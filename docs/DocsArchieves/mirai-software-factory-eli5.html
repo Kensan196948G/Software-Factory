@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>みらいソフトウェアファクトリー やさしい解説版</title>
+<style>
+:root{
+  --bg:#f7f6f2; --surface:#ffffff; --surface2:#f0eee8; --ink:#1d2430; --muted:#5f6876; --line:#e2ded4;
+  --navy:#173a5c;
+  --accent:#f08a24; --accent-soft:#fff0df;
+  --ai:#0f9d9a; --ai-soft:#ddf4f2;
+  --ci:#4f5bd5; --ci-soft:#e8eafb;
+  --human:#d4553a; --human-soft:#fbe6e0;
+  --ok:#1f9d55; --ok-soft:#e1f4e8; --warn:#c98a12; --warn-soft:#fcf1d8; --ng:#c53030; --ng-soft:#fbe2e2;
+  --shadow:0 1px 2px rgba(30,40,50,.05),0 10px 26px rgba(30,40,50,.07);
+  --font:"Hiragino Maru Gothic ProN","Hiragino Sans","BIZ UDPGothic","Noto Sans JP","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#11161d; --surface:#18202a; --surface2:#202a36; --ink:#e8edf2; --muted:#a0abb8; --line:#2b3644;
+    --accent-soft:#3a2714; --ai-soft:#0f2f2d; --ci-soft:#1f2348; --human-soft:#3a1d17;
+    --ok-soft:#11301f; --warn-soft:#352a10; --ng-soft:#3a1717;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 26px rgba(0,0,0,.25);
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:64px}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);line-height:1.85;font-size:16.5px;-webkit-font-smoothing:antialiased}
+a{color:var(--ci)}
+.ico{width:1.2em;height:1.2em;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vertical-align:-.22em;flex:none}
+.wrap{max-width:1040px;margin:0 auto;padding:0 20px}
+#progress{position:fixed;top:0;left:0;height:4px;width:0;background:linear-gradient(90deg,var(--accent),var(--ai));z-index:60;border-radius:0 4px 4px 0}
+
+nav.top{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--surface) 90%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+nav.top .wrap{display:flex;align-items:center;gap:14px;height:56px}
+nav.top .brand{display:flex;align-items:center;gap:8px;font-weight:800;white-space:nowrap;color:var(--ink);text-decoration:none}
+nav.top .brand .ico{color:var(--accent);width:1.5em;height:1.5em}
+nav.top ul{display:flex;gap:2px;list-style:none;margin:0;padding:0;overflow-x:auto;scrollbar-width:none}
+nav.top ul::-webkit-scrollbar{display:none}
+nav.top li a{display:block;padding:6px 11px;border-radius:999px;font-size:13px;color:var(--muted);text-decoration:none;white-space:nowrap}
+nav.top li a.active,nav.top li a:hover{background:var(--accent-soft);color:var(--ink)}
+
+/* hero */
+.hero{position:relative;overflow:hidden;background:linear-gradient(170deg,#fff4e6 0%,#e9f6f5 100%)}
+@media (prefers-color-scheme:dark){.hero{background:linear-gradient(170deg,#2a1f14 0%,#10272a 100%)}}
+.hero::before{content:"";position:absolute;inset:0;background-image:radial-gradient(color-mix(in srgb,var(--accent) 22%,transparent) 1.5px,transparent 1.5px);background-size:26px 26px;opacity:.6;pointer-events:none}
+.hero .wrap{position:relative;padding-top:48px;padding-bottom:40px}
+.pills{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;padding:4px 12px;border-radius:999px;background:var(--surface);border:1px solid var(--line)}
+.pill.e{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700}
+.hero h1{font-size:clamp(28px,5vw,46px);line-height:1.3;margin:0}
+.hero h1 small{display:block;font-size:.42em;color:var(--accent);letter-spacing:.08em;margin-bottom:6px}
+.hero .lead{font-size:clamp(16px,2.2vw,19px);margin:14px 0 0;max-width:720px}
+.hero .lead mark{background:linear-gradient(transparent 60%,color-mix(in srgb,var(--accent) 40%,transparent) 60%);color:inherit;font-weight:700}
+
+/* hero conveyor */
+.belt{position:relative;margin:34px 0 6px;height:190px;border-radius:22px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);overflow:hidden}
+.belt .floor{position:absolute;left:0;right:0;bottom:34px;height:10px;background:repeating-linear-gradient(90deg,#8a96a6 0 16px,#6b7787 16px 32px);background-size:32px 10px;animation:roll 1s linear infinite}
+@keyframes roll{to{background-position:32px 0}}
+.station{position:absolute;bottom:52px;width:120px;margin-left:-60px;text-align:center}
+.station .bub{width:66px;height:66px;margin:0 auto;border-radius:20px;display:grid;place-items:center;color:#fff;box-shadow:var(--shadow);animation:bob 2.4s ease-in-out infinite}
+.station .bub .ico{width:32px;height:32px}
+.station b{display:block;font-size:13px;margin-top:6px}
+.station.s1{left:22%}.station.s2{left:50%}.station.s3{left:78%}
+.station.s1 .bub{background:var(--ai)}
+.station.s2 .bub{background:var(--ci);animation-delay:.4s}
+.station.s3 .bub{background:var(--human);animation-delay:.8s}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+.parcel{position:absolute;bottom:44px;width:30px;height:24px;margin-left:-15px;border-radius:6px;animation:ride 9s linear infinite;background:#c9cfd8;border:2px solid rgba(0,0,0,.12)}
+.parcel::after{content:"";position:absolute;left:50%;top:-2px;bottom:-2px;width:4px;margin-left:-2px;background:rgba(255,255,255,.5)}
+.parcel.p2{animation-delay:-3s}.parcel.p3{animation-delay:-6s}
+@keyframes ride{
+  0%{left:-4%;background:#c9cfd8}
+  22%{left:22%;background:#c9cfd8}
+  26%{background:var(--ai)}
+  50%{left:50%;background:var(--ai)}
+  54%{background:var(--ci)}
+  78%{left:78%;background:var(--ci)}
+  82%{background:var(--ok)}
+  100%{left:104%;background:var(--ok)}
+}
+.belt .cap{position:absolute;left:14px;bottom:6px;font-size:12px;color:var(--muted)}
+.belt .flag{position:absolute;right:14px;top:12px;font-size:12px;font-weight:700;color:var(--ok);display:flex;gap:5px;align-items:center}
+
+/* section */
+section.sec{padding:60px 0 6px}
+.sh{display:flex;align-items:center;gap:14px;margin-bottom:20px}
+.sh .n{flex:none;width:48px;height:48px;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:#fff;font-weight:800;font-size:19px;box-shadow:0 0 0 6px var(--accent-soft)}
+.sh h2{margin:0;font-size:clamp(21px,3vw,27px);line-height:1.4}
+.sh p{margin:2px 0 0;color:var(--muted);font-size:14.5px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);padding:20px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.reveal{opacity:0;transform:translateY(20px) scale(.98);transition:opacity .7s ease,transform .7s ease}
+.reveal.in{opacity:1;transform:none}
+
+.big-say{font-size:clamp(18px,2.6vw,23px);font-weight:800;line-height:1.6;text-align:center;padding:28px 22px;border-radius:24px;background:var(--surface);border:2px dashed var(--accent);box-shadow:var(--shadow)}
+.big-say .a{color:var(--ai)}.big-say .c{color:var(--ci)}.big-say .h{color:var(--human)}
+.three{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:18px}
+.chara{text-align:center;padding:22px 18px;border-radius:22px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);transition:transform .3s}
+.chara:hover{transform:translateY(-6px) rotate(-.5deg)}
+.chara .face{width:78px;height:78px;margin:0 auto 10px;border-radius:24px;display:grid;place-items:center;color:#fff}
+.chara .face .ico{width:38px;height:38px}
+.chara.ai .face{background:var(--ai)}.chara.ci .face{background:var(--ci)}.chara.hu .face{background:var(--human)}
+.chara h4{margin:0;font-size:18px}
+.chara .role{display:inline-block;font-size:12px;font-weight:700;padding:2px 10px;border-radius:999px;margin:6px 0 8px}
+.chara.ai .role{background:var(--ai-soft);color:var(--ai)}.chara.ci .role{background:var(--ci-soft);color:var(--ci)}.chara.hu .role{background:var(--human-soft);color:var(--human)}
+.chara p{margin:0;font-size:14.5px;color:var(--muted);text-align:left}
+
+/* tables */
+.tbl{overflow-x:auto;border-radius:20px;border:1px solid var(--line);background:var(--surface);box-shadow:var(--shadow)}
+table{width:100%;border-collapse:collapse;font-size:15px;min-width:600px}
+th,td{padding:13px 16px;text-align:left;vertical-align:middle;border-bottom:1px solid var(--line)}
+thead th{background:var(--surface2);font-size:13.5px;color:var(--muted);white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+tbody tr{transition:background .2s}
+tbody tr:hover{background:var(--accent-soft)}
+td.k{font-weight:700;white-space:nowrap}
+td.k .ico{margin-right:6px;color:var(--accent)}
+.arrow{color:var(--accent);font-weight:800;text-align:center}
+.mark{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:50%;font-weight:900;font-size:17px}
+.mark.m1{background:var(--ok-soft);color:var(--ok)}
+.mark.m2{background:var(--ai-soft);color:var(--ai)}
+.mark.m3{background:var(--warn-soft);color:var(--warn)}
+.mark.m4{background:var(--human-soft);color:var(--human)}
+.stars{letter-spacing:2px;color:var(--accent);font-size:15px;white-space:nowrap}
+.stars i{font-style:normal;color:var(--line)}
+.in .stars span{display:inline-block;animation:pop .45s both}
+.in .stars span:nth-child(2){animation-delay:.1s}.in .stars span:nth-child(3){animation-delay:.2s}.in .stars span:nth-child(4){animation-delay:.3s}.in .stars span:nth-child(5){animation-delay:.4s}
+@keyframes pop{from{opacity:0;transform:scale(.3)}to{opacity:1;transform:none}}
+.legend-marks{display:flex;flex-wrap:wrap;gap:14px;font-size:13.5px;color:var(--muted);margin-top:10px}
+.legend-marks span{display:inline-flex;align-items:center;gap:6px}
+.legend-marks .mark{width:24px;height:24px;font-size:13px}
+
+/* stepper */
+.loop{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:20px;align-items:start}
+.stepper{list-style:none;margin:0;padding:0;position:relative}
+.stepper::before{content:"";position:absolute;left:23px;top:22px;bottom:22px;width:3px;border-radius:2px;background:var(--line)}
+.stepper li{position:relative;display:flex;gap:12px;align-items:center;padding:7px 10px 7px 0;border-radius:16px;transition:background .35s}
+.stepper .sd{position:relative;z-index:1;flex:none;width:48px;height:48px;border-radius:16px;display:grid;place-items:center;background:var(--surface);border:2.5px solid var(--line);transition:all .35s}
+.stepper .sd .ico{width:22px;height:22px}
+.stepper li.t-in .sd{color:var(--accent)}.stepper li.t-ai .sd{color:var(--ai)}.stepper li.t-ci .sd{color:var(--ci)}.stepper li.t-hu .sd{color:var(--human)}
+.stepper .tx{flex:1;font-weight:700;font-size:15px}
+.stepper .tx small{display:block;font-weight:400;font-size:13px;color:var(--muted)}
+.stepper li.on{background:var(--surface2)}
+.stepper li.on .sd{transform:scale(1.1);border-color:currentColor;box-shadow:0 0 0 6px color-mix(in srgb,currentColor 16%,transparent)}
+.stepper li.done .sd::after{content:"";position:absolute;right:-6px;bottom:-6px;width:18px;height:18px;border-radius:50%;background:var(--ok) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5 9-10'/%3E%3C/svg%3E") center/11px no-repeat}
+.status{font-size:12.5px;font-weight:700;padding:3px 10px;border-radius:999px;background:var(--surface2);color:var(--muted);white-space:nowrap}
+.status.run{background:var(--ci-soft);color:var(--ci)}.status.fail{background:var(--ng-soft);color:var(--ng)}.status.pass{background:var(--ok-soft);color:var(--ok)}
+.speech{position:relative;padding:16px 18px;border-radius:18px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);min-height:96px}
+.speech::before{content:"";position:absolute;left:-9px;top:28px;border:9px solid transparent;border-right-color:var(--line);border-left:0}
+.speech .who{display:flex;align-items:center;gap:8px;font-weight:800;margin-bottom:4px}
+.speech .who .ico{width:22px;height:22px}
+.speech p{margin:0;font-size:15px}
+.speech.anim p{animation:fadein .4s ease}
+@keyframes fadein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.ctrl{display:flex;gap:8px;margin-top:12px}
+button.btn{font:inherit;font-size:13.5px;display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}
+button.btn:hover{background:var(--surface2)}
+
+/* order */
+.vs{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.ask{padding:20px;border-radius:20px;box-shadow:var(--shadow)}
+.ask.bad{background:var(--ng-soft)}.ask.good{background:var(--ok-soft)}
+.ask h4{margin:0 0 8px;display:flex;align-items:center;gap:8px;font-size:16px}
+.ask.bad h4{color:var(--ng)}.ask.good h4{color:var(--ok)}
+.ask .q{font-size:17px;font-weight:800;margin:4px 0 8px}
+.ask p{margin:0;font-size:14.5px}
+.order{margin-top:18px;background:var(--surface);border-radius:20px;border:1px solid var(--line);box-shadow:var(--shadow);overflow:hidden}
+.order .head{display:flex;align-items:center;gap:10px;padding:14px 20px;background:var(--navy);color:#fff;font-weight:800}
+.order .head .no{margin-left:auto;font-size:12px;font-weight:600;opacity:.8}
+.order dl{margin:0;display:grid;grid-template-columns:180px 1fr}
+.order dt,.order dd{margin:0;padding:12px 20px;border-bottom:1px solid var(--line)}
+.order dt{font-weight:700;background:var(--surface2);display:flex;align-items:center;gap:8px;font-size:14.5px}
+.order dt .ico{color:var(--accent)}
+.order dd{font-size:15px}
+.order dl>*:nth-last-child(-n+2){border-bottom:0}
+.order .stamp{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:800;color:var(--human);border:2px solid var(--human);border-radius:8px;padding:0 8px;transform:rotate(-4deg);margin-left:6px}
+
+/* promises */
+.promises{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.pr{position:relative;padding:20px;border-radius:20px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);transition:transform .3s}
+.pr:hover{transform:translateY(-5px)}
+.pr .ib{width:48px;height:48px;border-radius:16px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);margin-bottom:10px}
+.pr .ib .ico{width:24px;height:24px}
+.pr .num{position:absolute;right:16px;top:12px;font-weight:900;font-size:30px;color:var(--surface2)}
+.pr h4{margin:0 0 6px;font-size:16.5px;line-height:1.5}
+.pr p{margin:0;font-size:14.5px;color:var(--muted)}
+.pr .eg{margin-top:10px;font-size:13px;padding:8px 12px;border-radius:12px;background:var(--surface2)}
+
+.keys{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.kbox{padding:20px;border-radius:20px;box-shadow:var(--shadow)}
+.kbox.give{background:var(--ok-soft)}.kbox.keep{background:var(--ng-soft)}
+.kbox h4{margin:0 0 10px;display:flex;align-items:center;gap:8px;font-size:16.5px}
+.kbox.give h4{color:var(--ok)}.kbox.keep h4{color:var(--ng)}
+.kbox ul{margin:0;padding:0;list-style:none}
+.kbox li{display:flex;gap:10px;align-items:flex-start;padding:7px 0;font-size:15px;border-bottom:1px dashed color-mix(in srgb,var(--ink) 15%,transparent)}
+.kbox li:last-child{border-bottom:0}
+.kbox li .ico{margin-top:4px}
+.kbox.give li .ico{color:var(--ok)}.kbox.keep li .ico{color:var(--ng)}
+
+/* checklist */
+.checks{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.ck{display:flex;gap:10px;align-items:flex-start;padding:14px;border-radius:16px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow)}
+.ck .box{flex:none;width:26px;height:26px;border-radius:8px;border:2.5px solid var(--ci);display:grid;place-items:center;color:#fff;transition:background .3s}
+.ck .box .ico{width:16px;height:16px;opacity:0;transform:scale(.3);transition:all .3s}
+.in .ck .box{background:var(--ci)}
+.in .ck .box .ico{opacity:1;transform:none}
+.ck b{display:block;font-size:14.5px}
+.ck small{display:block;font-size:12.5px;color:var(--muted);line-height:1.55}
+.in .ck:nth-child(2) .box,.in .ck:nth-child(2) .box .ico{transition-delay:.15s}
+.in .ck:nth-child(3) .box,.in .ck:nth-child(3) .box .ico{transition-delay:.3s}
+.in .ck:nth-child(4) .box,.in .ck:nth-child(4) .box .ico{transition-delay:.45s}
+.in .ck:nth-child(5) .box,.in .ck:nth-child(5) .box .ico{transition-delay:.6s}
+.in .ck:nth-child(6) .box,.in .ck:nth-child(6) .box .ico{transition-delay:.75s}
+.in .ck:nth-child(7) .box,.in .ck:nth-child(7) .box .ico{transition-delay:.9s}
+.in .ck:nth-child(8) .box,.in .ck:nth-child(8) .box .ico{transition-delay:1.05s}
+
+/* stairs */
+.stairs{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;align-items:end;height:300px;padding:0 4px;position:relative}
+.stair{position:relative;border-radius:16px 16px 6px 6px;background:linear-gradient(180deg,var(--accent),#e0761a);color:#fff;padding:12px 10px;height:0;transition:height 1s cubic-bezier(.2,.8,.2,1);overflow:hidden;box-shadow:var(--shadow)}
+.stair:nth-child(2){background:linear-gradient(180deg,#f3a04a,var(--accent))}
+.stair:nth-child(3){background:linear-gradient(180deg,#2bb2ae,var(--ai))}
+.stair:nth-child(4){background:linear-gradient(180deg,#6a75e0,var(--ci))}
+.stair:nth-child(5){background:linear-gradient(180deg,#e06c52,var(--human))}
+.in .stair{height:var(--h)}
+.stair:nth-child(2){transition-delay:.15s}.stair:nth-child(3){transition-delay:.3s}.stair:nth-child(4){transition-delay:.45s}.stair:nth-child(5){transition-delay:.6s}
+.stair .p{font-size:11.5px;font-weight:800;opacity:.85;letter-spacing:.05em}
+.stair b{display:block;font-size:14.5px;line-height:1.4}
+.stair small{display:block;font-size:12px;line-height:1.5;opacity:.95;margin-top:4px}
+.climber{position:absolute;width:26px;height:26px;border-radius:50%;background:var(--navy);border:3px solid #fff;box-shadow:var(--shadow);left:calc(10% - 13px);bottom:66px;animation:climb 10s ease-in-out infinite;z-index:2;opacity:0}
+.in .climber{opacity:1}
+@keyframes climb{
+  0%,12%{left:calc(10% - 13px);bottom:66px}
+  20%,32%{left:calc(30% - 13px);bottom:114px}
+  40%,52%{left:calc(50% - 13px);bottom:162px}
+  60%,72%{left:calc(70% - 13px);bottom:210px}
+  80%,95%{left:calc(90% - 13px);bottom:258px}
+  100%{left:calc(90% - 13px);bottom:258px;opacity:0}
+}
+.goals{margin-top:16px}
+.goals td:first-child{white-space:nowrap;font-weight:800}
+
+.measure{display:flex;gap:12px;align-items:flex-start;padding:16px;border-radius:18px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow)}
+.measure .ib{flex:none;width:42px;height:42px;border-radius:14px;display:grid;place-items:center;background:var(--ai-soft);color:var(--ai)}
+.measure b{display:block;font-size:14.5px;line-height:1.5}
+.measure small{color:var(--muted);font-size:12.5px;line-height:1.5;display:block}
+
+.note{display:flex;gap:12px;align-items:flex-start;padding:15px 18px;border-radius:18px;font-size:15px;margin:16px 0}
+.note .ico{width:24px;height:24px;margin-top:2px}
+.note.tip{background:var(--accent-soft)}.note.tip .ico{color:var(--accent)}
+.note.warn{background:var(--warn-soft)}.note.warn .ico{color:var(--warn)}
+
+.sum{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.sumc{padding:22px;border-radius:22px;color:#fff;box-shadow:var(--shadow)}
+.sumc:nth-child(1){background:linear-gradient(150deg,#2bb2ae,var(--ai))}
+.sumc:nth-child(2){background:linear-gradient(150deg,#6a75e0,var(--ci))}
+.sumc:nth-child(3){background:linear-gradient(150deg,#e06c52,var(--human))}
+.sumc .ico{width:34px;height:34px}
+.sumc h4{margin:8px 0 6px;font-size:18px}
+.sumc p{margin:0;font-size:14.5px;opacity:.95}
+
+.dict{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.dict div{padding:12px 16px;border-radius:14px;background:var(--surface);border:1px solid var(--line)}
+.dict b{display:inline-block;font-size:14px;padding:1px 10px;border-radius:999px;background:var(--navy);color:#fff;margin-right:8px}
+.dict span{font-size:14.5px}
+
+.to-full{display:flex;align-items:center;gap:14px;margin-top:24px;padding:18px 20px;border-radius:20px;background:var(--navy);color:#eaf2fa;text-decoration:none;box-shadow:var(--shadow)}
+.to-full:hover{filter:brightness(1.1)}
+.to-full .ico{width:28px;height:28px;color:var(--accent)}
+.to-full b{display:block;color:#fff}
+.to-full small{color:#b9cde0}
+footer{margin-top:56px;padding:26px 0 40px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px}
+
+@media (max-width:900px){
+  .three,.promises,.sum,.grid3{grid-template-columns:1fr 1fr}
+  .checks,.grid4{grid-template-columns:1fr 1fr}
+  .loop{grid-template-columns:1fr}
+}
+@media (max-width:640px){
+  body{font-size:15.5px}
+  .wrap{padding:0 16px}
+  .three,.promises,.sum,.grid2,.grid3,.vs,.keys,.dict{grid-template-columns:1fr}
+  .checks,.grid4{grid-template-columns:1fr}
+  .station{width:90px;margin-left:-45px}
+  .station .bub{width:50px;height:50px;border-radius:15px}
+  .station .bub .ico{width:24px;height:24px}
+  .station b{font-size:11.5px}
+  .order dl{grid-template-columns:1fr}
+  .order dt{border-bottom:0;padding-bottom:4px}
+  .stairs{height:340px;gap:6px}
+  .stair{padding:10px 6px}
+  .stair b{font-size:12.5px}
+  .stair small{display:none}
+  .climber{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .reveal{opacity:1!important;transform:none!important}
+  .stair{height:var(--h)!important}
+}
+@media print{
+  nav.top,#progress,.ctrl{display:none}
+  .reveal{opacity:1;transform:none}
+  .stair{height:var(--h)}
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M3 13h5l2 3h4l2-3h5"/><path d="M5 5h14l2 8v6H3v-6z"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 16h6"/></symbol>
+    <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4"/><circle cx="12" cy="3.5" r="1"/><circle cx="9" cy="14" r="1.2"/><circle cx="15" cy="14" r="1.2"/><path d="M2 13v3M22 13v3"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-5-5"/><path d="M8 11l2 2 4-4"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2 20c.8-3.5 3.5-5.5 7-5.5s6.2 2 7 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .8 3.4 2.6 4 5.2"/></symbol>
+    <symbol id="i-stamp" viewBox="0 0 24 24"><path d="M9 3h6v5l-1 3h4a2 2 0 0 1 2 2v3H4v-3a2 2 0 0 1 2-2h4L9 8z"/><path d="M4 20h16"/></symbol>
+    <symbol id="i-rocket" viewBox="0 0 24 24"><path d="M12 2c3 2 5 6 5 10l-2 5H9l-2-5c0-4 2-8 5-10z"/><circle cx="12" cy="10" r="2"/><path d="M9 17l-2 4M15 17l2 4M12 17v4"/></symbol>
+    <symbol id="i-flask" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4.2 19A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.3-2L14 9V3"/><path d="M7 15h10"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-loop" viewBox="0 0 24 24"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></symbol>
+    <symbol id="i-crane" viewBox="0 0 24 24"><path d="M6 21V5M6 5h14M6 5l4 4M12 5v6M20 5v4"/><path d="M10 11h4v3h-4z"/><path d="M3 21h8"/></symbol>
+    <symbol id="i-helmet" viewBox="0 0 24 24"><path d="M3 17h18"/><path d="M5 17a7 7 0 0 1 14 0"/><path d="M10 10V6h4v4"/><path d="M4 20h16"/></symbol>
+    <symbol id="i-blueprint" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11M13 13h5M13 16h3"/></symbol>
+    <symbol id="i-house" viewBox="0 0 24 24"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 10h8M8 13h5"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4h12l-2 4 2 4H5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-yen" viewBox="0 0 24 24"><path d="M6 3l6 8 6-8M12 11v10M7 13h10M7 17h10"/></symbol>
+    <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4 18a9 9 0 1 1 16 0"/><path d="M12 13l4-5"/><circle cx="12" cy="13" r="1.5"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 4v16M16 4v16"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></symbol>
+    <symbol id="i-factory" viewBox="0 0 24 24"><path d="M3 21V10l5 3V10l5 3V10l5 3V4h3v17z"/><path d="M7 17h2M12 17h2M17 17h1"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 4h6a3 3 0 0 1 3 3v14a2 2 0 0 0-2-2H4z"/><path d="M20 4h-6a3 3 0 0 0-3 3v14a2 2 0 0 1 2-2h7z"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7L12 6.3"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></symbol>
+    <symbol id="i-split" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  </defs>
+</svg>
+
+<div id="progress"></div>
+
+<nav class="top">
+  <div class="wrap">
+    <a class="brand" href="#top"><svg class="ico"><use href="#i-factory"/></svg>やさしい解説</a>
+    <ul id="navlist">
+      <li><a href="#e1">ひとことで</a></li>
+      <li><a href="#e2">たとえ話</a></li>
+      <li><a href="#e3">3つの役</a></li>
+      <li><a href="#e4">得意・苦手</a></li>
+      <li><a href="#e5">できるまで</a></li>
+      <li><a href="#e6">注文書</a></li>
+      <li><a href="#e7">6つの約束</a></li>
+      <li><a href="#e8">完成チェック</a></li>
+      <li><a href="#e9">進め方</a></li>
+      <li><a href="#e10">まとめ</a></li>
+    </ul>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <div class="pills">
+      <span class="pill e"><svg class="ico"><use href="#i-spark"/></svg>やさしい解説版</span>
+      <span class="pill"><svg class="ico"><use href="#i-doc"/></svg>企画構想案（ドラフト）</span>
+      <span class="pill"><svg class="ico"><use href="#i-clock"/></svg>2026年10月17日</span>
+    </div>
+    <h1><small>MIRAI SOFTWARE FACTORY</small>みらいソフトウェアファクトリーって、なに？</h1>
+    <p class="lead">社内で使うシステムを、<mark>AIのロボットが作り、自動の検査機が調べ、最後に人がハンコを押す</mark>。そんな「システムの組み立てライン」を会社の中につくる計画です。</p>
+
+    <div class="belt" aria-label="作る・調べる・ハンコの3工程が流れる様子">
+      <div class="flag"><svg class="ico"><use href="#i-check"/></svg>完成！</div>
+      <div class="station s1"><div class="bub"><svg class="ico"><use href="#i-bot"/></svg></div><b>AIロボットが作る</b></div>
+      <div class="station s2"><div class="bub"><svg class="ico"><use href="#i-search"/></svg></div><b>検査機が調べる</b></div>
+      <div class="station s3"><div class="bub"><svg class="ico"><use href="#i-stamp"/></svg></div><b>人がハンコを押す</b></div>
+      <div class="parcel"></div><div class="parcel p2"></div><div class="parcel p3"></div>
+      <div class="floor"></div>
+      <div class="cap">箱の色が変わるたびに、ひとつ工程が終わっています</div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section class="sec" id="e1">
+  <div class="sh"><div class="n">1</div><div><h2>ひとことで言うと</h2><p>まずはこれだけ覚えてください</p></div></div>
+  <div class="big-say reveal">
+    AIに「全部おまかせ」するのではありません。<br>
+    <span class="a">作業はAI</span>、<span class="c">合否は検査機</span>、<span class="h">最後の決定は人</span>。<br>
+    この3つの役割を分けて、安全に早くシステムを作ります。
+  </div>
+  <div class="note tip reveal"><svg class="ico"><use href="#i-spark"/></svg><div><b>大事なポイント：</b>AIは賢いですが、まちがえることもあります。だから「AIが自分で大丈夫と言った」ではなく、<b>別の検査機と人の目</b>で確かめる仕組みにします。</div></div>
+</section>
+
+<section class="sec" id="e2">
+  <div class="sh"><div class="n">2</div><div><h2>建設現場にたとえると</h2><p>いつもの仕事の流れと、ほとんど同じです</p></div></div>
+  <div class="tbl reveal">
+    <table>
+      <thead><tr><th>システムづくりの言葉</th><th></th><th>建設現場でいうと</th><th>だれの仕事？</th></tr></thead>
+      <tbody>
+        <tr><td class="k"><svg class="ico"><use href="#i-inbox"/></svg>要望（こんな機能がほしい）</td><td class="arrow">→</td><td>施主さんの「こんな建物がほしい」</td><td>使う部署の人</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-doc"/></svg>仕様・作業指示書</td><td class="arrow">→</td><td>設計図と発注書</td><td>AIが下書き → 人が決定</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-bot"/></svg>実装（プログラムを書く）</td><td class="arrow">→</td><td>職人さんの施工</td><td>AIロボット</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-box"/></svg>隔離された作業環境</td><td class="arrow">→</td><td>囲いのある仮設ヤード</td><td>ロボットはこの中だけで作業</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-flask"/></svg>CI（自動テスト）</td><td class="arrow">→</td><td>検査機による品質検査</td><td>自動の検査機</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-doc"/></svg>PR（変更の提出書類）</td><td class="arrow">→</td><td>出来形・検査記録のまとめ</td><td>AIがそろえる</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-stamp"/></svg>マージ・公開の承認</td><td class="arrow">→</td><td>完成検査と引き渡しのハンコ</td><td>人（責任者）</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-chat"/></svg>desknet's NEO / AppSuite</td><td class="arrow">→</td><td>現場事務所の受付窓口・連絡板</td><td>お知らせ・相談・承認依頼の入口<br><small style="color:var(--muted)">正式な決定は提出書類（PR等）に記録</small></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="sec" id="e3">
+  <div class="sh"><div class="n">3</div><div><h2>登場する3つの役</h2><p>役割をはっきり分けるのが、この仕組みのコツです</p></div></div>
+  <div class="three">
+    <div class="chara ai reveal"><div class="face"><svg class="ico"><use href="#i-bot"/></svg></div><h4>AIロボット</h4><span class="role">作る係</span><p>要望を整理して設計図の下書きを作り、プログラムを書き、テストも用意します。疲れ知らずで速いのが長所。ただし、まちがえることもあります。</p></div>
+    <div class="chara ci reveal"><div class="face"><svg class="ico"><use href="#i-search"/></svg></div><h4>自動の検査機</h4><span class="role">調べる係</span><p>毎回同じ手順でチェックして「合格／不合格」を出します。ロボットの自己申告ではなく、検査機の結果で判断します。</p></div>
+    <div class="chara hu reveal"><div class="face"><svg class="ico"><use href="#i-helmet"/></svg></div><h4>人（責任者）</h4><span class="role">決める係</span><p>「何を作るか」「業務として正しいか」「公開してよいか」を決めます。ハンコを押せるのは人だけです。</p></div>
+  </div>
+</section>
+
+<section class="sec" id="e4">
+  <div class="sh"><div class="n">4</div><div><h2>ロボットが得意なこと・苦手なこと</h2><p>なんでも任せるのではなく、得意なところから任せます</p></div></div>
+  <div class="tbl reveal">
+    <table>
+      <thead><tr><th>やること</th><th>まかせ度</th><th></th><th>どう分担する？</th></tr></thead>
+      <tbody>
+        <tr><td class="k">要望の整理</td><td><span class="stars"><span>★</span><span>★</span><span>★</span><span>★</span><i>★</i></span></td><td><span class="mark m1">◎</span></td><td>AIが整理し、足りない情報を質問。最後は人が決める</td></tr>
+        <tr><td class="k">画面・しくみの設計案</td><td><span class="stars"><span>★</span><span>★</span><span>★</span><span>★</span><i>★</i></span></td><td><span class="mark m1">◎</span></td><td>いつもの決まりどおりならAI。ログインや権限まわりは人が確認</td></tr>
+        <tr><td class="k">プログラムを書く</td><td><span class="stars"><span>★</span><span>★</span><span>★</span><span>★</span><i>★</i></span></td><td><span class="mark m1">◎</span></td><td>小さな仕事に分けてから渡す</td></tr>
+        <tr><td class="k">つなげて動かすテスト</td><td><span class="stars"><span>★</span><span>★</span><span>★</span><i>★★</i></span></td><td><span class="mark m2">○</span></td><td>テスト用の場所とデータを先に準備しておけば得意</td></tr>
+        <tr><td class="k">不合格の直し</td><td><span class="stars"><span>★</span><span>★</span><span>★</span><i>★★</i></span></td><td><span class="mark m2">○</span></td><td>「やり直しは◯回まで」と上限を決める</td></tr>
+        <tr><td class="k">中身のチェック</td><td><span class="stars"><span>★</span><span>★</span><i>★★★</i></span></td><td><span class="mark m3">△</span></td><td>AIはお手伝い役。AIの判定だけで合格にしない</td></tr>
+        <tr><td class="k">業務として正しいか</td><td><span class="stars"><span>★</span><i>★★★★</i></span></td><td><span class="mark m4">人</span></td><td>「動く」と「仕事で使える」は別。使う部署が確かめる</td></tr>
+        <tr><td class="k">本番公開</td><td><span class="stars"><span>★</span><span>★</span><span>★</span><i>★★</i></span></td><td><span class="mark m3">△</span></td><td>作業は自動。でも「やってよし」のハンコは人</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="legend-marks"><span><span class="mark m1">◎</span>どんどん任せる</span><span><span class="mark m2">○</span>準備すれば任せる</span><span><span class="mark m3">△</span>お手伝いまで</span><span><span class="mark m4">人</span>人が決める</span></div>
+</section>
+
+<section class="sec" id="e5">
+  <div class="sh"><div class="n">5</div><div><h2>1つの機能ができるまで</h2><p>自動で動くので、ながめてみてください（不合格→やり直しも出てきます）</p></div></div>
+  <div class="loop">
+    <div class="card reveal">
+      <ol class="stepper" id="stepper">
+        <li class="t-in"><span class="sd"><svg class="ico"><use href="#i-inbox"/></svg></span><span class="tx">「こんな機能がほしい」を受付<small>desknet's NEO・AppSuite や受付画面から</small></span></li>
+        <li class="t-ai"><span class="sd"><svg class="ico"><use href="#i-bot"/></svg></span><span class="tx">AIが設計図の下書きを作る<small>あいまいな所は質問を返す</small></span></li>
+        <li class="t-hu"><span class="sd"><svg class="ico"><use href="#i-stamp"/></svg></span><span class="tx">人が「これで作って」とOK</span></li>
+        <li class="t-ai"><span class="sd"><svg class="ico"><use href="#i-blueprint"/></svg></span><span class="tx">AIが作業の段取りを決める</span></li>
+        <li class="t-ai"><span class="sd"><svg class="ico"><use href="#i-box"/></svg></span><span class="tx">囲いの中でプログラムを作る<small id="impl-sub">本番には触れない場所で作業</small></span></li>
+        <li class="t-ci"><span class="sd"><svg class="ico"><use href="#i-flask"/></svg></span><span class="tx">検査機がチェック</span><span class="status" id="ci">待機</span></li>
+        <li class="t-ai"><span class="sd"><svg class="ico"><use href="#i-doc"/></svg></span><span class="tx">提出書類と試し見画面をそろえる</span></li>
+        <li class="t-hu"><span class="sd"><svg class="ico"><use href="#i-eye"/></svg></span><span class="tx">人が書類と動きを確認</span></li>
+        <li class="t-hu"><span class="sd"><svg class="ico"><use href="#i-rocket"/></svg></span><span class="tx">試験運用 → 公開OK → みんなが使える</span></li>
+      </ol>
+      <div class="ctrl">
+        <button class="btn" id="btn-play" type="button"></button>
+        <button class="btn" id="btn-reset" type="button"><svg class="ico"><use href="#i-undo"/></svg>最初から</button>
+      </div>
+    </div>
+    <div>
+      <div class="speech reveal" id="speech"><div class="who" id="who"></div><p id="say"></p></div>
+      <div class="card reveal" style="margin-top:16px">
+        <h4 style="margin:0 0 6px;display:flex;align-items:center;gap:8px"><svg class="ico" style="color:var(--ai)"><use href="#i-db"/></svg>途中で止まっても大丈夫</h4>
+        <p style="margin:0;font-size:14.5px;color:var(--muted)">作業日報のように「どこまでできたか」「テストの結果」「次にやること」を毎回記録します。だから、別の日に別のロボットが続きから再開できます。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="e6">
+  <div class="sh"><div class="n">6</div><div><h2>ロボットへの「注文書」</h2><p>お願いの書き方しだいで、仕上がりが大きく変わります</p></div></div>
+  <div class="vs">
+    <div class="ask bad reveal"><h4><svg class="ico"><use href="#i-x"/></svg>わるいお願い</h4><div class="q">「使いやすい申請画面を作って」</div><p>「使いやすい」は人によってちがうので、検査機は合格・不合格を決められません。</p></div>
+    <div class="ask good reveal"><h4><svg class="ico"><use href="#i-check"/></svg>いいお願い</h4><div class="q">「申請した人は自分の申請だけ見られる。承認できるのは承認者だけ」</div><p>これなら「他人の申請が見えないか」をテストで確かめられます。</p></div>
+  </div>
+
+  <div class="order reveal">
+    <div class="head"><svg class="ico"><use href="#i-doc"/></svg>注文書の見本：PC貸出申請の承認機能<span class="no">No. FEAT-001</span></div>
+    <dl>
+      <dt><svg class="ico"><use href="#i-flag"/></svg>なんのため？</dt><dd>メールでやっている貸出申請をシステムにする</dd>
+      <dt><svg class="ico"><use href="#i-users"/></svg>だれが使う？</dt><dd>申請する人／承認する人／資産管理の担当者</dd>
+      <dt><svg class="ico"><use href="#i-check"/></svg>作るもの</dt><dd>申請の登録、自分の申請一覧、承認と却下、操作の記録</dd>
+      <dt><svg class="ico"><use href="#i-x"/></svg>今回は作らない</dt><dd>購買の手続き、会計システムとの連携</dd>
+      <dt><svg class="ico"><use href="#i-search"/></svg>合格の条件</dt><dd>他人の申請は見えない／承認できない人は承認できない／承認済みは二重に承認できない／だれが・いつ・何をしたか残る</dd>
+      <dt><svg class="ico"><use href="#i-lock"/></svg>守ること</dt><dd>今のログイン方法は変えない／本物のデータを練習用の場所に持ち込まない</dd>
+      <dt><svg class="ico"><use href="#i-stamp"/></svg>必ず人に聞くこと</dt><dd>データを消すような変更、ログインや権限の変更、新しい外部サービスとの接続<span class="stamp">要承認</span></dd>
+    </dl>
+  </div>
+  <div class="note tip reveal"><svg class="ico"><use href="#i-link"/></svg><div>「合格の条件」の1つ1つに、確かめるテストをひもづけます。<b>どの条件を、どのテストで確かめたか</b>があとから追えるようにします。</div></div>
+</section>
+
+<section class="sec" id="e7">
+  <div class="sh"><div class="n">7</div><div><h2>安全のための6つの約束</h2><p>現場の安全ルールと同じで、最初に決めておきます</p></div></div>
+  <div class="promises">
+    <div class="pr reveal"><span class="num">01</span><div class="ib"><svg class="ico"><use href="#i-split"/></svg></div><h4>いきなりロボットを大勢にしない</h4><p>最初は「作る係・検査機・チェック係」の3つだけ。慣れてから増やします。</p><div class="eg">新しい現場も、少人数の班から立ち上げるのと同じ</div></div>
+    <div class="pr reveal"><span class="num">02</span><div class="ib"><svg class="ico"><use href="#i-search"/></svg></div><h4>ロボットは検査のルールを変えられない</h4><p>合格の基準をゆるめたり検査を止めたりするには、人の許可が必要です。</p><div class="eg">職人さんが自分で検査基準を書きかえないのと同じ</div></div>
+    <div class="pr reveal"><span class="num">03</span><div class="ib"><svg class="ico"><use href="#i-key"/></svg></div><h4>「作るカギ」と「公開するカギ」を分ける</h4><p>作るロボットに、本番を動かすカギは渡しません。</p><div class="eg">施工班と、引き渡しの判を押す人は別</div></div>
+    <div class="pr reveal"><span class="num">04</span><div class="ib"><svg class="ico"><use href="#i-box"/></svg></div><h4>作業は囲いの中だけ</h4><p>仕事ごとに使い捨ての作業場を用意し、終わったら片付けます。本物のデータや秘密のカギは入れません。</p><div class="eg">立入禁止の囲いをして作業するのと同じ</div></div>
+    <div class="pr reveal"><span class="num">05</span><div class="ib"><svg class="ico"><use href="#i-layers"/></svg></div><h4>ロボットの数より「ぶつからないこと」</h4><p>同じ場所を同時にさわらないように順番を決めます。1つの仕事は1つの目的だけ。</p><div class="eg">同じ区画で2つの班が同時に掘らないように調整</div></div>
+    <div class="pr reveal"><span class="num">06</span><div class="ib"><svg class="ico"><use href="#i-stamp"/></svg></div><h4>AIのOKと人のOKは別もの</h4><p>AIがチェックを終えても、それは人の承認の代わりにはなりません。ハンコは何に押したかまで記録します。</p><div class="eg">自主検査と、発注者の完成検査はちがう</div></div>
+  </div>
+
+  <h3 style="margin:30px 0 12px;display:flex;align-items:center;gap:8px;font-size:18px"><svg class="ico" style="color:var(--accent)"><use href="#i-key"/></svg>ロボットに渡すカギ・渡さないカギ</h3>
+  <div class="keys">
+    <div class="kbox give reveal"><h4><svg class="ico"><use href="#i-check"/></svg>渡すもの</h4><ul>
+      <li><svg class="ico"><use href="#i-check"/></svg>作業用の下書き場所（作業ブランチ）を編集する権利</li>
+      <li><svg class="ico"><use href="#i-check"/></svg>テスト用のデータ</li>
+      <li><svg class="ico"><use href="#i-check"/></svg>その仕事に必要な、最小限のカギだけ</li>
+      <li><svg class="ico"><use href="#i-check"/></svg>決められた行き先へのネット接続</li>
+    </ul></div>
+    <div class="kbox keep reveal"><h4><svg class="ico"><use href="#i-x"/></svg>渡さないもの</h4><ul>
+      <li><svg class="ico"><use href="#i-x"/></svg>完成版（main）へ直接書きこむ権利</li>
+      <li><svg class="ico"><use href="#i-x"/></svg>本番のデータベースや管理者のカギ</li>
+      <li><svg class="ico"><use href="#i-x"/></svg>ほかの案件の秘密の情報</li>
+      <li><svg class="ico"><use href="#i-x"/></svg>文書の中に書かれた「権限を変えて」という命令に従うこと</li>
+    </ul></div>
+  </div>
+</section>
+
+<section class="sec" id="e8">
+  <div class="sh"><div class="n">8</div><div><h2>提出書類の完成チェック</h2><p>人がプログラムを全部読まなくても判断できるよう、8つをそろえて出します</p></div></div>
+  <div class="checks reveal">
+    <div class="ck"><span class="box"><svg class="ico"><use href="#i-check"/></svg></span><div><b>なんの注文か</b><small>どの要望・どの注文書の分か</small></div></div>
+    <div class="ck"><span class="box"><svg class="ico"><use href="#i-check"/></svg></span><div><b>どこを変えたか</b><small>画面・データ・権限への影響</small></div></div>
+    <div class="ck"><span class="box"><svg class="ico"><use href="#i-check"/></svg></span><div><b>合格条件の結果</b><small>条件ごとの○×と、まだ確かめていない所</small></div></div>
+    <div class="ck"><span class="box"><svg class="ico"><use href="#i-check"/></svg></span><div><b>検査機の結果</b><small>テストやセキュリティ検査</small></div></div>
+    <div class="ck"><span class="box"><svg class="ico"><use href="#i-check"/></svg></span><div><b>試し見画面</b><small>実際にさわれるURLと操作手順</small></div></div>
+    <div class="ck"><span class="box"><svg class="ico"><use href="#i-check"/></svg></span><div><b>運用への影響</b><small>設定変更や手順書の更新</small></div></div>
+    <div class="ck"><span class="box"><svg class="ico"><use href="#i-check"/></svg></span><div><b>元に戻す方法</b><small>うまくいかなかった時の戻し方</small></div></div>
+    <div class="ck"><span class="box"><svg class="ico"><use href="#i-check"/></svg></span><div><b>残っている心配</b><small>わかっている不具合や、追加で決めること</small></div></div>
+  </div>
+  <div class="note warn reveal"><svg class="ico"><use href="#i-alert"/></svg><div>検査に合格しても「絶対に不具合がない」という意味ではありません。だから最後に人の目で見ます。</div></div>
+</section>
+
+<section class="sec" id="e9">
+  <div class="sh"><div class="n">9</div><div><h2>少しずつ階段をのぼる進め方</h2><p>期間ではなく「この段ができたら次へ」で進みます</p></div></div>
+  <div class="card reveal">
+    <div class="stairs">
+      <div class="stair" style="--h:22%"><span class="p">STEP 0</span><b>決まりを作る</b><small>ひな形・手順・検査機を準備</small></div>
+      <div class="stair" style="--h:38%"><span class="p">STEP 1</span><b>1つ作ってみる</b><small>小さな機能を1本</small></div>
+      <div class="stair" style="--h:54%"><span class="p">STEP 2</span><b>チームで使う</b><small>複数人の依頼を安全に</small></div>
+      <div class="stair" style="--h:70%"><span class="p">STEP 3</span><b>公開までつなぐ</b><small>試験運用・公開・戻し方</small></div>
+      <div class="stair" style="--h:86%"><span class="p">STEP 4</span><b>どんどん良くする</b><small>不具合や要望から改善</small></div>
+      <div class="climber"></div>
+    </div>
+  </div>
+  <div class="tbl goals reveal">
+    <table>
+      <thead><tr><th>段</th><th>この段の「できた！」の合図</th></tr></thead>
+      <tbody>
+        <tr><td>STEP 0</td><td>人がやっても毎回同じ手順で同じ結果になる</td></tr>
+        <tr><td>STEP 1</td><td>小さな機能1つを、証拠付きで完成させられる</td></tr>
+        <tr><td>STEP 2</td><td>何人もの依頼を、ぶつからず安全にさばける</td></tr>
+        <tr><td>STEP 3</td><td>OKが出たものを、記録を残して公開し、必要なら戻せる</td></tr>
+        <tr><td>STEP 4</td><td>品質とお金を測りながら、改善を続けられる</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 style="margin:30px 0 12px;display:flex;align-items:center;gap:8px;font-size:18px"><svg class="ico" style="color:var(--accent)"><use href="#i-crane"/></svg>最初に作るもの</h3>
+  <div class="grid3">
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-monitor"/></svg></div><div><b>PC貸出申請</b><small>画面・データ・権限・記録がひととおり入った、ちょうどいい練習台</small></div></div>
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-chat"/></svg></div><div><b>社内改善提案の受付</b><small>使う人を限定して試しやすい</small></div></div>
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-helmet"/></svg></div><div><b>建設・土木の仕事は後から</b><small>構造計算や安全の判断はまかせず、登録・検索・承認から始める</small></div></div>
+  </div>
+
+  <h3 style="margin:30px 0 12px;display:flex;align-items:center;gap:8px;font-size:18px"><svg class="ico" style="color:var(--accent)"><use href="#i-gauge"/></svg>うまくいっているかの測り方</h3>
+  <div class="grid4">
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-clock"/></svg></div><div><b>どれだけ早くできたか</b><small>注文が決まってから提出まで</small></div></div>
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-user"/></svg></div><div><b>人の手間</b><small>チェックや手直しにかかった時間</small></div></div>
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-check"/></svg></div><div><b>一発合格の割合</b><small>合格の条件を満たした割合</small></div></div>
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-loop"/></svg></div><div><b>やり直しの回数</b><small>差し戻しや再挑戦</small></div></div>
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-alert"/></svg></div><div><b>公開後の不具合</b><small>みんなが使い始めてからの問題</small></div></div>
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-yen"/></svg></div><div><b>1件あたりの費用</b><small>AI・検査機・作業場のお金</small></div></div>
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-bell"/></svg></div><div><b>ハンコ待ちの時間</b><small>人の承認で止まっていた時間</small></div></div>
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-play"/></svg></div><div><b>続きからの再開</b><small>途中で止まった作業を再開できた割合</small></div></div>
+  </div>
+  <div class="note tip reveal"><svg class="ico"><use href="#i-flag"/></svg><div>ロボットが何回動いたかではなく、<b>「仕事で使えるものを、どれだけの品質とお金で届けられたか」</b>で評価します。</div></div>
+</section>
+
+<section class="sec" id="e10">
+  <div class="sh"><div class="n">10</div><div><h2>まとめ</h2><p>これだけ覚えておけば大丈夫</p></div></div>
+  <div class="sum">
+    <div class="sumc reveal"><svg class="ico"><use href="#i-bot"/></svg><h4>作るのはAI</h4><p>はっきりした注文書をもとに、囲いの中で小さく作ります。</p></div>
+    <div class="sumc reveal"><svg class="ico"><use href="#i-search"/></svg><h4>調べるのは検査機</h4><p>AIの自己申告ではなく、検査機の結果で合否を決めます。</p></div>
+    <div class="sumc reveal"><svg class="ico"><use href="#i-helmet"/></svg><h4>決めるのは人</h4><p>何を作るか・業務として正しいか・公開してよいかは人が判断します。</p></div>
+  </div>
+  <div class="note tip reveal"><svg class="ico"><use href="#i-spark"/></svg><div>最初から大きな工場は作りません。<b>「1つの要望が、注文書から証拠付きの提出書類になるまで」</b>を安定して回せる小さなラインから始めて、少しずつ広げます。</div></div>
+
+  <h3 style="margin:30px 0 12px;display:flex;align-items:center;gap:8px;font-size:18px"><svg class="ico" style="color:var(--accent)"><use href="#i-book"/></svg>ことばのミニ辞典</h3>
+  <div class="dict reveal">
+    <div><b>Issue</b><span>「これを作って・直して」という依頼の札</span></div>
+    <div><b>リポジトリ</b><span>プログラムや設計書をしまう、正式な保管庫</span></div>
+    <div><b>エージェント</b><span>自分で考えて作業を進めるAIロボット</span></div>
+    <div><b>CI</b><span>変更のたびに自動で動く検査機</span></div>
+    <div><b>ブランチ</b><span>完成版をよごさないための下書き用コピー</span></div>
+    <div><b>PR</b><span>「こう変えました」という提出書類。ここに証拠と判断を記録</span></div>
+    <div><b>マージ</b><span>下書きを完成版に取り込むこと（人がOKしてから）</span></div>
+    <div><b>ステージング</b><span>本番そっくりの試験運用の場所</span></div>
+  </div>
+
+  <a class="to-full" href="mirai-software-factory.html"><svg class="ico"><use href="#i-doc"/></svg><div><b>くわしい版（企画構想案 本編）を見る</b><small>同じフォルダの mirai-software-factory.html を開きます</small></div><svg class="ico" style="margin-left:auto"><use href="#i-arrow"/></svg></a>
+</section>
+
+<footer>
+  <div>みらいソフトウェアファクトリー 企画構想案 やさしい解説版（ドラフト）｜IT・DX部門｜2026年10月17日</div>
+  <div>本資料は本編をわかりやすく言いかえたものです。正式な内容・判断基準は本編を参照してください。</div>
+</footer>
+</main>
+
+<script>
+(function(){
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var reveals = document.querySelectorAll('.reveal');
+  if ('IntersectionObserver' in window && !reduce) {
+    var io = new IntersectionObserver(function(es){
+      es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, {threshold:.12});
+    reveals.forEach(function(el){ io.observe(el); });
+  } else { reveals.forEach(function(el){ el.classList.add('in'); }); }
+
+  var bar = document.getElementById('progress');
+  var links = Array.prototype.slice.call(document.querySelectorAll('#navlist a'));
+  var secs = links.map(function(a){ return document.querySelector(a.getAttribute('href')); });
+  function onScroll(){
+    var h = document.documentElement, max = h.scrollHeight - h.clientHeight;
+    bar.style.width = (max>0 ? h.scrollTop/max*100 : 0) + '%';
+    var cur = -1;
+    secs.forEach(function(s,i){ if(s && s.getBoundingClientRect().top < 120) cur = i; });
+    links.forEach(function(a,i){ a.classList.toggle('active', i===cur); });
+  }
+  window.addEventListener('scroll', onScroll, {passive:true}); onScroll();
+
+  /* stepper with speech bubble */
+  var items = document.querySelectorAll('#stepper li');
+  var ci = document.getElementById('ci');
+  var implSub = document.getElementById('impl-sub');
+  var who = document.getElementById('who'), say = document.getElementById('say'), speech = document.getElementById('speech');
+  var W = {
+    in:['#i-inbox','受付窓口','var(--accent)'],
+    ai:['#i-bot','AIロボット','var(--ai)'],
+    ci:['#i-search','検査機','var(--ci)'],
+    hu:['#i-helmet','責任者','var(--human)']
+  };
+  var seq = [
+    {i:0,w:'in',t:'「PCの貸出申請をメールじゃなくシステムでやりたい」という依頼が届きました。'},
+    {i:1,w:'ai',t:'設計図の下書きを作りました。「承認者はだれですか？」と、わからない所も質問しておきます。'},
+    {i:2,w:'hu',t:'目的も合格の条件もこれで良し。この範囲で作ってください。'},
+    {i:3,w:'ai',t:'作業を小さく分けて、変える場所を決めました。'},
+    {i:4,w:'ai',t:'囲いの中で作ります。本番やほかの案件には触れません。',impl:'本番には触れない場所で作業'},
+    {i:5,w:'ci',t:'検査を始めます…',ci:['run','検査中…']},
+    {i:5,w:'ci',t:'不合格です。他人の申請が見えてしまうケースがありました。',ci:['fail','不合格']},
+    {i:4,w:'ai',t:'ご指摘の所を直します。やり直しは決められた回数の範囲内で。',impl:'直しています（やり直し 1回目）',back:true},
+    {i:5,w:'ci',t:'もう一度検査します…',ci:['run','再検査中…']},
+    {i:5,w:'ci',t:'合格です！ 合格の条件をすべて満たしました。',ci:['pass','合格']},
+    {i:6,w:'ai',t:'提出書類と、さわって試せる画面をそろえました。'},
+    {i:7,w:'hu',t:'書類を見て、実際にさわってみました。業務として問題なし。'},
+    {i:8,w:'hu',t:'試験運用でも問題なし。公開OKのハンコを押します。'},
+    {end:true,w:'hu',t:'完成！ みんなが使えるようになりました。使ってみた声が、次の依頼になります。'}
+  ];
+  var k = 0, timer = null, playing = !reduce;
+  function render(){
+    var s = seq[k];
+    items.forEach(function(li,idx){
+      li.classList.remove('on');
+      if (s.end) li.classList.add('done');
+      else if (!s.back) li.classList.toggle('done', idx < s.i);
+    });
+    if (!s.end) items[s.i].classList.add('on');
+    if (s.back) { items[4].classList.remove('done'); items[5].classList.remove('done'); }
+    if (s.impl) implSub.textContent = s.impl;
+    if (s.ci) { ci.className = 'status ' + s.ci[0]; ci.textContent = s.ci[1]; }
+    else if (!s.end && s.i < 5) { ci.className = 'status'; ci.textContent = '待機'; }
+    var w = W[s.w];
+    who.innerHTML = '<svg class="ico" style="color:'+w[2]+'"><use href="'+w[0]+'"/></svg><span style="color:'+w[2]+'">'+w[1]+'</span>';
+    say.textContent = s.t;
+    speech.classList.remove('anim'); void speech.offsetWidth; speech.classList.add('anim');
+  }
+  function step(){ k = (k+1) % seq.length; render(); }
+  function play(){ clearInterval(timer); timer = setInterval(step, 2600); }
+  var btn = document.getElementById('btn-play');
+  function setBtn(){
+    btn.innerHTML = playing ? '<svg class="ico"><use href="#i-pause"/></svg>一時停止' : '<svg class="ico"><use href="#i-play"/></svg>再生';
+  }
+  btn.addEventListener('click', function(){ playing = !playing; if (playing) play(); else clearInterval(timer); setBtn(); });
+  document.getElementById('btn-reset').addEventListener('click', function(){ k = 0; render(); if (playing) play(); });
+  render(); setBtn(); if (playing) play();
+})();
+</script>
+</body>
+</html>

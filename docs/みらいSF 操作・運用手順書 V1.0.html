@@ -1,0 +1,1431 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>みらいSF 操作・運用手順書 V1.0</title>
+<style>
+
+:root{
+  --bg:#f5f7fa; --surface:#ffffff; --surface2:#eef2f6; --ink:#14202e; --muted:#5a6878; --line:#dce3eb;
+  --navy:#0f2a44; --navy2:#173a5c; --on-navy:#ffffff;
+  --accent:#d9731a; --accent-soft:#fff1e2;
+  --ai:#0f8a87; --ai-soft:#e0f4f3;
+  --human:#c64a30; --human-soft:#fbe8e3;
+  --ci:#4f5bd5; --ci-soft:#e9ebfb;
+  --g:#1f8a4c; --g-soft:#e3f5ea; --y:#a87308; --y-soft:#fdf3dc; --r:#c53030; --r-soft:#fbe4e4;
+  --shadow:0 1px 2px rgba(15,42,68,.06),0 8px 24px rgba(15,42,68,.07);
+  --radius:14px;
+  --font:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  --mono:ui-monospace,"SFMono-Regular","Cascadia Code",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e1621; --surface:#152130; --surface2:#1b2a3c; --ink:#e6edf5; --muted:#9fb0c3; --line:#2a3b50;
+    --navy:#0b1f33; --navy2:#16324f; --on-navy:#ffffff;
+    --accent:#f5a04f; --accent-soft:#3a2a17;
+    --ai:#4fd1cc; --ai-soft:#123534;
+    --human:#f08a72; --human-soft:#3b2019;
+    --ci:#9aa3f5; --ci-soft:#232a52;
+    --g:#5fd394; --g-soft:#173527; --y:#f0c050; --y-soft:#3a2f12; --r:#f08080; --r-soft:#3d1c1c;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0e1621; --surface:#152130; --surface2:#1b2a3c; --ink:#e6edf5; --muted:#9fb0c3; --line:#2a3b50;
+  --navy:#0b1f33; --navy2:#16324f; --on-navy:#ffffff;
+  --accent:#f5a04f; --accent-soft:#3a2a17;
+  --ai:#4fd1cc; --ai-soft:#123534;
+  --human:#f08a72; --human-soft:#3b2019;
+  --ci:#9aa3f5; --ci-soft:#232a52;
+  --g:#5fd394; --g-soft:#173527; --y:#f0c050; --y-soft:#3a2f12; --r:#f08080; --r-soft:#3d1c1c;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15.5px;line-height:1.85;letter-spacing:.01em}
+a{color:var(--ci)}
+code,kbd{font-family:var(--mono);font-size:.9em;background:var(--surface2);border:1px solid var(--line);border-radius:6px;padding:0 .35em}
+.topbar{position:sticky;top:0;z-index:20;background:var(--navy);color:var(--on-navy);display:flex;align-items:center;gap:12px;padding:10px 20px;box-shadow:0 2px 10px rgba(0,0,0,.15)}
+.topbar .brand{font-weight:700;letter-spacing:.04em;white-space:nowrap}
+.topbar .brand small{font-weight:400;opacity:.75;margin-left:8px}
+.topbar .sp{flex:1}
+.topbar a.sw,.topbar button{color:var(--on-navy);background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.22);border-radius:999px;padding:5px 12px;font:inherit;font-size:13px;cursor:pointer;text-decoration:none;white-space:nowrap}
+.topbar a.sw:hover,.topbar button:hover{background:rgba(255,255,255,.2)}
+.hero{background:linear-gradient(135deg,var(--navy) 0%,var(--navy2) 100%);color:var(--on-navy);padding:48px 20px 40px}
+.hero .in{max-width:1180px;margin:0 auto}
+.hero .kicker{display:inline-block;font-size:12.5px;letter-spacing:.12em;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:3px 12px}
+.hero h1{font-size:clamp(26px,4.4vw,40px);line-height:1.3;margin:14px 0 8px}
+.hero p{margin:0;max-width:820px;opacity:.92}
+.hero .meta{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:18px;font-size:13.5px;opacity:.9}
+.layout{max-width:1180px;margin:0 auto;padding:28px 20px 80px;display:grid;grid-template-columns:250px minmax(0,1fr);gap:32px}
+.toc{position:sticky;top:64px;align-self:start;max-height:calc(100vh - 84px);overflow:auto;font-size:13.5px;padding-right:4px}
+.toc b{display:block;font-size:12px;color:var(--muted);letter-spacing:.1em;margin:0 0 6px}
+.toc ol{list-style:none;margin:0;padding:0}
+.toc a{display:block;padding:5px 10px;border-radius:8px;color:var(--ink);text-decoration:none;border-left:3px solid transparent}
+.toc a:hover{background:var(--surface2)}
+.toc a.on{background:var(--accent-soft);border-left-color:var(--accent);font-weight:700}
+.toc-m{display:none}
+main{min-width:0}
+section.sec{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:28px 30px;margin:0 0 24px;scroll-margin-top:72px}
+section.sec>h2{display:flex;align-items:center;gap:12px;font-size:22px;line-height:1.4;margin:0 0 6px}
+section.sec>h2 .no{flex:none;display:grid;place-items:center;width:36px;height:36px;border-radius:10px;background:var(--navy);color:var(--on-navy);font-size:15px}
+section.sec>.sub{color:var(--muted);margin:0 0 18px}
+h3{font-size:17.5px;margin:26px 0 10px;padding-left:10px;border-left:4px solid var(--accent);line-height:1.5}
+h4{font-size:15.5px;margin:18px 0 6px}
+p{margin:0 0 12px}
+ul,ol{margin:0 0 12px;padding-left:1.4em}
+li{margin:2px 0}
+.easy{background:var(--ai-soft);border:1px solid color-mix(in srgb,var(--ai) 35%,transparent);border-radius:12px;padding:14px 16px 12px 16px;margin:12px 0 16px}
+.easy::before{content:"やさしく言うと";display:inline-block;font-size:12px;font-weight:700;color:var(--surface);background:var(--ai);border-radius:999px;padding:1px 10px;margin-bottom:6px}
+.note{background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin:12px 0}
+.warn{background:var(--r-soft);border:1px solid color-mix(in srgb,var(--r) 35%,transparent);border-radius:12px;padding:12px 16px;margin:12px 0}
+.prop{background:var(--y-soft);border:1px dashed color-mix(in srgb,var(--y) 60%,transparent);border-radius:12px;padding:12px 16px;margin:12px 0}
+.prop::before{content:"本書で補った提案";display:inline-block;font-size:12px;font-weight:700;color:var(--y);border:1px solid var(--y);border-radius:999px;padding:0 10px;margin-bottom:4px}
+.tw{overflow-x:auto;margin:10px 0 16px;border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.65}
+th,td{border-bottom:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+thead th{background:var(--surface2);font-size:13px;color:var(--muted);white-space:nowrap;position:sticky;top:0}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:color-mix(in srgb,var(--surface2) 50%,transparent)}
+tr.grp td{background:var(--surface2)}
+td.id,th.id{font-family:var(--mono);white-space:nowrap;font-size:13px}
+td.nw{white-space:nowrap}
+.b{display:inline-block;font-size:12px;font-weight:700;border-radius:999px;padding:1px 9px;white-space:nowrap;border:1px solid}
+.b.must{color:var(--human);border-color:var(--human);background:var(--human-soft)}
+.b.should{color:var(--ci);border-color:var(--ci);background:var(--ci-soft)}
+.b.could{color:var(--muted);border-color:var(--line);background:var(--surface2)}
+.src{display:inline-block;font-family:var(--mono);font-size:11.5px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:0 5px;margin:1px 2px 1px 0;white-space:nowrap}
+.src.p{color:var(--y);border-color:var(--y)}
+.sig{display:inline-flex;align-items:center;gap:5px;font-weight:700;font-size:13px;border-radius:999px;padding:1px 10px;white-space:nowrap}
+.sig::before{content:"";width:10px;height:10px;border-radius:50%;background:currentColor}
+.sig.g{color:var(--g);background:var(--g-soft)} .sig.y{color:var(--y);background:var(--y-soft)} .sig.r{color:var(--r);background:var(--r-soft)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:12px 0 16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.card h4{margin:0 0 6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.card p{margin:0;font-size:14px;color:var(--muted)}
+.card.ai{border-top:4px solid var(--ai)} .card.ci{border-top:4px solid var(--ci)} .card.hu{border-top:4px solid var(--human)} .card.ac{border-top:4px solid var(--accent)}
+.card.g{border-top:4px solid var(--g)} .card.y{border-top:4px solid var(--y)} .card.r{border-top:4px solid var(--r)}
+.who{font-size:12px;font-weight:700;border-radius:6px;padding:0 7px;white-space:nowrap}
+.who.ai{background:var(--ai-soft);color:var(--ai)} .who.ci{background:var(--ci-soft);color:var(--ci)} .who.hu{background:var(--human-soft);color:var(--human)}
+.steps{counter-reset:s;list-style:none;padding:0;margin:12px 0 16px;display:grid;gap:8px}
+.steps>li{counter-increment:s;display:grid;grid-template-columns:34px 1fr;gap:12px;align-items:start;background:var(--surface2);border-radius:10px;padding:10px 12px}
+.steps>li::before{content:counter(s);display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--navy);color:var(--on-navy);font-weight:700;font-size:14px}
+.steps>li b{display:block}
+figure{margin:14px 0 18px}
+.figwrap{overflow-x:auto}
+figure svg{width:100%;min-width:640px;height:auto;display:block}
+figcaption{font-size:13px;color:var(--muted);margin-top:6px;text-align:center}
+dl.gl{display:grid;grid-template-columns:minmax(120px,190px) 1fr;gap:0;margin:8px 0;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+dl.gl dt,dl.gl dd{margin:0;padding:9px 12px;border-bottom:1px solid var(--line)}
+dl.gl dt{font-weight:700;background:var(--surface2)}
+.filter{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+.filter input{flex:1 1 220px;min-width:0;font:inherit;font-size:14px;padding:7px 12px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+.filter button{font:inherit;font-size:13px;padding:5px 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}
+.filter button.on{background:var(--navy);color:var(--on-navy);border-color:var(--navy)}
+.sign{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.sign div{border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-height:110px}
+.sign small{color:var(--muted)}
+footer.ft{max-width:1180px;margin:0 auto;padding:0 20px 40px;color:var(--muted);font-size:13px}
+.totop{position:fixed;right:16px;bottom:16px;width:44px;height:44px;border-radius:50%;border:none;background:var(--navy);color:var(--on-navy);font-size:18px;cursor:pointer;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .2s}
+.totop.show{opacity:1;pointer-events:auto}
+svg .t{fill:var(--ink);font-family:var(--font)} svg .tm{fill:var(--muted);font-family:var(--font)}
+svg .bx{fill:var(--surface);stroke:var(--line)} svg .bx2{fill:var(--surface2);stroke:var(--line)}
+svg .ai{fill:var(--ai-soft);stroke:var(--ai)} svg .ci{fill:var(--ci-soft);stroke:var(--ci)} svg .hu{fill:var(--human-soft);stroke:var(--human)} svg .ac{fill:var(--accent-soft);stroke:var(--accent)}
+svg .ln{stroke:var(--muted);fill:none} svg .ar{fill:var(--muted)}
+@media (max-width:900px){
+  .layout{grid-template-columns:minmax(0,1fr);padding:18px 16px 60px;gap:0}
+  .toc{display:none}
+  .toc-m{display:block;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 14px;margin:0 0 16px}
+  .toc-m summary{cursor:pointer;font-weight:700}
+  .toc-m ol{margin:8px 0;padding-left:1.4em;font-size:14px}
+  section.sec{padding:20px 16px}
+  .hero{padding:32px 16px 28px}
+  .topbar{padding:8px 16px}
+  .topbar .brand small{display:none}
+  .sign{grid-template-columns:1fr}
+  dl.gl{grid-template-columns:1fr}
+  dl.gl dt{border-bottom:none}
+}
+@media (max-width:520px){ .topbar .hide-s{display:none} body{font-size:15px} }
+@media print{
+  .topbar,.toc,.toc-m,.totop,.filter{display:none!important}
+  body{background:#fff;font-size:11pt}
+  .layout{display:block;padding:0}
+  section.sec{box-shadow:none;border:none;padding:0;margin:0 0 18px;break-inside:auto}
+  section.sec>h2{break-after:avoid}
+  .hero{background:#fff;color:#000;padding:0 0 12px;border-bottom:2px solid #000}
+  .tw,.figwrap{overflow:visible;border:none}
+  figure svg{min-width:0}
+  thead th{position:static}
+}
+
+/* 操作・運用手順書の追加分 */
+.stayb{display:inline-flex;align-items:center;gap:5px;font-weight:700;font-size:13px;border-radius:999px;padding:1px 10px;white-space:nowrap;color:var(--muted);background:var(--surface2)}
+.stayb.wn{color:var(--y);background:var(--y-soft)}
+.stayb.al{color:var(--r);background:var(--r-soft)}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <span class="brand">みらいSF<small>操作・運用手順書 V1.0</small></span>
+  <span class="sp"></span>
+  <a class="sw" href="みらいSF%20要件定義書%20V1.0.html">要件定義書</a>
+  <a class="sw hide-s" href="みらいSF%20詳細仕様書%20V1.0.html">詳細仕様書</a>
+  <a class="sw hide-s" href="みらいSF%20フェーズ計画書%20V1.0.html">フェーズ計画書</a>
+  <a class="sw hide-s" href="mirai-construction-sf-intake.html">受付ステーション</a>
+  <button type="button" id="themeBtn" aria-label="表示の明るさを切り替え">表示切替</button>
+  <button type="button" onclick="window.print()" class="hide-s">印刷</button>
+</div>
+
+<header class="hero">
+  <div class="in">
+    <span class="kicker">OPERATION &amp; RUNBOOK</span>
+    <h1>みらいソフトウェアファクトリー<br>操作・運用手順書</h1>
+    <p>SF受付ステーションの<b>使い方（だれが・どのボタンを・どの順に押すか）</b>と、ラインを毎日・毎月<b>止めずに回すための決まり</b>を、役割ごとにまとめた手順書です。依頼する人は第2部の自分の役割の章だけ読めば使えます。</p>
+    <div class="meta"><span>文書番号：MSF-OPS-2026-001</span><span>版：V1.0（最終版）</span><span>作成日：2026年10月21日</span><span>起案：DX推進部（みらい建設工業株式会社）</span></div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目次">
+  <b>目次</b>
+  <ol id="tocList">
+    <li><a href="#s0">0. 文書管理・読み方</a></li>
+    <li><a href="#s1">1. 受付ステーションのしくみ</a></li>
+    <li><a href="#s2">2. 依頼者の操作</a></li>
+    <li><a href="#s3">3. 受付担当の操作</a></li>
+    <li><a href="#s4">4. 承認者の操作</a></li>
+    <li><a href="#s5">5. 体制と役割</a></li>
+    <li><a href="#s6">6. 定期作業</a></li>
+    <li><a href="#s7">7. 滞留とエスカレーション</a></li>
+    <li><a href="#s8">8. 障害対応</a></li>
+    <li><a href="#s9">9. 変更管理</a></li>
+    <li><a href="#s10">10. バックアップと復元</a></li>
+    <li><a href="#s11">11. アカウントと権限</a></li>
+    <li><a href="#s12">12. データの保存と監査対応</a></li>
+    <li><a href="#s13">13. 費用と指標の報告</a></li>
+    <li><a href="#s14">14. フェーズごとの運用</a></li>
+    <li><a href="#s15">15. 人を大切にする配慮</a></li>
+    <li><a href="#s16">16. よくある質問とトラブル</a></li>
+    <li><a href="#s17">17. チェックリスト</a></li>
+    <li><a href="#s18">18. 用語集</a></li>
+    <li><a href="#s19">19. 承認欄</a></li>
+  </ol>
+</nav>
+
+<main>
+<details class="toc-m"><summary>目次を開く</summary><ol>
+  <li><a href="#s0">文書管理・読み方</a></li><li><a href="#s1">受付ステーションのしくみ</a></li><li><a href="#s2">依頼者の操作</a></li><li><a href="#s3">受付担当の操作</a></li><li><a href="#s4">承認者の操作</a></li><li><a href="#s5">体制と役割</a></li><li><a href="#s6">定期作業</a></li><li><a href="#s7">滞留とエスカレーション</a></li><li><a href="#s8">障害対応</a></li><li><a href="#s9">変更管理</a></li><li><a href="#s10">バックアップと復元</a></li><li><a href="#s11">アカウントと権限</a></li><li><a href="#s12">データの保存と監査対応</a></li><li><a href="#s13">費用と指標の報告</a></li><li><a href="#s14">フェーズごとの運用</a></li><li><a href="#s15">人を大切にする配慮</a></li><li><a href="#s16">よくある質問とトラブル</a></li><li><a href="#s17">チェックリスト</a></li><li><a href="#s18">用語集</a></li><li><a href="#s19">承認欄</a></li>
+</ol></details>
+
+<!-- ======================= 第1部 ======================= -->
+<!-- ============ 0 ============ -->
+<section class="sec" id="s0">
+  <h2><span class="no">0</span>文書管理・この文書の読み方</h2>
+  <p class="sub">第1部 はじめに ― この手順書が何のためのもので、だれがどこを読めばよいかを示します。</p>
+
+  <h3>この文書の役割</h3>
+  <p>みらいSFの文書は4冊で1組です。本書は、決まったことを<b>「実際にどう使い、どう回すか」</b>に置きかえた手順書です。なぜ・何を（要件）は要件定義書、どう作るか（仕様）は詳細仕様書、どの順で・何をもって次へ進むかはフェーズ計画書に書いてあります。</p>
+  <div class="tw"><table>
+    <thead><tr><th>文書</th><th>答える問い</th><th>主な読み手</th></tr></thead>
+    <tbody>
+      <tr><td><a href="みらいSF%20要件定義書%20V1.0.html">要件定義書 V1.0</a>（MSF-REQ-2026-001）</td><td>なぜ作るのか／何をできるようにするのか</td><td>経営層、業務責任者、依頼者、DX推進部</td></tr>
+      <tr><td><a href="みらいSF%20詳細仕様書%20V1.0.html">詳細仕様書 V1.0</a>（MSF-SPC-2026-001）</td><td>画面・ルール・データ・権限・検査をどう決めるのか</td><td>DX推進部、開発・検証担当、内部監査</td></tr>
+      <tr><td><a href="みらいSF%20フェーズ計画書%20V1.0.html">フェーズ計画書 V1.0</a>（MSF-PLN-2026-001）</td><td>PoC→Go/No-Go→Prototype→MVP→Staging→Release→運用・改善をどう進めるのか</td><td>経営層、DX推進部、業務責任者</td></tr>
+      <tr><td><b>操作・運用手順書 V1.0（本書）</b>（MSF-OPS-2026-001）</td><td>画面をどう操作し、ラインを毎日・毎月どう回すのか</td><td>依頼者、受付担当、承認者、技術者、工場の管理責任者、内部監査</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>あなたが読む章</h3>
+  <p>全部を読む必要はありません。自分の役割の行だけ読んでください。</p>
+  <div class="tw"><table>
+    <thead><tr><th>あなたは…</th><th>まず読む章</th><th>必要なときに読む章</th></tr></thead>
+    <tbody>
+      <tr><td><b>依頼者</b>（現場・部署の担当者、現場所長、現場事務 など）</td><td><a href="#s1">1章</a>、<a href="#s2">2章</a></td><td><a href="#s16">16章</a>（困ったとき）</td></tr>
+      <tr><td><b>受付担当</b>（DX推進部）</td><td><a href="#s1">1章</a>、<a href="#s3">3章</a>、<a href="#s6">6章</a>、<a href="#s7">7章</a></td><td><a href="#s2">2章</a>（依頼者を手伝うとき）、<a href="#s8">8章</a>〜<a href="#s13">13章</a>、<a href="#s17">17章</a></td></tr>
+      <tr><td><b>承認者</b>（業務責任者、現場所長）</td><td><a href="#s1">1章</a>、<a href="#s4">4章</a></td><td><a href="#s7">7章</a>（催促が来たとき）、<a href="#s17">17章</a>（承認前チェックリスト）</td></tr>
+      <tr><td><b>技術者</b>（黄・赤の確認をする人）</td><td><a href="#s4">4章</a>の4-3〜4-4、<a href="#s15">15章</a></td><td><a href="#s14">14章</a>（モデル現場の試用）</td></tr>
+      <tr><td><b>工場の管理責任者</b>（DX推進部 責任者）</td><td><a href="#s5">5章</a>〜<a href="#s14">14章</a></td><td><a href="#s17">17章</a>（本番切替チェックリスト）</td></tr>
+      <tr><td><b>内部監査</b>（内部監査・コンプライアンス）</td><td><a href="#s5">5章</a>、<a href="#s11">11章</a>、<a href="#s12">12章</a></td><td><a href="#s9">9章</a>、<a href="#s15">15章</a></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>記号と書き方の約束</h3>
+  <div class="tw"><table>
+    <thead><tr><th>表記</th><th>意味</th></tr></thead>
+    <tbody>
+      <tr><td class="id">OP-xx</td><td>本書の操作・運用手順の番号。問い合わせや教育では、この番号で手順を指します</td></tr>
+      <tr><td>「ボタン名」</td><td>画面に表示される文字そのもの（受付ステーション試作 V1.0 の表示と同じ）</td></tr>
+      <tr><td><span class="b should">試作</span></td><td>いま動いている受付ステーション試作 V1.0（ブラウザ内だけで動く完全オフライン版）での操作</td></tr>
+      <tr><td><span class="b must">本番</span></td><td>MVP以降の本番の仕組みでの操作（Entra ID でサインイン、データはサーバ側）。試作と違う所だけ書きます</td></tr>
+      <tr><td><span class="src p">提案</span></td><td>出典にない値・やり方を本書で補ったもの。採用は関係者の合意で決めます</td></tr>
+      <tr><td>（案）</td><td>目標値・しきい値の推奨案。フェーズ計画書のゲートで確定します</td></tr>
+      <tr><td><span class="src">S5</span> など</td><td>出典資料（要件定義書 0章の出典表と同じ。S5＝受付ステーション試作 V1.0、S8＝詳細仕様書 正式版 など）</td></tr>
+      <tr><td><span class="sig g">青</span> <span class="sig y">黄</span> <span class="sig r">赤</span></td><td>信号の3色。青＝任せる、黄＝担当者のチェック付き、赤＝AIに決めさせない</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">「IT・DX部門」「情シス」と書かれていた旧版の役割は、本書では <b>DX推進部（受付・ライン運営）</b> と <b>DX推進部（基盤・セキュリティ）</b> に読みかえています。みらい建設工業では、DX推進部が情報システムの役割も持つためです。</div>
+
+  <h3>改訂履歴</h3>
+  <div class="tw"><table>
+    <thead><tr><th>版</th><th>日付</th><th>内容</th><th>作成</th></tr></thead>
+    <tbody>
+      <tr><td>0.1</td><td class="nw">2026-10-17</td><td>やさしい版ドラフト（詳細仕様書 9章「運用仕様」として記載）</td><td>DX推進部</td></tr>
+      <tr><td>1.0</td><td class="nw">2026-10-21</td><td>最終版として独立した手順書に。正式版詳細仕様書（運用・保守、移行）とやさしい版を統合し、19部署カタログに準拠。6フェーズ（PoC→Go/No-Go→Prototype→MVP→Staging→Release→運用・改善）に合わせて運用を整理。受付試作 V1.0 の改善6点（下書きの自動保存、カードの次へ進める、選べない理由の表示、承認前チェック、あなたの番と滞留日数、書き換え候補）の操作手順を追加</td><td>DX推進部</td></tr>
+    </tbody>
+  </table></div>
+  <p>本書をもって、旧版（正式版 詳細仕様書の運用・保守章、やさしい版 v0.1 の運用仕様章）は廃止し、本書を正とします。</p>
+</section>
+
+<!-- ============ 1 ============ -->
+<section class="sec" id="s1">
+  <h2><span class="no">1</span>受付ステーションのしくみ</h2>
+  <p class="sub">操作を始める前に、画面の地図と、依頼が流れていくしくみを1枚ずつ見ておきます。</p>
+
+  <h3>1-1. 画面の地図</h3>
+  <p>受付ステーションは、左（スマートフォンでは下）のメニューで5つの画面を切りかえます。依頼を押すと右から「詳細」が出てきて、状態を変えるときは「状態を変更」の小窓が開きます。</p>
+  <figure><div class="figwrap">
+    <svg viewBox="0 0 960 400" role="img" aria-label="受付ステーションの画面の地図">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ar"/></marker></defs>
+      <rect x="10" y="10" width="940" height="44" rx="10" class="bx2" stroke-width="1"/>
+      <text x="26" y="38" class="t" font-size="14" font-weight="700">上の帯：みらい建設工業 SF受付ステーション　［完全オフライン］</text>
+      <text x="640" y="38" class="tm" font-size="13">操作する人（試作のみ：役割の切替）</text>
+      <rect x="10" y="66" width="120" height="324" rx="10" class="bx2" stroke-width="1"/>
+      <text x="70" y="92" text-anchor="middle" class="t" font-size="13" font-weight="700">メニュー</text>
+      <text x="70" y="124" text-anchor="middle" class="t" font-size="13">ホーム ●</text>
+      <text x="70" y="152" text-anchor="middle" class="t" font-size="13">新しい依頼</text>
+      <text x="70" y="180" text-anchor="middle" class="t" font-size="13">ボード</text>
+      <text x="70" y="208" text-anchor="middle" class="t" font-size="13">一覧</text>
+      <text x="70" y="370" text-anchor="middle" class="t" font-size="13">データ</text>
+      <text x="70" y="246" text-anchor="middle" class="tm" font-size="11">●＝あなたの番の件数</text>
+      <rect x="150" y="66" width="250" height="150" rx="12" class="ac" stroke-width="1.5"/>
+      <text x="166" y="92" class="t" font-size="14" font-weight="700">ホーム</text>
+      <text x="166" y="116" class="tm" font-size="12">・あなたの番（次に動かす依頼）</text>
+      <text x="166" y="136" class="tm" font-size="12">・書きかけの依頼（下書き）</text>
+      <text x="166" y="156" class="tm" font-size="12">・件数／止まっている依頼</text>
+      <text x="166" y="176" class="tm" font-size="12">・最近の動き／信号の色の割合</text>
+      <text x="166" y="200" class="tm" font-size="12">「新しい依頼をはじめる」</text>
+      <rect x="150" y="232" width="250" height="158" rx="12" class="hu" stroke-width="1.5"/>
+      <text x="166" y="258" class="t" font-size="14" font-weight="700">新しい依頼（7つのSTEP）</text>
+      <text x="166" y="282" class="tm" font-size="12">はじめに→だれが→困りごと→作るもの</text>
+      <text x="166" y="302" class="tm" font-size="12">→合格の条件→データと安全→確認</text>
+      <text x="166" y="326" class="tm" font-size="12">右側：信号の候補・ものさし・</text>
+      <text x="166" y="346" class="tm" font-size="12">　　　注文書プレビュー</text>
+      <text x="166" y="372" class="tm" font-size="12">入力は自動で下書き保存</text>
+      <rect x="420" y="66" width="250" height="150" rx="12" class="ci" stroke-width="1.5"/>
+      <text x="436" y="92" class="t" font-size="14" font-weight="700">ボード</text>
+      <text x="436" y="116" class="tm" font-size="12">状態ごとの列にカードが並ぶ</text>
+      <text x="436" y="136" class="tm" font-size="12">カードの「→（次の状態）へ」で進める</text>
+      <text x="436" y="156" class="tm" font-size="12">（ドラッグでも可）</text>
+      <text x="436" y="180" class="tm" font-size="12">「あなたの番だけ」で絞り込み</text>
+      <rect x="420" y="232" width="250" height="158" rx="12" class="ci" stroke-width="1.5"/>
+      <text x="436" y="258" class="t" font-size="14" font-weight="700">一覧</text>
+      <text x="436" y="282" class="tm" font-size="12">キーワード・部署・状態・色で絞り込み</text>
+      <text x="436" y="302" class="tm" font-size="12">「滞留」「次は」の列</text>
+      <text x="436" y="326" class="tm" font-size="12">CSV・JSON の書き出し</text>
+      <rect x="690" y="66" width="260" height="210" rx="12" class="ai" stroke-width="1.5"/>
+      <text x="706" y="92" class="t" font-size="14" font-weight="700">詳細（右から出る）</text>
+      <text x="706" y="116" class="tm" font-size="12">タブ：概要／注文書／コメント・履歴</text>
+      <text x="706" y="136" class="tm" font-size="12">「（次の状態）へ進める」</text>
+      <text x="706" y="156" class="tm" font-size="12">「状態を変更」「編集」「削除」</text>
+      <text x="706" y="180" class="tm" font-size="12">先頭に「あなたの番です」または</text>
+      <text x="706" y="200" class="tm" font-size="12">「次に動かすのは〜です」</text>
+      <rect x="706" y="216" width="228" height="48" rx="10" class="bx" stroke-width="1"/>
+      <text x="820" y="238" text-anchor="middle" class="t" font-size="12" font-weight="700">状態を変更（小窓）</text>
+      <text x="820" y="256" text-anchor="middle" class="tm" font-size="11">選べる状態だけ・承認前チェック</text>
+      <rect x="690" y="290" width="260" height="100" rx="12" class="bx2" stroke-width="1"/>
+      <text x="706" y="316" class="t" font-size="14" font-weight="700">データ</text>
+      <text x="706" y="340" class="tm" font-size="12">保存先の表示、JSON・CSV の書き出し、</text>
+      <text x="706" y="360" class="tm" font-size="12">JSON の取り込み、サンプルに戻す</text>
+      <path d="M670 141 L690 141" class="ln" stroke-width="1.5" marker-end="url(#ah)"/>
+      <path d="M670 311 L682 311 L682 160 L690 160" class="ln" stroke-width="1.5" marker-end="url(#ah)"/>
+      <path d="M400 141 L420 141" class="ln" stroke-width="1.5" marker-end="url(#ah)"/>
+    </svg>
+  </div><figcaption>図1-1　受付ステーションの画面の地図（試作 V1.0 の画面にもとづく） <span class="src">S5</span></figcaption></figure>
+
+  <h3>1-2. 信号の3色</h3>
+  <p>どの依頼にも信号の色を付けます。入力に合わせて画面が<b>色の候補</b>を自動で出しますが、<b>最後に色を決めるのは承認者</b>です。迷ったら1つ上の色にします。</p>
+  <div class="cards">
+    <div class="card g"><h4><span class="sig g">青</span>どんどん任せる</h4><p>記録・整理・検索・お知らせ。まちがえてもすぐ直せて、人やお金に直接ひびかないもの。例：工事写真の整理、作業日報、入札・発注情報のお知らせ</p></div>
+    <div class="card y"><h4><span class="sig y">黄</span>担当者のチェック付き</h4><p>たたき台づくり・比べっこ・見落としチェック。結果は必ず担当者や技術者が見てから使う。例：KY記録の書きもれ確認、天気・波・潮の予報の目安</p></div>
+    <div class="card r"><h4><span class="sig r">赤</span>AIに決めさせない</h4><p>合否・金額・契約・人の処遇・安全（出航・作業中止など）を決める仕事。道具は「材料集め・表示」まで。例：見積金額の決定、船を出すかの判断</p></div>
+  </div>
+  <div class="easy">海の工事では、天気・波・潮の予報を集めて見せるのはAIの得意なこと（黄）です。でも「今日は船を出すか」「作業を止めるか」は、船長や現場の責任者が決めます（赤）。画面にも「作業できる／できない」とは表示しません。</div>
+
+  <h3>1-3. 依頼の状態の流れ</h3>
+  <p>依頼は「受付」から「完了」まで、次の順に進みます。書き直しが必要なときは「差戻し」、今回は作らないときは「見送り」になります。</p>
+  <figure><div class="figwrap">
+    <svg viewBox="0 0 960 250" role="img" aria-label="依頼の状態の流れ">
+      <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ar"/></marker></defs>
+      <rect x="10" y="40" width="98" height="52" rx="10" class="hu" stroke-width="1.5"/><text x="59" y="64" text-anchor="middle" class="t" font-size="14" font-weight="700">受付</text><text x="59" y="82" text-anchor="middle" class="tm" font-size="11">依頼者が登録</text>
+      <rect x="128" y="40" width="98" height="52" rx="10" class="ci" stroke-width="1.5"/><text x="177" y="64" text-anchor="middle" class="t" font-size="14" font-weight="700">内容確認中</text><text x="177" y="82" text-anchor="middle" class="tm" font-size="11">受付担当</text>
+      <rect x="246" y="40" width="98" height="52" rx="10" class="ac" stroke-width="1.5"/><text x="295" y="64" text-anchor="middle" class="t" font-size="14" font-weight="700">承認待ち</text><text x="295" y="82" text-anchor="middle" class="tm" font-size="11">承認者の判断</text>
+      <rect x="364" y="40" width="98" height="52" rx="10" class="ac" stroke-width="1.5"/><text x="413" y="64" text-anchor="middle" class="t" font-size="14" font-weight="700">承認済み</text><text x="413" y="82" text-anchor="middle" class="tm" font-size="11">色が決まる</text>
+      <rect x="482" y="40" width="98" height="52" rx="10" class="ai" stroke-width="1.5"/><text x="531" y="64" text-anchor="middle" class="t" font-size="14" font-weight="700">実装中</text><text x="531" y="82" text-anchor="middle" class="tm" font-size="11">AIが作る</text>
+      <rect x="600" y="40" width="98" height="52" rx="10" class="ci" stroke-width="1.5"/><text x="649" y="64" text-anchor="middle" class="t" font-size="14" font-weight="700">検証中</text><text x="649" y="82" text-anchor="middle" class="tm" font-size="11">検査と人の確認</text>
+      <rect x="718" y="40" width="98" height="52" rx="10" class="hu" stroke-width="1.5"/><text x="767" y="64" text-anchor="middle" class="t" font-size="14" font-weight="700">現場試用</text><text x="767" y="82" text-anchor="middle" class="tm" font-size="11">モデル現場</text>
+      <rect x="836" y="40" width="114" height="52" rx="10" class="bx2" stroke-width="1.5"/><text x="893" y="64" text-anchor="middle" class="t" font-size="14" font-weight="700">完了</text><text x="893" y="82" text-anchor="middle" class="tm" font-size="11">使える状態</text>
+      <path d="M108 66 L126 66" class="ln" stroke-width="1.5" marker-end="url(#ah2)"/>
+      <path d="M226 66 L244 66" class="ln" stroke-width="1.5" marker-end="url(#ah2)"/>
+      <path d="M344 66 L362 66" class="ln" stroke-width="1.5" marker-end="url(#ah2)"/>
+      <path d="M462 66 L480 66" class="ln" stroke-width="1.5" marker-end="url(#ah2)"/>
+      <path d="M580 66 L598 66" class="ln" stroke-width="1.5" marker-end="url(#ah2)"/>
+      <path d="M698 66 L716 66" class="ln" stroke-width="1.5" marker-end="url(#ah2)"/>
+      <path d="M816 66 L834 66" class="ln" stroke-width="1.5" marker-end="url(#ah2)"/>
+      <rect x="200" y="150" width="140" height="48" rx="10" class="bx" stroke-width="1.5"/><text x="270" y="172" text-anchor="middle" class="t" font-size="14" font-weight="700">差戻し</text><text x="270" y="189" text-anchor="middle" class="tm" font-size="11">理由が必須・依頼者が直す</text>
+      <rect x="400" y="150" width="140" height="48" rx="10" class="bx" stroke-width="1.5"/><text x="470" y="172" text-anchor="middle" class="t" font-size="14" font-weight="700">見送り</text><text x="470" y="189" text-anchor="middle" class="tm" font-size="11">理由が必須・今回は作らない</text>
+      <path d="M295 92 L280 148" class="ln" stroke-width="1.5" marker-end="url(#ah2)"/>
+      <path d="M200 174 L60 174 L60 94" class="ln" stroke-width="1.5" marker-end="url(#ah2)"/>
+      <text x="70" y="214" class="tm" font-size="11">直して再提出 → 受付へ戻る</text>
+      <path d="M310 92 L460 148" class="ln" stroke-width="1.2" stroke-dasharray="4 4" marker-end="url(#ah2)"/>
+      <text x="600" y="168" class="tm" font-size="12">本番では「公開承認待ち」と「取消」を加えた12の状態になり、</text>
+      <text x="600" y="188" class="tm" font-size="12">「現場試用」は現場で使う道具だけが通ります（詳細仕様書）。</text>
+    </svg>
+  </div><figcaption>図1-2　依頼の状態の流れ（試作 V1.0 の10状態） <span class="src">S5</span><span class="src">S9</span></figcaption></figure>
+  <div class="tw"><table>
+    <thead><tr><th>状態</th><th>意味</th><th>次に動かす人</th></tr></thead>
+    <tbody>
+      <tr><td>受付</td><td>依頼が登録された</td><td>受付担当</td></tr>
+      <tr><td>内容確認中</td><td>受付担当が中身を確認し、注文書を整えている</td><td>受付担当</td></tr>
+      <tr><td>承認待ち</td><td>承認者の判断待ち</td><td>承認者</td></tr>
+      <tr><td>承認済み</td><td>中身と信号の色が決まった。注文書を開発ラインへ渡す</td><td>受付担当</td></tr>
+      <tr><td>実装中</td><td>AIが隔離された作業場で作り、検査機が確かめている</td><td>受付担当</td></tr>
+      <tr><td>検証中</td><td>PR（提出書類）・試し見画面・人の確認</td><td>受付担当</td></tr>
+      <tr><td>現場試用</td><td>モデル現場などで実際に使って確かめている</td><td>承認者（完了にする）。依頼者は感想をコメント</td></tr>
+      <tr><td>完了</td><td>使える状態になった</td><td>－</td></tr>
+      <tr><td>差戻し</td><td>書き直しが必要（理由つき）</td><td>依頼者</td></tr>
+      <tr><td>見送り</td><td>今回は作らない（理由つき）</td><td>－</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>1-4. 「あなたの番」と滞留日数の印</h3>
+  <p>ホームの先頭には、<b>いまあなたが動かす依頼</b>だけが「あなたの番」として並びます。止まっている日数の長いものが上です。左メニューの「ホーム」に付く数字も、あなたの番の件数です。</p>
+  <div class="tw"><table>
+    <thead><tr><th>役割</th><th>あなたの番になる依頼</th><th>画面に出る「すること」</th></tr></thead>
+    <tbody>
+      <tr><td>依頼者</td><td>自分が起票した「差戻し」</td><td>指摘を直して再提出する</td></tr>
+      <tr><td>依頼者</td><td>自分が起票した「現場試用」</td><td>現場で使ってみて感想をコメントする</td></tr>
+      <tr><td>受付担当</td><td>受付／内容確認中／承認済み／実装中／検証中</td><td>中身を確認して「内容確認中」へ／注文書を整えて承認を依頼する／開発（AIで作る）を始める／できあがりを検証へ回す／検査に合格したら現場試用へ</td></tr>
+      <tr><td>承認者</td><td>自分が承認者になっている「承認待ち」「現場試用」</td><td>信号の色を決めて、承認か差戻しを決める／試用の結果を見て「完了」にする</td></tr>
+    </tbody>
+  </table></div>
+  <p>状態が変わってからの日数を<b>滞留日数</b>として、ホーム・ボード・一覧（「滞留」の列）・詳細・状態変更の小窓に表示します。</p>
+  <div class="cards">
+    <div class="card"><h4><span class="stayb">今日／1〜2日</span></h4><p>灰色の印。ふつうの進み方です。</p></div>
+    <div class="card y"><h4><span class="stayb wn">3日以上</span></h4><p>黄色の印。ホームの「3日以上止まっている」に数えられます。受付担当が週1回まとめて催促します（7章）。</p></div>
+    <div class="card r"><h4><span class="stayb al">7日以上</span></h4><p>赤い印。承認者の上長へ知らせる対象です（7章、提案）。</p></div>
+  </div>
+  <p>「完了」と「見送り」の依頼には滞留日数を表示しません。しきい値（3日／7日）は MVP の実績を見て確定します（Q-15）。</p>
+
+  <h3>1-5. データの保存とサインイン（大事な注意）</h3>
+  <div class="tw"><table>
+    <thead><tr><th></th><th><span class="b should">試作</span> 受付ステーション試作 V1.0</th><th><span class="b must">本番</span> MVP 以降</th></tr></thead>
+    <tbody>
+      <tr><td>だれが操作しているか</td><td>上の帯の「操作する人」で役割を切りかえる（動作確認用）</td><td>Microsoft Entra ID に登録された人を、サインインの操作なし（非対話式のシングルサインオン）で見分ける。役割の切替は置かない</td></tr>
+      <tr><td>依頼データの保存先</td><td>このブラウザの中だけ。外部には送信しない。保存できない環境では「一時的に保持されます」と表示され、閉じると消える</td><td>サーバ側のデータベースに1つだけ保存し、全員で共有</td></tr>
+      <tr><td>下書き</td><td>このブラウザの中だけに自動保存（1つだけ）</td><td>利用者ごとにサーバ側に保存（本人だけが見られる。保存期間は Q-14 で決定）</td></tr>
+      <tr><td>削除</td><td>「削除」でデータが完全に消える</td><td>削除はせず「取消」の状態にして、理由と履歴を残す</td></tr>
+    </tbody>
+  </table></div>
+  <div class="warn">試作は<b>本物のデータを入れない練習用</b>です。名簿・発注者の図面・現場の位置・写真の原本など、本物の情報は入力しないでください。試作のデータは、ブラウザの履歴やサイトデータを消すと消えます。残したいときは「データ」画面の「JSONで書き出す」でファイルに保存します（OP-18）。</div>
+</section>
+
+<!-- ======================= 第2部 ======================= -->
+<!-- ============ 2 ============ -->
+<section class="sec" id="s2">
+  <h2><span class="no">2</span>依頼者の操作</h2>
+  <p class="sub">第2部 操作手順 ― 現場・部署で「困った」「これがあったら」を依頼する人の手順です（OP-01〜OP-09）。</p>
+
+  <div class="easy">依頼は「注文書（作業指示書）」の下書きです。AIはこの注文書を読んで道具を作り、検査機は「合格の条件」で合否を決めます。だから、<b>どうなれば合格かを、だれが読んでも同じ意味になる言葉で書く</b>ことが、いちばん大事です。</div>
+
+  <h3>OP-01　受付ステーションを開いて、自分になっているか確かめる</h3>
+  <ol class="steps">
+    <li><div><b>開く</b>受付ステーション（<a href="mirai-construction-sf-intake.html">mirai-construction-sf-intake.html</a>）を Edge または Chrome で開きます。</div></li>
+    <li><div><b>自分を確かめる</b><span class="b should">試作</span> 上の帯の「操作する人」で、自分の役割（依頼者）を選びます。<span class="b must">本番</span> 会社のアカウント（Entra ID）で自動的に識別されるので、操作は不要です。</div></li>
+    <li><div><b>ホームを見る</b>先頭の「あなたの番」に、あなたが動かす依頼が出ます。「いま、あなたが動かす依頼はありません。」なら、待っていて大丈夫です。</div></li>
+  </ol>
+
+  <h3>OP-02　新しい依頼を出す（7つのSTEP）</h3>
+  <p>ホームの「新しい依頼をはじめる」、または左メニューの「新しい依頼」を押します。上に STEP 1〜7 の帯が出ます。「つぎへ」で進み、「もどる」で戻ります（戻っても入力は消えません）。<b>必須</b>の印がある項目を空のまま「つぎへ」を押すと、赤い枠で足りない項目が示されます。</p>
+  <div class="tw"><table>
+    <thead><tr><th>STEP</th><th>画面の見出し</th><th>入れること（太字は必須）</th><th>コツ</th></tr></thead>
+    <tbody>
+      <tr><td class="nw">1 はじめに</td><td>どんな依頼ですか？</td><td><b>依頼の種類</b>（新しい道具がほしい／いまある道具を良くしたい／不具合の報告／相談・アイデア）、道具カタログから選ぶ（任意）</td><td>近い道具がカタログにあれば選ぶ（OP-03）。なくても大丈夫</td></tr>
+      <tr><td class="nw">2 だれが</td><td>だれが・どこで使いますか？</td><td><b>起票者</b>、連絡先、<b>所属部署</b>、<b>だれが使う？</b>（1つ以上）、使う人のおよその人数、どこで使う？</td><td>「海の上」「電波の弱い現場」を選ぶと、圏外でも動くことが大事な条件になります</td></tr>
+      <tr><td class="nw">3 困りごと</td><td>いま困っていること・目的</td><td><b>件名</b>、<b>いま困っていること</b>、<b>なんのため？（目的）</b></td><td>件名は、ひとことで「何がほしいか」がわかる名前に</td></tr>
+      <tr><td class="nw">4 作るもの</td><td>作るもの・今回は作らないもの</td><td><b>作るもの</b>（1行に1項目）、今回は作らない</td><td>「作らない」を書いておくと、作りすぎや手戻りを防げます</td></tr>
+      <tr><td class="nw">5 合格の条件</td><td>どうなれば合格？</td><td><b>合格の条件</b>（1件以上、最大8件）</td><td>数字や「〜できる／〜できない」で書く（OP-04）</td></tr>
+      <tr><td class="nw">6 データと安全</td><td>この道具は何をしますか？</td><td><b>この道具がすること</b>（青・黄・赤の3択）、扱う情報、関わる相手、守ること、必ず人に聞くこと</td><td>信号の色を決める大事な質問です。「決める」仕事はAIに任せません</td></tr>
+      <tr><td class="nw">7 確認</td><td>ものさしと最終確認</td><td>その手間の頻度、1回あたりの手間（分）、元になるデータ、ほかに広げられそう？、<b>承認者（業務責任者）</b>、希望時期、添付ファイル</td><td>手間の大きさは参考値です。着手順は別途決めます</td></tr>
+    </tbody>
+  </table></div>
+  <ol class="steps">
+    <li><div><b>右側を見ながら入れる</b>画面の右（スマートフォンでは下）に「信号の色（判定の候補）」「ものさし（参考値）」「注文書プレビュー」が出ます。入力のたびに変わるので、色の理由を見ながら進めます。</div></li>
+    <li><div><b>受け付ける</b>STEP 7 で「この内容で受け付ける」を押すと、受付番号と日付の入った「受付」のハンコが出て、ボードへ移ります。下書きはこのとき消えます。</div></li>
+    <li><div><b>番号を控える</b>受付番号（例：REQ-2026-0010）が、問い合わせのときの目印になります。</div></li>
+  </ol>
+  <div class="note">「扱う情報」を1つでも選ぶ、「関わる相手」を社内のみ以外にする、「必ず人に聞くこと」で安全・品質や作業船の運航を選ぶと、信号の候補は少なくとも<span class="sig y">黄</span>になります。これは「チェックを付けて慎重に進める」という意味で、悪いことではありません。</div>
+
+  <h3>OP-03　道具カタログから近い道具を選ぶ</h3>
+  <ol class="steps">
+    <li><div><b>部署を押す</b>STEP 1 の「部署別 道具カタログから選ぶ（任意）」で、部署のボタンを押します。その部署の道具の候補が出ます。丸の色はカタログ上の信号の色です。</div></li>
+    <li><div><b>道具を押す</b>近い道具を押すと「（道具名）」を選びました（件名・部署・信号の候補に反映）と出て、件名（空のときだけ）・部署・「この道具がすること」の初期値が入ります。</div></li>
+    <li><div><b>やめるとき</b>「選択を外す」を押すと、カタログ外の依頼になります。カタログにない依頼もそのまま出せます。</div></li>
+  </ol>
+  <p>カタログには19部署・118件の道具の候補があります（青52・黄47・赤19）。★は「はじめやすい候補」で、着手の順番ではありません。全件は<a href="みらいSF%20詳細仕様書%20V1.0.html">詳細仕様書</a>の付録にあります。</p>
+
+  <h3>OP-04　合格の条件を書く ― 書き換え候補を使う</h3>
+  <p>STEP 5 では、条件を1つ書くたびに、その下に書き方のチェック結果が出ます。</p>
+  <div class="tw"><table>
+    <thead><tr><th>出る表示</th><th>意味</th><th>どうするか</th></tr></thead>
+    <tbody>
+      <tr><td>✓ 検査で確かめられる書き方です。</td><td>そのまま使える</td><td>次の条件へ</td></tr>
+      <tr><td>△「〇〇」「△△」の所を、自分の言葉に書きかえてください。</td><td>例文の仮置き（〇〇・△△・○○・□□）が残っている</td><td>記号の所を自分の言葉に</td></tr>
+      <tr><td>△「（語）」は人によって受け取り方がちがうため、検査機で合否を決められません。…</td><td>あいまいな言葉（使いやすい、早く、なるべく など26語）がある</td><td>下に出る<b>書き換え候補</b>を使う（下の手順）</td></tr>
+      <tr><td>△ もう少し具体的に書きましょう（だれが・何を・どうなれば合格か）。</td><td>8文字未満で短すぎる</td><td>だれが・何を・どうなれば、を足す</td></tr>
+    </tbody>
+  </table></div>
+  <ol class="steps">
+    <li><div><b>候補を見る</b>あいまいな言葉があると、条件の下に「「使いやすい」の書きかえ候補」のような黄色い枠が出て、考え方のヒントと例文が並びます。</div></li>
+    <li><div><b>例文を押す</b>近い例文を押すと、その条件が例文に置きかわります。「置きかえました。選ばれている「〇〇」に、そのまま入力できます」と出て、〇〇の所が選ばれた状態になるので、そのまま文字を打てば上書きされます。</div></li>
+    <li><div><b>残りの記号も直す</b>△△や□□が残っていれば、そこも自分の言葉に直します。チェック結果が「✓」になれば完成です。</div></li>
+    <li><div><b>やっぱり戻す</b>置きかえる前の文に戻したいときは、枠の下の「元の文に戻す（もとの文）」を押します。</div></li>
+  </ol>
+  <div class="tw"><table>
+    <thead><tr><th>あいまいな言葉</th><th>書き直しの考え方</th><th>例文（押すと置きかわる）</th></tr></thead>
+    <tbody>
+      <tr><td>使いやすい・使い易い・直感的・簡単・かんたん・便利・快適・スムーズ</td><td>「操作の回数」「かかる時間」「説明なしでできるか」で書く</td><td>〇〇まで3回以内の操作でたどり着ける／初めての人が説明なしで〇〇を5分以内に終えられる／手袋をしたままでも〇〇のボタンを押せる</td></tr>
+      <tr><td>見やすい・わかりやすい・分かりやすい・きれい</td><td>「どこに・何が・どの大きさで出るか」で書く</td><td>〇〇が画面のいちばん上に表示される／〇〇は色だけでなく文字でも区別できる／屋外の明るさでも〇〇の文字が△△ポイント以上で表示される</td></tr>
+      <tr><td>早く・速く・すばやく</td><td>「何秒・何分・いつまでに」を数字で書く</td><td>〇〇を押してから3秒以内に△△が表示される／〇〇の翌営業日の朝9時までに△△へ通知される</td></tr>
+      <tr><td>なるべく・できるだけ・しっかり・ちゃんと・適切・適宜</td><td>「必ず〜する」「〜のときは〜できない」と言い切る</td><td>〇〇が空のままでは登録できない／〇〇のときは必ず△△に通知される／〇〇は△△だけが見られる</td></tr>
+      <tr><td>柔軟・いろいろ・など</td><td>対象をすべて書き出し、それ以外は「今回は作らない」へ回す</td><td>〇〇・△△・□□の3種類に対応する（それ以外は今回は作らない）</td></tr>
+      <tr><td>いい感じ・いいかんじ</td><td>「何と比べて・どれくらいの差なら合格か」を書く</td><td>〇〇と△△の差が□□以内のときに合格とする／〇〇は担当者が「確定」を押すまで登録されない</td></tr>
+    </tbody>
+  </table></div>
+  <p>「よく使う書き方（押すと追加されます）」の6つの例文を押すと、空いている欄（なければ新しい欄）に追加されます。条件は「条件を追加」で8件まで増やせます。</p>
+  <div class="note">あいまいな言葉が残っていても登録はできます。ただし承認のときに「承認前チェック」で承認者に知らされ、差戻しになることがあります。「など」は「写真や動画などを保存できる」のように問題のない文でも反応することがあります。その場合は「写真と動画を保存できる」のように対象を書き出してください（一覧の見直しは Q-16）。</div>
+
+  <h3>OP-05　書きかけの依頼を「続きから再開」する／破棄する</h3>
+  <p>入力の途中で画面を閉じても、入力はこのブラウザに自動で下書き保存されています。入力画面の下に「下書きを自動保存しました　（時刻）」と出ていれば保存済みです。</p>
+  <ol class="steps">
+    <li><div><b>ホームから再開</b>ホームに「書きかけの依頼があります」の枠が出ます（件名・何STEPまで入力したか・保存時刻）。「続きから再開」を押すと、止めたSTEPから続けられます。</div></li>
+    <li><div><b>「新しい依頼」から再開</b>「新しい依頼」を押したときに書きかけがあると、「書きかけの依頼があります」の小窓が出ます。「続きから再開」か「破棄して新しく始める」を選びます。</div></li>
+    <li><div><b>破棄する</b>ホームの「破棄」、または入力画面の「下書きを破棄」を押し、確認の小窓で「破棄する」を押します。元に戻せません。</div></li>
+  </ol>
+  <div class="warn">下書きは<b>このブラウザに1つだけ</b>です。別のPCやスマートフォン、別のブラウザでは見えません。ブラウザのサイトデータを消すと下書きも消えます。<span class="b must">本番</span>では、下書きは利用者ごとにサーバ側に保存し、本人だけが見られるようにします（保存期間は Q-14）。</div>
+
+  <h3>OP-06　自分の依頼の進み具合を見る</h3>
+  <ol class="steps">
+    <li><div><b>ホームで見る</b>ホームの「あなたの依頼（ほかの人の番）」に、ほかの人が動かす番の自分の依頼が、状態・滞留日数・「次は（だれ）」付きで出ます。</div></li>
+    <li><div><b>詳細で見る</b>依頼を押すと詳細が開きます。先頭に「次に動かすのは（受付担当／承認者）です（いまの状態になってから n 日）」が出ます。「コメント・履歴」タブで、だれが・いつ・何をしたかを確かめられます。</div></li>
+    <li><div><b>質問する</b>「コメント・履歴」タブの入力欄に書いて「コメントする」を押すと、記録に残ります。</div></li>
+  </ol>
+
+  <h3>OP-07　差戻しを直して再提出する</h3>
+  <p>差戻しになった依頼は、あなたの番になります。理由はコメントと変更履歴に残っています。</p>
+  <ol class="steps">
+    <li><div><b>開く</b>ホームの「あなたの番」で、差戻しの依頼の「直す」を押します（詳細の「指摘を直す（直したら再提出）」でも同じです）。</div></li>
+    <li><div><b>直す</b>入力画面が開くので、理由に書かれた所を直します。上の帯で、直したいSTEPへ直接移れます。</div></li>
+    <li><div><b>再提出する</b>STEP 7 の「直した内容で再提出する」を押します。依頼は「受付」に戻り、履歴に「再提出（指摘に合わせて内容を直しました）」と残ります。</div></li>
+  </ol>
+  <div class="note">直す必要がなく、そのまま受付に戻したいときは、ボードのカードの「受付へ」ボタンでも再提出できます。ただし理由に応えた直しをしてから戻すのが基本です。</div>
+
+  <h3>OP-08　現場試用の感想をコメントする</h3>
+  <ol class="steps">
+    <li><div><b>開く</b>ホームの「あなたの番」で、現場試用の依頼の「感想を書く」を押します。詳細の「コメント・履歴」タブが開きます。</div></li>
+    <li><div><b>書く</b>屋外・手袋・雨の日・電波の弱い所で使ってみてどうだったか、困った所を具体的に書きます（例：「台船の上で手袋のまま押せた。圏外でも写真が残った」）。</div></li>
+    <li><div><b>送る</b>「コメントする」を押します。完了にするかどうかは承認者が判断します。</div></li>
+  </ol>
+
+  <h3>OP-09　依頼を取り下げる（見送り）</h3>
+  <p>もう必要なくなった依頼は、「受付」または「差戻し」のときだけ、自分で取り下げられます。</p>
+  <ol class="steps">
+    <li><div><b>小窓を開く</b>詳細の「状態を変更」を押します。「受付」のときは、選べる状態として「見送り」だけが出ます（「差戻し」のときは、再提出の「受付」も出ます）。</div></li>
+    <li><div><b>理由を書く</b>「見送り」を選ぶと、メモが（必須）になります。「依頼者から取り下げの申し出がありました。」などの理由の候補を押すと、メモに入ります。</div></li>
+    <li><div><b>確定</b>「変更する」を押します。</div></li>
+  </ol>
+  <div class="note">依頼者が動かせるのは、<b>自分が起票した依頼</b>の「差戻し→受付（再提出）」と「受付・差戻し→見送り（取り下げ）」だけです。ほかの人の依頼や、ほかの状態は、小窓に「いまの役割（依頼者）では、この依頼の状態は変えられません。」と出て、選べない理由が一覧で見られます。依頼者は依頼を削除できません。</div>
+</section>
+
+<!-- ============ 3 ============ -->
+<section class="sec" id="s3">
+  <h2><span class="no">3</span>受付担当の操作</h2>
+  <p class="sub">DX推進部で依頼を受け付け、注文書を整え、ラインを進める人の手順です（OP-10〜OP-19）。</p>
+
+  <h3>OP-10　「あなたの番」から一日を始める</h3>
+  <ol class="steps">
+    <li><div><b>ホームを開く</b>「あなたの番」に、受付・内容確認中・承認済み・実装中・検証中の依頼が、止まっている日数の長い順に並びます。黄（3日以上）・赤（7日以上）の印のものから手を付けます。</div></li>
+    <li><div><b>その場で進める</b>各行の「「（次の状態）」へ」ボタンで、詳細を開かずに次へ進められます（OP-13）。中身を見る必要があるものは、行を押して詳細を開きます。</div></li>
+    <li><div><b>止まっている依頼を見る</b>2段目の「止まっている依頼（3日以上・ほかの人の番）」は、承認者や依頼者の番で止まっているものです。週1回まとめて催促します（OP-19）。</div></li>
+    <li><div><b>新着を見る</b>「最近の動き」で、新しい受付や差戻しを確かめます。</div></li>
+  </ol>
+
+  <h3>OP-11　受け付けた依頼の中身を確かめる</h3>
+  <ol class="steps">
+    <li><div><b>概要を読む</b>詳細の「概要」タブで、困りごと・目的・使う人と場所・作るもの・今回は作らない・合格の条件・扱う情報を読みます。合格の条件で「△ 書き直しをおすすめ」が付いた行は、ヒントと例が添えてあります。</div></li>
+    <li><div><b>信号の候補の理由を見る</b>「信号の色」の枠に、候補の色と理由がすべて並びます。赤の候補なら、「材料集め・表示」までに範囲を変えられるかを考えます。</div></li>
+    <li><div><b>内容確認中へ</b>確認を始めたら「「内容確認中」へ進める」を押します。</div></li>
+    <li><div><b>足りないとき</b>依頼者に聞けば済むことは「コメント・履歴」タブで質問します。書き直しが必要なら差戻しにします（OP-15）。</div></li>
+  </ol>
+
+  <h3>OP-12　注文書を整えて、承認を依頼する</h3>
+  <ol class="steps">
+    <li><div><b>編集で整える</b>詳細の「編集」で、依頼者と相談しながら合格の条件・今回は作らない・扱う情報・必ず人に聞くことを整えます。最後は「この内容で更新する」。履歴に「内容を編集」が残ります。</div></li>
+    <li><div><b>注文書を確かめる</b>「注文書」タブで YAML を読み、目的・対象・対象外・合格の条件・守ること・必ず人に聞くことがそろっているか確かめます（OP-16）。</div></li>
+    <li><div><b>承認待ちへ</b>「「承認待ち」へ進める」を押します。承認者の「あなたの番」に出ます。</div></li>
+  </ol>
+  <div class="prop">承認を依頼する前に、受付担当が<a href="#s17">17章</a>の「承認前チェックリスト」で同じ点を見ておくと、差戻しが減ります。</div>
+
+  <h3>OP-13　カードの「次へ」で進める ― 元に戻す</h3>
+  <ol class="steps">
+    <li><div><b>押す</b>ボードの各カードの下にある「→（次の状態）へ」ボタンを押します。押してもカードの詳細は開きません。</div></li>
+    <li><div><b>すぐ進む状態</b>内容確認中・承認待ち・実装中・検証中・現場試用・受付（再提出）へは、1回で進みます。下に「（受付番号）を「（状態）」に進めました」と「元に戻す」ボタンが約7秒出ます。</div></li>
+    <li><div><b>まちがえたら</b>その間に「元に戻す」を押すと、状態と履歴が押す前に戻り、「元に戻しました」と出ます。</div></li>
+    <li><div><b>小窓が開く状態</b>承認済み・完了へは、確認の小窓（承認前チェックなど）が開きます。これは承認者の操作です。</div></li>
+  </ol>
+  <div class="note">自分では動かせないカードには、ボタンの代わりに「次は（受付担当／承認者／依頼者）」と表示されます。ボードの「あなたの番だけ」に印を付けると、自分が動かすカードだけに絞れます。カードのドラッグでも状態を変えられます（タッチ端末ではボタンを使います）。カードは Tab キーで選び、Enter で詳細を開けます。</div>
+
+  <h3>OP-14　状態変更の小窓で「選べない理由」を見る</h3>
+  <ol class="steps">
+    <li><div><b>開く</b>詳細の「状態を変更」を押します。いまの状態・滞留日数・操作する人が上に出ます。</div></li>
+    <li><div><b>選べる状態だけが並ぶ</b>いまの役割で選べる状態だけが並び、次の段階には「次の段階」の印が付いています。</div></li>
+    <li><div><b>理由を見る</b>「選べない状態（n）とその理由」を開くと、選べない状態ごとに理由と「できる人」が出ます（例：「「承認済み」にできるのは承認者だけです（最後は人が決めます）」）。</div></li>
+  </ol>
+  <div class="tw"><table>
+    <thead><tr><th>受付担当ができること</th><th>できないこと（理由）</th></tr></thead>
+    <tbody>
+      <tr><td>「承認済み」「完了」以外の状態へ動かす。差戻し・見送り（理由必須）。完了以外の依頼の編集。依頼の削除（試作では完了した依頼も削除できる。本番は削除せず「取消」）</td><td>「承認済み」「完了」にする（承認者だけ）。完了した依頼を動かす（承認者だけ）</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><span class="b must">本番</span>では、状態の移り方を詳細仕様書の遷移表に限定し、承認を通らずに「実装中」へ進めることはできなくなります。また削除は「取消」になります。</div>
+
+  <h3>OP-15　差戻し・見送りを書く</h3>
+  <ol class="steps">
+    <li><div><b>選ぶ</b>「状態を変更」で「差戻し」または「見送り」を選ぶと、メモが（必須）になり、メモ欄の上に「よく使う理由（押すとメモに入ります）」が並びます。</div></li>
+    <li><div><b>理由を入れる</b>候補を押すとメモに追記されます（同じ文は重ねて入りません）。「受付番号：　」の所には、まとめ先の番号を書き足します。</div></li>
+    <li><div><b>具体的に足す</b>どの条件をどう直せばよいかを1行足すと、依頼者が迷いません。</div></li>
+    <li><div><b>確定</b>「変更する」を押します。メモはコメントにも残り、依頼者の「あなたの番」に出ます。</div></li>
+  </ol>
+
+  <h3>OP-16　注文書（YAML）を確かめる・コピーする・ダウンロードする</h3>
+  <ol class="steps">
+    <li><div><b>開く</b>詳細の「注文書」タブを開きます。「AIへ渡す前に、人がレビューします。」と表示されます。</div></li>
+    <li><div><b>確かめる</b>signal の suggested（候補）と decided（決定）、acceptance_criteria（合格の条件）、out_of_scope（今回は作らない）、requires_human_approval（必ず人に聞くこと）を必ず読みます。</div></li>
+    <li><div><b>渡す</b>「コピー」でクリップボードへ、「ダウンロード」で「受付番号_注文書.yaml」のファイルにします。<span class="b must">本番</span>では、承認済みの注文書だけが GitHub の Issue として自動で開発ラインへ渡ります。</div></li>
+  </ol>
+
+  <h3>OP-17　承認済みから先を進める</h3>
+  <div class="tw"><table>
+    <thead><tr><th>いまの状態</th><th>受付担当がすること</th><th>次へ進める合図</th></tr></thead>
+    <tbody>
+      <tr><td>承認済み</td><td>開発（AIで作る）を始める。注文書を開発ラインへ渡す</td><td>Issue が作られ、作業が始まった →「実装中」へ</td></tr>
+      <tr><td>実装中</td><td>止まった作業（修正の上限・必ず人に聞くこと）を見張る（7章）</td><td>PR（提出書類）ができ、検査機（CI）が合格した →「検証中」へ</td></tr>
+      <tr><td>検証中</td><td>PRの判断材料10項目・試し見画面・人の確認がそろうよう段取りする</td><td>マージ済み・ステージング確認済み →「現場試用」へ（現場で使う道具）</td></tr>
+      <tr><td>現場試用</td><td>試し係の感想がコメントに入っているか確かめる</td><td>承認者が「完了」にする</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">「必ず人に聞くこと」に当たる変更が必要になったときや、注文書の中身を変えたときは、承認を取り直します（<span class="b must">本番</span>では「承認待ち」に戻ります）。</div>
+
+  <h3>OP-18　CSV・JSON の書き出しと取り込み</h3>
+  <ol class="steps">
+    <li><div><b>CSV（Excelで見る）</b>「一覧」の「CSV」でいま絞り込んでいる分を、「データ」の「CSVで書き出す」で全件を、「受付一覧_年月日.csv」として書き出します（11列、文字化けしない形式）。</div></li>
+    <li><div><b>JSON（バックアップ）</b>「データ」の「JSONで書き出す」で全件を「受付データ_年月日.json」に保存します。<span class="b should">試作</span>では、これが唯一のバックアップです。</div></li>
+    <li><div><b>JSON を取り込む</b>「JSONを取り込む」でファイルを選ぶと、「n 件のデータで、いまのデータを置き換えます。よろしいですか？」と出ます。「取り込む」でいまのデータが<strong>すべて置きかわります</strong>。形式が違うと「このファイルは取り込めません」と出て、データは変わりません。</div></li>
+    <li><div><b>サンプルに戻す</b>「サンプルに戻す」は、練習のやり直し用です。登録した内容はすべて消え、見本の9件に戻ります（試作のみ）。</div></li>
+  </ol>
+  <div class="warn">書き出したファイルには依頼の中身が入ります。共有フォルダに置くときは、見られる人を限ってください。<span class="b must">本番</span>では、CSV・JSON の書き出しは管理者だけができ、書き出しは監査ログに残ります。</div>
+
+  <h3>OP-19　止まっている依頼を催促する</h3>
+  <ol class="steps">
+    <li><div><b>見つける</b>ホームの「止まっている依頼（3日以上・ほかの人の番）」と件数カード「3日以上止まっている」、一覧の「滞留」「次は」の列で探します。</div></li>
+    <li><div><b>催促する</b>週1回、次に動かす人（承認者・依頼者）へまとめて知らせます。<span class="b must">本番</span>では desknet's NEO／AppSuite の通知を使います（方式は Q-01）。</div></li>
+    <li><div><b>記録する</b>催促したことを依頼のコメントに残します（「〇月〇日に承認をお願いしました」）。</div></li>
+    <li><div><b>7日以上</b>赤い印（7日以上）のものは、7章の手順で承認者の上長へ知らせます。</div></li>
+  </ol>
+</section>
+
+<!-- ============ 4 ============ -->
+<section class="sec" id="s4">
+  <h2><span class="no">4</span>承認者の操作</h2>
+  <p class="sub">業務責任者・現場所長として、何を作るかと信号の色を決め、承認・差戻し・見送り・完了を判断する人の手順です（OP-20〜OP-26）。</p>
+
+  <div class="easy">承認は「この注文書のとおりに作ってよい」というハンコです。AIの「できました」でも検査機の「合格」でもなく、<b>最後に決めるのは人</b>です。だから画面は、ハンコを押す前に見落としがないかを自動で並べて見せます。</div>
+
+  <h3>OP-20　承認待ちの依頼を開く</h3>
+  <ol class="steps">
+    <li><div><b>ホームを開く</b>「あなたの番」に、自分が承認者になっている承認待ち・現場試用の依頼が、止まっている日数の長い順に出ます。</div></li>
+    <li><div><b>中身を読む</b>行を押して詳細の「概要」を読みます。先頭に「あなたの番です：信号の色を決めて、承認か差戻しを決める」と出ます。</div></li>
+    <li><div><b>承認の小窓へ</b>行の「「承認済み」へ」ボタン、または詳細の「「承認済み」へ進める」を押すと、承認の小窓が開きます。</div></li>
+  </ol>
+
+  <h3>OP-21　承認前チェックを読み、確認する</h3>
+  <p>小窓で「承認済み」が選ばれていると、「承認前チェック（自動）」が出ます。✓は問題なし、△は確かめてほしい点です。</p>
+  <div class="tw"><table>
+    <thead><tr><th>チェックの項目</th><th>△になるとき</th><th>確かめること</th></tr></thead>
+    <tbody>
+      <tr><td>合格の条件</td><td>0件、または検査しにくい書き方がある（件数と例が出る）</td><td>このままで検査機が合否を決められるか。決められなければ差戻し</td></tr>
+      <tr><td>今回は作らない</td><td>空</td><td>作りすぎ・手戻りのおそれがないか</td></tr>
+      <tr><td>扱う情報</td><td>個人情報・お金・作業船の記録などを扱う</td><td>見られる人の範囲と、練習用の場所に本物を持ち込まないこと</td></tr>
+      <tr><td>社外の人</td><td>協力会社・発注者が関わる</td><td>見せる範囲</td></tr>
+      <tr><td>安全・品質／作業船の運航</td><td>必ず人に聞くことに当たる</td><td>判定・出航・作業中止を道具に決めさせない作りか</td></tr>
+      <tr><td>赤信号</td><td>決める仕事が含まれる</td><td>OP-23</td></tr>
+    </tbody>
+  </table></div>
+  <ol class="steps">
+    <li><div><b>△を読む</b>△がある項目を1つずつ確かめます。</div></li>
+    <li><div><b>確認の印</b>問題がなければ「上の △ n 件を確認しました（直してほしい点があれば「差戻し」を選びます）」に印を付けます。印がないと「承認前チェックの △ を確認して、チェックを入れてください」と出て、承認できません。</div></li>
+    <li><div><b>直してほしいとき</b>承認せず「差戻し」を選びます（OP-24）。△の項目に合う差戻し理由には「おすすめ」の印が付いています。</div></li>
+  </ol>
+
+  <h3>OP-22　信号の色を決める</h3>
+  <ol class="steps">
+    <li><div><b>候補を見る</b>「信号の色を決める」に、候補の色が最初から選ばれています。迷ったら1つ上の色にします。</div></li>
+    <li><div><b>ゆるい色にするとき</b>候補より低い色（例：候補が黄で青にする）を選ぶと、「候補（黄）より ゆるい色 にします。理由をメモに書いてください。」と出ます。メモに理由を書かないと「候補よりゆるい色にする理由をメモに書いてください」と出て、承認できません。</div></li>
+    <li><div><b>確定</b>「変更する」を押します。履歴に「信号の色を「（色）」に決定（候補は「（色）」）／承認前チェック △n件を確認」が残ります。</div></li>
+  </ol>
+  <div class="note">見本の REQ-2026-0002「作業船の予定をひと目で見たい」は、候補が黄ですが、承認者が青に決めています。理由は「予定の表示と二重予約の防止だけで、船を出すかの判断は道具に含めないため」です。ゆるい色にするときは、このように<b>道具に含めない判断</b>を理由に書きます。</div>
+
+  <h3>OP-23　赤信号を確認する</h3>
+  <ol class="steps">
+    <li><div><b>範囲を確かめる</b>赤の依頼は、そのままでは作りません。道具の範囲が「材料集め・表示」までに変わっているかを確かめます。変わっていなければ差戻しにします。</div></li>
+    <li><div><b>確認の印</b>赤を選ぶと「赤信号の仕事は AIに決めさせません。道具の範囲が「材料集め・表示」までで、決定は人が行うことを確認しました。」が出ます。印がないと「赤信号の確認にチェックしてください」と出て、承認できません。</div></li>
+    <li><div><b>技術者に聞く</b>安全・構造・品質・法令にかかわるものは、資格と責任を持つ技術者に確認してから決めます。</div></li>
+  </ol>
+  <div class="note">見本の REQ-2026-0007「見積金額を自動で決めたい」は赤の候補のため、「金額の決定は赤信号（AIに決めさせない）です。「過去工事との見積比べ（黄）」や「社内単価・作業船の費用データの検索（青）」に範囲を変え、合格の条件を数字で書き直して再提出してください。」と差し戻されています。</div>
+
+  <h3>OP-24　差戻し・見送りの理由を書く</h3>
+  <p>「差戻し」「見送り」を選ぶとメモが（必須）になり、理由の候補が並びます。押すとメモに入ります。</p>
+  <div class="tw"><table>
+    <thead><tr><th>種類</th><th>理由の候補（画面の文言）</th><th>「おすすめ」が付くとき</th></tr></thead>
+    <tbody>
+      <tr><td rowspan="6">差戻し</td><td>合格の条件を、数字や「〜できる／〜できない」で書き直してください。</td><td>合格の条件が△</td></tr>
+      <tr><td>「今回は作らない」を書き足してください。</td><td>今回は作らないが△</td></tr>
+      <tr><td>「決める」仕事（合否・金額・安全など）はAIに任せられません。範囲を「材料集め・表示」までに変えてください。</td><td>赤信号が△</td></tr>
+      <tr><td>扱う情報（個人情報・お金など）と、見られる人の範囲を書き足してください。</td><td>扱う情報が△</td></tr>
+      <tr><td>困っていること・目的を、もう少し具体的に（だれが・いつ・どれくらい）書いてください。</td><td>－</td></tr>
+      <tr><td>似た依頼があるため、まとめて進めます（受付番号：　）。</td><td>－</td></tr>
+      <tr><td rowspan="5">見送り</td><td>今期は優先度が低いため見送ります（次の見直しで再検討します）。</td><td>－</td></tr>
+      <tr><td>いまある道具・市販の製品で対応できるため見送ります。</td><td>－</td></tr>
+      <tr><td>似た依頼にまとめました（受付番号：　）。</td><td>－</td></tr>
+      <tr><td>元になるデータがそろっていないため見送ります。</td><td>－</td></tr>
+      <tr><td>依頼者から取り下げの申し出がありました。</td><td>－</td></tr>
+    </tbody>
+  </table></div>
+  <p>候補を入れたうえで、どこをどう直せばよいかを1行足してください。メモは依頼者へのコメントにも残ります。</p>
+
+  <h3>OP-25　現場試用の結果を見て「完了」にする</h3>
+  <ol class="steps">
+    <li><div><b>結果を読む</b>「あなたの番」の現場試用の依頼を開き、「コメント・履歴」タブで試し係・依頼者の感想を読みます。屋外・手袋・雨の日・電波の弱い所で使えたか、写真や記録の原本が書きかわっていないか、見せてよい範囲が守られているかを確かめます。</div></li>
+    <li><div><b>完了にする</b>使えると判断したら「「完了」へ進める」を押し、小窓で「変更する」を押します。</div></li>
+    <li><div><b>まだのとき</b>手直しが必要なら「差戻し」または「実装中」に戻し、理由を書きます。</div></li>
+  </ol>
+
+  <h3>OP-26　公開承認（本番）</h3>
+  <p><span class="b must">本番</span>では、PRを完成版に取り込む「マージ」と、本番に出す「公開」は<b>別のリスク判断</b>です。状態「公開承認待ち」の依頼について、承認者がステージングでの検証結果（現場で使う道具は試用結果）を見て公開を許可します。マージの承認とは別に記録され、承認したときの成果物と違うものは公開されません。公開してよい人・代理の決め方は Q-21 で決めます。</p>
+  <div class="tw"><table>
+    <thead><tr><th>公開してはいけないとき</th></tr></thead>
+    <tbody>
+      <tr><td>承認がない／承認した成果物と違う／合格の条件の充足率が100%未満／重大な不具合がある／復旧手順が確かめられていない／凍結期間中（決算・繁忙期・大型連休など）。緊急の例外は、管理者と業務責任者の二人の承認と事後の記録が必要です。 <span class="src">S8</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ======================= 第3部 ======================= -->
+<!-- ============ 5 ============ -->
+<section class="sec" id="s5">
+  <h2><span class="no">5</span>体制と役割</h2>
+  <p class="sub">第3部 運用手順 ― ラインを回すのはだれか、だれが何を決めるかを先に決めておきます。</p>
+
+  <h3>5-1. 運用の体制</h3>
+  <div class="tw"><table>
+    <thead><tr><th>役割</th><th>担当（みらい建設工業）</th><th>主な運用業務</th><th>主に使うもの</th></tr></thead>
+    <tbody>
+      <tr><td><b>サービスオーナー</b></td><td>DX推進部 部長（案）</td><td>全体方針、予算、フェーズのゲート判定の取りまとめ、重大な障害の意思決定</td><td>週次の運用定例</td></tr>
+      <tr><td><b>工場の管理責任者</b></td><td>DX推進部 責任者</td><td>CI定義・権限・標準・信号ルール・カタログの変更承認、費用上限の管理</td><td>変更管理の記録</td></tr>
+      <tr><td><b>受付担当</b></td><td>DX推進部（受付・ライン運営）</td><td>依頼の確認、注文書の整備、ラインの進行、滞留の催促、エスカレーション対応、データ管理</td><td>受付ステーション、desknet's NEO／AppSuite</td></tr>
+      <tr><td><b>開発ライン運用担当</b></td><td>DX推進部（受付・ライン運営）</td><td>ジョブの見張り、CI失敗の切り分け、再試行・停止の判断、リリース作業</td><td>GitHub、運用ダッシュボード</td></tr>
+      <tr><td><b>基盤・セキュリティ担当</b></td><td>DX推進部（基盤・セキュリティ）</td><td>Entra ID・ネットワーク・基盤、脆弱性とインシデントの技術判断、権限の棚卸し、バックアップ</td><td>監視・ログ基盤</td></tr>
+      <tr><td><b>承認者</b></td><td>部署ごとの業務責任者・現場所長</td><td>信号の色の決定、承認・差戻し・見送り、マージ承認、公開承認、完了の判断</td><td>受付ステーション、通知</td></tr>
+      <tr><td><b>技術者</b></td><td>資格と責任を持つ技術者</td><td>黄・赤に関わる内容の確認、モデル現場の結果確認</td><td>詳細画面、PR</td></tr>
+      <tr><td><b>現場の試し係</b></td><td>モデル現場の担当者</td><td>屋外・手袋・雨の日・電波の弱い所での試用、原本の確認、感想の記録</td><td>詳細画面のコメント</td></tr>
+      <tr><td><b>内部監査</b></td><td>内部監査・コンプライアンス</td><td>監査ログ・権限設定の点検、統制が効いているかの評価（年次・四半期）</td><td>監査ログ、対応表</td></tr>
+    </tbody>
+  </table></div>
+  <p>サポートの正式な窓口と対応時間（SLA）は Q-18 で決めます。決まるまでは、上の役割で対応します。<span class="src">S8</span></p>
+
+  <h3>5-2. だれが決めるか（RACI）</h3>
+  <p>R＝実行する、A＝最終責任を持つ（1つの活動に1人）、C＝相談を受ける、I＝知らされる。</p>
+  <div class="tw"><table>
+    <thead><tr><th>活動</th><th>依頼者</th><th>受付担当</th><th>承認者</th><th>実装AI</th><th>CI・レビュー</th><th>DX推進部<br>（基盤・セキュリティ）</th><th>内部監査</th></tr></thead>
+    <tbody>
+      <tr><td>要望の登録・合格の条件の記入</td><td>R</td><td>A</td><td>C</td><td>－</td><td>－</td><td>－</td><td>－</td></tr>
+      <tr><td>受付・内容確認</td><td>C</td><td>R/A</td><td>C</td><td>－</td><td>－</td><td>I</td><td>－</td></tr>
+      <tr><td>信号の色の決定</td><td>I</td><td>C</td><td>R/A</td><td>－</td><td>－</td><td>－</td><td>I</td></tr>
+      <tr><td>注文書・合格の条件の承認</td><td>C</td><td>R</td><td>A</td><td>－</td><td>－</td><td>－</td><td>I</td></tr>
+      <tr><td>隔離環境での実装</td><td>－</td><td>A</td><td>－</td><td>R</td><td>I</td><td>C</td><td>－</td></tr>
+      <tr><td>CIによる検証（合否）</td><td>－</td><td>C</td><td>－</td><td>I</td><td>R/A</td><td>－</td><td>I</td></tr>
+      <tr><td>マージの承認</td><td>I</td><td>C</td><td>R/A</td><td>－</td><td>C</td><td>－</td><td>I</td></tr>
+      <tr><td>本番の公開承認</td><td>I</td><td>C</td><td>R/A</td><td>－</td><td>C</td><td>C</td><td>I</td></tr>
+      <tr><td>運用の見張り・障害対応</td><td>I</td><td>R/A</td><td>I</td><td>－</td><td>C</td><td>C</td><td>I</td></tr>
+      <tr><td>監査・証跡の確認</td><td>I</td><td>C</td><td>C</td><td>－</td><td>－</td><td>C</td><td>R/A</td></tr>
+      <tr><td>工場の標準の変更</td><td>－</td><td>R</td><td>C</td><td>－</td><td>C</td><td>C</td><td>A※</td></tr>
+    </tbody>
+  </table></div>
+  <p class="sub">※ 正式版要件定義書の RACI にもとづく。工場の標準の変更は、工場の管理責任者が承認し、内部監査が最終的に統制の妥当性を確かめます（詳しくは要件定義書 5章）。 <span class="src">S7</span><span class="src">S8</span></p>
+
+  <h3>5-3. 教育（FR-55 標準化・教育・テンプレート）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>対象</th><th>教えること</th><th>使う資料</th><th>効果の見方</th></tr></thead>
+    <tbody>
+      <tr><td>依頼者・現場の担当者</td><td>依頼の出し方、合格の条件の書き方（あいまい語を避ける）、信号の意味</td><td>本書 2章、記入例</td><td>初めての人の主要タスク完了率、質問の件数</td></tr>
+      <tr><td>受付担当</td><td>入力の手伝い、信号の判定、注文書の確認、データ管理、監査の記録</td><td>本書 3章・6〜13章、チェックリスト（17章）</td><td>演習</td></tr>
+      <tr><td>承認者</td><td>承認の責任、信号の色の決め方、赤の扱い、公開の判断、残るリスク</td><td>本書 4章、判断の例</td><td>承認記録の質のレビュー</td></tr>
+      <tr><td>開発・運用担当</td><td>ライン、CI、PRの判断材料10項目、修正の上限、隔離、監視、障害・変更・復旧</td><td>開発標準・テンプレート、本書 7〜10章</td><td>PRの質のレビュー、復旧訓練</td></tr>
+      <tr><td>モデル現場（試し係）</td><td>試用の進め方、原本の扱い、見せてよい範囲</td><td>現場向けの図解ガイド、本書 OP-08</td><td>試用記録と感想</td></tr>
+    </tbody>
+  </table></div>
+  <p>教育資料・テンプレート（注文書・PRのひな形、チェックリスト、本書）は Git で版を管理し、変えるときは 9章の変更管理を通します。 <span class="src">S8</span></p>
+</section>
+
+<!-- ============ 6 ============ -->
+<section class="sec" id="s6">
+  <h2><span class="no">6</span>定期作業</h2>
+  <p class="sub">毎日・毎週・毎月…の決まった作業です。忘れないよう、担当とやることを固定します。</p>
+
+  <div class="tw"><table>
+    <thead><tr><th>頻度</th><th>作業</th><th>担当</th><th>手順</th></tr></thead>
+    <tbody>
+      <tr><td class="nw"><b>毎日</b></td><td>新しい依頼の確認、あなたの番の処理、止まっている作業（修正の上限・必ず人に聞くこと）の確認、バックアップ結果の確認</td><td>受付担当、開発ライン運用担当、基盤担当</td><td>OP-30</td></tr>
+      <tr><td class="nw"><b>毎週</b></td><td>運用定例（停止ジョブ、CI失敗、承認待ち・滞留、インシデント、直近リリース）、3日以上止まっている依頼の催促</td><td>受付担当、開発ライン運用担当、承認者代表</td><td>OP-31、OP-33</td></tr>
+      <tr><td class="nw"><b>毎月</b></td><td>品質・費用レビュー（指標・合格の条件の充足率・不具合・費用・予算消化率）、権限設定の点検、リストア検証（案。バックアップから1件戻せるかの小さな確認。四半期ごとの復旧訓練とは別）、現場・利用者レビュー（MVP以降）、計画メンテナンス（案）</td><td>サービスオーナー、受付担当、工場の管理責任者、基盤担当</td><td>OP-32、OP-39、OP-46</td></tr>
+      <tr><td class="nw"><b>四半期</b></td><td>投資・フェーズ判定（ゲート）、監査ログの改ざん検知とアクセス権の棚卸し、削減見込みと実費用の比較、<b>復旧訓練（RTO・RPO の実測）（案）</b> <span class="src">S7</span></td><td>サービスオーナー、工場の管理責任者、基盤担当、内部監査</td><td>OP-40、OP-42、OP-45、<a href="みらいSF%20フェーズ計画書%20V1.0.html">フェーズ計画書</a></td></tr>
+      <tr><td class="nw"><b>半年ごと</b></td><td>統制との対応表（ISO/IEC 27001・J-SOX・NIST SSDF）の見直し</td><td>DX推進部（基盤・セキュリティ）、内部監査</td><td>OP-44</td></tr>
+      <tr><td class="nw"><b>年1回</b></td><td>採用製品の最新情報の確認、信号ルールとカタログの見直し、法令・規程の適合レビュー、ペネトレーションテスト、文書（本書を含む4冊）の見直し、保存期限を過ぎたデータの承認つき削除</td><td>工場の管理責任者、基盤担当、内部監査</td><td>OP-43</td></tr>
+      <tr><td class="nw"><b>90日ごと（案）</b></td><td>シークレット（カギ）の入れ替え。漏えいの疑いがあればすぐに</td><td>基盤担当</td><td>－</td></tr>
+    </tbody>
+  </table></div>
+  <p class="sub">出典：正式版詳細仕様書 10.5〜10.6、やさしい版 9-2 を統合 <span class="src">S8</span><span class="src">S9</span></p>
+
+  <h3>OP-30　毎日の作業（受付担当・開発ライン運用担当）</h3>
+  <ol class="steps">
+    <li><div><b>朝</b>ホームの「あなたの番」と「最近の動き」を見る。新しい受付を「内容確認中」へ進める（OP-10〜OP-11）。</div></li>
+    <li><div><b>ラインの確認</b>止まっているジョブ（修正の上限・予算・必ず人に聞くこと）がないか、運用ダッシュボードで確かめ、あれば 7章の段階に従って人へ上げる。</div></li>
+    <li><div><b>バックアップ</b>前日のバックアップが成功したか確かめる。失敗していればもう一度実行し、だめなら手動で取る（OP-39）。</div></li>
+    <li><div><b>夕方</b>今日動かした依頼の履歴を見直し、コメントで依頼者・承認者に伝え漏れがないか確かめる。</div></li>
+  </ol>
+
+  <h3>OP-31　週次の運用定例</h3>
+  <ol class="steps">
+    <li><div><b>集める</b>前の週の、止まったジョブ、CI失敗、承認待ちと滞留（3日以上の件数）、インシデント、リリースを一覧にする。</div></li>
+    <li><div><b>話し合う</b>止まっている理由と、次にだれが何をするかを決める。悪くなった数字には原因と改善の行動（Issue）を付ける。</div></li>
+    <li><div><b>残す</b>決めたことを行動一覧に残し、次の定例で確かめる。</div></li>
+  </ol>
+  <div class="note">定例の数字は<b>個人の評価には使いません</b>。仕組みを良くするために使います。着手順（どの道具から作るか）も定例で決め、ものさしの点数はその材料の1つにとどめます。 <span class="src">S8</span></div>
+
+  <h3>OP-32　月次の品質・費用レビュー</h3>
+  <ol class="steps">
+    <li><div><b>集計する</b>13章の指標（KPI-01〜08、KPI-F1〜F8、KPI-U1〜U4）と費用を集計する（OP-46）。</div></li>
+    <li><div><b>比べる</b>目標（案）と比べ、悪くなった指標に原因と行動を付ける。</div></li>
+    <li><div><b>公開する</b>指標レポートとして関係者に共有する。</div></li>
+  </ol>
+</section>
+
+<!-- ============ 7 ============ -->
+<section class="sec" id="s7">
+  <h2><span class="no">7</span>滞留とエスカレーション</h2>
+  <p class="sub">依頼やジョブが止まったとき、だれに・いつ上げるかを決めておきます。</p>
+
+  <h3>7-1. 止まっている依頼の扱い</h3>
+  <div class="tw"><table>
+    <thead><tr><th>滞留日数</th><th>画面の印</th><th>すること</th><th>担当</th></tr></thead>
+    <tbody>
+      <tr><td>3日以上</td><td><span class="stayb wn">黄</span></td><td>週1回まとめて催促し、コメントに記録する（OP-19）</td><td>受付担当</td></tr>
+      <tr><td>7日以上</td><td><span class="stayb al">赤</span></td><td>承認者の上長へ知らせる。週次定例で理由と次の行動を決める</td><td>受付担当 → 承認者の上長</td></tr>
+    </tbody>
+  </table></div>
+  <div class="prop">上の扱い（BR-21）は提案です。しきい値（3日／7日）と催促の方法は、MVP の実績を見て G3 で確定します（Q-15）。正式版詳細仕様書の監視しきい値「承認待ち滞留 2営業日超で承認者・受付担当へリマインド（S4）」も、あわせて見直します。</div>
+
+  <h3>OP-33　滞留の催促</h3>
+  <ol class="steps">
+    <li><div><b>一覧を作る</b>一覧画面で状態を絞り、「滞留」「次は」の列で3日以上・7日以上を拾う（CSVにしてもよい）。</div></li>
+    <li><div><b>知らせる</b>次に動かす人へ、受付番号・件名・止まっている日数・してほしいことをまとめて送る。</div></li>
+    <li><div><b>記録する</b>各依頼のコメントに「催促しました（日付）」を残す。</div></li>
+  </ol>
+
+  <h3>7-2. 開発ラインのエスカレーション（L1〜L4）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>段階</th><th>こんなとき</th><th>だれへ</th><th>決めること</th><th>目標時間（案）</th></tr></thead>
+    <tbody>
+      <tr><td><b>L1</b> 自動</td><td>CIの失敗が1〜2回</td><td>実装AI・ワークフロー制御</td><td>上限内で自動修正・再検証</td><td>即時</td></tr>
+      <tr><td><b>L2</b> 開発</td><td>同じ原因で3回失敗、または60分を超えた</td><td>開発ライン運用担当・受付担当</td><td>原因の切り分け、タスクの分割、仕様の明確化</td><td>4時間以内</td></tr>
+      <tr><td><b>L3</b> 承認</td><td>修正が合計6回、予算の80%、CIの保護を変える必要がある</td><td>承認者・工場の管理責任者</td><td>続ける・範囲を変える・やめる</td><td>1営業日以内</td></tr>
+      <tr><td><b>L4</b> 重大</td><td>予算の100%、重大なセキュリティ問題、本番への影響</td><td>工場の管理責任者・基盤・セキュリティ担当・業務責任者</td><td>停止・復旧・公表</td><td>2時間以内</td></tr>
+    </tbody>
+  </table></div>
+  <p class="sub">修正の上限（同じ原因3回・合計6回・1タスク2時間・1タスク5,000円など）は（案）で、Q-05 で確定します。 <span class="src">S8</span></p>
+
+  <h3>OP-34　止まったときの記録と再開</h3>
+  <ol class="steps">
+    <li><div><b>記録する</b>止まった理由、失敗した検査、残っている作業、次に判断してほしいこと、使った回数・時間・費用を記録する。</div></li>
+    <li><div><b>判断する</b>受付担当は、注文書の見直し・タスクの分割・人による修正・見送りのどれにするかを決める（L3なら承認者が決める）。</div></li>
+    <li><div><b>再開する</b>再開は人の指示で行う。回数のカウントは、承認の取り直しか人の明示の許可があったときだけ戻す。</div></li>
+  </ol>
+
+  <h3>7-3. すぐ人へ上げること</h3>
+  <ul>
+    <li><b>赤信号の判断にAIが入りこんでいる疑い</b> → ただちに作業を止め、工場の管理責任者と承認者へ</li>
+    <li><b>「必ず人に聞くこと」に当たる変更</b> → 承認者へ（必要なら技術者・工場の管理責任者も）</li>
+    <li><b>セキュリティの疑い</b>（カギの混入、許可していない宛先への通信など） → DX推進部（基盤・セキュリティ）へ</li>
+    <li><b>本番の障害</b> → 8章の手順で</li>
+  </ul>
+</section>
+
+<!-- ============ 8 ============ -->
+<section class="sec" id="s8">
+  <h2><span class="no">8</span>障害対応</h2>
+  <p class="sub">本番で困ったことが起きたとき、重さに応じて、だれが・いつまでに動くかを決めます。（MVP以降に適用。試作では 16章を見てください）</p>
+
+  <h3>8-1. 重大度と目標時間（案）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>重大度</th><th>どんなとき</th><th>最初の対応</th><th>復旧の目標</th><th>報告</th></tr></thead>
+    <tbody>
+      <tr><td><b>S1 重大</b></td><td>本番が止まった、データ漏えいの疑い、重大な脆弱性、監査ログの異常</td><td>15分以内</td><td>4時間以内</td><td>すぐに電話＋当日中に報告書</td></tr>
+      <tr><td><b>S2 高</b></td><td>主要な機能が止まった、承認・公開ができない、セキュリティ（高）</td><td>30分以内</td><td>1営業日以内</td><td>当日中に共有</td></tr>
+      <tr><td><b>S3 中</b></td><td>一部の不具合、遅い、CIやジョブが止まった</td><td>2時間以内</td><td>3営業日以内</td><td>週次で共有</td></tr>
+      <tr><td><b>S4 低</b></td><td>表示の乱れ、軽い不具合、改善の要望</td><td>1営業日以内</td><td>次のリリース</td><td>月次で共有</td></tr>
+    </tbody>
+  </table></div>
+  <p>対応時間は平日 8:00〜19:00、S1 だけは24時間365日です（正式な窓口と当番は Q-18 で決定）。 <span class="src">S8</span></p>
+
+  <h3>8-2. 見張りのしきい値（案）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>見張るもの</th><th>しきい値</th><th>重大度</th><th>だれが・何をする</th></tr></thead>
+    <tbody>
+      <tr><td>受付画面のエラー率</td><td>5分間で5%超</td><td>S2</td><td>運用・開発</td></tr>
+      <tr><td>受付画面の応答</td><td>P95が3秒超（1分間）</td><td>S3</td><td>運用・開発</td></tr>
+      <tr><td>状態の反映の遅れ</td><td>5秒超が続く</td><td>S3</td><td>開発（イベント・キューの滞留を確認）</td></tr>
+      <tr><td>承認待ちの滞留</td><td>2営業日超</td><td>S4</td><td>承認者・受付担当（催促、7章）</td></tr>
+      <tr><td>CIの連続失敗</td><td>同じPRで3回</td><td>S3</td><td>開発・ワークフロー制御（L2）</td></tr>
+      <tr><td>ジョブの停止</td><td>上限到達・予算100%</td><td>S3</td><td>承認者・管理者（L3/L4）</td></tr>
+      <tr><td>本番のエラー率</td><td>5分間で1%超</td><td>S1</td><td>運用・管理者・セキュリティ担当（元に戻すか判断）</td></tr>
+      <tr><td>重大な脆弱性の検出</td><td>1件以上</td><td>S1</td><td>修正期限を決める。必要なら公開停止</td></tr>
+      <tr><td>シークレットの検出</td><td>1件以上</td><td>S1</td><td>無効化・入れ替え・履歴の確認</td></tr>
+      <tr><td>監査ログの検証失敗</td><td>ハッシュ不一致1件以上</td><td>S1</td><td>内部監査・管理者（証跡の保全）</td></tr>
+      <tr><td>予算の消化率</td><td>80%／100%</td><td>S3／S2</td><td>管理者（13章）</td></tr>
+      <tr><td>バックアップの失敗</td><td>1回以上</td><td>S2</td><td>再実行・手動取得</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>OP-35　障害が起きたとき</h3>
+  <ol class="steps">
+    <li><div><b>記録する</b>起票し、重大度・影響の範囲・起きた時刻を書く。</div></li>
+    <li><div><b>広げない</b>必要なら公開・デプロイ・権限を止める。証跡（ログ）を保全する。</div></li>
+    <li><div><b>上げる</b>S1 はサービスオーナーと基盤・セキュリティ担当へすぐ。S2 は管理者へ。S3 は開発ライン運用担当へ。</div></li>
+    <li><div><b>戻す</b>PRに書いた復旧方法で戻す（アプリは直前の承認済み成果物へ30分以内（案）、設定は15分以内（案））。時刻と方法を記録する。</div></li>
+    <li><div><b>知らせる</b>利用者へ状況を知らせる。社外への発表は広報・法務の承認を得る。</div></li>
+    <li><div><b>学ぶ</b>原因を分析し、再発防止を新しい依頼（「不具合の報告」）として受付に登録する。<strong>個人の責任追及ではなく、仕組みを直す</strong>ための振り返りにする。</div></li>
+  </ol>
+
+  <h3>OP-36　データ漏えいの疑い</h3>
+  <ol class="steps">
+    <li><div><b>止める</b>疑いのある接続を遮断し、証跡を保全する。</div></li>
+    <li><div><b>知らせる</b>DX推進部（基盤・セキュリティ）へすぐ連絡する（S1）。</div></li>
+    <li><div><b>範囲を調べる</b>どの情報が、だれに、どれだけ見えたかを特定する。</div></li>
+    <li><div><b>報告を判断する</b>個人情報保護法と社内規程に従い、法務・広報と報告の要否を決める。</div></li>
+  </ol>
+  <div class="warn">本番データ・発注者から預かった図面・作業員名簿・現場の位置情報・写真の原本を、開発・検証・AIの作業場へ持ち込んだ場合は、<b>重大なインシデント</b>として扱います。</div>
+
+  <h3>OP-47　受付が止まったときの暫定受付</h3>
+  <ol class="steps">
+    <li><div><b>代わりに受ける</b>受付アプリが止まったときは、受付用紙・メールで依頼を受け付ける。</div></li>
+    <li><div><b>後で登録</b>復旧したら受付担当が代わりに登録する。<span class="b must">本番</span>では、依頼者（起票者）と実際に操作した人は分けて記録される。</div></li>
+    <li><div><b>ほかが止まったとき</b>GitHub が止まったら「投入待ち」として記録し、復旧後に再実行する。AIのエージェントが使えないときは、人の手による実装・検証に切りかえる。</div></li>
+  </ol>
+</section>
+
+<!-- ============ 9 ============ -->
+<section class="sec" id="s9">
+  <h2><span class="no">9</span>変更管理</h2>
+  <p class="sub">変えるときは、影響を確かめ、承認を取り、記録を残します。工場（ライン）そのもののルールも同じです。</p>
+
+  <div class="tw"><table>
+    <thead><tr><th>種類</th><th>例</th><th>手順</th><th>承認</th><th>実施できるとき</th></tr></thead>
+    <tbody>
+      <tr><td><b>標準変更</b></td><td>決められた手順での依頼データの修正、カタログの軽い表記の修正</td><td>手順どおり実施 → 記録</td><td>受付担当</td><td>業務時間内</td></tr>
+      <tr><td><b>通常変更</b></td><td>アプリのリリース、設定、CI定義、権限</td><td>申請 → 影響の確認 → レビュー → 承認 → 実施 → 確認</td><td>管理者＋承認者</td><td>公開できる時間帯</td></tr>
+      <tr><td><b>緊急変更</b></td><td>障害の暫定対応</td><td>暫定で適用 → 事後に承認 → 恒久対応を依頼として登録</td><td>管理者＋業務責任者</td><td>いつでも（記録は必須）</td></tr>
+      <tr><td><b>工場の変更</b></td><td>CI・権限・標準・注文書のひな形・信号ルール・カタログ・本書を含む4冊の文書</td><td>申請 → 影響の確認 → レビュー → 承認 → 周知 → 版の更新</td><td>工場の管理責任者＋承認者</td><td>計画して</td></tr>
+    </tbody>
+  </table></div>
+  <p>決算・繁忙期・大型連休などは<b>凍結期間</b>とし、前もって知らせたうえで、緊急変更だけを認めます（サービスオーナーが決める）。 <span class="src">S8</span></p>
+
+  <h3>OP-37　変更の記録に書くこと</h3>
+  <p>変更ID・種類、目的・理由、影響の範囲、実施手順と戻し方、承認（だれが・いつ・条件）、結果（日時・確認した人・残った課題）。</p>
+
+  <h3>OP-38　工場（ライン）そのものの変更</h3>
+  <ol class="steps">
+    <li><div><b>依頼にする</b>CI定義・保護ルール・権限・注文書のひな形・信号ルール・カタログの変更を、依頼として受付に登録する。</div></li>
+    <li><div><b>影響を確かめる</b>変更で弱くなる検査や、広がる権限がないかを確かめ、PRに書く。</div></li>
+    <li><div><b>承認する</b>工場の管理責任者が承認する。合格の条件を削る・弱める内容を含むときは内部監査にも知らせる <span class="src p">提案</span>。</div></li>
+    <li><div><b>反映して残す</b>PR経由で反映し、変更履歴を残す。カタログの変更は依頼画面に反映し、関係者へ知らせる。</div></li>
+  </ol>
+  <div class="note">実装AIは、CIの定義・保護ルール・セキュリティ検査を変えられません。変えようとするPRは承認待ちで止まります。これは「検査を弱めて合格にする」ことを防ぐためです。</div>
+</section>
+
+<!-- ============ 10 ============ -->
+<section class="sec" id="s10">
+  <h2><span class="no">10</span>バックアップと復元</h2>
+  <p class="sub">データを失わないための決まりです。目標は、止まってから4時間以内に戻し（RTO）、失うデータは1時間分まで（RPO）とします（案）。</p>
+
+  <div class="tw"><table>
+    <thead><tr><th>対象</th><th>取り方・頻度（案）</th><th>保管（案）</th><th>RTO／RPO（案）</th></tr></thead>
+    <tbody>
+      <tr><td>受付データベース</td><td>毎日フル＋変更前のスナップショット</td><td>日次30日・月次1年</td><td>4時間／1時間</td></tr>
+      <tr><td>監査ログ</td><td>追記型ストレージの複製・オブジェクトロック</td><td>7年</td><td>4時間／15分</td></tr>
+      <tr><td>添付ファイル</td><td>オブジェクトストレージのバージョン管理</td><td>依頼と同じ</td><td>4時間／1時間</td></tr>
+      <tr><td>設定・マスタ（カタログなど）</td><td>Gitで版管理</td><td>無期限</td><td>1時間／0</td></tr>
+      <tr><td>CI・リリースの証跡</td><td>CI基盤で保持＋監査基盤へ転送</td><td>90日以上／7年</td><td>（参照用のため復旧対象外）</td></tr>
+    </tbody>
+  </table></div>
+  <p class="sub">出典：正式版詳細仕様書 8.7・10.6 <span class="src">S8</span>。<span class="b should">試作</span>では、データは各ブラウザの中にしかないため、「JSONで書き出す」で保存したファイルがバックアップになります（OP-18）。</p>
+
+  <h3>OP-39　バックアップの確認とリストア検証</h3>
+  <ol class="steps">
+    <li><div><b>毎日</b>自動バックアップの結果を確かめる。失敗していたら再実行し、だめなら手動で取る（S2）。</div></li>
+    <li><div><b>毎月（案）</b>隔離した環境に戻してみて、件数・ハッシュ・主な業務が動くことを確かめる。</div></li>
+    <li><div><b>記録</b>結果を運用記録と監査ログに残す。</div></li>
+  </ol>
+
+  <h3>OP-40　復旧の手順（演習も同じ）</h3>
+  <ol class="steps">
+    <li><div><b>範囲を決める</b>影響の範囲を特定し、作業を止めるか判断する（インシデントとして記録）。</div></li>
+    <li><div><b>時点を選ぶ</b>戻すバックアップの時点を決め、ハッシュと件数で整っていることを確かめる。</div></li>
+    <li><div><b>試す</b>隔離した環境で戻してみて、動作と整合を確かめる。</div></li>
+    <li><div><b>本番に戻す</b>本番を戻し、業務担当に動作を確かめてもらう。</div></li>
+    <li><div><b>再発を防ぐ</b>原因を分析し、再発防止を依頼として登録する。</div></li>
+    <li><div><b>記録する</b>かかった時間（RTOの実績）を監査ログと指標に残す。</div></li>
+  </ol>
+  <p>復旧訓練は<b>四半期に1回（案）</b>、<b>本番データを使わず</b>隔離した環境で行います（正式版要件定義書の「復旧訓練 四半期」による。正式版詳細仕様書の「年1回以上」という下限も満たします）。 <span class="src">S7</span><span class="src">S8</span>Staging では本番と同じ条件で演習し、RTO・RPO を実測します（<a href="みらいSF%20フェーズ計画書%20V1.0.html">フェーズ計画書</a>）。</p>
+</section>
+
+<!-- ============ 11 ============ -->
+<section class="sec" id="s11">
+  <h2><span class="no">11</span>アカウントと権限</h2>
+  <p class="sub">だれが何をできるかは、Microsoft Entra ID と承認者マスタで決めます。権限は必要な分だけ、必要な間だけにします。</p>
+
+  <h3>11-1. Entra ID のグループと役割（考え方）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>役割</th><th>できること（要約）</th><th>与えないこと</th></tr></thead>
+    <tbody>
+      <tr><td>依頼者</td><td>自分の依頼の登録・編集（受付・差戻しのとき）、コメント、閲覧</td><td>承認、完了にする、色の決定、ほかの人の依頼を動かす</td></tr>
+      <tr><td>受付担当</td><td>内容確認、編集、状態の変更（承認済み・完了を除く）、注文書の作成</td><td>承認、完了にする、色の決定</td></tr>
+      <tr><td>承認者</td><td>色の決定、承認・差戻し・見送り、マージ承認、公開承認（自分が承認者の依頼）</td><td>承認なしの本番反映、品質ゲートの無効化、自分で指示した実装の自己承認</td></tr>
+      <tr><td>技術者</td><td>黄・赤に関わる内容の確認</td><td>－</td></tr>
+      <tr><td>管理者（DX推進部）</td><td>利用者・権限・カタログ・設定の管理、CSV・JSONの書き出し</td><td>承認者の判断の代行（業務責任者が指名した代理承認を除く）</td></tr>
+      <tr><td>内部監査</td><td>監査ログの閲覧、統制の検証</td><td>開発・承認の実行</td></tr>
+    </tbody>
+  </table></div>
+  <p>Entra ID のどのグループをどの役割に対応づけるかは Q-13 で決め、PoC で確かめます。管理者・承認者は多要素認証（MFA）を必須にします（案）。管理者の権限は常に持たせず、必要なときだけ付けます。 <span class="src">S7</span><span class="src">S8</span></p>
+
+  <h3>OP-41　入社・異動・退職</h3>
+  <ol class="steps">
+    <li><div><b>入社</b>Entra ID のアカウントができたら、所属部署のグループに入れる。承認者・技術者になる人は、承認者マスタに登録する（部署ごとの承認者は Q-07）。</div></li>
+    <li><div><b>異動・兼務</b>組織マスタの有効期間を更新する。承認者だった人の承認待ちの依頼は、新しい承認者へ付けかえ、履歴に残す。</div></li>
+    <li><div><b>退職</b>Entra ID のアカウントが止まると、受付ステーションも使えなくなる。承認者マスタから外し、持っていた承認待ちを付けかえる。</div></li>
+    <li><div><b>記録</b>権限・役割の変更は、管理者＋業務責任者の承認で行い、前後・理由・承認者・日時を監査ログに残す。役割の自己付与はできない。</div></li>
+  </ol>
+
+  <h3>OP-42　権限の棚卸し（四半期）</h3>
+  <ol class="steps">
+    <li><div><b>一覧を出す</b>役割ごとの利用者一覧と、期限付き権限の一覧を出す。</div></li>
+    <li><div><b>照らし合わせる</b>人事の異動・退職情報と照らし合わせ、不要な権限・期限切れの権限を外す。</div></li>
+    <li><div><b>確かめる</b>内部監査が結果を確かめ、記録を残す。あわせて監査ログの改ざん検知（ハッシュの検証）を行う。</div></li>
+  </ol>
+</section>
+
+<!-- ============ 12 ============ -->
+<section class="sec" id="s12">
+  <h2><span class="no">12</span>データの保存と監査対応</h2>
+  <p class="sub">記録は消さずに残し、あとから「だれが・いつ・何を・どの対象に」を説明できるようにします。</p>
+
+  <h3>12-1. 保存・取消・廃棄の決まり</h3>
+  <div class="tw"><table>
+    <thead><tr><th>データ</th><th><span class="b should">試作</span></th><th><span class="b must">本番</span></th><th>保存期間（案）</th></tr></thead>
+    <tbody>
+      <tr><td>依頼・履歴・コメント・承認</td><td>ブラウザの中</td><td>受付データベース（アクセス制御・暗号化）</td><td>完了後7年</td></tr>
+      <tr><td>添付ファイル</td><td>ファイル名と大きさだけ</td><td>文書管理（SharePoint など、Q-17）へ保存し、受付からリンク</td><td>依頼と同じ</td></tr>
+      <tr><td>注文書（YAML）</td><td>画面の表示のみ</td><td>受付データベース＋Git</td><td>7年</td></tr>
+      <tr><td>監査ログ</td><td>記録しない</td><td>追記型（ハッシュの鎖）</td><td>7年</td></tr>
+      <tr><td>下書き</td><td>ブラウザの中に1つ</td><td>利用者ごとにサーバ側（本人だけ）</td><td>Q-14 で決定</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li>保存期間は Q-09 で確定します。<b>決まるまでは削除しません。</b></li>
+    <li><span class="b must">本番</span>では依頼を削除せず、「取消」の状態にして理由と履歴を残します（一覧では非表示、表示切替で見られる）。</li>
+    <li>保存期間を過ぎたデータの削除は、年1回、管理者の承認と記録をつけて行います（OP-43）。監査ログは保存期間（7年（案）、Q-09）のあいだは削除せず、期間を過ぎた分も内部監査の確認を経てから扱いを決めます。</li>
+    <li>工事写真・検査記録の原本は書きかえられない形で保存し、撮影日時・撮影場所は登録後に変えられません。</li>
+  </ul>
+
+  <h3>OP-43　取消と廃棄</h3>
+  <ol class="steps">
+    <li><div><b>取消</b>受付担当・承認者が、理由を書いて「取消」にする（本番）。データと履歴は残る。</div></li>
+    <li><div><b>廃棄の候補を出す</b>年1回、保存期間を過ぎたデータの一覧を出す。</div></li>
+    <li><div><b>承認して消す</b>管理者と内部監査が確かめ、承認つきで削除し、削除した記録を残す。</div></li>
+  </ol>
+
+  <h3>OP-44　監査対応（証跡の出し方）</h3>
+  <ol class="steps">
+    <li><div><b>範囲を聞く</b>監査の対象（期間・部署・依頼・操作の種類）を確かめる。</div></li>
+    <li><div><b>出す</b>（FR-56 トレーサビリティの維持）受付番号をたどると、依頼 → 注文書の版 → Issue → PR → CIの結果 → 承認（対象のコミット）→ 公開の記録まで、同じ番号（相関ID）でつながっています。監査ログは内部監査・管理者だけが検索でき、検索したことも記録されます。</div></li>
+    <li><div><b>対応表を見せる</b>統制との対応表（NIST SSDF の PO・PS・PW・RV、ISO/IEC 27001:2022 附属書A、J-SOX IT全般統制）を示す。詳しくは要件定義書・詳細仕様書。</div></li>
+    <li><div><b>指摘を直す</b>指摘は改善の依頼として受付に登録し、直ったかどうかを追う。</div></li>
+  </ol>
+  <div class="tw"><table>
+    <thead><tr><th>監査で見せるもの</th><th>どこにあるか</th></tr></thead>
+    <tbody>
+      <tr><td>依頼・承認・状態変更の記録（だれが・いつ・役割・メモ）</td><td>受付の変更履歴、監査ログ</td></tr>
+      <tr><td>信号の色の決定（候補・決定・理由・赤の確認・承認前チェックの確認）</td><td>受付の変更履歴（例：「信号の色を「青」に決定（候補は「黄」）／（理由）」）</td></tr>
+      <tr><td>検査の結果とPRの判断材料10項目</td><td>GitHub（PR・CIの記録）</td></tr>
+      <tr><td>マージと公開の承認（対象のコミット・成果物）</td><td>PR、リリースの記録、監査ログ</td></tr>
+      <tr><td>権限・役割の変更</td><td>監査ログ</td></tr>
+      <tr><td>書き出し・取り込み</td><td>監査ログ（本番）</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============ 13 ============ -->
+<section class="sec" id="s13">
+  <h2><span class="no">13</span>費用の管理と指標の報告</h2>
+  <p class="sub">お金と成果を数字で見て、良くなっているかを確かめます。数字は個人の評価には使いません。</p>
+
+  <h3>13-1. 費用の管理</h3>
+  <ul>
+    <li>AI・CI・環境の費用は、案件とタスクごとに月次で見える化します。</li>
+    <li>予算の<b>80%で警告</b>、<b>100%で自動停止</b>します（案）。1タスクの上限は5,000円（案）。月の費用上限は Q-05、費用の配り方は Q-19 で決めます。</li>
+    <li>ものさしの「月あたり削減見込み」と実際の費用を、四半期ごとに比べます。予算はフェーズ（ゲート）ごとに承認します。</li>
+  </ul>
+
+  <h3>OP-45　予算の上限に近づいたとき</h3>
+  <ol class="steps">
+    <li><div><b>80%</b>警告が来たら、受付担当がその案件の残りの作業と見込みを確かめ、承認者に知らせる（L3）。</div></li>
+    <li><div><b>100%</b>自動で止まる。理由と使った額を記録し、承認者が「続ける（予算の追加）・範囲を変える・やめる」を決める。</div></li>
+  </ol>
+
+  <h3>13-2. 集める指標</h3>
+  <div class="tw"><table>
+    <thead><tr><th>ID</th><th>指標</th><th>目標（案）</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="3"><b>全社の指標（ラインの効き目）</b></td></tr>
+      <tr><td class="id">KPI-01</td><td>要望の確定からPR提出までの時間</td><td>MVPで実測してから決める</td></tr>
+      <tr><td class="id">KPI-02</td><td>人のレビュー・手直しの時間</td><td>実測後に決める（減っていく傾向）</td></tr>
+      <tr><td class="id">KPI-03</td><td>合格の条件を満たした割合（公開前）</td><td>100%</td></tr>
+      <tr><td class="id">KPI-04</td><td>差戻し・再試行の回数</td><td>減っていく傾向</td></tr>
+      <tr><td class="id">KPI-05</td><td>マージ後の不具合と本番への影響</td><td>重大0件</td></tr>
+      <tr><td class="id">KPI-06</td><td>完了タスクあたりの AI・CI・環境の費用</td><td>予算内（80%警告・100%停止）</td></tr>
+      <tr><td class="id">KPI-07</td><td>承認待ちの時間</td><td>実測後に決める</td></tr>
+      <tr><td class="id">KPI-08</td><td>途中で止まった作業の再開成功率</td><td>95%以上</td></tr>
+      <tr class="grp"><td colspan="3"><b>建設土木の指標（現場での効き目）</b></td></tr>
+      <tr><td class="id">KPI-F1</td><td>現場の事務時間（写真整理・日報など）</td><td rowspan="8">MVPで実測してから決める（Q-12）</td></tr>
+      <tr><td class="id">KPI-F2</td><td>困りごとから使えるまでの日数</td></tr>
+      <tr><td class="id">KPI-F3</td><td>現場での利用率</td></tr>
+      <tr><td class="id">KPI-F4</td><td>提出書類の手戻り</td></tr>
+      <tr><td class="id">KPI-F5</td><td>使い始めてからの不具合</td></tr>
+      <tr><td class="id">KPI-F6</td><td>信号ルールの守られ方（赤の判断にAIが入りこんでいないか）</td></tr>
+      <tr><td class="id">KPI-F7</td><td>1件あたりの費用</td></tr>
+      <tr><td class="id">KPI-F8</td><td>現場の声（「助かった」「ここが困る」の数と中身）</td></tr>
+      <tr class="grp"><td colspan="3"><b>受付の使いやすさの指標</b></td></tr>
+      <tr><td class="id">KPI-U1</td><td>下書きから受付完了までの割合</td><td rowspan="4">MVPで実測してから決める</td></tr>
+      <tr><td class="id">KPI-U2</td><td>差戻しの割合と理由の内訳（理由の候補で分類）</td></tr>
+      <tr><td class="id">KPI-U3</td><td>状態ごとの平均滞留日数、3日以上止まっている件数</td></tr>
+      <tr><td class="id">KPI-U4</td><td>承認前チェックの△の件数の推移</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>OP-46　指標の集計と報告（毎月）</h3>
+  <ol class="steps">
+    <li><div><b>集める</b>受付の履歴（状態変更の日時・差戻しのメモ・承認前チェックの記録）、GitHub の記録（PR・CI）、費用の記録から、月1回集計する。<span class="b should">試作</span>では一覧の CSV（受付日時・更新日時・状態・信号）で集計できる。</div></li>
+    <li><div><b>まとめる</b>目標（案）と比べ、悪くなったものに原因と行動を付ける。</div></li>
+    <li><div><b>報告する</b>月次の品質・費用レビュー（OP-32）で報告し、四半期のゲート判定の材料にする。</div></li>
+  </ol>
+</section>
+
+<!-- ============ 14 ============ -->
+<section class="sec" id="s14">
+  <h2><span class="no">14</span>フェーズごとの運用の違い</h2>
+  <p class="sub">PoC から運用・改善まで、段階ごとに運用の重さを変えます。各フェーズの終了条件とゲートは<a href="みらいSF%20フェーズ計画書%20V1.0.html">フェーズ計画書</a>が正本です。</p>
+
+  <figure><div class="figwrap">
+    <svg viewBox="0 0 960 170" role="img" aria-label="6フェーズの流れ">
+      <defs><marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ar"/></marker></defs>
+      <rect x="10" y="30" width="118" height="64" rx="10" class="ai" stroke-width="1.5"/><text x="69" y="56" text-anchor="middle" class="t" font-size="14" font-weight="700">PoC</text><text x="69" y="76" text-anchor="middle" class="tm" font-size="11">技術的に成立？</text>
+      <rect x="144" y="30" width="96" height="64" rx="10" class="hu" stroke-width="1.5"/><text x="192" y="56" text-anchor="middle" class="t" font-size="14" font-weight="700">Go/No-Go</text><text x="192" y="76" text-anchor="middle" class="tm" font-size="11">G1</text>
+      <rect x="256" y="30" width="118" height="64" rx="10" class="ci" stroke-width="1.5"/><text x="315" y="56" text-anchor="middle" class="t" font-size="14" font-weight="700">Prototype</text><text x="315" y="76" text-anchor="middle" class="tm" font-size="11">理解・操作できる？</text>
+      <rect x="390" y="30" width="118" height="64" rx="10" class="ac" stroke-width="1.5"/><text x="449" y="56" text-anchor="middle" class="t" font-size="14" font-weight="700">MVP</text><text x="449" y="76" text-anchor="middle" class="tm" font-size="11">本当に使われる？</text>
+      <rect x="524" y="30" width="118" height="64" rx="10" class="ci" stroke-width="1.5"/><text x="583" y="56" text-anchor="middle" class="t" font-size="14" font-weight="700">Staging</text><text x="583" y="76" text-anchor="middle" class="tm" font-size="11">安全・安定？</text>
+      <rect x="658" y="30" width="118" height="64" rx="10" class="hu" stroke-width="1.5"/><text x="717" y="56" text-anchor="middle" class="t" font-size="14" font-weight="700">Release</text><text x="717" y="76" text-anchor="middle" class="tm" font-size="11">正式に提供</text>
+      <rect x="792" y="30" width="158" height="64" rx="10" class="bx2" stroke-width="1.5"/><text x="871" y="56" text-anchor="middle" class="t" font-size="14" font-weight="700">運用・改善</text><text x="871" y="76" text-anchor="middle" class="tm" font-size="11">計測→学習→改善</text>
+      <path d="M128 62 L142 62" class="ln" stroke-width="1.5" marker-end="url(#ah3)"/>
+      <path d="M240 62 L254 62" class="ln" stroke-width="1.5" marker-end="url(#ah3)"/>
+      <path d="M374 62 L388 62" class="ln" stroke-width="1.5" marker-end="url(#ah3)"/>
+      <path d="M508 62 L522 62" class="ln" stroke-width="1.5" marker-end="url(#ah3)"/>
+      <path d="M642 62 L656 62" class="ln" stroke-width="1.5" marker-end="url(#ah3)"/>
+      <path d="M776 62 L790 62" class="ln" stroke-width="1.5" marker-end="url(#ah3)"/>
+      <rect x="10" y="120" width="112" height="32" rx="8" class="bx2" stroke-width="1.2"/><text x="66" y="141" text-anchor="middle" class="t" font-size="11.5" font-weight="700">受付（次の依頼）</text>
+      <path d="M871 94 L871 136 L124 136" class="ln" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#ah3)"/>
+      <text x="660" y="160" text-anchor="middle" class="tm" font-size="12">次のリリース：新しい依頼として受付へ戻り、G3・G4 を通って本番へ</text>
+    </svg>
+  </div><figcaption>図14-1　6フェーズの流れ（詳しくはフェーズ計画書）</figcaption></figure>
+
+  <div class="tw"><table>
+    <thead><tr><th>フェーズ</th><th>使う環境とデータ</th><th>運用のしかた</th><th>次へ進む判定（フェーズ計画書のチェック項目）</th><th>本書のどこを使うか</th></tr></thead>
+    <tbody>
+      <tr><td><b>PoC</b></td><td>AIの作業場（sandbox）と検証環境。作り物のデータだけ</td><td>DX推進部の中で、見本（FEAT-001 PC貸出申請 または SITE-001 工事写真の圏外保存）を1本通す。止まったら記録して原因を調べる。正式な受付・障害対応はまだ行わない</td><td>着手は G0（GC-01〜05）。終了は GC-11〜20 を G1 で判定</td><td>7章（L1〜L3）、9章（工場の変更）</td></tr>
+      <tr><td><b>Go / No-Go</b></td><td>－</td><td>経営層が Go／条件付きGo／No-Go／やり直し（やり直しは提案）を決め、次の予算・要員を承認する</td><td>G1（GC-11〜23）。<b>権限の境界・なりすまし命令・隔離（GC-13〜15）が未達なら条件付きGoにもしない</b> <span class="src p">提案</span></td><td>－</td></tr>
+      <tr><td><b>Prototype</b></td><td>受付ステーション試作（オフライン、ブラウザ内保存）</td><td>依頼者・受付担当・承認者の代表に操作してもらい、迷った所・かかった時間を記録する。データは JSON で保存</td><td>GC-24〜26（主要タスク完了率90%以上（案）など）。MVP 着手は G2（GC-27〜33）</td><td>第2部（OP-01〜OP-26）、16章</td></tr>
+      <tr><td><b>MVP</b></td><td>限定パイロット環境（オンプレミス想定）。本物のデータは承認された範囲だけ</td><td>DX推進部＋2〜3部署＋海のモデル現場1か所、青信号の道具から。週次定例・滞留の催促・指標の初回測定を始める</td><td>G3（GC-34〜41。業務上の受入条件8は GC-37）</td><td>6章、7章、13章、15章</td></tr>
+      <tr><td><b>Staging</b></td><td>本番と同じ条件（Entra ID、権限、データ量1,000件）。作り物のデータ</td><td>本番と同じ手順を通しで演習する：障害訓練、復旧訓練（RTO・RPOの実測）、権限テスト全件、運用手順の通し訓練</td><td>G4（GC-42〜52。システム受入共通基準7は GC-42〜48）。<b>重大な不具合0件（GC-43）と権限・監査・隔離（GC-44）は条件付きGoにしない</b></td><td>8章、10章、11章、17章（本番切替チェックリスト）</td></tr>
+      <tr><td><b>Release</b></td><td>本番</td><td>部署・支店を順に広げる段階公開（第1弾：MVP参加部署とモデル現場・その支店／第2弾：本社の本部とほかの支店・営業所／第3弾：全社 <span class="src p">提案</span>）。各弾の前に公開承認、利用者への案内、問い合わせ窓口、公開直後の安定化期間の見守り</td><td>G5 運用移行判定（GC-53〜57）</td><td>4章（OP-26）、8章、本書全体</td></tr>
+      <tr><td><b>運用・改善</b></td><td>本番</td><td>月次の指標、改善の受付（フィードバックは新しい依頼として受付へ）、定例リリース月1回＋緊急の修正 <span class="src p">提案</span>、黄信号への挑戦（OP-48）、年1回のルール・カタログの見直し</td><td>次のリリースは依頼の大きさと色（T1〜T3）に応じて G3・G4 を通る</td><td>6章、9章、13章、15章</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">PoC〜Prototype は<b>練習用のデータだけ</b>で行います。本番のデータを使えるのは Staging 以降の承認された範囲だけです（NFR-36）。</div>
+</section>
+
+<!-- ============ 15 ============ -->
+<section class="sec" id="s15">
+  <h2><span class="no">15</span>人を大切にする配慮の運用</h2>
+  <p class="sub">道具を作るときも、使うときも、働く人の権利と公正を守ります。運用で守ることを具体的にします。 <span class="src">S4</span></p>
+
+  <div class="cards">
+    <div class="card hu"><h4>働く人の情報を守る</h4><p>作業員名簿、船員や潜水士の資格・健康の情報は、必要な人だけが、必要な項目だけ見られるようにします。運用では、権限の棚卸し（OP-42）で見られる人を定期的に確かめ、AIの作業場には本物の名簿を入れません。</p></div>
+    <div class="card hu"><h4>だれも取り残さない</h4><p>外国籍の仲間向けの多言語資料は、AIの翻訳をそのまま使わず、必ず人が確認してから使います。確認した人と日付を記録します。</p></div>
+    <div class="card hu"><h4>声を上げた人を守る</h4><p>ヒヤリハットや内部通報をした人が不利にならないようにし、通報者の情報は担当者以外に見せません。障害の振り返り（OP-35）も、個人を責めず仕組みを直すために行います。</p></div>
+    <div class="card hu"><h4>協力会社と公正につきあう</h4><p>会社の人権方針やパートナーシップ構築宣言にそって、AIの点数だけで取引先を外したり、条件を決めたりしません（NFR-34）。協力会社・発注者に見せる範囲を変えるときは、人の承認を取ります（Q-23）。</p></div>
+  </div>
+  <div class="tw"><table>
+    <thead><tr><th>場面</th><th>運用でのチェック</th><th>担当</th></tr></thead>
+    <tbody>
+      <tr><td>承認のとき</td><td>「扱う情報」に個人情報があれば、見られる人の範囲が書かれているか（承認前チェックの△）</td><td>承認者</td></tr>
+      <tr><td>モデル現場の試用</td><td>試用に使うのは作り物のデータか。写っている人の了解があるか（写真）</td><td>受付担当、試し係</td></tr>
+      <tr><td>指標の報告</td><td>指標を個人の評価に使っていないか。個人の残業時間などの機微な情報を集計に出していないか</td><td>サービスオーナー</td></tr>
+      <tr><td>協力会社に関わる道具</td><td>AIの点数・順位だけで取引の可否や条件を決める機能になっていないか（そうなら赤として差戻し）</td><td>承認者、技術者</td></tr>
+      <tr><td>多言語の資料</td><td>人が確認したか、確認者と日付が残っているか</td><td>作成部署</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>OP-48　黄信号の道具の結果を使うとき</h3>
+  <p>黄信号の道具（たたき台・比べっこ・見落としチェック）は、運用・改善フェーズで、確認する技術者・担当者が部署ごとに指名されてから扱い始めます（Q-07）。道具の結果は、<b>必ず人が見てから使います</b>。 <span class="src">S3</span></p>
+  <ol class="steps">
+    <li><div><b>結果を見る</b>道具が出したたたき台・比べた結果・見落としの知らせを、指名された技術者・担当者が読む。</div></li>
+    <li><div><b>自分で決める</b>採用するか、直すか、使わないかを人が決める。道具の出した数字や順位を、そのまま判断の結論にしない。</div></li>
+    <li><div><b>残す</b>だれが確認して、どう判断したかを記録に残す（道具に確認欄がなければ、その道具の改善として依頼する）。</div></li>
+    <li><div><b>赤に近づいたら止める</b>道具が合否・金額・契約・人の処遇・安全を決める使われ方をしていたら、使うのをやめ、工場の管理責任者と承認者へ知らせる（7-3）。この様子は KPI-F6 で見続けます。</div></li>
+  </ol>
+</section>
+
+<!-- ======================= 第4部 ======================= -->
+<!-- ============ 16 ============ -->
+<section class="sec" id="s16">
+  <h2><span class="no">16</span>よくある質問とトラブル</h2>
+  <p class="sub">第4部 付録 ― 困ったときに、まずここを見てください。解決しないときは受付担当（DX推進部）へ。</p>
+
+  <div class="filter" data-for="faqTable">
+    <input type="search" placeholder="キーワードで絞り込み（例：保存、押せない、JSON）" aria-label="よくある質問の絞り込み">
+  </div>
+  <div class="tw"><table id="faqTable">
+    <thead><tr><th>こんなとき</th><th>原因</th><th>どうするか</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="3"><b>保存・下書き</b></td></tr>
+      <tr><td>画面の下に「一時的に保持されます（このブラウザでは保存できないため、閉じる前に「データ」からJSONで書き出してください）」と出る</td><td>プライベートウィンドウや、サイトデータの保存を禁止したブラウザで開いている</td><td>ふつうのウィンドウで開き直す。続けるなら、閉じる前に「データ」の「JSONで書き出す」で保存する（OP-18）。入力画面には「このブラウザでは保存できないため、閉じると入力が消えます」と出ます</td></tr>
+      <tr><td>書きかけの依頼が見当たらない</td><td>別のPC・別のブラウザで開いている／サイトデータを消した／「下書きを破棄」した／受け付けたので消えた</td><td>下書きはブラウザに1つだけです（OP-05）。受け付け済みなら一覧で件名を検索する。<span class="b must">本番</span>では利用者ごとにサーバに保存されます</td></tr>
+      <tr><td>「新しい依頼」を押しても新しく始まらない</td><td>入力中の依頼を表示している（「入力中の依頼を表示しています（新しく始めるときは「下書きを破棄」）」）、または書きかけがある</td><td>いまの下書きを「下書きを破棄」してから始める。または小窓で「破棄して新しく始める」</td></tr>
+      <tr><td>依頼の編集を始めようとしたら「書きかけの依頼があります」と出た</td><td>別の依頼の書きかけがある（下書きは1つだけ）</td><td>書きかけを残したいなら先に受け付けるか、「キャンセル」。破棄してよければ「破棄して編集する」</td></tr>
+      <tr><td>「編集していた依頼が見つかりません（削除された可能性があります）」と出た</td><td>編集の途中で、その依頼が削除された</td><td>受付担当に確認する。<span class="b must">本番</span>では削除はなく「取消」になります</td></tr>
+      <tr class="grp"><td colspan="3"><b>ボタンが押せない・選べない</b></td></tr>
+      <tr><td>カードに「→」ボタンがなく「次は（受付担当）」などと出る</td><td>その依頼は、いまあなたの番ではない（役割が違う、または自分の依頼ではない）</td><td>表示された人が動かすのを待つ。急ぐならコメントで知らせる</td></tr>
+      <tr><td>状態変更の小窓に「いまの役割（依頼者）では、この依頼の状態は変えられません。」と出る</td><td>依頼者は、自分の依頼の「差戻し→受付」「受付・差戻し→見送り」しかできない</td><td>「選べない状態とその理由」を開いて、だれができるかを見る（OP-14）</td></tr>
+      <tr><td>「「承認済み」にできるのは承認者だけです（最後は人が決めます）」と出る</td><td>承認・完了は承認者の仕事</td><td>承認者に頼む。受付担当は「承認待ち」へ進めるところまで</td></tr>
+      <tr><td>「ほかの人の依頼は動かせません（起票者：…）」と出る</td><td>依頼者は自分が起票した依頼だけ動かせる</td><td>起票した人か受付担当に頼む</td></tr>
+      <tr><td>「編集」が押せない（「いまの役割・状態では編集できません」）</td><td>依頼者は自分の依頼の「受付」「差戻し」のときだけ編集できる。完了した依頼はだれも編集できない</td><td>直したいことはコメントで受付担当へ。完了後の改善は新しい依頼（「いまある道具を良くしたい」）で出す</td></tr>
+      <tr><td>「削除」が押せない（「依頼者は削除できません」）</td><td>依頼者は削除できない</td><td>不要になったら取り下げ（OP-09）</td></tr>
+      <tr><td>承認しようとすると「承認前チェックの △ を確認して、チェックを入れてください」と出る</td><td>承認前チェックに△があり、確認の印がない</td><td>△を読み、問題なければ印を付ける。直してほしければ差戻し（OP-21）</td></tr>
+      <tr><td>「候補よりゆるい色にする理由をメモに書いてください」と出る</td><td>候補より低い色を選んだ</td><td>メモに理由を書く（OP-22）</td></tr>
+      <tr><td>「赤信号の確認にチェックしてください」と出る</td><td>赤で承認しようとして確認の印がない</td><td>範囲が「材料集め・表示」までになっているか確かめて印を付ける（OP-23）</td></tr>
+      <tr><td>「理由をメモに書いてください（候補を押すと入ります）」と出る</td><td>差戻し・見送りの理由が空</td><td>理由の候補を押すか、自分で書く（OP-15、OP-24）</td></tr>
+      <tr class="grp"><td colspan="3"><b>あなたの番・滞留</b></td></tr>
+      <tr><td>自分の依頼が「あなたの番」に出ない</td><td>依頼者の番になるのは「差戻し」と「現場試用」のときだけ。ほかの状態は別の人の番</td><td>ホームの「あなたの依頼（ほかの人の番）」で進み具合を見る（OP-06）</td></tr>
+      <tr><td>承認者なのに承認待ちが「あなたの番」に出ない</td><td>その依頼の承認者が自分ではない</td><td>詳細の「承認者」を確かめる。付けかえは受付担当へ（OP-41）</td></tr>
+      <tr><td>滞留日数が思ったより多い</td><td>日数は「受付」または最後の状態変更からの日数。編集やコメントでは数え直さない</td><td>そのままで正しい表示です。止まっている理由をコメントに残す</td></tr>
+      <tr class="grp"><td colspan="3"><b>書き出し・取り込み</b></td></tr>
+      <tr><td>「このファイルは取り込めません」と出る</td><td>受付データの形式ではない（items の一覧がない、受付番号や件名が文字でない など）</td><td>「JSONで書き出す」で作ったファイルを使う。データは変わっていません</td></tr>
+      <tr><td>JSON を取り込んだら、前のデータがなくなった</td><td>取り込みは全件の置きかえ</td><td>取り込む前に「JSONで書き出す」で保存しておく（OP-18）</td></tr>
+      <tr><td>CSV を Excel で開くと文字化けする</td><td>古い開き方をしている</td><td>ダブルクリックで開く（文字化けしない形式で書き出しています）。だめならデータの取り込み機能で UTF-8 を選ぶ</td></tr>
+      <tr><td>「書き出せませんでした」「コピーできませんでした」と出る</td><td>ブラウザがダウンロードやクリップボードを止めている</td><td>ブラウザの設定でダウンロードを許可する。コピーは YAML を選んで手でコピーする</td></tr>
+      <tr class="grp"><td colspan="3"><b>入力</b></td></tr>
+      <tr><td>「つぎへ」を押すと赤い枠でメッセージが出て進めない</td><td>必須の項目が空（例：「使う人を1つ以上選んでください」「合格の条件を1つ以上書いてください」）</td><td>メッセージの項目を入れる</td></tr>
+      <tr><td>合格の条件に「など」を書いたら△になった</td><td>「など」はあいまい語の一覧に入っている</td><td>対象を書き出す（例：「写真と動画を保存できる」）。誤検知の扱いは Q-16 で見直し中</td></tr>
+      <tr><td>添付したファイルが詳細で開けない</td><td><span class="b should">試作</span>ではファイル名と大きさだけを記録している</td><td>本物の資料は送らない。<span class="b must">本番</span>では文書管理に保存されリンクで開ける（Q-17）</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============ 17 ============ -->
+<section class="sec" id="s17">
+  <h2><span class="no">17</span>チェックリスト</h2>
+  <p class="sub">印刷して使えるチェックリストです。</p>
+
+  <h3>17-1. 毎日のチェック（受付担当・運用担当）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>✓</th><th>項目</th><th>手順</th></tr></thead>
+    <tbody>
+      <tr><td>□</td><td>ホームの「あなたの番」を確認し、黄・赤の印から処理した</td><td>OP-10</td></tr>
+      <tr><td>□</td><td>新しい受付を「内容確認中」へ進めた</td><td>OP-11</td></tr>
+      <tr><td>□</td><td>止まっているジョブ（上限・予算・必ず人に聞くこと）がない、または人へ上げた</td><td>OP-34</td></tr>
+      <tr><td>□</td><td>前日のバックアップが成功している</td><td>OP-39</td></tr>
+      <tr><td>□</td><td>セキュリティのアラート（シークレット検出・許可外の通信）がない</td><td>8-2</td></tr>
+      <tr><td>□</td><td>今日の操作で、依頼者・承認者への伝え漏れがない（コメント）</td><td>OP-30</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>17-2. 承認前チェックリスト（受付担当が承認を頼む前／承認者が承認する前）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>✓</th><th>項目</th><th>見る所</th></tr></thead>
+    <tbody>
+      <tr><td>□</td><td>合格の条件が1件以上あり、すべて「✓ 検査で確かめられる書き方です。」になっている</td><td>概要・承認前チェック</td></tr>
+      <tr><td>□</td><td>「今回は作らない」が書かれている</td><td>概要</td></tr>
+      <tr><td>□</td><td>扱う情報があれば、見られる人の範囲が書かれている。本物のデータを練習用の場所に持ち込まない</td><td>概要・守ること</td></tr>
+      <tr><td>□</td><td>協力会社・発注者が関わるなら、見せる範囲が書かれている</td><td>関わる相手</td></tr>
+      <tr><td>□</td><td>安全・品質・作業船の運航にかかわるなら、判定・出航・作業中止を道具に決めさせない作りになっている</td><td>必ず人に聞くこと・今回は作らない</td></tr>
+      <tr><td>□</td><td>赤の候補なら、範囲が「材料集め・表示」までに変わっている。変わっていなければ差戻し</td><td>信号の色の理由</td></tr>
+      <tr><td>□</td><td>候補よりゆるい色にするなら、理由（道具に含めない判断）を書いた</td><td>状態変更の小窓のメモ</td></tr>
+      <tr><td>□</td><td>注文書（YAML）の目的・対象・対象外・合格の条件・守ること・必ず人に聞くことがそろっている</td><td>注文書タブ</td></tr>
+      <tr><td>□</td><td>AIの点数や順位だけで人や取引先を決める機能になっていない</td><td>作るもの</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>17-3. 本番切替チェックリスト（10項目）</h3>
+  <p>Staging から本番へ切りかえる前に確かめます。正式版詳細仕様書の「移行判定チェックリスト」10項目を、<a href="みらいSF%20フェーズ計画書%20V1.0.html">フェーズ計画書</a>のゲートのチェック項目（GC）に対応づけています。<b>初めはすべて「未確認」</b>とし、未確認・不合格が1つでもあれば切りかえません。判定はサービスオーナー（公開承認者）、統制の項目は内部監査と DX推進部（基盤・セキュリティ）の確認が必要です。 <span class="src">S8</span></p>
+  <div class="tw"><table>
+    <thead><tr><th class="id">#</th><th>項目</th><th>対応するチェック項目</th><th>結果</th></tr></thead>
+    <tbody>
+      <tr><td class="id">1</td><td>「必須」の要件がすべて実装・検証済み（トレーサビリティ表）</td><td>GC-42</td><td>未確認</td></tr>
+      <tr><td class="id">2</td><td>受入条件充足率100%、重大な不具合0件 <b>（条件付き不可）</b></td><td>GC-43</td><td>未確認</td></tr>
+      <tr><td class="id">3</td><td>権限・監査・隔離の検証が完了（権限テスト全件合格） <b>（条件付き不可）</b></td><td>GC-44</td><td>未確認</td></tr>
+      <tr><td class="id">4</td><td>性能の目安（案）を満たす。復元訓練で RTO 4時間以内・RPO 1時間以内（案）</td><td>GC-49、GC-50</td><td>未確認</td></tr>
+      <tr><td class="id">5</td><td>運用手順・復旧手順（本書）が承認され、通し訓練を終えた</td><td>GC-45</td><td>未確認</td></tr>
+      <tr><td class="id">6</td><td>対象者別の教育資料がそろい、マスタ（19部署・118件の道具、選択肢、承認者）が整った</td><td>GC-45</td><td>未確認</td></tr>
+      <tr><td class="id">7</td><td>モデル現場で「現場で使える」と確かめ、感想を依頼として登録した</td><td>GC-36（G3 で確認済み）</td><td>未確認</td></tr>
+      <tr><td class="id">8</td><td>8つの指標の初期値を測る仕組みが動き、目標値に合意した</td><td>GC-46（目標値は GC-38）</td><td>未確認</td></tr>
+      <tr><td class="id">9</td><td>データの分類・保存・保持の設定を、内部監査・基盤セキュリティ担当が確かめた</td><td>GC-47（統制は GC-44）</td><td>未確認</td></tr>
+      <tr><td class="id">10</td><td>戻し方（切り戻しの手順・判断基準・連絡先）とサポート体制が決まった</td><td>GC-51、GC-52</td><td>未確認</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">GC-43（重大な不具合0件）と GC-44（権限・監査・隔離）は、未達のまま「条件付きGo」にはしません。ほかの目標値に未達がある場合は、理由と代わりの対策を記録し、条件付きで範囲を限って公開できます（フェーズ計画書 8章）。</div>
+
+  <h3>17-4. 試作から本番への引っ越し手順</h3>
+  <ol class="steps">
+    <li><div><b>本番の形を決める</b>受付を desknet's NEO／AppSuite で作るか、受付ステーションを本番にするか（Q-01）。</div></li>
+    <li><div><b>仕様を引き継ぐ</b>判定・計算・状態・権限・出力のルール（詳細仕様書）を引き継ぐ。仮の認証・仮のデータ・仮の権限は残さない（GC-27）。</div></li>
+    <li><div><b>マスタを整える</b>19部署・118件の道具（変わらない道具ID）、選択肢、承認者を登録する。</div></li>
+    <li><div><b>本番の環境を作る</b>Entra ID、データベース、通知、監査ログ。</div></li>
+    <li><div><b>並べて確かめる</b>試作（または手順書）と本番で同じ結果になるか突き合わせる。</div></li>
+    <li><div><b>受入テスト</b>承認者と検証担当が、該当するテストを行う。</div></li>
+    <li><div><b>切りかえる</b>受付開始を案内し、古いやり方を止める（サービスオーナー）。</div></li>
+    <li><div><b>戻し方を確かめる</b>切り戻しの手順・連絡先を確かめておく。</div></li>
+  </ol>
+  <div class="warn">試作のブラウザ内のデータ（見本の9件など）は本番へ移しません。移すのは「仕様・マスタ・見本の期待値」です。 <span class="src">S8</span></div>
+</section>
+
+<!-- ============ 18 ============ -->
+<section class="sec" id="s18">
+  <h2><span class="no">18</span>用語集</h2>
+  <p class="sub">本書に出てくる言葉の意味です。くわしくは要件定義書の用語集を見てください。</p>
+  <dl class="gl">
+    <dt>あなたの番</dt><dd>いま自分が動かす依頼。ホームの先頭に、止まっている日数の長い順に並ぶ</dd>
+    <dt>滞留日数</dt><dd>いまの状態になってからの日数。3日以上は黄、7日以上は赤の印</dd>
+    <dt>下書き</dt><dd>入力途中の依頼。試作ではこのブラウザに1つだけ自動保存される</dd>
+    <dt>承認前チェック</dt><dd>承認するときに自動で出る点検。△があれば確認の印がないと承認できない</dd>
+    <dt>信号の色</dt><dd>青＝任せる、黄＝担当者のチェック付き、赤＝AIに決めさせない。画面が候補を出し、承認者が決める</dd>
+    <dt>注文書（作業指示書）</dt><dd>AIへの作業指示を、人がレビューできる形（YAML）に書いたもの</dd>
+    <dt>合格の条件（受入条件）</dt><dd>「これができたら合格」という条件。検査機で確かめられるように書く</dd>
+    <dt>あいまい語</dt><dd>「使いやすい」「早く」など、人によって受け取り方がちがう言葉（26語）。書き換え候補が出る</dd>
+    <dt>差戻し／見送り</dt><dd>書き直しを頼むこと／今回は作らないこと。どちらも理由が必須</dd>
+    <dt>取消</dt><dd>本番での「削除」の代わり。データと履歴は残し、一覧では隠す</dd>
+    <dt>PR（提出書類）</dt><dd>「こう変えました」という提出書類。判断材料10項目と検査の結果をそろえる</dd>
+    <dt>CI（検査機）</dt><dd>変更のたびに自動で動く検査。合否はここで決める（AIの自己申告では決めない）</dd>
+    <dt>マージ／公開</dt><dd>完成版への取り込み／本番に出すこと。別々に承認する</dd>
+    <dt>ステージング</dt><dd>本番そっくりの検証の場所</dd>
+    <dt>RTO／RPO</dt><dd>止まってから元に戻すまでの目標時間／失ってよいデータの時間の幅</dd>
+    <dt>エスカレーション</dt><dd>自分で解決できないときに、決める人へ判断を上げること（L1〜L4）</dd>
+    <dt>凍結期間</dt><dd>決算・繁忙期などで、緊急の変更しかしない期間</dd>
+    <dt>Entra ID／SSO</dt><dd>会社のアカウントの仕組み／一度のサインインで複数の仕組みを使えること。本番の受付は、操作なしで利用者を識別する</dd>
+    <dt>MFA（多要素認証）</dt><dd>パスワードのほかに、スマートフォンなどでも本人を確かめること。管理者・承認者は必須（案）</dd>
+    <dt>モデル現場／試し係</dt><dd>新しい道具を最初に試す現場／そこで屋外・手袋・電波の弱い所で使ってみる人</dd>
+    <dt>ゲート（G0〜G5）／GC</dt><dd>フェーズの切れ目の判定／その判定のチェック項目（フェーズ計画書）</dd>
+    <dt>OP-xx</dt><dd>本書の操作・運用手順の番号</dd>
+  </dl>
+</section>
+
+<!-- ============ 19 ============ -->
+<section class="sec" id="s19">
+  <h2><span class="no">19</span>承認欄</h2>
+  <p class="sub">本書の手順で受付ステーションとラインを運用してよいかを判断し、記名します。</p>
+  <div class="sign">
+    <div><small>作成</small><br>DX推進部<br><br><small>日付：　　年　　月　　日</small></div>
+    <div><small>確認</small><br>業務責任者（代表）・内部監査<br><br><small>日付：　　年　　月　　日</small></div>
+    <div><small>承認</small><br>サービスオーナー（DX推進部 部長）<br><br><small>日付：　　年　　月　　日</small></div>
+  </div>
+</section>
+</main>
+</div>
+
+<footer class="ft">
+  みらいソフトウェアファクトリー 操作・運用手順書 V1.0（MSF-OPS-2026-001）｜DX推進部｜2026年10月21日<br>
+  画面の文言は受付ステーション試作 V1.0（mirai-construction-sf-intake.html）にもとづきます。（案）の値と「提案」の事項は、フェーズ計画書のゲートで確定します。製品の機能・制約は変更される場合があるため、採用時に最新の公式情報を確認してください。人名はすべて架空です。
+</footer>
+<button class="totop" id="totop" type="button" aria-label="ページの先頭へ">↑</button>
+
+<script>
+
+(function(){
+  var root=document.documentElement, KEY='mirai-sf-doc-theme';
+  try{ var t=localStorage.getItem(KEY); if(t==='light'||t==='dark') root.setAttribute('data-theme',t); }catch(e){}
+  document.getElementById('themeBtn').addEventListener('click',function(){
+    var cur=root.getAttribute('data-theme') || (window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+    var nx=cur==='dark'?'light':'dark'; root.setAttribute('data-theme',nx);
+    try{ localStorage.setItem(KEY,nx); }catch(e){}
+  });
+  var links=[].slice.call(document.querySelectorAll('#tocList a'));
+  var map={}; links.forEach(function(a){ map[a.getAttribute('href').slice(1)]=a; });
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(es){ es.forEach(function(e){ if(e.isIntersecting){ links.forEach(function(a){a.classList.remove('on');}); var a=map[e.target.id]; if(a) a.classList.add('on'); } }); },{rootMargin:'-20% 0px -70% 0px'});
+    document.querySelectorAll('section.sec').forEach(function(s){ io.observe(s); });
+  }
+  var tt=document.getElementById('totop');
+  window.addEventListener('scroll',function(){ tt.classList.toggle('show', window.scrollY>600); },{passive:true});
+  tt.addEventListener('click',function(){ window.scrollTo({top:0}); });
+  document.querySelectorAll('.filter').forEach(function(f){
+    var tb=document.getElementById(f.getAttribute('data-for')); if(!tb) return;
+    var inp=f.querySelector('input'), pr='';
+    function run(){
+      var q=inp.value.trim().toLowerCase();
+      var rows=[].slice.call(tb.querySelectorAll('tbody tr')), lastGrp=null, grpHas=false;
+      function closeGrp(){ if(lastGrp) lastGrp.style.display=grpHas?'':'none'; }
+      rows.forEach(function(r){
+        if(r.classList.contains('grp')){ closeGrp(); lastGrp=r; grpHas=false; return; }
+        var bd=r.querySelector('.b,.sig');
+        var ok=(!q||r.textContent.toLowerCase().indexOf(q)>=0)&&(!pr||(bd&&bd.textContent===pr));
+        r.style.display=ok?'':'none'; if(ok) grpHas=true;
+      });
+      closeGrp();
+    }
+    inp.addEventListener('input',run);
+    f.querySelectorAll('button').forEach(function(b){ b.addEventListener('click',function(){ pr=b.getAttribute('data-p'); f.querySelectorAll('button').forEach(function(x){x.classList.toggle('on',x===b);}); run(); }); });
+  });
+})();
+
+</script>
+</body>
+</html>

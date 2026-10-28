@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>みらいソフトウェアファクトリー 企画構想案</title>
+<style>
+:root{
+  --bg:#f5f7fa; --surface:#ffffff; --surface2:#eef2f6; --ink:#14202e; --muted:#5a6878; --line:#dce3eb;
+  --navy:#0f2a44; --navy2:#173a5c;
+  --accent:#f08a24; --accent-soft:#fff1e2;
+  --ai:#0f9d9a; --ai-soft:#e0f4f3;
+  --human:#d4553a; --human-soft:#fbe8e3;
+  --ci:#4f5bd5; --ci-soft:#e9ebfb;
+  --ok:#1f9d55; --ok-soft:#e3f5ea; --warn:#c98a12; --warn-soft:#fdf3dc; --ng:#c53030; --ng-soft:#fbe4e4;
+  --shadow:0 1px 2px rgba(15,42,68,.06),0 8px 24px rgba(15,42,68,.07);
+  --radius:14px;
+  --font:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  --mono:ui-monospace,"SFMono-Regular","Cascadia Code",Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0c131b; --surface:#131d28; --surface2:#1a2633; --ink:#e5ecf3; --muted:#98a7b6; --line:#253343;
+    --accent-soft:#3a2613; --ai-soft:#0e2e2d; --human-soft:#3a1c16; --ci-soft:#1d2147;
+    --ok-soft:#10301f; --warn-soft:#352a10; --ng-soft:#3a1616;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:64px}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);line-height:1.75;font-size:15.5px;-webkit-font-smoothing:antialiased}
+a{color:var(--ci)}
+.ico{width:1.2em;height:1.2em;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vertical-align:-.22em;flex:none}
+.wrap{max-width:1120px;margin:0 auto;padding:0 20px}
+
+/* progress + nav */
+#progress{position:fixed;top:0;left:0;height:3px;width:0;background:linear-gradient(90deg,var(--accent),var(--ai));z-index:60}
+nav.top{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--surface) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+nav.top .wrap{display:flex;align-items:center;gap:16px;height:56px}
+nav.top .brand{display:flex;align-items:center;gap:8px;font-weight:700;white-space:nowrap;color:var(--ink);text-decoration:none}
+nav.top .brand .ico{color:var(--accent);width:1.5em;height:1.5em}
+nav.top ul{display:flex;gap:2px;list-style:none;margin:0;padding:0;overflow-x:auto;scrollbar-width:none}
+nav.top ul::-webkit-scrollbar{display:none}
+nav.top li a{display:block;padding:6px 10px;border-radius:8px;font-size:13px;color:var(--muted);text-decoration:none;white-space:nowrap}
+nav.top li a.active,nav.top li a:hover{background:var(--surface2);color:var(--ink)}
+
+/* hero */
+.hero{position:relative;overflow:hidden;color:#eaf2fa;background:radial-gradient(1200px 500px at 85% -10%,#24527e 0%,transparent 60%),linear-gradient(160deg,var(--navy) 0%,#0a1e33 100%)}
+.hero::before{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);background-size:32px 32px;animation:grid 30s linear infinite;pointer-events:none}
+@keyframes grid{to{background-position:32px 32px,32px 32px}}
+.hero .gear{position:absolute;opacity:.12;stroke:#9cc4ea;fill:none;pointer-events:none}
+.hero .g1{width:360px;right:-90px;top:-80px;animation:spin 40s linear infinite}
+.hero .g2{width:200px;right:210px;top:150px;animation:spin 26s linear infinite reverse}
+@keyframes spin{to{transform:rotate(360deg)}}
+.hero .wrap{position:relative;padding-top:56px;padding-bottom:44px}
+.badge-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.06)}
+.pill.draft{border-color:var(--accent);color:#ffd2a6}
+.hero h1{font-size:clamp(30px,5.2vw,52px);line-height:1.2;margin:0 0 6px;letter-spacing:.02em}
+.hero h1 .en{display:block;font-size:.34em;letter-spacing:.24em;color:#9cc4ea;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:clamp(15px,2vw,18px);max-width:760px;color:#c9d9e9;margin:14px 0 0}
+.hero .lead b{color:#fff;background:linear-gradient(transparent 62%,rgba(240,138,36,.45) 62%)}
+
+.line{position:relative;display:grid;grid-template-columns:repeat(6,1fr);margin:40px 0 8px}
+.track{position:absolute;left:8.33%;right:8.33%;top:30px;height:4px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden}
+.track::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,rgba(240,138,36,.75) 0 12px,transparent 12px 26px);background-size:26px 4px;animation:belt 1s linear infinite}
+@keyframes belt{to{background-position:26px 0}}
+.packet{position:absolute;top:22px;width:20px;height:20px;margin-left:-10px;border-radius:6px;background:var(--accent);box-shadow:0 0 18px var(--accent);animation:move 9s ease-in-out infinite;z-index:2}
+@keyframes move{
+  0%,10%{left:8.33%;opacity:0}3%{opacity:1}
+  16%,26%{left:25%;opacity:1}
+  32%,42%{left:41.67%}
+  48%,58%{left:58.33%}
+  64%,74%{left:75%}
+  80%,92%{left:91.67%;opacity:1}
+  100%{left:91.67%;opacity:0}
+}
+.st{text-align:center;position:relative;z-index:1}
+.st .dot{width:62px;height:62px;margin:0 auto;border-radius:18px;display:grid;place-items:center;background:#132f4b;border:1.5px solid rgba(255,255,255,.18);animation:lit 9s infinite}
+.st .dot .ico{width:28px;height:28px;color:#cfe2f4}
+.st:nth-child(4) .dot{animation-delay:1.44s}.st:nth-child(5) .dot{animation-delay:2.88s}.st:nth-child(6) .dot{animation-delay:4.32s}.st:nth-child(7) .dot{animation-delay:5.76s}.st:nth-child(8) .dot{animation-delay:7.2s}
+@keyframes lit{0%,4%{border-color:rgba(255,255,255,.18);box-shadow:none}8%,16%{border-color:var(--accent);box-shadow:0 0 0 6px rgba(240,138,36,.18),0 0 24px rgba(240,138,36,.45)}22%,100%{border-color:rgba(255,255,255,.18);box-shadow:none}}
+.st .lbl{margin-top:8px;font-size:13px;font-weight:700}
+.st .who{font-size:11px;color:#9cb3c9}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:30px}
+.kpi{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:14px 16px}
+.kpi .n{font-size:30px;font-weight:800;color:#fff;line-height:1}
+.kpi .n small{font-size:14px;margin-left:2px;color:#ffc58c}
+.kpi .t{font-size:12px;color:#b6cadd;margin-top:6px}
+
+/* legend */
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:var(--muted);margin:14px 0 0}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:12px;height:12px;border-radius:4px;display:inline-block}
+.sw.ai{background:var(--ai)}.sw.hu{background:var(--human)}.sw.ci{background:var(--ci)}.sw.ac{background:var(--accent)}
+
+/* sections */
+section.sec{padding:64px 0 8px}
+.sec-h{display:flex;align-items:flex-start;gap:14px;margin-bottom:22px}
+.sec-h .num{flex:none;width:46px;height:46px;border-radius:12px;display:grid;place-items:center;background:var(--navy);color:#fff;font-weight:800;font-size:18px}
+.sec-h h2{margin:0;font-size:clamp(21px,3vw,27px);line-height:1.35}
+.sec-h p{margin:4px 0 0;color:var(--muted);font-size:14px}
+h3{font-size:18px;margin:30px 0 12px;display:flex;align-items:center;gap:8px}
+h3 .ico{color:var(--accent)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+
+.reveal{opacity:0;transform:translateY(18px);transition:opacity .7s ease,transform .7s ease}
+.reveal.in{opacity:1;transform:none}
+
+.goal{position:relative;padding:26px 26px 26px 30px;border-radius:var(--radius);background:linear-gradient(135deg,var(--accent-soft),var(--surface));border:1px solid var(--line);box-shadow:var(--shadow)}
+.goal::before{content:"";position:absolute;left:0;top:18px;bottom:18px;width:5px;border-radius:0 4px 4px 0;background:var(--accent)}
+.goal p{margin:0 0 8px;font-size:17px;font-weight:600}
+.goal p:last-child{margin:0}
+.goal .ai{color:var(--ai)}.goal .hu{color:var(--human)}
+
+.role{border-radius:var(--radius);padding:18px 20px;border:1px solid var(--line);background:var(--surface);box-shadow:var(--shadow)}
+.role h4{margin:0 0 10px;display:flex;align-items:center;gap:8px;font-size:16px}
+.role.ai h4{color:var(--ai)}.role.hu h4{color:var(--human)}
+.role .ico-b{width:36px;height:36px;border-radius:10px;display:grid;place-items:center}
+.role.ai .ico-b{background:var(--ai-soft)}.role.hu .ico-b{background:var(--human-soft)}
+ul.chk{list-style:none;padding:0;margin:0}
+ul.chk li{position:relative;padding-left:26px;margin:6px 0}
+ul.chk li::before{content:"";position:absolute;left:4px;top:.62em;width:10px;height:6px;border-left:2.4px solid var(--ok);border-bottom:2.4px solid var(--ok);transform:rotate(-45deg)}
+
+.note{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-radius:12px;font-size:14.5px;margin:16px 0}
+.note .ico{width:22px;height:22px;margin-top:2px}
+.note.info{background:var(--ci-soft);color:var(--ink)}.note.info .ico{color:var(--ci)}
+.note.warn{background:var(--warn-soft)}.note.warn .ico{color:var(--warn)}
+.note.key{background:var(--accent-soft)}.note.key .ico{color:var(--accent)}
+
+/* tables */
+.tbl{overflow-x:auto;border-radius:var(--radius);border:1px solid var(--line);background:var(--surface);box-shadow:var(--shadow)}
+table{width:100%;border-collapse:collapse;font-size:14.5px;min-width:640px}
+th,td{padding:12px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+thead th{background:var(--surface2);font-size:13px;color:var(--muted);font-weight:700;white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+tbody tr{transition:background .2s}
+tbody tr:hover{background:color-mix(in srgb,var(--surface2) 60%,transparent)}
+td.k{font-weight:700;white-space:nowrap}
+td.k .ico{color:var(--accent);margin-right:6px}
+.tag{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px;white-space:nowrap}
+.tag.hi{background:var(--ok-soft);color:var(--ok)}
+.tag.cond{background:var(--ai-soft);color:var(--ai)}
+.tag.sup{background:var(--ci-soft);color:var(--ci)}
+.tag.hu{background:var(--human-soft);color:var(--human)}
+.tag.ap{background:var(--warn-soft);color:var(--warn)}
+.meter{height:7px;border-radius:4px;background:var(--surface2);margin-top:7px;overflow:hidden;min-width:110px}
+.meter i{display:block;height:100%;width:0;border-radius:4px;transition:width 1.4s cubic-bezier(.2,.8,.2,1)}
+.in .meter i{width:var(--v)}
+.meter.hi i{background:var(--ok)}.meter.cond i{background:var(--ai)}.meter.sup i{background:var(--ci)}.meter.hu i{background:var(--human)}.meter.ap i{background:var(--warn)}
+.yes{color:var(--ok)}.no{color:var(--ng)}
+
+/* architecture flow */
+.arch{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:20px;align-items:start}
+.flow{position:relative}
+.node{position:relative;display:flex;gap:14px;align-items:flex-start;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
+.node .ib{flex:none;width:42px;height:42px;border-radius:11px;display:grid;place-items:center;background:var(--surface2)}
+.node .ib .ico{width:22px;height:22px}
+.node b{display:block;font-size:15px}
+.node small{display:block;color:var(--muted);font-size:13px;line-height:1.6}
+.node.n-ai .ib{background:var(--ai-soft);color:var(--ai)}
+.node.n-hu{border-color:color-mix(in srgb,var(--human) 45%,var(--line))}
+.node.n-hu .ib{background:var(--human-soft);color:var(--human)}
+.node.n-ci .ib{background:var(--ci-soft);color:var(--ci)}
+.node.n-ac .ib{background:var(--accent-soft);color:var(--accent)}
+.node .tagr{margin-left:auto;align-self:center}
+.conn{position:relative;height:30px;margin-left:36px;width:4px}
+.conn::before{content:"";position:absolute;inset:0;border-radius:2px;background:repeating-linear-gradient(180deg,var(--accent) 0 6px,transparent 6px 12px);background-size:4px 12px;animation:down .8s linear infinite;opacity:.8}
+.conn::after{content:"";position:absolute;bottom:-3px;left:-4px;border:6px solid transparent;border-top:7px solid var(--accent);border-bottom:0}
+@keyframes down{to{background-position:0 12px}}
+.subs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.sub{border:1px dashed var(--line);border-radius:10px;padding:8px 10px;font-size:12.5px;background:var(--surface2)}
+.sub b{font-size:13px;display:flex;align-items:center;gap:5px}
+.sub .ico{width:16px;height:16px}
+.feedback{position:absolute;right:-16px;top:40px;bottom:30px;width:14px;border:2px dashed var(--ai);border-left:0;border-radius:0 12px 12px 0;opacity:.7}
+.feedback::after{content:"";position:absolute;top:-7px;left:-8px;border:6px solid transparent;border-right:8px solid var(--ai);border-left:0}
+.side .card{padding:16px;margin-bottom:12px}
+.side h5{margin:0 0 6px;font-size:14px;display:flex;align-items:center;gap:6px}
+.side p{margin:0;font-size:13px;color:var(--muted);line-height:1.65}
+
+/* loop A */
+.loopA{display:grid;grid-template-columns:repeat(8,1fr);gap:8px;margin-bottom:16px}
+.la{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 8px;text-align:center;box-shadow:var(--shadow);transition:transform .25s}
+.la:hover{transform:translateY(-4px)}
+.la .no{display:block;font-size:11px;font-weight:800;color:var(--accent);letter-spacing:.06em}
+.la .ico{width:24px;height:24px;color:var(--navy2);margin:6px 0}
+@media (prefers-color-scheme:dark){.la .ico{color:#9cc4ea}}
+.la b{display:block;font-size:12.5px;line-height:1.45}
+.la::after{content:"";position:absolute;right:-7px;top:50%;width:6px;height:6px;border-top:2px solid var(--muted);border-right:2px solid var(--muted);transform:translateY(-50%) rotate(45deg);opacity:.6}
+.la:last-child::after{display:none}
+.step-n{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:8px;background:var(--navy);color:#fff;font-size:13px;font-weight:800;margin-right:8px}
+
+/* loop B */
+.loopB{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:20px;align-items:start}
+.stepper{position:relative;list-style:none;margin:0;padding:0}
+.stepper::before{content:"";position:absolute;left:21px;top:20px;bottom:20px;width:2px;background:var(--line)}
+.stepper li{position:relative;display:flex;gap:12px;align-items:center;padding:7px 10px 7px 0;border-radius:12px;transition:background .35s}
+.stepper .sd{position:relative;z-index:1;flex:none;width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:var(--surface);border:2px solid var(--line);transition:all .35s}
+.stepper .sd .ico{width:20px;height:20px}
+.stepper li.t-ai .sd{color:var(--ai)}.stepper li.t-hu .sd{color:var(--human)}.stepper li.t-ci .sd{color:var(--ci)}.stepper li.t-in .sd{color:var(--accent)}
+.stepper .tx{font-size:14.5px;font-weight:600;flex:1}
+.stepper .tx small{display:block;font-weight:400;color:var(--muted);font-size:12.5px}
+.stepper li.on{background:var(--surface2)}
+.stepper li.on .sd{transform:scale(1.08);box-shadow:0 0 0 5px color-mix(in srgb,currentColor 18%,transparent)}
+.stepper li.t-ai.on .sd{border-color:var(--ai)}.stepper li.t-hu.on .sd{border-color:var(--human)}.stepper li.t-ci.on .sd{border-color:var(--ci)}.stepper li.t-in.on .sd{border-color:var(--accent)}
+.stepper li.done .sd::after{content:"";position:absolute;right:-5px;bottom:-5px;width:16px;height:16px;border-radius:50%;background:var(--ok) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5 9-10'/%3E%3C/svg%3E") center/10px no-repeat}
+.ci-status{font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px;background:var(--surface2);color:var(--muted);white-space:nowrap}
+.ci-status.run{background:var(--ci-soft);color:var(--ci)}
+.ci-status.fail{background:var(--ng-soft);color:var(--ng)}
+.ci-status.pass{background:var(--ok-soft);color:var(--ok)}
+.ctrl{display:flex;gap:8px;margin-top:10px}
+button.btn{font:inherit;font-size:13px;display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:9px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}
+button.btn:hover{background:var(--surface2)}
+.persist{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.persist div{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;background:var(--surface2);font-size:13.5px;font-weight:600}
+.persist .ico{color:var(--ai)}
+
+/* yaml */
+.code{position:relative;background:#0d1b2a;color:#d6e4f0;border-radius:var(--radius);padding:18px 18px 18px 0;font-family:var(--mono);font-size:13px;line-height:1.7;overflow:auto;box-shadow:var(--shadow);counter-reset:ln}
+.code .l{display:block;padding-left:52px;position:relative;white-space:pre}
+.code .l::before{counter-increment:ln;content:counter(ln);position:absolute;left:0;width:38px;text-align:right;color:#4b6178}
+.y-k{color:#7cc7ff}.y-s{color:#ffd28a}.y-c{color:#5f7a94}.y-d{color:#f08a24}.y-h{background:rgba(212,85,58,.22);border-radius:3px}
+.copy{position:absolute;top:10px;right:10px;font-family:var(--font);font-size:12px;padding:4px 10px;border-radius:8px;border:1px solid #2c4560;background:#132a40;color:#cfe2f4;cursor:pointer}
+.vs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.vs div{padding:12px 14px;border-radius:12px;font-size:14px}
+.vs .bad{background:var(--ng-soft)}.vs .good{background:var(--ok-soft)}
+.vs b{display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:4px}
+.vs .bad b{color:var(--ng)}.vs .good b{color:var(--ok)}
+
+/* best practices */
+.bp{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.bpc{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);overflow:hidden;transition:transform .3s,box-shadow .3s}
+.bpc:hover{transform:translateY(-4px);box-shadow:0 12px 32px rgba(15,42,68,.12)}
+.bpc .big{position:absolute;right:-6px;top:-14px;font-size:84px;font-weight:900;color:var(--surface2);line-height:1;z-index:0}
+.bpc>*{position:relative;z-index:1}
+.bpc .ib{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);margin-bottom:10px}
+.bpc .ib .ico{width:22px;height:22px}
+.bpc h4{margin:0 0 8px;font-size:16px;line-height:1.45}
+.bpc ul{margin:0;padding-left:18px;font-size:13.5px;color:var(--muted)}
+.bpc li{margin:3px 0}
+
+/* PR grid */
+.prg{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.pri{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow)}
+.pri .h{display:flex;align-items:center;gap:8px;font-weight:700;font-size:14.5px;margin-bottom:6px}
+.pri .h .ico{color:var(--ci);width:20px;height:20px}
+.pri p{margin:0;font-size:13px;color:var(--muted);line-height:1.6}
+.reveal.in .pri{animation:pop .5s both}
+.reveal.in .pri:nth-child(2){animation-delay:.06s}.reveal.in .pri:nth-child(3){animation-delay:.12s}.reveal.in .pri:nth-child(4){animation-delay:.18s}.reveal.in .pri:nth-child(5){animation-delay:.24s}.reveal.in .pri:nth-child(6){animation-delay:.3s}.reveal.in .pri:nth-child(7){animation-delay:.36s}.reveal.in .pri:nth-child(8){animation-delay:.42s}
+@keyframes pop{from{opacity:0;transform:scale(.94) translateY(10px)}to{opacity:1;transform:none}}
+
+/* phases */
+.phase-bar{display:grid;grid-template-columns:repeat(5,1fr);gap:0;margin-bottom:16px;position:relative}
+.phase-bar::before{content:"";position:absolute;top:22px;left:10%;right:10%;height:3px;background:var(--line)}
+.phase-bar .fill{position:absolute;top:22px;left:10%;height:3px;background:linear-gradient(90deg,var(--accent),var(--ai));transition:width .6s ease;width:0}
+.ph{position:relative;background:none;border:0;font:inherit;color:var(--muted);cursor:pointer;text-align:center;padding:0 4px}
+.ph .c{width:46px;height:46px;border-radius:50%;margin:0 auto 6px;display:grid;place-items:center;background:var(--surface);border:2.5px solid var(--line);font-weight:800;color:var(--muted);transition:all .3s;position:relative;z-index:1}
+.ph b{display:block;font-size:13px}
+.ph small{font-size:11.5px}
+.ph.active .c,.ph.past .c{border-color:var(--accent);color:var(--accent)}
+.ph.active .c{background:var(--accent);color:#fff;box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 22%,transparent)}
+.ph.active b{color:var(--ink)}
+.phase-panel{display:none;animation:fade .45s ease}
+.phase-panel.show{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.pp{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.pp h4{margin:0 0 8px;font-size:14px;color:var(--muted);display:flex;align-items:center;gap:6px}
+.pp .v{font-size:15.5px;font-weight:600}
+.metric{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;box-shadow:var(--shadow)}
+.metric .ib{flex:none;width:38px;height:38px;border-radius:10px;display:grid;place-items:center;background:var(--ai-soft);color:var(--ai)}
+.metric span{font-size:13.5px;font-weight:600;line-height:1.55}
+.theme{display:flex;gap:12px;align-items:center}
+.theme .ib{flex:none;width:48px;height:48px;border-radius:12px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}
+.theme .ib .ico{width:24px;height:24px}
+.theme b{display:block}
+.theme small{color:var(--muted);font-size:13px}
+
+/* policy */
+.policy{list-style:none;margin:0;padding:0;counter-reset:p}
+.policy li{counter-increment:p;display:flex;gap:14px;align-items:center;padding:14px 16px;border-radius:12px;background:var(--surface);border:1px solid var(--line);margin-bottom:10px;box-shadow:var(--shadow);opacity:0;transform:translateX(-14px);transition:all .5s ease}
+.in .policy li{opacity:1;transform:none}
+.policy li::before{content:counter(p);flex:none;width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--navy);color:#fff;font-weight:800}
+.policy li .ico{margin-left:auto;color:var(--ok);width:22px;height:22px}
+.ssdf .card{border-top:4px solid var(--ci)}
+.ssdf .code-t{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--ci);background:var(--ci-soft);padding:2px 8px;border-radius:6px}
+.ssdf h4{margin:8px 0 6px;font-size:15px}
+.ssdf p{margin:0;font-size:13px;color:var(--muted)}
+.closing{margin-top:28px;padding:28px;border-radius:var(--radius);color:#eaf2fa;background:linear-gradient(135deg,var(--navy),#163e63);box-shadow:var(--shadow);position:relative;overflow:hidden}
+.closing h3{color:#fff;margin:0 0 10px}
+.closing h3 .ico{color:var(--accent)}
+.closing p{margin:0;color:#c9d9e9}
+.closing .mini{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:16px;font-size:13px}
+.closing .mini span{padding:5px 11px;border-radius:999px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2)}
+.closing .mini i{font-style:normal;color:var(--accent)}
+
+.refs{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.refs li a{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:12px;background:var(--surface);border:1px solid var(--line);text-decoration:none;color:var(--ink);font-size:13.5px;line-height:1.5}
+.refs li a:hover{border-color:var(--ci)}
+.refs .ico{color:var(--ci);margin-top:2px}
+.refs small{display:block;color:var(--muted);font-size:12px}
+footer{margin-top:64px;padding:28px 0 40px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px}
+
+@media (max-width:960px){
+  .arch,.loopB{grid-template-columns:1fr}
+  .loopA{grid-template-columns:repeat(4,1fr)}
+  .la:nth-child(4)::after{display:none}
+  .bp,.grid3{grid-template-columns:1fr 1fr}
+  .prg,.grid4{grid-template-columns:1fr 1fr}
+}
+@media (max-width:640px){
+  body{font-size:15px}
+  .wrap{padding:0 16px}
+  .grid2,.bp,.grid3,.pp,.vs,.refs{grid-template-columns:1fr}
+  .kpis{grid-template-columns:1fr 1fr}
+  .line{grid-template-columns:repeat(6,1fr)}
+  .st .dot{width:44px;height:44px;border-radius:12px}
+  .st .dot .ico{width:20px;height:20px}
+  .track{top:21px}.packet{top:14px;width:16px;height:16px;margin-left:-8px}
+  .st .lbl{font-size:11px}.st .who{display:none}
+  .loopA{grid-template-columns:1fr 1fr}
+  .la::after{display:none}
+  .subs{grid-template-columns:1fr}
+  .phase-bar .ph small{display:none}
+  .ph .c{width:38px;height:38px}
+  .phase-bar::before,.phase-bar .fill{top:18px}
+  .hero .g2{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .reveal,.policy li{opacity:1!important;transform:none!important}
+  .meter i{width:var(--v)!important}
+}
+@media print{
+  nav.top,#progress,.ctrl,.copy{display:none}
+  .reveal,.policy li{opacity:1;transform:none}
+  .meter i{width:var(--v)}
+  section.sec{break-inside:avoid-page}
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M3 13h5l2 3h4l2-3h5"/><path d="M5 5h14l2 8v6H3v-6z"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 16h6"/></symbol>
+    <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4"/><circle cx="12" cy="3.5" r="1"/><circle cx="9" cy="14" r="1.2"/><circle cx="15" cy="14" r="1.2"/><path d="M2 13v3M22 13v3"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/></symbol>
+    <symbol id="i-flask" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4.2 19A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.3-2L14 9V3"/><path d="M7 15h10"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2 20c.8-3.5 3.5-5.5 7-5.5s6.2 2 7 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .8 3.4 2.6 4 5.2"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10M18 9c0 5-7 3-11 8"/></symbol>
+    <symbol id="i-pr" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="19" r="2"/><path d="M6 7v10M18 17V9a3 3 0 0 0-3-3h-4"/><path d="M13 3l-3 3 3 3"/></symbol>
+    <symbol id="i-rocket" viewBox="0 0 24 24"><path d="M12 2c3 2 5 6 5 10l-2 5H9l-2-5c0-4 2-8 5-10z"/><circle cx="12" cy="10" r="2"/><path d="M9 17l-2 4M15 17l2 4M12 17v4"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/><path d="M6 12l3-3 3 2 4-4"/></symbol>
+    <symbol id="i-loop" viewBox="0 0 24 24"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/></symbol>
+    <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4 18a9 9 0 1 1 16 0"/><path d="M12 13l4-5"/><circle cx="12" cy="13" r="1.5"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4h12l-2 4 2 4H5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.5"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 10h8M8 13h5"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-yen" viewBox="0 0 24 24"><path d="M6 3l6 8 6-8M12 11v10M7 13h10M7 17h10"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-repo" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 3v18"/><path d="M11 8h5M11 12h5"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18h10a4 4 0 0 0 .5-8A6 6 0 0 0 6 9a4.5 4.5 0 0 0 1 9z"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7L12 6.3"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+    <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z"/></symbol>
+    <symbol id="i-factory" viewBox="0 0 24 24"><path d="M3 21V10l5 3V10l5 3V10l5 3V4h3v17z"/><path d="M7 17h2M12 17h2M17 17h1"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 4v16M16 4v16"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></symbol>
+    <symbol id="i-split" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-crane" viewBox="0 0 24 24"><path d="M6 21V5M6 5h14M6 5l4 4M12 5v6M20 5v4"/><path d="M10 11h4v3h-4z"/><path d="M3 21h8"/></symbol>
+    <symbol id="i-stamp" viewBox="0 0 24 24"><path d="M9 3h6v5l-1 3h4a2 2 0 0 1 2 2v3H4v-3a2 2 0 0 1 2-2h4L9 8z"/><path d="M4 20h16"/></symbol>
+  </defs>
+</svg>
+
+<div id="progress"></div>
+
+<nav class="top">
+  <div class="wrap">
+    <a class="brand" href="#top"><svg class="ico"><use href="#i-factory"/></svg>みらいSF</a>
+    <ul id="navlist">
+      <li><a href="#s1">構想</a></li>
+      <li><a href="#s2">実現性</a></li>
+      <li><a href="#s3">構成</a></li>
+      <li><a href="#s4">プロセス</a></li>
+      <li><a href="#s5">作業指示書</a></li>
+      <li><a href="#s6">実践原則</a></li>
+      <li><a href="#s7">PR</a></li>
+      <li><a href="#s8">導入計画</a></li>
+      <li><a href="#s9">方針</a></li>
+      <li><a href="#s10">参考</a></li>
+    </ul>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <svg class="gear g1" viewBox="0 0 200 200"><circle cx="100" cy="100" r="78" stroke-width="22" stroke-dasharray="18 13"/><circle cx="100" cy="100" r="52" stroke-width="3"/><circle cx="100" cy="100" r="18" stroke-width="3"/></svg>
+  <svg class="gear g2" viewBox="0 0 200 200"><circle cx="100" cy="100" r="76" stroke-width="22" stroke-dasharray="16 12"/><circle cx="100" cy="100" r="40" stroke-width="3"/></svg>
+  <div class="wrap">
+    <div class="badge-row">
+      <span class="pill draft"><svg class="ico"><use href="#i-doc"/></svg>企画構想案（ドラフト）</span>
+      <span class="pill"><svg class="ico"><use href="#i-clock"/></svg>2026年10月17日</span>
+      <span class="pill"><svg class="ico"><use href="#i-users"/></svg>起案：IT・DX部門</span>
+    </div>
+    <h1><span class="en">MIRAI SOFTWARE FACTORY</span>みらいソフトウェアファクトリー</h1>
+    <p class="lead">AIに開発を丸投げする仕組みではなく、<b>要望・仕様・実装・検証・承認・リリースを一つの管理された工程につなぐ「開発ライン」</b>を社内に構築する構想です。</p>
+
+    <div class="line" aria-label="開発ラインの工程">
+      <div class="track"></div>
+      <div class="packet"></div>
+      <div class="st"><div class="dot"><svg class="ico"><use href="#i-inbox"/></svg></div><div class="lbl">要望</div><div class="who">チーム</div></div>
+      <div class="st"><div class="dot"><svg class="ico"><use href="#i-doc"/></svg></div><div class="lbl">仕様</div><div class="who">AI案 → 人が確定</div></div>
+      <div class="st"><div class="dot"><svg class="ico"><use href="#i-code"/></svg></div><div class="lbl">実装</div><div class="who">AI（隔離環境）</div></div>
+      <div class="st"><div class="dot"><svg class="ico"><use href="#i-flask"/></svg></div><div class="lbl">検証</div><div class="who">CI（独立判定）</div></div>
+      <div class="st"><div class="dot"><svg class="ico"><use href="#i-stamp"/></svg></div><div class="lbl">承認</div><div class="who">人</div></div>
+      <div class="st"><div class="dot"><svg class="ico"><use href="#i-rocket"/></svg></div><div class="lbl">リリース</div><div class="who">承認付き自動化</div></div>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi"><div class="n"><span data-count="8">0</span><small>工程</small></div><div class="t">案件全体の業務検証ループ</div></div>
+      <div class="kpi"><div class="n"><span data-count="5">0</span><small>段階</small></div><div class="t">Phase 0〜4 の段階導入</div></div>
+      <div class="kpi"><div class="n"><span data-count="3">0</span><small>役割</small></div><div class="t">最小構成（実装・CI・レビュー）</div></div>
+      <div class="kpi"><div class="n"><span data-count="7">0</span><small>方針</small></div><div class="t">推奨する基本方針</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+<!-- 1 -->
+<section class="sec" id="s1">
+  <div class="sec-h"><div class="num">1</div><div><h2>構想の到達点</h2><p>「自然言語で指示できるか」ではなく「完了を機械的に判定できるか」を軸に設計する</p></div></div>
+  <div class="goal reveal">
+    <p><span class="ai">チームが機能要望を登録すると、AIが仕様案・実装計画を作成し、承認された範囲でクラウド上の実装・テスト・修正・PR作成まで進める。</span></p>
+    <p><span class="hu">人間は、業務要件の確定、重要な設計判断、最終マージ、本番公開を判断する。</span></p>
+  </div>
+  <div class="grid2" style="margin-top:16px">
+    <div class="role ai reveal">
+      <h4><span class="ico-b"><svg class="ico"><use href="#i-bot"/></svg></span>AI・自動化が担う工程</h4>
+      <ul class="chk"><li>要望の整理・不足情報の抽出</li><li>仕様案・受入条件案・実装計画の作成</li><li>隔離環境での実装・単体テスト作成</li><li>テスト失敗時の修正（上限付き）</li><li>差分レビューの支援、PR・証跡の作成</li></ul>
+    </div>
+    <div class="role hu reveal">
+      <h4><span class="ico-b"><svg class="ico"><use href="#i-user"/></svg></span>人が判断する工程</h4>
+      <ul class="chk"><li>目的・対象・受入条件の確定</li><li>認証・権限・データ境界などの重要設計</li><li>業務として正しいかの確認（利用部門）</li><li>最終マージの判断</li><li>本番公開・破壊的変更の実行許可</li></ul>
+    </div>
+  </div>
+  <div class="note key reveal"><svg class="ico"><use href="#i-spark"/></svg><div>構成・工程・判定基準は本用途に対する推奨案であり、特定製品だけで一式が完成するという意味ではありません。生成コードの正しさや安全性は保証されないため、<b>独立したテストとレビュー</b>を工程に組み込みます。</div></div>
+</section>
+
+<!-- 2 -->
+<section class="sec" id="s2">
+  <div class="sec-h"><div class="num">2</div><div><h2>実現性の評価</h2><p>領域ごとの自動化の見込みと、人との推奨境界</p></div></div>
+  <div class="tbl reveal">
+    <table>
+      <thead><tr><th>領域</th><th style="width:190px">自動化の見込み</th><th>推奨する境界</th></tr></thead>
+      <tbody>
+        <tr><td class="k"><svg class="ico"><use href="#i-inbox"/></svg>要望の整理・不足情報の抽出</td><td><span class="tag hi">高い</span><div class="meter hi"><i style="--v:88%"></i></div></td><td>AIが整理し、業務責任者が目的・対象・受入条件を確定</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-layers"/></svg>画面・API・DBの設計案</td><td><span class="tag hi">高い</span><div class="meter hi"><i style="--v:82%"></i></div></td><td>既存標準に従う変更は自動化。認証・権限・データ境界は人が確認</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-code"/></svg>実装・単体テスト作成</td><td><span class="tag hi">高い</span><div class="meter hi"><i style="--v:85%"></i></div></td><td>小さく明確なタスク単位で実行</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-flask"/></svg>結合テスト・E2Eテスト</td><td><span class="tag cond">条件付きで高い</span><div class="meter cond"><i style="--v:70%"></i></div></td><td>検証環境、テストデータ、期待結果を事前に整備</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-loop"/></svg>テスト失敗の修正</td><td><span class="tag cond">条件付きで高い</span><div class="meter cond"><i style="--v:68%"></i></div></td><td>再試行回数・時間・予算に上限を設ける</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-eye"/></svg>コードレビュー</td><td><span class="tag sup">支援に適する</span><div class="meter sup"><i style="--v:50%"></i></div></td><td>AIレビューを唯一の品質判定にしない</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-users"/></svg>業務上の妥当性の判断</td><td><span class="tag hu">人の判断を残す</span><div class="meter hu"><i style="--v:18%"></i></div></td><td>「動く」だけでなく「業務として正しい」を利用部門が確認</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-rocket"/></svg>本番公開・破壊的変更</td><td><span class="tag ap">承認付き自動化</span><div class="meter ap"><i style="--v:58%"></i></div></td><td>デプロイ作業は自動化し、実行許可を分離</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size:12.5px;color:var(--muted);margin:8px 2px 0">※ バーは自動化の見込みを相対的に示した目安で、測定値ではありません。</p>
+</section>
+
+<!-- 3 -->
+<section class="sec" id="s3">
+  <div class="sec-h"><div class="num">3</div><div><h2>推奨構成：GitHub中心の開発工場</h2><p>GitHub中心・クラウド実行・人による最終判断</p></div></div>
+  <div class="legend"><span><i class="sw ac"></i>入口・管理</span><span><i class="sw ai"></i>AI</span><span><i class="sw ci"></i>機械判定・制御</span><span><i class="sw hu"></i>人の判断</span></div>
+
+  <div class="arch" style="margin-top:16px">
+    <div class="flow reveal">
+      <div class="node n-ac"><div class="ib"><svg class="ico"><use href="#i-inbox"/></svg></div><div><b>チームの要望</b><small>受付画面／GitHub Issues／desknet's NEO・AppSuite</small></div></div>
+      <div class="conn"></div>
+      <div class="node n-ac"><div class="ib"><svg class="ico"><use href="#i-doc"/></svg></div><div><b>要望・仕様の管理</b><small>目的、受入条件、対象外、リスク、承認記録</small></div></div>
+      <div class="conn"></div>
+      <div class="node n-ci"><div class="ib"><svg class="ico"><use href="#i-gear"/></svg></div><div><b>ワークフロー制御</b><small>状態管理、タスク分割、権限、予算、再試行、停止</small></div></div>
+      <div class="conn"></div>
+      <div class="node n-ai"><div class="ib"><svg class="ico"><use href="#i-cloud"/></svg></div><div style="flex:1"><b>クラウド実行環境</b>
+        <div class="subs">
+          <div class="sub"><b style="color:var(--ai)"><svg class="ico"><use href="#i-bot"/></svg>実装エージェント</b>隔離環境でコード変更</div>
+          <div class="sub"><b style="color:var(--ci)"><svg class="ico"><use href="#i-flask"/></svg>検証ジョブ</b>ビルド、テスト、セキュリティ検査</div>
+          <div class="sub"><b style="color:var(--ai)"><svg class="ico"><use href="#i-eye"/></svg>レビューエージェント</b>差分と検証結果の確認</div>
+        </div></div></div>
+      <div class="conn"></div>
+      <div class="node n-ci"><div class="ib"><svg class="ico"><use href="#i-pr"/></svg></div><div><b>GitHub Pull Request</b><small>差分、テスト証跡、プレビュー、残存リスク</small></div></div>
+      <div class="conn"></div>
+      <div class="node n-hu"><div class="ib"><svg class="ico"><use href="#i-user"/></svg></div><div><b>人間によるマージ判断</b><small>業務上の妥当性と残存リスクを判断</small></div><span class="tag hu tagr">人</span></div>
+      <div class="conn"></div>
+      <div class="node n-hu"><div class="ib"><svg class="ico"><use href="#i-rocket"/></svg></div><div><b>ステージング検証 → 公開承認 → 本番デプロイ</b><small>マージとは別のリスク判断として公開を扱う</small></div><span class="tag hu tagr">人</span></div>
+      <div class="conn"></div>
+      <div class="node n-ai" style="position:relative"><div class="ib"><svg class="ico"><use href="#i-loop"/></svg></div><div><b>監視・障害・利用者フィードバック</b><small>次のIssueとしてラインの先頭へ戻す</small></div></div>
+    </div>
+
+    <aside class="side">
+      <div class="card reveal"><h5><svg class="ico" style="color:var(--ci)"><use href="#i-split"/></svg>判断と実行を分離</h5><p>AIの自由な会話だけで工程を進めず、ワークフロー側が実行可能な操作を制限します。判断部分・実行環境・セッション記録を分けると、権限管理と再開処理を設計しやすくなります。</p></div>
+      <div class="card reveal"><h5><svg class="ico" style="color:var(--accent)"><use href="#i-box"/></svg>まず既存製品で組む</h5><p>「既存のクラウドエージェント＋GitHub＋CI」から始め、自作するのは不足する制御部分だけにします。</p></div>
+      <div class="card reveal"><h5><svg class="ico" style="color:var(--ai)"><use href="#i-branch"/></svg>1作業＝小さな変更</h5><p>クラウドエージェントの1回の作業は、原則として1リポジトリ・1ブランチ・1PRに限られ、セッション時間にも上限があります。大きな案件は小さな変更に分割します。</p></div>
+      <div class="card reveal"><h5><svg class="ico" style="color:var(--human)"><use href="#i-db"/></svg>動く場所を分ける</h5><p>「開発エージェントが動く場所」と「完成したアプリが動く場所」を分離。Cloudflare、Neon、Supabase等は実行先・データ基盤として別途選定します。</p></div>
+    </aside>
+  </div>
+
+  <h3><svg class="ico"><use href="#i-layers"/></svg>構成要素の分担</h3>
+  <div class="tbl reveal">
+    <table>
+      <thead><tr><th>要素</th><th>推奨する役割</th></tr></thead>
+      <tbody>
+        <tr><td class="k"><svg class="ico"><use href="#i-flag"/></svg>GitHub Issues / Projects</td><td>作業要求、担当、進捗、関連PRの管理</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-repo"/></svg>Gitリポジトリ</td><td>コード、仕様、設計判断、テスト、運用手順の正本</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-flask"/></svg>GitHub Actions等のCI</td><td>毎回同じ手順で実行するビルド・検証</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-bot"/></svg>コーディングエージェント</td><td>計画、実装、テスト作成、修正、PR作成</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-gear"/></svg>ワークフロー制御層</td><td>承認待ち、停止、再開、予算、排他制御の管理</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-monitor"/></svg>プレビュー／ステージング</td><td>チームによる操作・業務確認</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-chat"/></svg>desknet's NEO / AppSuite</td><td>通知・相談・承認依頼の入口。正式な判断は対象PR等へ記録</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-rocket"/></svg>デプロイ基盤</td><td>承認済みの成果物を環境へ反映</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 4 -->
+<section class="sec" id="s4">
+  <div class="sec-h"><div class="num">4</div><div><h2>開発プロセス：二つのループ</h2><p>案件全体の「業務検証ループ」と、個々の変更を処理する「実装ループ」の二段構成</p></div></div>
+
+  <h3><svg class="ico"><use href="#i-crane"/></svg>A. 案件全体の業務検証ループ</h3>
+  <div class="loopA reveal">
+    <div class="la"><span class="no">01</span><svg class="ico"><use href="#i-flag"/></svg><b>目的・制約の整理</b></div>
+    <div class="la"><span class="no">02</span><svg class="ico"><use href="#i-monitor"/></svg><b>サンプルWebUI</b></div>
+    <div class="la"><span class="no">03</span><svg class="ico"><use href="#i-layers"/></svg><b>本番実装方針の確定</b></div>
+    <div class="la"><span class="no">04</span><svg class="ico"><use href="#i-code"/></svg><b>主要業務1本の実装</b></div>
+    <div class="la"><span class="no">05</span><svg class="ico"><use href="#i-users"/></svg><b>MVPの限定利用</b></div>
+    <div class="la"><span class="no">06</span><svg class="ico"><use href="#i-shield"/></svg><b>本番相当の検証</b></div>
+    <div class="la"><span class="no">07</span><svg class="ico"><use href="#i-rocket"/></svg><b>段階的な公開</b></div>
+    <div class="la"><span class="no">08</span><svg class="ico"><use href="#i-loop"/></svg><b>運用改善</b></div>
+  </div>
+  <div class="tbl reveal">
+    <table>
+      <thead><tr><th>工程</th><th>主な活動</th><th>人が判断する内容</th></tr></thead>
+      <tbody>
+        <tr><td class="k"><span class="step-n">1</span>目的・制約の整理</td><td>対象業務、利用者、データ、予算、禁止事項を整理</td><td><span class="tag hu">判断</span> 何を解決するか、着手するか</td></tr>
+        <tr><td class="k"><span class="step-n">2</span>サンプルWebUI</td><td>モックデータで画面・操作を確認</td><td><span class="tag hu">判断</span> 業務の流れが正しいか</td></tr>
+        <tr><td class="k"><span class="step-n">3</span>本番実装方針の確定</td><td>再利用部分と作り直す部分、認証・DB・運用を設計</td><td><span class="tag hu">判断</span> 本番用の設計を認めるか</td></tr>
+        <tr><td class="k"><span class="step-n">4</span>主要業務1本の実装</td><td>画面からDB・権限・監査まで縦に実装</td><td><span class="tag hu">判断</span> 限定利用できるか</td></tr>
+        <tr><td class="k"><span class="step-n">5</span>MVPの限定利用</td><td>実務で価値と不足を確認</td><td><span class="tag hu">判断</span> 継続・変更・中止</td></tr>
+        <tr><td class="k"><span class="step-n">6</span>本番相当の検証</td><td>権限、性能、復旧、外部連携等を確認</td><td><span class="tag hu">判断</span> 公開条件を満たしたか</td></tr>
+        <tr><td class="k"><span class="step-n">7</span>段階的な公開</td><td>対象者や機能を絞って公開</td><td><span class="tag hu">判断</span> 本番公開・拡大の可否</td></tr>
+        <tr><td class="k"><span class="step-n">8</span>運用改善</td><td>障害・利用状況・要望を次の変更へ</td><td><span class="tag hu">判断</span> 優先順位と投資判断</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note warn reveal"><svg class="ico"><use href="#i-alert"/></svg><div><b>サンプルUIが動くこと</b>と<b>本番運用に耐えること</b>は別の完了条件にします。モック認証・仮データ・仮の権限制御が本番へ残らないよう、工程③で引継ぎ可否を明示します。</div></div>
+
+  <h3><svg class="ico"><use href="#i-loop"/></svg>B. 個々の機能の自動実装ループ</h3>
+  <div class="loopB">
+    <div class="card reveal">
+      <ol class="stepper" id="stepper">
+        <li class="t-in"><span class="sd"><svg class="ico"><use href="#i-inbox"/></svg></span><span class="tx">要望受付<small>Issue／受付画面／desknet's NEO・AppSuite</small></span></li>
+        <li class="t-ai"><span class="sd"><svg class="ico"><use href="#i-bot"/></svg></span><span class="tx">AIが仕様案・受入条件・不明点を整理</span></li>
+        <li class="t-hu"><span class="sd"><svg class="ico"><use href="#i-stamp"/></svg></span><span class="tx">人が仕様を承認</span></li>
+        <li class="t-ai"><span class="sd"><svg class="ico"><use href="#i-doc"/></svg></span><span class="tx">AIが実装計画と変更範囲を作成</span></li>
+        <li class="t-ai"><span class="sd"><svg class="ico"><use href="#i-box"/></svg></span><span class="tx">隔離環境で実装<small id="impl-sub">作業ブランチのみ編集</small></span></li>
+        <li class="t-ci"><span class="sd"><svg class="ico"><use href="#i-flask"/></svg></span><span class="tx">CIによる独立検証<small>失敗 → 上限内で修正 → 再検証</small></span><span class="ci-status" id="ci-status">待機</span></li>
+        <li class="t-ai"><span class="sd"><svg class="ico"><use href="#i-pr"/></svg></span><span class="tx">AIレビュー・PR・プレビューを作成</span></li>
+        <li class="t-hu"><span class="sd"><svg class="ico"><use href="#i-eye"/></svg></span><span class="tx">人が差分・証跡・業務動作を確認</span></li>
+        <li class="t-hu"><span class="sd"><svg class="ico"><use href="#i-rocket"/></svg></span><span class="tx">マージ → ステージング → 公開承認</span></li>
+      </ol>
+      <div class="ctrl">
+        <button class="btn" id="btn-play" type="button"><svg class="ico"><use href="#i-pause"/></svg><span>一時停止</span></button>
+        <button class="btn" id="btn-reset" type="button"><svg class="ico"><use href="#i-undo"/></svg>最初から</button>
+      </div>
+    </div>
+    <div>
+      <div class="card reveal">
+        <h4 style="margin:0 0 6px;display:flex;align-items:center;gap:8px"><svg class="ico" style="color:var(--ai)"><use href="#i-db"/></svg>途中で止まっても再開できる前提</h4>
+        <p style="margin:0;font-size:14px;color:var(--muted)">長時間の開発では一度の会話に依存せず、作業状態を成果物として残します。別の実行からでも引き継げる状態を常に保ちます。</p>
+        <div class="persist">
+          <div><svg class="ico"><use href="#i-split"/></svg>機能一覧</div>
+          <div><svg class="ico"><use href="#i-gauge"/></svg>実装状態</div>
+          <div><svg class="ico"><use href="#i-flask"/></svg>テスト結果</div>
+          <div><svg class="ico"><use href="#i-flag"/></svg>次の作業</div>
+        </div>
+      </div>
+      <div class="note info reveal"><svg class="ico"><use href="#i-gauge"/></svg><div>修正の再試行には<b>回数・時間・予算</b>の上限を設け、上限に達したら人へエスカレーションします。</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 5 -->
+<section class="sec" id="s5">
+  <div class="sec-h"><div class="num">5</div><div><h2>自動化を成立させる「作業指示書」</h2><p>AIへの入力を、単なるプロンプトではなくレビュー可能な仕様として扱う</p></div></div>
+  <div class="vs reveal">
+    <div class="bad"><b><svg class="ico"><use href="#i-x"/></svg>自動検証できない</b>「使いやすい申請画面」</div>
+    <div class="good"><b><svg class="ico"><use href="#i-check"/></svg>権限テストで判定できる</b>「申請者は自分の申請のみ閲覧でき、承認者だけが承認できる」</div>
+  </div>
+  <div class="grid2" style="align-items:start">
+    <div class="code reveal" id="yaml"><button class="copy" id="copy" type="button">コピー</button><span class="l"><span class="y-k">id</span>: <span class="y-s">FEAT-001</span></span><span class="l"><span class="y-k">title</span>: <span class="y-s">PC貸出申請の承認機能</span></span><span class="l"></span><span class="l"><span class="y-k">purpose</span>:</span><span class="l">  <span class="y-d">-</span> メールで行っている貸出申請をシステム化する</span><span class="l"></span><span class="l"><span class="y-k">users</span>:</span><span class="l">  <span class="y-d">-</span> 申請者</span><span class="l">  <span class="y-d">-</span> 承認者</span><span class="l">  <span class="y-d">-</span> 資産管理担当者</span><span class="l"></span><span class="l"><span class="y-k">scope</span>:</span><span class="l">  <span class="y-d">-</span> 申請の登録</span><span class="l">  <span class="y-d">-</span> 自分の申請一覧</span><span class="l">  <span class="y-d">-</span> 承認と却下</span><span class="l">  <span class="y-d">-</span> 操作履歴の記録</span><span class="l"></span><span class="l"><span class="y-k">out_of_scope</span>:</span><span class="l">  <span class="y-d">-</span> 購買処理</span><span class="l">  <span class="y-d">-</span> 会計システム連携</span><span class="l"></span><span class="l"><span class="y-k">acceptance_criteria</span>:</span><span class="l">  <span class="y-d">-</span> 申請者は他人の申請を閲覧できない</span><span class="l">  <span class="y-d">-</span> 承認権限のない利用者は承認APIを実行できない</span><span class="l">  <span class="y-d">-</span> 承認済み申請を再承認できない</span><span class="l">  <span class="y-d">-</span> 承認者、対象、時刻、変更内容が記録される</span><span class="l"></span><span class="l"><span class="y-k">constraints</span>:</span><span class="l">  <span class="y-d">-</span> 既存の認証方式を変更しない</span><span class="l">  <span class="y-d">-</span> 本番データを開発環境へ取り込まない</span><span class="l"></span><span class="l"><span class="y-k y-h">requires_human_approval</span>:</span><span class="l">  <span class="y-d">-</span> DBの破壊的変更</span><span class="l">  <span class="y-d">-</span> 認証・権限設計の変更</span><span class="l">  <span class="y-d">-</span> 新規の外部サービス連携</span></div>
+    <div>
+      <div class="card reveal" style="padding:16px 18px">
+        <h4 style="margin:0 0 10px;display:flex;align-items:center;gap:8px"><svg class="ico" style="color:var(--accent)"><use href="#i-doc"/></svg>標準化する項目</h4>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          <span class="tag sup">purpose 目的</span><span class="tag sup">users 利用者</span><span class="tag sup">scope 対象</span><span class="tag sup">out_of_scope 対象外</span><span class="tag hi">acceptance_criteria 受入条件</span><span class="tag ap">constraints 制約</span><span class="tag hu">requires_human_approval 要承認</span>
+        </div>
+      </div>
+      <h3 style="margin-top:20px"><svg class="ico"><use href="#i-link"/></svg>受入条件とテストの紐付け（例）</h3>
+      <div class="tbl reveal">
+        <table style="min-width:0">
+          <thead><tr><th>受入条件</th><th>確認するテスト（例）</th></tr></thead>
+          <tbody>
+            <tr><td>AC-1 他人の申請を閲覧できない</td><td><span class="tag sup">権限</span> 他人の申請IDの取得が拒否される</td></tr>
+            <tr><td>AC-2 権限なしで承認APIを実行できない</td><td><span class="tag sup">権限</span> 一般利用者の承認要求が拒否される</td></tr>
+            <tr><td>AC-3 承認済みを再承認できない</td><td><span class="tag cond">状態遷移</span> 承認済みへの再承認がエラーになる</td></tr>
+            <tr><td>AC-4 操作履歴が記録される</td><td><span class="tag hi">監査</span> 承認者・対象・時刻・変更内容が残る</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="font-size:13px;color:var(--muted);margin:8px 2px 0">「受入条件のどれを、どのテストで確認したか」を追える状態を目標にします。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 6 -->
+<section class="sec" id="s6">
+  <div class="sec-h"><div class="num">6</div><div><h2>ベストプラクティス</h2><p>工場として安全に回すための6つの実践原則</p></div></div>
+  <div class="bp">
+    <div class="bpc reveal"><span class="big">01</span><div class="ib"><svg class="ico"><use href="#i-split"/></svg></div><h4>最初から多数のAIを並列稼働させない</h4><ul><li>最小構成は「実装エージェント」「CI」「レビュー担当」の3つ</li><li>設計・セキュリティ等の役割は必要に応じて追加</li><li>役割名や別モデルを分けても誤りの独立性は保証されない。まず仕様・自動テスト・権限制御を整備</li></ul></div>
+    <div class="bpc reveal"><span class="big">02</span><div class="ib"><svg class="ico"><use href="#i-lock"/></svg></div><h4>実装AIが品質ゲートを自由に変更できないようにする</h4><ul><li>機能コードと追加テストは通常の作業範囲</li><li>既存の受入条件の削除・弱体化は別途承認</li><li>CI定義・保護ルール・セキュリティ検査の無効化は通常タスクから除外</li><li>AIの「成功」の説明ではなくCIの実行結果で判定</li><li>重要な受入テストは実装担当と別の管理境界で保護</li></ul></div>
+    <div class="bpc reveal"><span class="big">03</span><div class="ib"><svg class="ico"><use href="#i-shield"/></svg></div><h4>実装権限と公開権限を分離する</h4><ul><li>実装エージェントにmainへの直接書込み・本番アクセスを与えない</li><li>デプロイジョブは承認済み成果物の配備だけを行う</li><li>製品任せにせず、工場全体の設計原則にする（下表）</li></ul></div>
+    <div class="bpc reveal"><span class="big">04</span><div class="ib"><svg class="ico"><use href="#i-box"/></svg></div><h4>エージェントの作業環境を隔離する</h4><ul><li>タスクごとに使い捨ての実行環境を作る</li><li>ソース・テスト用データ・最小限の資格情報だけを渡す</li><li>外向き通信は必要な宛先に制限</li><li>本番DB・管理者トークン・他案件の秘密情報を渡さない</li><li>Issue・README・外部ページの文章を権限変更の命令として扱わない</li><li>成果物・ログを保存後に環境を破棄</li></ul></div>
+    <div class="bpc reveal"><span class="big">05</span><div class="ib"><svg class="ico"><use href="#i-branch"/></svg></div><h4>並列数より変更の衝突を管理する</h4><ul><li>1タスク＝1目的のPR</li><li>DBスキーマ・認証・共通部品の同時変更を制御</li><li>API・DBの契約は依存タスクより先に確定</li><li>マージ前に最新の統合状態で検証</li><li>DB変更は旧版アプリとの共存を考慮して段階的に</li><li>承認後にコミットが変わったら検証・承認を取り直す</li></ul></div>
+    <div class="bpc reveal"><span class="big">06</span><div class="ib"><svg class="ico"><use href="#i-stamp"/></svg></div><h4>AIによる自動承認と人の承認を区別する</h4><ul><li>無条件に全PRへApproveを付ける運用は避ける</li><li>自動検査は合否・根拠・未確認事項を報告</li><li>AIレビューは指摘と見落とし得る範囲を示す</li><li>人間は業務上の妥当性と残存リスクを判断</li><li>承認は対象コミットや公開成果物に紐付ける</li></ul></div>
+  </div>
+  <div class="note key reveal"><svg class="ico"><use href="#i-gauge"/></svg><div>管理単位は「AIが何台動くか」ではなく、<b>「安全に統合できる変更が何件あるか」</b>です。</div></div>
+
+  <h3><svg class="ico"><use href="#i-shield"/></svg>権限境界（原則③）</h3>
+  <div class="tbl reveal">
+    <table>
+      <thead><tr><th>主体</th><th><svg class="ico yes"><use href="#i-check"/></svg> 許可する操作</th><th><svg class="ico no"><use href="#i-x"/></svg> 原則として与えない権限</th></tr></thead>
+      <tbody>
+        <tr><td class="k"><svg class="ico" style="color:var(--ai)"><use href="#i-bot"/></svg>実装エージェント</td><td>作業ブランチの編集、テスト、PR作成</td><td>mainへの直接書込み、本番アクセス</td></tr>
+        <tr><td class="k"><svg class="ico" style="color:var(--ci)"><use href="#i-flask"/></svg>検証ジョブ</td><td>テスト用環境での検査</td><td>本番更新、リポジトリ管理</td></tr>
+        <tr><td class="k"><svg class="ico" style="color:var(--ai)"><use href="#i-eye"/></svg>レビュー担当</td><td>差分確認、指摘、検証結果の評価</td><td>自分の判断だけでの公開</td></tr>
+        <tr><td class="k"><svg class="ico" style="color:var(--ci)"><use href="#i-rocket"/></svg>デプロイジョブ</td><td>承認済み成果物の配備</td><td>任意コードの実装</td></tr>
+        <tr><td class="k"><svg class="ico" style="color:var(--human)"><use href="#i-user"/></svg>人間の承認者</td><td>マージ・公開・例外判断</td><td>必要以上の常設管理権限</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 7 -->
+<section class="sec" id="s7">
+  <div class="sec-h"><div class="num">7</div><div><h2>PRを「判断できる成果物」にする</h2><p>人が毎回コードを一から読み直さなくても判断できる情報を揃える</p></div></div>
+  <div class="prg reveal">
+    <div class="pri"><div class="h"><svg class="ico"><use href="#i-link"/></svg>要望との対応</div><p>対象Issue、承認済み仕様、変更の目的</p></div>
+    <div class="pri"><div class="h"><svg class="ico"><use href="#i-layers"/></svg>変更範囲</div><p>画面、API、DB、権限、外部連携への影響</p></div>
+    <div class="pri"><div class="h"><svg class="ico"><use href="#i-check"/></svg>受入条件の検証</div><p>条件ごとのテスト結果と未確認事項</p></div>
+    <div class="pri"><div class="h"><svg class="ico"><use href="#i-flask"/></svg>自動検査</div><p>ビルド、型、単体、結合、E2E、セキュリティ検査</p></div>
+    <div class="pri"><div class="h"><svg class="ico"><use href="#i-monitor"/></svg>業務確認</div><p>プレビューURL、操作手順、必要に応じて画面キャプチャ</p></div>
+    <div class="pri"><div class="h"><svg class="ico"><use href="#i-gear"/></svg>運用影響</div><p>設定変更、移行、監視、手順書更新</p></div>
+    <div class="pri"><div class="h"><svg class="ico"><use href="#i-undo"/></svg>復旧方法</div><p>アプリの戻し方、DB変更時の制約</p></div>
+    <div class="pri"><div class="h"><svg class="ico"><use href="#i-alert"/></svg>残存リスク</div><p>既知の不具合、対象外、追加判断が必要な点</p></div>
+  </div>
+  <div class="grid2" style="margin-top:16px">
+    <div class="note info reveal" style="margin:0"><svg class="ico"><use href="#i-shield"/></svg><div>セキュリティ検査は一つのツールに依存させず、<b>脆弱性・依存関係・シークレット</b>など確認対象を分けて組み合わせます。</div></div>
+    <div class="note warn reveal" style="margin:0"><svg class="ico"><use href="#i-alert"/></svg><div>「検査が通った」ことは「不具合や脆弱性がない」ことの証明ではありません。</div></div>
+  </div>
+</section>
+
+<!-- 8 -->
+<section class="sec" id="s8">
+  <div class="sec-h"><div class="num">8</div><div><h2>段階的な導入計画</h2><p>期間を先に固定せず、各段階の終了条件で進める</p></div></div>
+  <div class="card reveal">
+    <div class="phase-bar" id="phasebar">
+      <div class="fill" id="phasefill"></div>
+      <button class="ph active" data-p="0" type="button"><span class="c">0</span><b>標準化</b><small>Phase 0</small></button>
+      <button class="ph" data-p="1" type="button"><span class="c">1</span><b>単一案件</b><small>Phase 1</small></button>
+      <button class="ph" data-p="2" type="button"><span class="c">2</span><b>チーム利用</b><small>Phase 2</small></button>
+      <button class="ph" data-p="3" type="button"><span class="c">3</span><b>公開まで接続</b><small>Phase 3</small></button>
+      <button class="ph" data-p="4" type="button"><span class="c">4</span><b>継続改善</b><small>Phase 4</small></button>
+    </div>
+    <div class="phase-panel show" data-panel="0"><div class="pp"><div><h4><svg class="ico"><use href="#i-factory"/></svg>構築するもの</h4><div class="v">ひな形、開発手順、CI、仕様テンプレート</div></div><div><h4><svg class="ico"><use href="#i-flag"/></svg>終了条件</h4><div class="v">人間が同じ手順で再現できる</div></div></div></div>
+    <div class="phase-panel" data-panel="1"><div class="pp"><div><h4><svg class="ico"><use href="#i-factory"/></svg>構築するもの</h4><div class="v">Issue → 実装 → テスト → PR</div></div><div><h4><svg class="ico"><use href="#i-flag"/></svg>終了条件</h4><div class="v">小さな機能を証跡付きで完了できる</div></div></div></div>
+    <div class="phase-panel" data-panel="2"><div class="pp"><div><h4><svg class="ico"><use href="#i-factory"/></svg>構築するもの</h4><div class="v">権限、並列実行、競合制御、通知、費用上限</div></div><div><h4><svg class="ico"><use href="#i-flag"/></svg>終了条件</h4><div class="v">複数人の依頼を安全に処理できる</div></div></div></div>
+    <div class="phase-panel" data-panel="3"><div class="pp"><div><h4><svg class="ico"><use href="#i-factory"/></svg>構築するもの</h4><div class="v">ステージング、公開承認、復旧手順</div></div><div><h4><svg class="ico"><use href="#i-flag"/></svg>終了条件</h4><div class="v">承認済み成果物を追跡・配備・復旧できる</div></div></div></div>
+    <div class="phase-panel" data-panel="4"><div class="pp"><div><h4><svg class="ico"><use href="#i-factory"/></svg>構築するもの</h4><div class="v">障害・要望から修正案を作成</div></div><div><h4><svg class="ico"><use href="#i-flag"/></svg>終了条件</h4><div class="v">品質と費用を測りながら改善できる</div></div></div></div>
+  </div>
+
+  <h3><svg class="ico"><use href="#i-spark"/></svg>最初の題材</h3>
+  <div class="grid3">
+    <div class="card reveal theme"><div class="ib"><svg class="ico"><use href="#i-monitor"/></svg></div><div><b>PC貸出申請</b><small>画面・API・権限・履歴を一通り含む</small></div></div>
+    <div class="card reveal theme"><div class="ib"><svg class="ico"><use href="#i-chat"/></svg></div><div><b>社内改善提案の受付</b><small>限定した利用者で検証しやすい</small></div></div>
+    <div class="card reveal theme"><div class="ib"><svg class="ico"><use href="#i-crane"/></svg></div><div><b>建設・土木向けの順序</b><small>構造計算・安全判断は担わせず、情報登録・検索・承認から</small></div></div>
+  </div>
+
+  <h3><svg class="ico"><use href="#i-gauge"/></svg>測定する指標</h3>
+  <div class="grid4">
+    <div class="metric reveal"><div class="ib"><svg class="ico"><use href="#i-clock"/></svg></div><span>要望確定からPR提出までの時間</span></div>
+    <div class="metric reveal"><div class="ib"><svg class="ico"><use href="#i-user"/></svg></div><span>人間のレビュー・手直し時間</span></div>
+    <div class="metric reveal"><div class="ib"><svg class="ico"><use href="#i-check"/></svg></div><span>受入条件を満たした割合</span></div>
+    <div class="metric reveal"><div class="ib"><svg class="ico"><use href="#i-loop"/></svg></div><span>差し戻し・再試行の回数</span></div>
+    <div class="metric reveal"><div class="ib"><svg class="ico"><use href="#i-alert"/></svg></div><span>マージ後の不具合と本番影響</span></div>
+    <div class="metric reveal"><div class="ib"><svg class="ico"><use href="#i-yen"/></svg></div><span>完了タスクあたりのAI・CI・環境費用</span></div>
+    <div class="metric reveal"><div class="ib"><svg class="ico"><use href="#i-bell"/></svg></div><span>承認待ち時間</span></div>
+    <div class="metric reveal"><div class="ib"><svg class="ico"><use href="#i-play"/></svg></div><span>途中停止した作業の再開成功率</span></div>
+  </div>
+  <div class="note key reveal"><svg class="ico"><use href="#i-flag"/></svg><div>評価軸はコード量やAIの実行回数ではなく、<b>「業務として受け入れられた変更を、どの品質・費用で届けたか」</b>です。</div></div>
+</section>
+
+<!-- 9 -->
+<section class="sec" id="s9">
+  <div class="sec-h"><div class="num">9</div><div><h2>推奨方針</h2><p>みらいソフトウェアファクトリーの7つの基本方針</p></div></div>
+  <ol class="policy reveal">
+    <li>GitHubをコード・仕様・変更履歴の中心にする<svg class="ico"><use href="#i-check"/></svg></li>
+    <li>開発要望を、受入条件のある作業指示書へ変換する<svg class="ico"><use href="#i-check"/></svg></li>
+    <li>クラウドエージェントが、隔離環境で小さな変更を実装する<svg class="ico"><use href="#i-check"/></svg></li>
+    <li>CIを独立した品質ゲートとして使う<svg class="ico"><use href="#i-check"/></svg></li>
+    <li>プレビューと検証証跡を揃えて、人間が最終マージを判断する<svg class="ico"><use href="#i-check"/></svg></li>
+    <li>本番公開は、マージとは別のリスク判断として扱う<svg class="ico"><use href="#i-check"/></svg></li>
+    <li>工場自体の権限・CI・標準変更も、管理対象にする<svg class="ico"><use href="#i-check"/></svg></li>
+  </ol>
+
+  <h3><svg class="ico"><use href="#i-shield"/></svg>NIST SSDF を工場の統制チェックリストに</h3>
+  <div class="grid4 ssdf">
+    <div class="card reveal"><span class="code-t">PO</span><h4>組織の準備</h4><p>開発標準・役割・作業指示書テンプレート・権限境界の定義（Phase 0）</p></div>
+    <div class="card reveal"><span class="code-t">PS</span><h4>ソフトウェアの保護</h4><p>ブランチ保護、品質ゲートの改ざん防止、CI定義変更の承認制</p></div>
+    <div class="card reveal"><span class="code-t">PW</span><h4>安全なソフトウェアの作成</h4><p>隔離環境での実装、独立テスト、多層のセキュリティ検査</p></div>
+    <div class="card reveal"><span class="code-t">RV</span><h4>脆弱性への対応</h4><p>監視・障害・依存関係の更新を次のIssueとしてラインへ戻す</p></div>
+  </div>
+
+  <h3><svg class="ico"><use href="#i-doc"/></svg>既存の社内統制との対応（参考）</h3>
+  <div class="tbl reveal">
+    <table>
+      <thead><tr><th>工場の仕組み</th><th>ISO/IEC 27001:2022 附属書A（例）</th><th>J-SOX IT全般統制（例）</th></tr></thead>
+      <tbody>
+        <tr><td class="k">作業指示書・受入条件</td><td>8.25 セキュア開発ライフサイクル／8.26 アプリケーションセキュリティ要求事項</td><td>開発・変更の要件定義と承認</td></tr>
+        <tr><td class="k">CIによる独立検証</td><td>8.29 開発及び受入れにおけるセキュリティテスト</td><td>テストの実施と結果の記録</td></tr>
+        <tr><td class="k">PRと承認の紐付け</td><td>8.32 変更管理</td><td>変更管理（承認・記録・移送）</td></tr>
+        <tr><td class="k">権限境界・mainへの直接書込み禁止</td><td>8.4 ソースコードへのアクセス／8.2 特権的アクセス権</td><td>アクセス管理・職務分離</td></tr>
+        <tr><td class="k">隔離環境・本番データ非持込み</td><td>8.31 開発・テスト・本番環境の分離／8.33 テスト用情報</td><td>本番環境へのアクセス制限</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size:12.5px;color:var(--muted);margin:8px 2px 0">※ 対応関係は検討の起点として示した例です。適用範囲・管理策の採否は自社の適用宣言書・内部統制文書に基づき確定してください。</p>
+
+  <div class="closing reveal">
+    <h3><svg class="ico"><use href="#i-factory"/></svg>まず作るべきは「最小の開発ライン」</h3>
+    <p>巨大なマルチエージェント基盤ではなく、<b style="color:#fff">一つの要望が、仕様合意から証跡付きPRになるまで</b>を安定して回せるラインを最初に作ります。そこにチーム利用、承認、公開、運用を段階的に接続します。</p>
+    <div class="mini"><span>要望</span><i>→</i><span>仕様合意</span><i>→</i><span>実装</span><i>→</i><span>独立検証</span><i>→</i><span>証跡付きPR</span><i>＋</i><span>チーム利用</span><i>＋</i><span>承認・公開</span><i>＋</i><span>運用</span></div>
+  </div>
+</section>
+
+<!-- 10 -->
+<section class="sec" id="s10">
+  <div class="sec-h"><div class="num">10</div><div><h2>参考資料</h2><p>本構想の前提とした公開情報</p></div></div>
+  <ul class="refs">
+    <li><a href="https://docs.github.com/copilot/concepts/agents/coding-agent/about-coding-agent" target="_blank" rel="noopener"><svg class="ico"><use href="#i-link"/></svg><span>About GitHub Copilot coding agent<small>docs.github.com</small></span></a></li>
+    <li><a href="https://docs.github.com/en/copilot/responsible-use/agents" target="_blank" rel="noopener"><svg class="ico"><use href="#i-link"/></svg><span>Responsible use of Copilot agents<small>docs.github.com</small></span></a></li>
+    <li><a href="https://github.blog/changelog/2025-10-28-copilot-coding-agent-now-automatically-validates-code-security-and-quality/" target="_blank" rel="noopener"><svg class="ico"><use href="#i-link"/></svg><span>Copilot coding agent: code security and quality validation<small>github.blog（2025-10-28）</small></span></a></li>
+    <li><a href="https://www.anthropic.com/engineering/managed-agents" target="_blank" rel="noopener"><svg class="ico"><use href="#i-link"/></svg><span>Managed Agents<small>anthropic.com/engineering</small></span></a></li>
+    <li><a href="https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents" target="_blank" rel="noopener"><svg class="ico"><use href="#i-link"/></svg><span>Effective harnesses for long-running agents<small>anthropic.com/engineering</small></span></a></li>
+    <li><a href="https://www.anthropic.com/engineering/harness-design-long-running-apps" target="_blank" rel="noopener"><svg class="ico"><use href="#i-link"/></svg><span>Harness design for long-running apps<small>anthropic.com/engineering</small></span></a></li>
+    <li><a href="https://csrc.nist.gov/Projects/ssdf" target="_blank" rel="noopener"><svg class="ico"><use href="#i-link"/></svg><span>Secure Software Development Framework (SSDF)<small>csrc.nist.gov</small></span></a></li>
+  </ul>
+</section>
+
+<footer>
+  <div>みらいソフトウェアファクトリー 企画構想案（ドラフト）｜IT・DX部門｜2026年10月17日</div>
+  <div>本資料の構成・工程・判定基準は推奨案です。製品の機能・制約は変更される場合があるため、採用時に最新の公式情報を確認してください。</div>
+</footer>
+</main>
+
+<script>
+(function(){
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* reveal */
+  var reveals = document.querySelectorAll('.reveal');
+  if ('IntersectionObserver' in window && !reduce) {
+    var io = new IntersectionObserver(function(es){
+      es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, {threshold: .12});
+    reveals.forEach(function(el){ io.observe(el); });
+  } else {
+    reveals.forEach(function(el){ el.classList.add('in'); });
+  }
+  /* staggered policy items */
+  document.querySelectorAll('.policy li').forEach(function(li,i){ li.style.transitionDelay = (i*0.09)+'s'; });
+
+  /* counters */
+  document.querySelectorAll('[data-count]').forEach(function(el){
+    var target = +el.getAttribute('data-count');
+    if (reduce) { el.textContent = target; return; }
+    var start = null, dur = 1200;
+    function tick(t){ if(!start) start=t; var p=Math.min((t-start)/dur,1); el.textContent = Math.round(target*(1-Math.pow(1-p,3))); if(p<1) requestAnimationFrame(tick); }
+    setTimeout(function(){ requestAnimationFrame(tick); }, 300);
+  });
+
+  /* scroll progress + nav active */
+  var bar = document.getElementById('progress');
+  var links = Array.prototype.slice.call(document.querySelectorAll('#navlist a'));
+  var secs = links.map(function(a){ return document.querySelector(a.getAttribute('href')); });
+  function onScroll(){
+    var h = document.documentElement;
+    var max = h.scrollHeight - h.clientHeight;
+    bar.style.width = (max>0 ? (h.scrollTop/max*100) : 0) + '%';
+    var cur = -1;
+    secs.forEach(function(s,i){ if(s && s.getBoundingClientRect().top < 120) cur = i; });
+    links.forEach(function(a,i){ a.classList.toggle('active', i===cur); });
+  }
+  window.addEventListener('scroll', onScroll, {passive:true}); onScroll();
+
+  /* loop B stepper */
+  var items = document.querySelectorAll('#stepper li');
+  var ci = document.getElementById('ci-status');
+  var implSub = document.getElementById('impl-sub');
+  var seq = [
+    {i:0},{i:1},{i:2},{i:3},
+    {i:4, impl:'作業ブランチのみ編集'},
+    {i:5, ci:['run','検証中…']},
+    {i:5, ci:['fail','失敗 → 修正へ（1/3）']},
+    {i:4, impl:'指摘箇所を修正（試行 2/3）', back:true},
+    {i:5, ci:['run','再検証中…']},
+    {i:5, ci:['pass','合格']},
+    {i:6},{i:7},{i:8},{end:true}
+  ];
+  var k = 0, timer = null, playing = !reduce;
+  function render(){
+    var s = seq[k];
+    items.forEach(function(li,idx){
+      li.classList.remove('on');
+      if (s.end) { li.classList.add('done'); return; }
+      if (!s.back) li.classList.toggle('done', idx < s.i);
+    });
+    if (s.end) { return; }
+    items[s.i].classList.add('on');
+    if (s.back) { items[4].classList.remove('done'); items[5].classList.remove('done'); }
+    if (s.impl) implSub.textContent = s.impl;
+    if (s.ci) { ci.className = 'ci-status ' + s.ci[0]; ci.textContent = s.ci[1]; }
+    else if (s.i < 5) { ci.className = 'ci-status'; ci.textContent = '待機'; }
+  }
+  function step(){
+    k++;
+    if (k >= seq.length) { k = 0; }
+    render();
+  }
+  function play(){ clearInterval(timer); timer = setInterval(step, 1500); }
+  var btn = document.getElementById('btn-play');
+  function setBtn(){
+    btn.innerHTML = playing
+      ? '<svg class="ico"><use href="#i-pause"/></svg><span>一時停止</span>'
+      : '<svg class="ico"><use href="#i-play"/></svg><span>再生</span>';
+  }
+  btn.addEventListener('click', function(){ playing = !playing; if(playing) play(); else clearInterval(timer); setBtn(); });
+  document.getElementById('btn-reset').addEventListener('click', function(){ k = 0; render(); if(playing) play(); });
+  render(); setBtn(); if (playing) play();
+
+  /* phases */
+  var phs = document.querySelectorAll('.ph');
+  var panels = document.querySelectorAll('.phase-panel');
+  var fill = document.getElementById('phasefill');
+  var pIdx = 0, pTimer = null;
+  function setPhase(p){
+    pIdx = p;
+    phs.forEach(function(b,i){ b.classList.toggle('active', i===p); b.classList.toggle('past', i<p); });
+    panels.forEach(function(pn,i){ pn.classList.toggle('show', i===p); });
+    fill.style.width = (p/4*80) + '%';
+  }
+  phs.forEach(function(b){ b.addEventListener('click', function(){ clearInterval(pTimer); setPhase(+b.getAttribute('data-p')); }); });
+  setPhase(0);
+  if (!reduce) { pTimer = setInterval(function(){ setPhase((pIdx+1)%5); }, 4000); }
+
+  /* copy yaml */
+  document.getElementById('copy').addEventListener('click', function(){
+    var lines = Array.prototype.map.call(document.querySelectorAll('#yaml .l'), function(l){ return l.textContent; });
+    var text = lines.join('\n');
+    var b = this;
+    try {
+      navigator.clipboard.writeText(text).then(function(){ b.textContent='コピーしました'; setTimeout(function(){ b.textContent='コピー'; },1600); },
+        function(){ b.textContent='コピー不可'; });
+    } catch(e) { b.textContent='コピー不可'; }
+  });
+})();
+</script>
+</body>
+</html>

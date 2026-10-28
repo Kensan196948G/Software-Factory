@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>みらいSF フェーズ計画書 V1.0</title>
+<meta name="description" content="みらいソフトウェアファクトリーを PoC→Go/No-Go→Prototype→MVP→Staging→Release→運用・改善 の6フェーズとゲートで進めるための計画書（MSF-PLN-2026-001 V1.0）">
+<style>
+
+:root{
+  --bg:#f5f7fa; --surface:#ffffff; --surface2:#eef2f6; --ink:#14202e; --muted:#5a6878; --line:#dce3eb;
+  --navy:#0f2a44; --navy2:#173a5c; --on-navy:#ffffff;
+  --accent:#d9731a; --accent-soft:#fff1e2;
+  --ai:#0f8a87; --ai-soft:#e0f4f3;
+  --human:#c64a30; --human-soft:#fbe8e3;
+  --ci:#4f5bd5; --ci-soft:#e9ebfb;
+  --g:#1f8a4c; --g-soft:#e3f5ea; --y:#a87308; --y-soft:#fdf3dc; --r:#c53030; --r-soft:#fbe4e4;
+  --shadow:0 1px 2px rgba(15,42,68,.06),0 8px 24px rgba(15,42,68,.07);
+  --radius:14px;
+  --font:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  --mono:ui-monospace,"SFMono-Regular","Cascadia Code",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e1621; --surface:#152130; --surface2:#1b2a3c; --ink:#e6edf5; --muted:#9fb0c3; --line:#2a3b50;
+    --navy:#0b1f33; --navy2:#16324f; --on-navy:#ffffff;
+    --accent:#f5a04f; --accent-soft:#3a2a17;
+    --ai:#4fd1cc; --ai-soft:#123534;
+    --human:#f08a72; --human-soft:#3b2019;
+    --ci:#9aa3f5; --ci-soft:#232a52;
+    --g:#5fd394; --g-soft:#173527; --y:#f0c050; --y-soft:#3a2f12; --r:#f08080; --r-soft:#3d1c1c;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0e1621; --surface:#152130; --surface2:#1b2a3c; --ink:#e6edf5; --muted:#9fb0c3; --line:#2a3b50;
+  --navy:#0b1f33; --navy2:#16324f; --on-navy:#ffffff;
+  --accent:#f5a04f; --accent-soft:#3a2a17;
+  --ai:#4fd1cc; --ai-soft:#123534;
+  --human:#f08a72; --human-soft:#3b2019;
+  --ci:#9aa3f5; --ci-soft:#232a52;
+  --g:#5fd394; --g-soft:#173527; --y:#f0c050; --y-soft:#3a2f12; --r:#f08080; --r-soft:#3d1c1c;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15.5px;line-height:1.85;letter-spacing:.01em}
+a{color:var(--ci)}
+code,kbd{font-family:var(--mono);font-size:.9em;background:var(--surface2);border:1px solid var(--line);border-radius:6px;padding:0 .35em}
+.topbar{position:sticky;top:0;z-index:20;background:var(--navy);color:var(--on-navy);display:flex;align-items:center;gap:12px;padding:10px 20px;box-shadow:0 2px 10px rgba(0,0,0,.15)}
+.topbar .brand{font-weight:700;letter-spacing:.04em;white-space:nowrap}
+.topbar .brand small{font-weight:400;opacity:.75;margin-left:8px}
+.topbar .sp{flex:1}
+.topbar a.sw,.topbar button{color:var(--on-navy);background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.22);border-radius:999px;padding:5px 12px;font:inherit;font-size:13px;cursor:pointer;text-decoration:none;white-space:nowrap}
+.topbar a.sw:hover,.topbar button:hover{background:rgba(255,255,255,.2)}
+.hero{background:linear-gradient(135deg,var(--navy) 0%,var(--navy2) 100%);color:var(--on-navy);padding:48px 20px 40px}
+.hero .in{max-width:1180px;margin:0 auto}
+.hero .kicker{display:inline-block;font-size:12.5px;letter-spacing:.12em;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:3px 12px}
+.hero h1{font-size:clamp(26px,4.4vw,40px);line-height:1.3;margin:14px 0 8px}
+.hero p{margin:0;max-width:820px;opacity:.92}
+.hero .meta{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:18px;font-size:13.5px;opacity:.9}
+.layout{max-width:1180px;margin:0 auto;padding:28px 20px 80px;display:grid;grid-template-columns:250px minmax(0,1fr);gap:32px}
+.toc{position:sticky;top:64px;align-self:start;max-height:calc(100vh - 84px);overflow:auto;font-size:13.5px;padding-right:4px}
+.toc b{display:block;font-size:12px;color:var(--muted);letter-spacing:.1em;margin:0 0 6px}
+.toc ol{list-style:none;margin:0;padding:0}
+.toc a{display:block;padding:5px 10px;border-radius:8px;color:var(--ink);text-decoration:none;border-left:3px solid transparent}
+.toc a:hover{background:var(--surface2)}
+.toc a.on{background:var(--accent-soft);border-left-color:var(--accent);font-weight:700}
+.toc-m{display:none}
+main{min-width:0}
+section.sec{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:28px 30px;margin:0 0 24px;scroll-margin-top:72px}
+section.sec>h2{display:flex;align-items:center;gap:12px;font-size:22px;line-height:1.4;margin:0 0 6px}
+section.sec>h2 .no{flex:none;display:grid;place-items:center;width:36px;height:36px;border-radius:10px;background:var(--navy);color:var(--on-navy);font-size:15px}
+section.sec>.sub{color:var(--muted);margin:0 0 18px}
+h3{font-size:17.5px;margin:26px 0 10px;padding-left:10px;border-left:4px solid var(--accent);line-height:1.5}
+h4{font-size:15.5px;margin:18px 0 6px}
+p{margin:0 0 12px}
+ul,ol{margin:0 0 12px;padding-left:1.4em}
+li{margin:2px 0}
+.easy{background:var(--ai-soft);border:1px solid color-mix(in srgb,var(--ai) 35%,transparent);border-radius:12px;padding:14px 16px 12px 16px;margin:12px 0 16px}
+.easy::before{content:"やさしく言うと";display:inline-block;font-size:12px;font-weight:700;color:var(--surface);background:var(--ai);border-radius:999px;padding:1px 10px;margin-bottom:6px}
+.note{background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin:12px 0}
+.warn{background:var(--r-soft);border:1px solid color-mix(in srgb,var(--r) 35%,transparent);border-radius:12px;padding:12px 16px;margin:12px 0}
+.prop{background:var(--y-soft);border:1px dashed color-mix(in srgb,var(--y) 60%,transparent);border-radius:12px;padding:12px 16px;margin:12px 0}
+.prop::before{content:"本書で補った提案";display:inline-block;font-size:12px;font-weight:700;color:var(--y);border:1px solid var(--y);border-radius:999px;padding:0 10px;margin-bottom:4px}
+.tw{overflow-x:auto;margin:10px 0 16px;border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.65}
+th,td{border-bottom:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+thead th{background:var(--surface2);font-size:13px;color:var(--muted);white-space:nowrap;position:sticky;top:0}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:color-mix(in srgb,var(--surface2) 50%,transparent)}
+tr.grp td{background:var(--surface2)}
+td.id,th.id{font-family:var(--mono);white-space:nowrap;font-size:13px}
+td.nw{white-space:nowrap}
+.b{display:inline-block;font-size:12px;font-weight:700;border-radius:999px;padding:1px 9px;white-space:nowrap;border:1px solid}
+.b.must{color:var(--human);border-color:var(--human);background:var(--human-soft)}
+.b.should{color:var(--ci);border-color:var(--ci);background:var(--ci-soft)}
+.b.could{color:var(--muted);border-color:var(--line);background:var(--surface2)}
+.src{display:inline-block;font-family:var(--mono);font-size:11.5px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:0 5px;margin:1px 2px 1px 0;white-space:nowrap}
+.src.p{color:var(--y);border-color:var(--y)}
+.sig{display:inline-flex;align-items:center;gap:5px;font-weight:700;font-size:13px;border-radius:999px;padding:1px 10px;white-space:nowrap}
+.sig::before{content:"";width:10px;height:10px;border-radius:50%;background:currentColor}
+.sig.g{color:var(--g);background:var(--g-soft)} .sig.y{color:var(--y);background:var(--y-soft)} .sig.r{color:var(--r);background:var(--r-soft)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:12px 0 16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.card h4{margin:0 0 6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.card p{margin:0;font-size:14px;color:var(--muted)}
+.card.ai{border-top:4px solid var(--ai)} .card.ci{border-top:4px solid var(--ci)} .card.hu{border-top:4px solid var(--human)} .card.ac{border-top:4px solid var(--accent)}
+.card.g{border-top:4px solid var(--g)} .card.y{border-top:4px solid var(--y)} .card.r{border-top:4px solid var(--r)}
+.who{font-size:12px;font-weight:700;border-radius:6px;padding:0 7px;white-space:nowrap}
+.who.ai{background:var(--ai-soft);color:var(--ai)} .who.ci{background:var(--ci-soft);color:var(--ci)} .who.hu{background:var(--human-soft);color:var(--human)}
+.steps{counter-reset:s;list-style:none;padding:0;margin:12px 0 16px;display:grid;gap:8px}
+.steps>li{counter-increment:s;display:grid;grid-template-columns:34px 1fr;gap:12px;align-items:start;background:var(--surface2);border-radius:10px;padding:10px 12px}
+.steps>li::before{content:counter(s);display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--navy);color:var(--on-navy);font-weight:700;font-size:14px}
+.steps>li b{display:block}
+figure{margin:14px 0 18px}
+.figwrap{overflow-x:auto}
+figure svg{width:100%;min-width:640px;height:auto;display:block}
+figcaption{font-size:13px;color:var(--muted);margin-top:6px;text-align:center}
+dl.gl{display:grid;grid-template-columns:minmax(120px,190px) 1fr;gap:0;margin:8px 0;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+dl.gl dt,dl.gl dd{margin:0;padding:9px 12px;border-bottom:1px solid var(--line)}
+dl.gl dt{font-weight:700;background:var(--surface2)}
+.filter{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+.filter input{flex:1 1 220px;min-width:0;font:inherit;font-size:14px;padding:7px 12px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+.filter button{font:inherit;font-size:13px;padding:5px 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}
+.filter button.on{background:var(--navy);color:var(--on-navy);border-color:var(--navy)}
+.sign{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.sign div{border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-height:110px}
+.sign small{color:var(--muted)}
+footer.ft{max-width:1180px;margin:0 auto;padding:0 20px 40px;color:var(--muted);font-size:13px}
+.totop{position:fixed;right:16px;bottom:16px;width:44px;height:44px;border-radius:50%;border:none;background:var(--navy);color:var(--on-navy);font-size:18px;cursor:pointer;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .2s}
+.totop.show{opacity:1;pointer-events:auto}
+svg .t{fill:var(--ink);font-family:var(--font)} svg .tm{fill:var(--muted);font-family:var(--font)}
+svg .bx{fill:var(--surface);stroke:var(--line)} svg .bx2{fill:var(--surface2);stroke:var(--line)}
+svg .ai{fill:var(--ai-soft);stroke:var(--ai)} svg .ci{fill:var(--ci-soft);stroke:var(--ci)} svg .hu{fill:var(--human-soft);stroke:var(--human)} svg .ac{fill:var(--accent-soft);stroke:var(--accent)}
+svg .ln{stroke:var(--muted);fill:none} svg .ar{fill:var(--muted)}
+@media (max-width:900px){
+  .layout{grid-template-columns:minmax(0,1fr);padding:18px 16px 60px;gap:0}
+  .toc{display:none}
+  .toc-m{display:block;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 14px;margin:0 0 16px}
+  .toc-m summary{cursor:pointer;font-weight:700}
+  .toc-m ol{margin:8px 0;padding-left:1.4em;font-size:14px}
+  section.sec{padding:20px 16px}
+  .hero{padding:32px 16px 28px}
+  .topbar{padding:8px 16px}
+  .topbar .brand small{display:none}
+  .sign{grid-template-columns:1fr}
+  dl.gl{grid-template-columns:1fr}
+  dl.gl dt{border-bottom:none}
+}
+@media (max-width:520px){ .topbar .hide-s{display:none} body{font-size:15px} }
+@media print{
+  .topbar,.toc,.toc-m,.totop,.filter{display:none!important}
+  body{background:#fff;font-size:11pt}
+  .layout{display:block;padding:0}
+  section.sec{box-shadow:none;border:none;padding:0;margin:0 0 18px;break-inside:auto}
+  section.sec>h2{break-after:avoid}
+  .hero{background:#fff;color:#000;padding:0 0 12px;border-bottom:2px solid #000}
+  .tw,.figwrap{overflow:visible;border:none}
+  figure svg{min-width:0}
+  thead th{position:static}
+}
+
+/* フェーズ計画書の追加 */
+.ask{border-radius:12px;padding:14px 18px;margin:10px 0 14px;font-size:16.5px;font-weight:700;line-height:1.7;border:1px solid var(--line);border-left:6px solid var(--accent);background:var(--accent-soft)}
+.ask.ci{border-left-color:var(--ci);background:var(--ci-soft)} .ask.ai{border-left-color:var(--ai);background:var(--ai-soft)} .ask.hu{border-left-color:var(--human);background:var(--human-soft)} .ask.ac{border-left-color:var(--accent);background:var(--accent-soft)}
+table.raci td:not(:first-child),table.raci th:not(:first-child){text-align:center;white-space:nowrap}
+table.mx td:nth-child(n+3),table.mx th:nth-child(n+3){text-align:center}
+table.mx td[colspan]{text-align:left}
+table.mx{min-width:760px} table.mx td:first-child{white-space:nowrap} table.mx td:nth-child(2){min-width:13em}
+table.raci{min-width:640px} table.raci td:first-child{min-width:11em}
+.hint{font-size:13px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <span class="brand">みらいSF<small>フェーズ計画書 V1.0</small></span>
+  <span class="sp"></span>
+  <a class="sw" href="みらいSF%20要件定義書%20V1.0.html">要件定義書</a>
+  <a class="sw hide-s" href="みらいSF%20詳細仕様書%20V1.0.html">詳細仕様書</a>
+  <a class="sw hide-s" href="みらいSF%20操作・運用手順書%20V1.0.html">操作・運用手順書</a>
+  <a class="sw hide-s" href="mirai-construction-sf-intake.html">受付ステーション</a>
+  <button type="button" id="themeBtn" aria-label="表示の明るさを切り替え">表示切替</button>
+  <button type="button" onclick="window.print()" class="hide-s">印刷</button>
+</div>
+
+<header class="hero">
+  <div class="in">
+    <span class="kicker">PHASE PLAN</span>
+    <h1>みらいソフトウェアファクトリー<br>フェーズ計画書</h1>
+    <p>「試してみる」から「みんなで使う」までを、<b>6つのフェーズ</b>と<b>判定の関所（ゲート）</b>で進めるための計画書です。どの順番で、何ができたら次へ進んでよいか、だれが決めるかを決めます。</p>
+    <div class="meta"><span>文書番号：MSF-PLN-2026-001</span><span>版：V1.0（最終版・新規）</span><span>作成日：2026年10月21日</span><span>起案：DX推進部（みらい建設工業株式会社）</span></div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目次">
+  <b>目次</b>
+  <ol id="tocList">
+    <li><a href="#s0">0. 文書管理・読み方</a></li>
+    <li><a href="#s1">1. なぜ6フェーズか</a></li>
+    <li><a href="#s2">2. 全体図</a></li>
+    <li><a href="#s3">3. 2つの適用レベル</a></li>
+    <li><a href="#s4">4. PoC</a></li>
+    <li><a href="#s5">5. Go / No-Go</a></li>
+    <li><a href="#s6">6. Prototype</a></li>
+    <li><a href="#s7">7. MVP</a></li>
+    <li><a href="#s8">8. Staging</a></li>
+    <li><a href="#s9">9. Release</a></li>
+    <li><a href="#s10">10. 運用・改善</a></li>
+    <li><a href="#s11">11. ゲート判定の進め方</a></li>
+    <li><a href="#s12">12. 道具ごとの当てはめ</a></li>
+    <li><a href="#s13">13. 旧段階との対応</a></li>
+    <li><a href="#s14">14. 現在地と次の一手</a></li>
+    <li><a href="#s15">15. 用語</a></li>
+    <li><a href="#s16">16. 承認欄</a></li>
+  </ol>
+</nav>
+
+<main>
+<details class="toc-m"><summary>目次を開く</summary><ol>
+  <li><a href="#s0">文書管理・読み方</a></li><li><a href="#s1">なぜ6フェーズか</a></li><li><a href="#s2">全体図</a></li><li><a href="#s3">2つの適用レベル</a></li><li><a href="#s4">PoC</a></li><li><a href="#s5">Go / No-Go</a></li><li><a href="#s6">Prototype</a></li><li><a href="#s7">MVP</a></li><li><a href="#s8">Staging</a></li><li><a href="#s9">Release</a></li><li><a href="#s10">運用・改善</a></li><li><a href="#s11">ゲート判定の進め方</a></li><li><a href="#s12">道具ごとの当てはめ</a></li><li><a href="#s13">旧段階との対応</a></li><li><a href="#s14">現在地と次の一手</a></li><li><a href="#s15">用語</a></li><li><a href="#s16">承認欄</a></li>
+</ol></details>
+
+<!-- ============ 0 ============ -->
+<section class="sec" id="s0">
+  <h2><span class="no">0</span>文書管理・この文書の読み方</h2>
+  <p class="sub">この文書の役割と、ほかの3つの文書との関係です。</p>
+
+  <h3>この文書の役割</h3>
+  <p>みらいソフトウェアファクトリー（みらいSF）の文書は4冊でひとそろいです。本書は<b>「どの順番で進め、何ができたら次へ進んでよいか」</b>を決める文書で、6つのフェーズとゲートの<b>正本</b>です。ほかの3冊は、段階の話をするときは本書を参照します。</p>
+  <div class="tw"><table>
+    <thead><tr><th>文書</th><th>答える問い</th><th>主な読み手</th></tr></thead>
+    <tbody>
+      <tr><td><a href="みらいSF%20要件定義書%20V1.0.html">要件定義書 V1.0</a>（MSF-REQ-2026-001）</td><td>なぜ作るのか／何をできるようにするのか</td><td>経営層、業務責任者、依頼者、DX推進部</td></tr>
+      <tr><td><a href="みらいSF%20詳細仕様書%20V1.0.html">詳細仕様書 V1.0</a>（MSF-SPC-2026-001）</td><td>画面・ルール・データ・権限・検査をどう作るか</td><td>DX推進部、開発・検証担当、内部監査</td></tr>
+      <tr><td><b>フェーズ計画書 V1.0（本書）</b>（MSF-PLN-2026-001）</td><td>どの順で進め、何をもって次へ進むか。だれが判定するか</td><td>経営層、業務責任者、DX推進部、内部監査</td></tr>
+      <tr><td><a href="みらいSF%20操作・運用手順書%20V1.0.html">操作・運用手順書 V1.0</a>（MSF-OPS-2026-001）</td><td>どう使い、どう毎日・毎月回すか</td><td>依頼者、受付担当、承認者、運用担当</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>読む人ごとのおすすめ</h3>
+  <div class="tw"><table>
+    <thead><tr><th>あなたが…</th><th>読むとよい章</th></tr></thead>
+    <tbody>
+      <tr><td>経営層（ゲートを承認する人）</td><td>1章、2章、5章（Go / No-Go）、11章、14章</td></tr>
+      <tr><td>業務責任者・承認者</td><td>2章、7章（MVP）、9章（Release）、12章（道具ごとの当てはめ）</td></tr>
+      <tr><td>DX推進部</td><td>全章</td></tr>
+      <tr><td>内部監査</td><td>5章、8章（Staging）、11章（判定の記録）</td></tr>
+      <tr><td>依頼者・現場の試し係</td><td>2章、7章、12章</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>もとにした資料（出典）と記号</h3>
+  <div class="tw"><table>
+    <thead><tr><th class="id">記号</th><th>資料</th></tr></thead>
+    <tbody>
+      <tr><td class="id">S1</td><td>企画構想案（mirai-software-factory.html）。8工程の業務検証ループ、Phase 0〜4</td></tr>
+      <tr><td class="id">S3</td><td>建設土木版（mirai-software-factory-construction-eli5.html）。STEP 0〜4、モデル現場</td></tr>
+      <tr><td class="id">S4</td><td>部署別道具カタログ みらい建設工業版（19部署・118件）</td></tr>
+      <tr><td class="id">S5</td><td>受付ステーション試作 V1.0（<a href="mirai-construction-sf-intake.html">mirai-construction-sf-intake.html</a>、2026-10-21）</td></tr>
+      <tr><td class="id">S7</td><td>要件定義書 正式版（MSF-REQ 旧版）。Phase 0〜4 の終了条件、業務上の受入条件8、システム受入共通基準7、8つの指標</td></tr>
+      <tr><td class="id">S9</td><td>やさしい版 v0.1（要件定義書・詳細仕様書、2026-10-17）</td></tr>
+      <tr><td><span class="src p">提案</span></td><td>出典に明記がなく、本書で補ったもの。採用は関係者の合意で確定します</td></tr>
+      <tr><td>（案）</td><td>目標値の案。MVPでの実測を見て確定します（Q-12）</td></tr>
+      <tr><td class="id">GC-xx</td><td>ゲート判定のチェック項目（本書のID）</td></tr>
+      <tr><td class="id">TC-Pxx</td><td>ゲート判定の記録を確かめるテスト（本書のID）</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>改訂履歴</h3>
+  <div class="tw"><table>
+    <thead><tr><th>版</th><th>日付</th><th>内容</th><th>作成</th></tr></thead>
+    <tbody>
+      <tr><td>0.1</td><td class="nw">2026-10-17</td><td>やさしい版ドラフト（要件定義書・詳細仕様書）。段階は Phase 0〜4（S1）と STEP 0〜4（S3）の2本立て</td><td>DX推進部</td></tr>
+      <tr><td>1.0</td><td class="nw">2026-10-21</td><td>最終版。本書を新設し、段階を6フェーズ（PoC→Go/No-Go→Prototype→MVP→Staging→Release→運用・改善）に一本化。正式版とやさしい版を統合、19部署カタログに準拠、受付試作V1.0の改善6点を反映</td><td>DX推進部</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">本書は新設の文書です。これまでの段階の表（正式版の Phase 0〜4、やさしい版の Phase／STEP の読みかえ）は、本書の6フェーズで置きかえます。旧段階との対応は <a href="#s13">13章</a> にあります。</div>
+</section>
+
+<!-- ============ 1 ============ -->
+<section class="sec" id="s1">
+  <h2><span class="no">1</span>なぜ6フェーズで進めるのか</h2>
+  <p class="sub">「小さく試して、確かめてから広げる」ための考え方です。</p>
+
+  <div class="easy">家を建てるとき、いきなり全部を建てる人はいません。まず地盤が持つかを調べ（PoC）、建てるかを決め（Go / No-Go）、模型で住み心地を確かめ（Prototype）、1部屋だけ住んでみて（MVP）、引っ越し前に本番そっくりの点検をして（Staging）、入居し（Release）、住みながら直していきます（運用・改善）。みらいSFも同じ順番で進めます。</div>
+
+  <h3>1-1. 6つのフェーズと、それぞれの「問い」</h3>
+  <p>各フェーズは、<b>1つの問いに答えるため</b>にあります。問いに「はい」と言える証拠がそろったら、ゲートで判定して次へ進みます。</p>
+  <div class="tw"><table>
+    <thead><tr><th class="id">ID</th><th>フェーズ</th><th>中心の問い</th></tr></thead>
+    <tbody>
+      <tr><td class="id">PH1</td><td><b>PoC</b>（技術検証）</td><td>技術的に成立するか？</td></tr>
+      <tr><td class="id">G1</td><td><b>Go / No-Go</b>（判定）</td><td>投資して先へ進むか（Go／条件付きGo／No-Go）</td></tr>
+      <tr><td class="id">PH2</td><td><b>Prototype</b>（必要に応じて）</td><td>利用者が理解・操作できるか？</td></tr>
+      <tr><td class="id">PH3</td><td><b>MVP</b>（最小の製品）</td><td>最小の価値で、本当に使われるか？</td></tr>
+      <tr><td class="id">PH4</td><td><b>Staging</b>（本番前の検証）</td><td>本番に近い条件で、安全・安定して運用できるか？</td></tr>
+      <tr><td class="id">PH5</td><td><b>Release</b>（正式提供）</td><td>本番環境で、対象ユーザーへ正式提供する</td></tr>
+      <tr><td class="id">PH6</td><td><b>運用・改善</b></td><td>計測 → 学習 → 改善 → 次リリース</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>1-2. 進め方の5つの約束</h3>
+  <div class="cards">
+    <div class="card ac"><h4>① 期間ではなく終了条件で進む</h4><p>「3か月たったから次へ」ではなく、ゲートのチェック項目（GC）を満たしたら次へ進みます。BR-16 <span class="src">S1</span><span class="src">S7</span></p></div>
+    <div class="card ac"><h4>② 判定は人が行い、記録する</h4><p>ゲートの判定者・日時・結果・根拠を残します。判定はAIに任せません。BR-19</p></div>
+    <div class="card ac"><h4>③ 小さく始めて広げる</h4><p>最初は青信号の小さな道具、少ない部署とモデル現場1か所から。黄は担当者のチェック体制ができてから。赤は対象外のまま。BR-14 <span class="src">S3</span></p></div>
+    <div class="card ac"><h4>④ 段階ごとに場所を分ける</h4><p>試作・パイロット・本番前・本番で環境を分け、本物のデータは承認された範囲だけで使います。NFR-36</p></div>
+    <div class="card ac"><h4>⑤ 道具の大きさで当てはめを変える</h4><p>小さな改善は短い道のり、新しい黄信号の道具はPoCから。BR-20（<a href="#s12">12章</a>）</p></div>
+  </div>
+
+  <h3>1-3. 「動く」と「使える」と「任せられる」は別のもの</h3>
+  <p>PoCで技術的に動いても、利用者が迷えば使われません（Prototype・MVPで確かめる）。少人数で使えても、人数が増えたり障害が起きたりしたときに安全とは限りません（Stagingで確かめる）。この3つを別々のフェーズで確かめることが、6フェーズの理由です。 <span class="src">S1</span></p>
+  <div class="note">試作画面が動くことと、本番運用に耐えることは別の完了条件です。モック認証・仮データ・仮の権限制御が本番へ残らないよう、G2（MVP着手判定）で「試作から引き継ぐもの・作り直すもの」をはっきりさせます。 <span class="src">S1</span><span class="src">S7</span></div>
+</section>
+
+<!-- ============ 2 ============ -->
+<section class="sec" id="s2">
+  <h2><span class="no">2</span>全体図</h2>
+  <p class="sub">6つのフェーズと、間にある6つのゲート（G0〜G5）を一枚で示します。</p>
+
+  <figure><div class="figwrap">
+    <svg viewBox="0 0 980 470" role="img" aria-label="6つのフェーズとゲートの流れ。企画・受付からG0、PoC、G1 Go/No-Go、Prototype、G2、MVP、G3、Staging、G4、Release、G5、運用・改善へ進み、運用・改善から次リリースとして受付へ戻る">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ar"/></marker></defs>
+      <!-- skip arc -->
+      <path d="M485 75 C 485 22, 745 22, 745 75" class="ln" stroke-width="1.5" stroke-dasharray="6 5" marker-end="url(#ah)"/>
+      <text x="615" y="30" text-anchor="middle" class="tm" font-size="12">省略してよい場合（G1で判断）</text>
+      <!-- row1 boxes -->
+      <rect x="20" y="60" width="150" height="90" rx="12" class="bx2" stroke-width="1.5"/>
+      <text x="95" y="90" text-anchor="middle" class="t" font-size="15" font-weight="700">企画・受付</text>
+      <text x="95" y="112" text-anchor="middle" class="tm" font-size="12">困りごと・目的を</text>
+      <text x="95" y="128" text-anchor="middle" class="tm" font-size="12">整理する</text>
+
+      <rect x="280" y="60" width="150" height="90" rx="12" class="ci" stroke-width="1.5"/>
+      <text x="355" y="90" text-anchor="middle" class="t" font-size="15" font-weight="700">PH1 PoC</text>
+      <text x="355" y="112" text-anchor="middle" class="tm" font-size="12">技術的に</text>
+      <text x="355" y="128" text-anchor="middle" class="tm" font-size="12">成立するか？</text>
+
+      <rect x="540" y="60" width="150" height="90" rx="12" class="ai" stroke-width="1.5" stroke-dasharray="6 4"/>
+      <text x="615" y="86" text-anchor="middle" class="t" font-size="15" font-weight="700">PH2 Prototype</text>
+      <text x="615" y="104" text-anchor="middle" class="tm" font-size="11">（必要に応じて）</text>
+      <text x="615" y="122" text-anchor="middle" class="tm" font-size="12">利用者が理解・</text>
+      <text x="615" y="138" text-anchor="middle" class="tm" font-size="12">操作できるか？</text>
+
+      <rect x="800" y="60" width="150" height="90" rx="12" class="ac" stroke-width="1.5"/>
+      <text x="875" y="90" text-anchor="middle" class="t" font-size="15" font-weight="700">PH3 MVP</text>
+      <text x="875" y="112" text-anchor="middle" class="tm" font-size="12">最小の価値で、</text>
+      <text x="875" y="128" text-anchor="middle" class="tm" font-size="12">本当に使われるか？</text>
+
+      <!-- row1 arrows & gates -->
+      <line x1="170" y1="105" x2="193" y2="105" class="ln" stroke-width="1.5"/>
+      <polygon points="225,75 255,105 225,135 195,105" class="hu" stroke-width="1.5"/>
+      <text x="225" y="110" text-anchor="middle" class="t" font-size="13" font-weight="700">G0</text>
+      <text x="225" y="160" text-anchor="middle" class="tm" font-size="11">着手判定</text>
+      <line x1="255" y1="105" x2="278" y2="105" class="ln" stroke-width="1.5" marker-end="url(#ah)"/>
+
+      <line x1="430" y1="105" x2="453" y2="105" class="ln" stroke-width="1.5"/>
+      <polygon points="485,75 515,105 485,135 455,105" class="hu" stroke-width="1.5"/>
+      <text x="485" y="110" text-anchor="middle" class="t" font-size="13" font-weight="700">G1</text>
+      <text x="485" y="160" text-anchor="middle" class="t" font-size="12" font-weight="700">Go / No-Go</text>
+      <line x1="515" y1="105" x2="538" y2="105" class="ln" stroke-width="1.5" marker-end="url(#ah)"/>
+
+      <line x1="690" y1="105" x2="713" y2="105" class="ln" stroke-width="1.5"/>
+      <polygon points="745,75 775,105 745,135 715,105" class="hu" stroke-width="1.5"/>
+      <text x="745" y="110" text-anchor="middle" class="t" font-size="13" font-weight="700">G2</text>
+      <text x="745" y="160" text-anchor="middle" class="tm" font-size="11">MVP着手判定</text>
+      <line x1="775" y1="105" x2="798" y2="105" class="ln" stroke-width="1.5" marker-end="url(#ah)"/>
+
+      <!-- G3 down -->
+      <line x1="875" y1="150" x2="875" y2="193" class="ln" stroke-width="1.5"/>
+      <polygon points="875,195 905,225 875,255 845,225" class="hu" stroke-width="1.5"/>
+      <text x="875" y="230" text-anchor="middle" class="t" font-size="13" font-weight="700">G3</text>
+      <text x="930" y="230" text-anchor="start" class="tm" font-size="11">Staging</text>
+      <text x="930" y="245" text-anchor="start" class="tm" font-size="11">移行判定</text>
+      <line x1="875" y1="255" x2="875" y2="298" class="ln" stroke-width="1.5" marker-end="url(#ah)"/>
+
+      <!-- row2 boxes -->
+      <rect x="800" y="300" width="150" height="100" rx="12" class="ci" stroke-width="1.5"/>
+      <text x="875" y="328" text-anchor="middle" class="t" font-size="15" font-weight="700">PH4 Staging</text>
+      <text x="875" y="350" text-anchor="middle" class="tm" font-size="12">本番に近い条件で、</text>
+      <text x="875" y="366" text-anchor="middle" class="tm" font-size="12">安全・安定して</text>
+      <text x="875" y="382" text-anchor="middle" class="tm" font-size="12">運用できるか？</text>
+
+      <rect x="540" y="300" width="150" height="100" rx="12" class="hu" stroke-width="1.5"/>
+      <text x="615" y="330" text-anchor="middle" class="t" font-size="15" font-weight="700">PH5 Release</text>
+      <text x="615" y="354" text-anchor="middle" class="tm" font-size="12">対象ユーザーへ</text>
+      <text x="615" y="370" text-anchor="middle" class="tm" font-size="12">正式に提供する</text>
+
+      <rect x="280" y="300" width="150" height="100" rx="12" class="ac" stroke-width="1.5"/>
+      <text x="355" y="330" text-anchor="middle" class="t" font-size="15" font-weight="700">PH6 運用・改善</text>
+      <text x="355" y="354" text-anchor="middle" class="tm" font-size="12">計測→学習→</text>
+      <text x="355" y="370" text-anchor="middle" class="tm" font-size="12">改善→次リリース</text>
+
+      <!-- row2 arrows & gates (right to left) -->
+      <line x1="800" y1="350" x2="777" y2="350" class="ln" stroke-width="1.5"/>
+      <polygon points="745,320 775,350 745,380 715,350" class="hu" stroke-width="1.5"/>
+      <text x="745" y="355" text-anchor="middle" class="t" font-size="13" font-weight="700">G4</text>
+      <text x="745" y="400" text-anchor="middle" class="tm" font-size="11">リリース判定</text>
+      <line x1="715" y1="350" x2="692" y2="350" class="ln" stroke-width="1.5" marker-end="url(#ah)"/>
+
+      <line x1="540" y1="350" x2="517" y2="350" class="ln" stroke-width="1.5"/>
+      <polygon points="485,320 515,350 485,380 455,350" class="hu" stroke-width="1.5"/>
+      <text x="485" y="355" text-anchor="middle" class="t" font-size="13" font-weight="700">G5</text>
+      <text x="485" y="400" text-anchor="middle" class="tm" font-size="11">運用移行判定</text>
+      <line x1="455" y1="350" x2="432" y2="350" class="ln" stroke-width="1.5" marker-end="url(#ah)"/>
+
+      <!-- loop back -->
+      <path d="M280 350 L 95 350 L 95 153" class="ln" stroke-width="1.8" stroke-dasharray="7 5" marker-end="url(#ah)"/>
+      <text x="110" y="215" class="t" font-size="13" font-weight="700">次リリース</text>
+      <text x="110" y="235" class="tm" font-size="12">改善要望・不具合を</text>
+      <text x="110" y="251" class="tm" font-size="12">新しい依頼として受付へ。</text>
+      <text x="110" y="267" class="tm" font-size="12">G3・G4 を通って公開</text>
+
+      <!-- legend -->
+      <rect x="20" y="430" width="16" height="16" rx="3" class="hu"/><text x="44" y="443" class="t" font-size="12">ゲート＝人が判定する関所（判定者・根拠を記録）</text>
+      <rect x="440" y="430" width="16" height="16" rx="3" class="ai" stroke-dasharray="4 3"/><text x="464" y="443" class="t" font-size="12">点線の枠＝必要に応じて行うフェーズ</text>
+    </svg>
+  </div><figcaption>図2-1　6つのフェーズとゲート（G0〜G5）。運用・改善で見つかったことは、新しい依頼として受付に戻ります</figcaption></figure>
+
+  <h3>2-1. ゲート（関所）の一覧</h3>
+  <div class="tw"><table>
+    <thead><tr><th class="id">ID</th><th>ゲート</th><th>いつ</th><th>決めること</th><th>判定者（承認）</th></tr></thead>
+    <tbody>
+      <tr><td class="id">G0</td><td>着手判定</td><td>企画 → PoC</td><td>PoCを始めてよいか。題材・確かめる問い・上限</td><td>経営層</td></tr>
+      <tr><td class="id">G1</td><td><b>Go / No-Go</b></td><td>PoC の後</td><td>投資して先へ進むか（Go／条件付きGo／No-Go）。Prototype を行うか省略するか</td><td>経営層</td></tr>
+      <tr><td class="id">G2</td><td>MVP着手判定</td><td>Prototype の後</td><td>本番実装方針・試作からの引継ぎ可否、MVPの対象と環境</td><td>業務責任者（代表）＋DX推進部 責任者</td></tr>
+      <tr><td class="id">G3</td><td>Staging移行判定</td><td>MVP の後</td><td>継続・変更・中止。指標の目標値</td><td>業務責任者（代表）、予算は経営層</td></tr>
+      <tr><td class="id">G4</td><td>リリース判定</td><td>Staging の後</td><td>本番に公開してよいか（公開承認＝マージとは別のリスク判断）、公開の範囲</td><td>公開承認者（業務責任者＋DX推進部）、経営層</td></tr>
+      <tr><td class="id">G5</td><td>運用移行判定</td><td>Release の安定化後</td><td>運用体制へ引き継いでよいか、次の公開範囲</td><td>DX推進部 責任者＋業務責任者</td></tr>
+    </tbody>
+  </table></div>
+  <p>判定者の詳しい分担（承認・確認・意見）とチェック項目は各フェーズの章に、判定会議の進め方は <a href="#s11">11章</a> にあります。</p>
+</section>
+
+<!-- ============ 3 ============ -->
+<section class="sec" id="s3">
+  <h2><span class="no">3</span>2つの適用レベル</h2>
+  <p class="sub">6フェーズは「工場そのもの」と「1つ1つの道具」の両方に使います。</p>
+
+  <div class="cards">
+    <div class="card ci"><h4>A. 工場（みらいSF）そのもの</h4><p>受付ステーション、注文書、AIの実装、検査機（CI）、PR、公開までの<b>ライン全体</b>を、会社に導入する道のりです。1回だけ通ります（その後は運用・改善を回し続けます）。4〜10章はこのAを中心に書きます。</p></div>
+    <div class="card ai"><h4>B. 1つ1つの道具（依頼）</h4><p>ラインに流れてくる依頼（例：工事写真の圏外保存）が、道具として使えるようになるまでの道のりです。依頼の<b>大きさと信号の色</b>で、通るフェーズを変えます（T1〜T3）。詳しくは <a href="#s12">12章</a>。</p></div>
+  </div>
+  <div class="easy">Aは「工場を建てて動かし始めるまで」、Bは「工場で1つの製品を作って出荷するまで」です。工場ができあがったあとも、製品（道具）ごとに小さな6フェーズを回します。</div>
+
+  <h3>3-1. フェーズごとに使う場所（環境）とデータ</h3>
+  <p>フェーズが進むほど本番に近い場所を使います。本物のデータを使ってよい範囲は、ゲートで承認された範囲だけです。 NFR-36</p>
+  <div class="tw"><table>
+    <thead><tr><th>フェーズ</th><th>使う場所（環境）</th><th>使うデータ</th></tr></thead>
+    <tbody>
+      <tr><td>PH1 PoC</td><td>検証用リポジトリ、AIの隔離された作業場、CI、プレビュー</td><td>作り物（ダミー）のデータだけ。本番DB・名簿・図面・位置情報・写真の原本は入れない（NFR-04、C-05）</td></tr>
+      <tr><td>PH2 Prototype</td><td>オフライン試作（受付ステーション試作 V1.0。ブラウザの中だけに保存）</td><td>見本データ（架空）。操作テストで入力した内容も架空のもの</td></tr>
+      <tr><td>PH3 MVP</td><td>限定パイロット環境（オンプレミス想定。実行先は Q-03）</td><td>実際の依頼（受付データ）を受け付ける。道具が扱う業務データは作り物、または利用部署と内部監査が承認した範囲だけ <span class="src p">提案</span>。AIの作業場とCIは常に作り物のデータ</td></tr>
+      <tr><td>PH4 Staging</td><td>本番と同じ条件の検証環境（Entra ID、権限、監視、バックアップ）</td><td>作り物のデータ（本番データの利用は別途承認）。件数は本番相当（1,000件）で確かめる</td></tr>
+      <tr><td>PH5 Release／PH6 運用・改善</td><td>本番環境（本番はクラウドを検討中。Q-03）</td><td>本番データ。配備はデプロイジョブだけが行う</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">「MVPはオンプレミス、本番はクラウドを検討中」は、DX・AI統合基盤全体の方針です。みらいSFの実行先・データ基盤は Q-03（G2で決定）で確定します。AIの推論はクラウドサービス（OpenAI・Anthropic のサービス）を使い、ローカルLLMは使いません（C-11）。</div>
+
+  <h3>3-2. どのフェーズにも共通の「やってはいけないこと」</h3>
+  <div class="warn">
+    <ul style="margin:0">
+      <li>赤信号の仕事（人の命・安全、構造・品質の合否、お金の最後の決定、契約・法律の判断、人の処遇、会社としての発表）をAIに決めさせる道具を作ること。海の工事では「今日は船を出すか」「作業を止めるか」は船長・現場の責任者が決めます <span class="src">S4</span></li>
+      <li>本物の図面・名簿・位置情報・写真の原本を、AIの作業場や検証環境へ持ち込むこと（NFR-04）</li>
+      <li>ゲートの判定を飛ばして次の環境へ配備すること（TC-P04）</li>
+      <li>期間が来たことを理由に、終了条件を満たさないまま次へ進むこと（BR-16）</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============ 4 PoC ============ -->
+<section class="sec" id="s4">
+  <h2><span class="no">4</span>PH1　PoC（技術検証）</h2>
+  <p class="sub">中心の問い：<b>技術的に成立するか？</b></p>
+
+  <div class="ask ci">「受付 → 注文書 → AIの実装 → 検査機 → 提出書類（PR）」の一本線が、<b>安全に、証拠付きで</b>動くかを、小さな見本1件で確かめます。</div>
+  <div class="easy">本番の工場を建てる前に、試作のラインで「1個だけ作ってみる」段階です。ここでは使いやすさや人数はまだ問いません。「この組み合わせで本当に作れるのか」「囲いの外に出ないか」を確かめます。</div>
+
+  <h3>4-1. 始める前の条件（G0 着手判定）</h3>
+  <p>次の5つがそろったら、経営層が PoC の開始を承認します。</p>
+  <div class="tw"><table>
+    <thead><tr><th class="id">ID</th><th>チェック項目</th><th>判定者</th></tr></thead>
+    <tbody>
+      <tr><td class="id">GC-01</td><td>目的・対象業務・対象外が文書になっている（<a href="みらいSF%20要件定義書%20V1.0.html">要件定義書 V1.0</a> が起案済み）</td><td>経営層（承認）／DX推進部 責任者（起案）</td></tr>
+      <tr><td class="id">GC-02</td><td>PoC で確かめる問い（技術的に不確かな点）と、成立・不成立の基準（4-6 の GC-11〜20）が決まっている</td><td>DX推進部 責任者</td></tr>
+      <tr><td class="id">GC-03</td><td>題材（FEAT-001 PC貸出申請 または SITE-001 工事写真の圏外保存）と、作り物のテストデータが用意できる</td><td>DX推進部</td></tr>
+      <tr><td class="id">GC-04</td><td>体制（DX推進部の担当、業務側の協力者1名以上）と、作業量・費用の上限が決まっている <span class="src p">提案</span></td><td>経営層</td></tr>
+      <tr><td class="id">GC-05</td><td>題材に赤信号の仕事を含めていない（BR-14）</td><td>DX推進部 責任者</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>4-2. 範囲（工場そのものの場合）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>確かめること</th><th>中身</th><th>関係する要件</th></tr></thead>
+    <tbody>
+      <tr><td>ラインの一本線</td><td>見本の依頼1件を、受付 → 注文書YAML → GitHub Issue → 隔離された作業場でAIが実装 → CIが独立検証 → AIレビュー → PR（判断材料10項目）まで通す</td><td>FR-23、FR-28〜38</td></tr>
+      <tr><td>合格の条件とテストのひもづけ</td><td>合格の条件1つずつにテストを付け、CIの結果だけで合否を出す</td><td>BR-05、FR-32</td></tr>
+      <tr><td>権限の境界</td><td>実装AIが main に書けない、CI定義・保護ルールを変えられない、本番のカギを持たない</td><td>NFR-01、02、06</td></tr>
+      <tr><td>囲い（隔離）となりすまし命令</td><td>許可していない宛先に通信できない。Issue に「権限を変えて」と書いても権限が変わらない</td><td>NFR-03、05</td></tr>
+      <tr><td>利用者の識別</td><td>Microsoft Entra ID の利用者を非対話式のSSOで識別でき、グループから役割（依頼者・受付担当・承認者など）を判別できる</td><td>NFR-08、Q-13</td></tr>
+      <tr><td>中断と再開</td><td>作業を途中で止め、別の実行から続きを再開できる（作業状態をリポジトリに残す）</td><td>NFR-21、FR-38</td></tr>
+      <tr><td>費用</td><td>1件あたりのAI・CI・環境の費用の初期値を測る</td><td>NFR-26、KPI-06</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>4-3. 主な活動</h3>
+  <ol class="steps">
+    <li><div><b>題材と問いを決める</b>FEAT-001（画面・API・権限・履歴を一通り含む練習台）か SITE-001（建設土木の見本。圏外保存）を選ぶ。両方行う場合は FEAT-001 から <span class="src p">提案</span></div></li>
+    <li><div><b>最小のラインを組む</b>既製品の組み合わせ（GitHub、CI、クラウドのコーディングエージェント）で組み、自作は足りない制御部分だけにする（NFR-29）。製品の候補は Q-02</div></li>
+    <li><div><b>見本を通す</b>受付ステーションで依頼を作り、注文書YAMLから Issue を作って、AIに実装させる</div></li>
+    <li><div><b>わざと壊して確かめる</b>権限の境界、なりすまし命令、許可外の通信、CI定義の変更を試し、すべて止まることを確認する</div></li>
+    <li><div><b>Entra ID で識別する</b>試験用のグループで、ログインした人の役割を判別できるか確かめる</div></li>
+    <li><div><b>報告書にまとめる</b>成立・不成立の根拠、概算費用、リスク一覧、未決事項の決定案</div></li>
+  </ol>
+
+  <h3>4-4. 参加者と役割</h3>
+  <div class="tw"><table class="raci">
+    <thead><tr><th>活動</th><th>経営層</th><th>業務責任者</th><th>DX推進部<br>（受付・ライン）</th><th>DX推進部<br>（基盤・セキュリティ）</th><th>依頼者・利用部署</th><th>内部監査</th></tr></thead>
+    <tbody>
+      <tr><td>題材と問いの決定</td><td>A</td><td>C</td><td>R</td><td>C</td><td>I</td><td>－</td></tr>
+      <tr><td>ラインの構築と見本の実行</td><td>－</td><td>－</td><td>R/A</td><td>R</td><td>－</td><td>－</td></tr>
+      <tr><td>権限・隔離・識別の試験</td><td>－</td><td>－</td><td>C</td><td>R/A</td><td>－</td><td>C</td></tr>
+      <tr><td>業務の正しさの確認（見本の動き）</td><td>－</td><td>R</td><td>C</td><td>－</td><td>C</td><td>－</td></tr>
+      <tr><td>PoC報告書</td><td>I</td><td>C</td><td>R/A</td><td>R</td><td>－</td><td>C</td></tr>
+    </tbody>
+  </table></div>
+  <p class="hint">R＝実施する／A＝最終責任を持つ（1つの活動に1つ）／C＝相談を受ける／I＝結果を知らされる。<span class="src">S7</span> のRACIの考え方にそろえています。</p>
+
+  <h3>4-5. 成果物</h3>
+  <ul>
+    <li><b>PoC報告書</b>：確かめた問いごとの結果（成立／条件付き成立／不成立）と根拠</li>
+    <li><b>見本1件の証跡</b>：注文書YAML、Issue、CIの結果、判断材料10項目のそろったPR</li>
+    <li><b>試験記録</b>：権限の境界・なりすまし命令・隔離・Entra ID 識別の試験結果</li>
+    <li><b>概算費用</b>：1件あたりのAI・CI・環境の費用（初期値）</li>
+    <li><b>リスク一覧</b>：RISK-01〜17 のうち、PoC で見えたものと対策</li>
+    <li><b>未決事項の決定案</b>：Q-01、Q-02、Q-10、Q-13</li>
+  </ul>
+
+  <h3>4-6. 終了条件（G1 で判定するチェック項目）</h3>
+  <p>次の GC-11〜GC-20 を <a href="#s5">5章（Go / No-Go）</a>で判定します。</p>
+  <div class="tw"><table>
+    <thead><tr><th class="id">ID</th><th>チェック項目</th><th>確かめ方</th></tr></thead>
+    <tbody>
+      <tr><td class="id">GC-11</td><td>見本1件が、受付からPR（判断材料10項目）まで通り、証跡が残っている</td><td>PR・CIログ・Issue の確認</td></tr>
+      <tr><td class="id">GC-12</td><td>合格の条件ごとにテストがひもづき、CIの結果で合否が出た。公開前の受入条件充足率100%（KPI-03）</td><td>PR の「受入条件の検証」欄</td></tr>
+      <tr><td class="id">GC-13</td><td>実装AIが main に書けない・CI定義を変えられない・本番のカギがない（NFR-01、02、06）</td><td>試験記録</td></tr>
+      <tr><td class="id">GC-14</td><td>Issue に「権限を変えて」と書いても権限が変わらない（NFR-05）</td><td>試験記録</td></tr>
+      <tr><td class="id">GC-15</td><td>作業場から許可外の宛先へ通信できず、作り物のデータだけがある（NFR-03、04）</td><td>試験記録・シークレット検査</td></tr>
+      <tr><td class="id">GC-16</td><td>Entra ID の利用者を SSO で識別でき、グループと役割の対応づけ案がある（Q-13）</td><td>試験記録</td></tr>
+      <tr><td class="id">GC-17</td><td>作業を途中で止め、別の実行から再開して完了できた（NFR-21）</td><td>作業状態の記録</td></tr>
+      <tr><td class="id">GC-18</td><td>1件あたりの概算費用と、リスク一覧がある（KPI-06）</td><td>PoC報告書</td></tr>
+      <tr><td class="id">GC-19</td><td>Q-01、Q-02、Q-13 の決定案があり、Q-10 の検討を始めている</td><td>未決事項の台帳</td></tr>
+      <tr><td class="id">GC-20</td><td>PoC報告書に、成立・不成立の根拠と「やり直すならどこか」が書かれている</td><td>PoC報告書</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>4-7. 測る指標</h3>
+  <ul>
+    <li>見本の通し：成功したか、PRの判断材料10項目がそろったか</li>
+    <li>KPI-01 要望確定からPR提出までの時間（初期値。目標は実測後）</li>
+    <li>KPI-03 受入条件充足率（100%）</li>
+    <li>KPI-06 完了タスクあたりの費用（初期値）、KPI-08 中断作業の再開成功率（初期値。目標95%以上）</li>
+  </ul>
+
+  <h3>4-8. 主なリスクと、このフェーズで決めること</h3>
+  <div class="tw"><table>
+    <thead><tr><th>リスク</th><th>対策</th></tr></thead>
+    <tbody>
+      <tr><td>RISK-01 AIが生成したコードの品質・思いこみ</td><td>CIでの独立検証と、合格の条件とテストのひもづけで判定する</td></tr>
+      <tr><td>RISK-02 なりすまし命令・権限の乗っ取り</td><td>GC-14 の試験。権限の変更は人の承認だけ</td></tr>
+      <tr><td>RISK-07 製品の仕様変更・提供終了</td><td>既製品の組み合わせにし、作業状態をリポジトリに残す</td></tr>
+      <tr><td>RISK-11 目標値・計画の楽観視</td><td>PoCでは目標値を決めず、初期値を測るだけにする</td></tr>
+    </tbody>
+  </table></div>
+  <p><b>決める未決事項（G1 まで）</b>：Q-01（desknet's NEO／AppSuite との連携方式）、Q-02（コーディングエージェント・ワークフロー制御の製品。OpenAI・Anthropic のサービスから）、Q-13（Entra ID のグループと役割）、Q-10（統制枠組みの適用範囲：検討開始）。</p>
+  <div class="warn"><b>やってはいけないこと</b>：本物のデータで試す／赤信号の題材を選ぶ／PoCのために作った仮の仕組み（仮の認証・仮の権限）を、そのまま次のフェーズへ持ち込む（RISK-17）。</div>
+</section>
+
+<!-- ============ 5 G1 ============ -->
+<section class="sec" id="s5">
+  <h2><span class="no">5</span>G1　Go / No-Go（進むか止めるかの判定）</h2>
+  <p class="sub">PoC の結果を見て、投資して先へ進むかを決めます。</p>
+
+  <div class="ask hu">PoC で「技術的に成立する」と言える証拠がそろったか。費用とリスクを見て、<b>投資して先へ進むか</b>。</div>
+  <div class="easy">地盤調査の結果を見て「この土地に家を建てるか」を決める会議です。建てる（Go）、条件を付けて建てる（条件付きGo）、やめる（No-Go）、もう一度調べる（やり直し）の4つから選びます（「やり直し」は本書で補った提案）。</div>
+
+  <h3>5-1. 判定の結果（4種類） <span class="src p">提案</span></h3>
+  <div class="cards">
+    <div class="card g"><h4><span class="sig g">Go</span></h4><p>GC-11〜20 をすべて満たした。Prototype（または省略して MVP 準備）へ進む。</p></div>
+    <div class="card y"><h4><span class="sig y">条件付きGo</span></h4><p>重要でない項目に未達があるが、対策と期限が決まっている。条件は次のゲート（G2）で必ず確認する。</p></div>
+    <div class="card r"><h4><span class="sig r">No-Go</span></h4><p>技術的に成立しない、または費用・リスクが見合わない。中止し、理由と再検討の条件を記録する。</p></div>
+    <div class="card ac"><h4>やり直し <span class="src p">提案</span></h4><p>判断に足りる証拠がない。PoC の範囲を決め直して追加で確かめる。</p></div>
+  </div>
+  <div class="note">GC-13〜GC-15（権限の境界・なりすまし命令・隔離）に未達があるときは、<b>条件付きGoにはしません</b>。安全の土台なので、満たすまで先へ進みません <span class="src p">提案</span>。</div>
+
+  <h3>5-2. 判定者</h3>
+  <div class="tw"><table>
+    <thead><tr><th>立場</th><th>だれ</th><th>役割</th></tr></thead>
+    <tbody>
+      <tr><td>承認</td><td>経営層</td><td>Go／条件付きGo／No-Go／やり直しを決め、次フェーズの予算・要員を承認する（C-14）</td></tr>
+      <tr><td>確認</td><td>DX推進部 責任者、業務責任者の代表</td><td>PoC報告書と証跡を確認し、判定案を出す</td></tr>
+      <tr><td>意見</td><td>内部監査</td><td>権限・証跡・統制の観点で意見を述べる（Q-10）</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>5-3. 判定のチェック項目</h3>
+  <p>4-6 の GC-11〜GC-20 に、次の項目を加えて判定します。</p>
+  <div class="tw"><table>
+    <thead><tr><th class="id">ID</th><th>チェック項目</th><th>判定者</th></tr></thead>
+    <tbody>
+      <tr><td class="id">GC-21</td><td>次のフェーズを Prototype にするか、省略するかを決めた（5-4 の条件）</td><td>経営層（DX推進部の案による）</td></tr>
+      <tr><td class="id">GC-22</td><td>次のフェーズの予算・要員・上限が決まった（C-14）</td><td>経営層</td></tr>
+      <tr><td class="id">GC-23</td><td>Q-01、Q-02、Q-13 が決まった（または決める期限が決まった）</td><td>DX推進部 責任者</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>5-4. Prototype を省略してよい条件</h3>
+  <p>次のどれかに当てはまる場合は、G1 で Prototype を省略し、MVP の準備（G2 の材料づくり）に進んでかまいません。</p>
+  <ul>
+    <li>画面が既存の標準部品だけでできていて、業務の流れも変わらない</li>
+    <li>既存の道具の小さな改善・不具合の修正である</li>
+    <li>利用者が DX推進部の中だけである</li>
+  </ul>
+  <div class="note">みらいSF（工場そのもの）の受付ステーションは、すでに試作 V1.0（<a href="mirai-construction-sf-intake.html">mirai-construction-sf-intake.html</a>）で画面の試作を先行して作っています。G1 では「この試作を使って Prototype の操作テストを行う」ことを決めます。PoC と並行して試作を見てもらい、その意見を G1 の参考にすることもできます <span class="src p">提案</span>。</div>
+
+  <h3>5-5. No-Go になったとき</h3>
+  <ul>
+    <li>理由（技術・費用・リスクのどれか）と、再検討の条件（例：製品の機能がそろったら、費用が下がったら）を記録する</li>
+    <li>PoC で作った検証用の環境・リポジトリは、成果物とログを保存してから片付ける（NFR-03 の考え方）</li>
+    <li>受付ステーションの試作は、依頼の受付・整理の練習台として使い続けてよい <span class="src p">提案</span></li>
+  </ul>
+</section>
+
+<!-- ============ 6 Prototype ============ -->
+<section class="sec" id="s6">
+  <h2><span class="no">6</span>PH2　Prototype（必要に応じて）</h2>
+  <p class="sub">中心の問い：<b>利用者が理解・操作できるか？</b></p>
+
+  <div class="ask ai">依頼者・受付担当・承認者が、説明をほとんど受けずに、依頼を出し・確かめ・承認できるか。<b>どこで迷うか</b>を見つけます。</div>
+  <div class="easy">模型の家に実際に住む人を招いて「ここは使いにくい」「これは何？」を聞く段階です。本物の家（本番の仕組み）はまだ作りません。だから、何度でも作り直せます。</div>
+
+  <h3>6-1. 範囲（工場そのものの場合）</h3>
+  <p>受付ステーション試作 V1.0（S5）を使います。インターネットに接続せず、ブラウザの中だけで動く試作です。2026-10-21 に入れた<b>使いやすさの改善6点</b>の効果も確かめます。</p>
+  <div class="tw"><table>
+    <thead><tr><th>確かめる操作（タスク）</th><th>役割</th><th>関係する機能</th></tr></thead>
+    <tbody>
+      <tr><td>新しい依頼を7ステップで出す。途中でやめて、続きから再開する</td><td>依頼者</td><td>FR-01〜09、FR-47（下書きの自動保存）</td></tr>
+      <tr><td>「使いやすい画面」のような合格の条件を、書き換え候補を使って直す</td><td>依頼者</td><td>FR-05、FR-54（書き換え候補）</td></tr>
+      <tr><td>差戻しの依頼を直して再提出する</td><td>依頼者</td><td>FR-09、FR-52（あなたの番）</td></tr>
+      <tr><td>「あなたの番」から依頼を確認し、次の状態へ進める。まちがえたら元に戻す</td><td>受付担当</td><td>FR-48（次へ進める・元に戻す）、FR-52、FR-53（滞留日数）</td></tr>
+      <tr><td>承認前チェックを見て、信号の色を決めて承認する／理由テンプレートで差し戻す</td><td>承認者</td><td>FR-14〜16、FR-50（承認前チェック）、FR-51（理由テンプレート）</td></tr>
+      <tr><td>選べない状態の理由を見て、だれが動かすかを理解する</td><td>全員</td><td>FR-49（選べる状態だけ表示）</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>6-2. 主な活動</h3>
+  <ol class="steps">
+    <li><div><b>参加者を集める</b>依頼者（海の現場・陸の現場・本社の本部から）、受付担当、承認者の代表。各役割から数名 <span class="src p">提案</span></div></li>
+    <li><div><b>操作テストをする</b>6-1 のタスクを、説明なしで行ってもらう。所要時間と、迷った箇所・止まった箇所を記録する</div></li>
+    <li><div><b>現場の条件で見る</b>スマートフォン幅、屋外の明るさ、手袋のままでの操作も試す（NFR-17）</div></li>
+    <li><div><b>直して、もう一度</b>迷った箇所を直し、必要なら同じタスクで再テストする</div></li>
+    <li><div><b>本番へ何を引き継ぐか決める</b>試作の画面とルールのうち、本番に引き継ぐもの・作り直すものを一覧にする（G2 の材料）</div></li>
+  </ol>
+
+  <h3>6-3. 参加者と役割</h3>
+  <div class="tw"><table class="raci">
+    <thead><tr><th>活動</th><th>業務責任者</th><th>DX推進部<br>（受付・ライン）</th><th>DX推進部<br>（基盤・セキュリティ）</th><th>依頼者・利用部署</th><th>現場の試し係</th><th>内部監査</th></tr></thead>
+    <tbody>
+      <tr><td>操作テストの計画</td><td>C</td><td>R/A</td><td>－</td><td>C</td><td>C</td><td>－</td></tr>
+      <tr><td>操作テストへの参加</td><td>R</td><td>R</td><td>－</td><td>R</td><td>R</td><td>－</td></tr>
+      <tr><td>試作の改善</td><td>I</td><td>R/A</td><td>－</td><td>C</td><td>C</td><td>－</td></tr>
+      <tr><td>引継ぎ一覧（本番へ持っていくもの）</td><td>C</td><td>R</td><td>R/A</td><td>－</td><td>－</td><td>C</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>6-4. 成果物</h3>
+  <ul>
+    <li><b>操作テスト結果</b>：タスクごとの成功・失敗、所要時間、迷った箇所の一覧と、直す／直さないの判断</li>
+    <li><b>改善した試作</b>（必要な場合。版を上げて残す）</li>
+    <li><b>引継ぎ一覧</b>：本番に引き継ぐ画面・ルールと、作り直すもの（モック認証・仮データ・仮の権限は必ず作り直す）</li>
+  </ul>
+
+  <h3>6-5. 終了条件（G2 で判定）</h3>
+  <p>G2 の判定は、MVP の準備がそろったかとあわせて <a href="#s7">7章</a> の 7-1 で行います。Prototype から出す材料は次の3つです。</p>
+  <div class="tw"><table>
+    <thead><tr><th class="id">ID</th><th>チェック項目</th></tr></thead>
+    <tbody>
+      <tr><td class="id">GC-24</td><td>初めての人の主要タスク完了率が90%以上（案）（NFR-18）</td></tr>
+      <tr><td class="id">GC-25</td><td>1件の依頼を登録する時間の中央値が10分以内（案）（NFR-18）</td></tr>
+      <tr><td class="id">GC-26</td><td>迷った箇所の一覧と、それぞれの対応（直した／本番で直す／直さない理由）がある</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>6-6. 測る指標</h3>
+  <ul>
+    <li>主要タスクの完了率、所要時間（中央値）、迷った箇所の数</li>
+    <li>KPI-U1 下書きから受付完了までの割合（試作でも数えられる範囲で）</li>
+  </ul>
+  <div class="warn"><b>やってはいけないこと</b>：試作に本物の依頼・個人情報を入力する（試作はブラウザの中だけに保存されます）／試作の「操作する人」の切替を、本番でもそのまま使う（本番は Entra ID で識別、NFR-08）。</div>
+</section>
+
+<!-- ============ 7 MVP ============ -->
+<section class="sec" id="s7">
+  <h2><span class="no">7</span>PH3　MVP（最小の製品で限定利用）</h2>
+  <p class="sub">中心の問い：<b>最小の価値で、本当に使われるか？</b></p>
+
+  <div class="ask ac">少ない部署と1か所のモデル現場で、実際の困りごとを依頼として受け付け、青信号の小さな道具を届けたときに、<b>使い続けてもらえるか</b>を確かめます。</div>
+  <div class="easy">家の1部屋だけを本当に作って、しばらく住んでもらう段階です。「便利だった」「結局使わなかった」を、言葉ではなく使われ方（数字）で確かめます。</div>
+
+  <h3>7-1. 始める前の条件（G2 MVP着手判定）</h3>
+  <p>Prototype の結果（GC-24〜26）に加え、次の項目がそろったら MVP を始めます。判定者は業務責任者の代表（承認）と DX推進部 責任者（確認）です。</p>
+  <div class="tw"><table>
+    <thead><tr><th class="id">ID</th><th>チェック項目</th><th>関係</th></tr></thead>
+    <tbody>
+      <tr><td class="id">GC-27</td><td>本番実装方針（Entra ID、データベース、権限、運用、移行）が決まり、試作から引き継ぐもの・作り直すものが明記されている。モック認証・仮データ・仮の権限を本番に残さない</td><td>C-09、RISK-17</td></tr>
+      <tr><td class="id">GC-28</td><td>精査結果 F-01〜F-20 の扱いを最終確認した</td><td>Q-11</td></tr>
+      <tr><td class="id">GC-29</td><td>MVP の対象（DX推進部＋2〜3部署＋海のモデル現場1か所）、承認者・技術者、現場の試し係が指名された</td><td>Q-07、Q-08</td></tr>
+      <tr><td class="id">GC-30</td><td>MVP の環境（限定パイロット環境）と、使ってよいデータの範囲（協力会社・発注者に見せる範囲を含む）が決まった</td><td>Q-03、Q-23、NFR-36</td></tr>
+      <tr><td class="id">GC-31</td><td>AI再試行の上限、月の費用上限、費用の配賦方法が決まった</td><td>Q-05、Q-19</td></tr>
+      <tr><td class="id">GC-32</td><td>着手順の決め方（ものさしの重み・決定会議）と、最初の青信号の題材が決まった</td><td>Q-06、BR-15</td></tr>
+      <tr><td class="id">GC-33</td><td>下書きの保存先、添付ファイルの保存先、既存システムとの連携範囲（工事番号など）が決まった</td><td>Q-14、Q-17、Q-22</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>7-2. 範囲（工場そのものの場合）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>項目</th><th>MVP での範囲</th></tr></thead>
+    <tbody>
+      <tr><td>環境</td><td>限定パイロット環境（オンプレミス想定、Q-03）。利用者は Entra ID で識別する</td></tr>
+      <tr><td>利用者</td><td>DX推進部＋2〜3部署＋海のモデル現場1か所。モデル現場は海の現場を推奨（海の上・電波の弱い所で確かめられるため）</td></tr>
+      <tr><td>道具</td><td>青信号の小さな道具から（STEP 1：事務所で1つ → STEP 2：モデル現場で試す）。黄信号は扱わない</td></tr>
+      <tr><td>工程</td><td>主要業務1本を、画面からデータベース・権限・監査の記録まで縦に作る → 限定利用 → 継続・変更・中止の判断（8工程の3〜5）</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">青信号の題材の例：カタログの★（はじめやすい候補）や見本の依頼から選びます。たとえば「入札・発注情報のお知らせ（営業本部、REQ-2026-0006）」は青信号、「工事写真の整理・写真台帳（現場（海の工事））」はカタログ上は青信号です。ただし★と並び順は着手順ではありません。着手順は Q-06 の決め方で決めます <span class="src">S4</span>。</div>
+
+  <h3>7-3. 主な活動</h3>
+  <ol class="steps">
+    <li><div><b>パイロット環境を用意する</b>Entra ID の識別、権限、監査の記録、バックアップを入れる（試作の「操作する人」の切替は使わない）</div></li>
+    <li><div><b>主要業務1本を縦に作る</b>受付 → 承認 → 実装 → 検査 → PR → マージ → 限定公開までを本物の仕組みで</div></li>
+    <li><div><b>事務所で1つ（STEP 1）</b>青信号の小さな道具1つを、証拠付きで完成させる</div></li>
+    <li><div><b>モデル現場で試す（STEP 2）</b>海のモデル現場で、屋外・手袋・雨の日・電波の弱い所・作業船や台船の上で使ってもらう。結果を依頼のコメントとPRに記録する</div></li>
+    <li><div><b>使われ方を測る</b>利用者数、継続利用、依頼から使えるまでの日数、現場の事務時間の変化を測る</div></li>
+    <li><div><b>指標の目標値を決める</b>実測をもとに Q-12（指標の目標値）を決める</div></li>
+  </ol>
+
+  <h3>7-4. 参加者と役割</h3>
+  <div class="tw"><table class="raci">
+    <thead><tr><th>活動</th><th>経営層</th><th>業務責任者・承認者</th><th>DX推進部<br>（受付・ライン）</th><th>DX推進部<br>（基盤・セキュリティ）</th><th>依頼者・利用部署</th><th>現場の試し係</th><th>内部監査</th></tr></thead>
+    <tbody>
+      <tr><td>依頼の受付・承認</td><td>－</td><td>A</td><td>R</td><td>－</td><td>R</td><td>C</td><td>I</td></tr>
+      <tr><td>パイロット環境の用意</td><td>－</td><td>I</td><td>C</td><td>R/A</td><td>－</td><td>－</td><td>C</td></tr>
+      <tr><td>道具づくり（ライン）</td><td>－</td><td>C</td><td>R/A</td><td>C</td><td>C</td><td>－</td><td>－</td></tr>
+      <tr><td>モデル現場での試用</td><td>－</td><td>A</td><td>C</td><td>－</td><td>C</td><td>R</td><td>－</td></tr>
+      <tr><td>指標の測定と目標値の案</td><td>A</td><td>C</td><td>R</td><td>－</td><td>I</td><td>I</td><td>I</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>7-5. 成果物</h3>
+  <ul>
+    <li>動いている限定パイロット環境と、主要業務1本の道具（証跡付き）</li>
+    <li>モデル現場の試用記録（屋外・手袋・雨・電波の弱い所・海の上）</li>
+    <li>利用ログ、現場の声、不足の一覧</li>
+    <li>8つの指標（KPI-01〜08）の初期値と、目標値の案（Q-12）</li>
+    <li>継続・変更・中止の判断案と理由</li>
+  </ul>
+
+  <h3>7-6. 終了条件（G3 Staging移行判定）</h3>
+  <p>判定者は業務責任者の代表（承認）、DX推進部 責任者（確認）、予算は経営層です。<span class="src">S7</span> の「業務上の受入条件8」を GC-37 に組み込みます。</p>
+  <div class="tw"><table>
+    <thead><tr><th class="id">ID</th><th>チェック項目</th></tr></thead>
+    <tbody>
+      <tr><td class="id">GC-34</td><td>実際に使われた：週あたりの利用者数・継続利用率を実測した（目標値は Q-12 で決める）</td></tr>
+      <tr><td class="id">GC-35</td><td>依頼から使えるまでの日数、現場の事務時間の変化を実測した（KPI-F1、F2）</td></tr>
+      <tr><td class="id">GC-36</td><td>モデル現場で試し係が「使える」と判断し、圏外で入力が消えない・二重に登録されないことを確かめた（TC-F01〜06）</td></tr>
+      <tr><td class="id">GC-37</td><td>業務上の受入条件8をすべて満たす（下の表）</td></tr>
+      <tr><td class="id">GC-38</td><td>8つの指標（KPI-01〜08）の初期値が測れ、目標値（Q-12）が決まった</td></tr>
+      <tr><td class="id">GC-39</td><td>赤信号の判断にAIが入りこんでいない（KPI-F6）</td></tr>
+      <tr><td class="id">GC-40</td><td>継続・変更・中止の判断と理由が記録された</td></tr>
+      <tr><td class="id">GC-41</td><td>Q-09、Q-15、Q-16、Q-20、Q-21 が決まり、Q-10 の適用範囲が確定した</td></tr>
+    </tbody>
+  </table></div>
+  <h4>GC-37 業務上の受入条件8 <span class="src">S7</span></h4>
+  <ol>
+    <li>入口が1つで、受付番号が一意である（二重採番のテスト）</li>
+    <li>信号の色が「候補」と「決定」に分かれ、決定は承認者だけができる</li>
+    <li>承認済みの注文書だけが開発ラインに入る（未承認は拒否されるテスト）</li>
+    <li>CIの合否が、PRに証跡として残る</li>
+    <li>マージと公開が、別の判断として記録される</li>
+    <li>例外（差戻し・見送り・中断・緊急停止など）が理由付きで記録される</li>
+    <li>モデル現場の試用結果が、公開判断の材料になっている</li>
+    <li>要望から公開までを、IDでたどれる</li>
+  </ol>
+
+  <h3>7-7. 測る指標</h3>
+  <ul>
+    <li>週あたりの利用者数、継続利用率、依頼から使えるまでの日数（目標は実測後に Q-12 で）</li>
+    <li>KPI-01〜08（全社）、KPI-F1〜F8（建設土木）の初期値</li>
+    <li>KPI-U2 差戻し率と理由の内訳、KPI-U3 状態ごとの平均滞留日数と3日以上の件数</li>
+  </ul>
+  <div class="tw"><table>
+    <thead><tr><th>主なリスク</th><th>対策</th></tr></thead>
+    <tbody>
+      <tr><td>RISK-08 現場に定着しない</td><td>試し係の判断を公開の材料にする。青信号の小さな道具から始め、利用率を見る</td></tr>
+      <tr><td>RISK-12 モデル現場に頼りすぎ、ほかへ広がらない</td><td>現場の違い（海と陸、支店ごと）を記録し、広げる条件を決める</td></tr>
+      <tr><td>RISK-16 承認待ち・滞留でラインが止まる</td><td>「あなたの番」と滞留日数（FR-52、53）で見える化し、催促のルール（BR-21、Q-15）を試す</td></tr>
+    </tbody>
+  </table></div>
+  <div class="warn"><b>やってはいけないこと</b>：工場そのものの MVP で黄信号の道具を扱う（黄は、技術者のチェック体制ができてから運用・改善フェーズで扱う。10-3）／利用者を一気に増やす（増やすのは Release で段階的に）／実データを承認された範囲の外で使う（GC-30）。</div>
+</section>
+
+<!-- ============ 8 Staging ============ -->
+<section class="sec" id="s8">
+  <h2><span class="no">8</span>PH4　Staging（本番前の検証）</h2>
+  <p class="sub">中心の問い：<b>本番に近い条件で、安全・安定して運用できるか？</b></p>
+
+  <div class="ask ci">本番と同じ条件（Entra ID、権限、データ量、監視、バックアップ）で、<b>壊れたとき・混んだとき・攻められたとき</b>にも守れるか、元に戻せるかを確かめます。</div>
+  <div class="easy">引っ越しの前に、本番そっくりの家で「停電したら？」「水道が止まったら？」「鍵をなくしたら？」を全部ためす段階です。使い心地は MVP で確かめ済みなので、ここでは<b>安全と安定</b>に集中します。</div>
+
+  <h3>8-1. 範囲（工場そのものの場合）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>確かめること</th><th>中身（目標値はすべて（案））</th><th>関係</th></tr></thead>
+    <tbody>
+      <tr><td>認証と権限</td><td>Entra ID SSO、管理者・承認者の多要素認証（MFA）。権限テストを全件（他人・他現場・他社のデータが見えない、権限のない操作が拒否される）</td><td>NFR-08、NFR-38、TC-S</td></tr>
+      <tr><td>性能</td><td>依頼1,000件で、画面初期表示2秒以内、一覧の絞り込み P95 1.5秒以内、登録・更新 P95 1秒以内、状態の反映5秒以内、承認待ちの通知5分以内。同時利用100名</td><td>NFR-23</td></tr>
+      <tr><td>復元</td><td>バックアップから戻す訓練。RTO（止まってから戻すまで）4時間以内、RPO（失ってよいデータの時間）1時間以内</td><td>NFR-32、NFR-37</td></tr>
+      <tr><td>障害と停止</td><td>障害訓練（受付が止まった、通知が届かない、CIが止まった）。緊急停止とロールバックの手順</td><td>NFR-37、FR-41</td></tr>
+      <tr><td>監査と記録</td><td>履歴は追記のみ・改ざんを検知できる。参照は内部監査・管理者に限る</td><td>NFR-12、NFR-14</td></tr>
+      <tr><td>セキュリティ検査</td><td>脆弱性・依存関係・シークレットの検査をCIで毎回。重大な脆弱性は7日以内、高は30日以内に修正する運用が回るか</td><td>NFR-07、NFR-38</td></tr>
+      <tr><td>運用手順の通し</td><td>運用担当が、<a href="みらいSF%20操作・運用手順書%20V1.0.html">操作・運用手順書</a>どおりに毎日・毎週・毎月の作業と、エスカレーションを通しで行う</td><td>D4</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>8-2. 主な活動</h3>
+  <ol class="steps">
+    <li><div><b>本番と同じ条件の環境を作る</b>本番と同じ構成・設定で、データは作り物（件数は本番相当の1,000件）</div></li>
+    <li><div><b>権限テストを全件行う</b>権限の表の「×」をすべて試し、拒否されることを確かめる</div></li>
+    <li><div><b>性能を測る</b>1,000件・同時100名で 8-1 の目安を測る</div></li>
+    <li><div><b>復元と障害の訓練をする</b>バックアップから戻す、止まったときに元に戻す</div></li>
+    <li><div><b>運用手順を通しで行う</b>受付担当・承認者・運用担当が手順書どおりに回し、直すべき所を手順書に反映する</div></li>
+    <li><div><b>公開の準備をする</b>公開の範囲（第1弾）、利用者への案内、問い合わせ窓口、戻し方を決める</div></li>
+  </ol>
+
+  <h3>8-3. 参加者と役割</h3>
+  <div class="tw"><table class="raci">
+    <thead><tr><th>活動</th><th>経営層</th><th>業務責任者・承認者</th><th>DX推進部<br>（受付・ライン）</th><th>DX推進部<br>（基盤・セキュリティ）</th><th>依頼者・利用部署</th><th>内部監査</th></tr></thead>
+    <tbody>
+      <tr><td>環境の用意・権限テスト</td><td>－</td><td>－</td><td>C</td><td>R/A</td><td>－</td><td>C</td></tr>
+      <tr><td>性能・復元・障害の訓練</td><td>－</td><td>I</td><td>R</td><td>R/A</td><td>－</td><td>I</td></tr>
+      <tr><td>運用手順の通し訓練</td><td>－</td><td>R</td><td>R/A</td><td>R</td><td>C</td><td>I</td></tr>
+      <tr><td>監査・証跡の確認</td><td>－</td><td>C</td><td>C</td><td>C</td><td>－</td><td>R/A</td></tr>
+      <tr><td>公開の準備</td><td>I</td><td>A</td><td>R</td><td>C</td><td>C</td><td>－</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>8-4. 成果物</h3>
+  <ul>
+    <li>権限テスト・性能測定・復元訓練・障害訓練の記録</li>
+    <li>直した操作・運用手順書（版を上げる）と教育資料</li>
+    <li>トレーサビリティ表（要件 → テスト → 結果）</li>
+    <li>公開計画（第1弾の範囲、案内、窓口、戻し方）</li>
+  </ul>
+
+  <h3>8-5. 終了条件（G4 リリース判定）</h3>
+  <p><span class="src">S7</span> の「システム受入共通基準7」を GC-42〜48 に組み込み、Staging の確認項目を加えます。判定者：公開承認者（業務責任者＋DX推進部）が判定し、経営層が承認します。内部監査は意見を述べます。</p>
+  <div class="tw"><table>
+    <thead><tr><th class="id">ID</th><th>チェック項目</th><th>確かめる人</th></tr></thead>
+    <tbody>
+      <tr><td class="id">GC-42</td><td>「必須」の要件がすべて実装・検証済み（トレーサビリティ表）</td><td>DX推進部</td></tr>
+      <tr><td class="id">GC-43</td><td>受入条件充足率100%、重大な不具合0件（NFR-40）</td><td>公開承認者</td></tr>
+      <tr><td class="id">GC-44</td><td>権限・監査・隔離の検証が完了（権限テスト全件合格）</td><td>DX推進部（基盤・セキュリティ）、内部監査</td></tr>
+      <tr><td class="id">GC-45</td><td>運用手順・復旧手順・教育資料があり、運用手順の通し訓練を終えた</td><td>業務責任者、DX推進部</td></tr>
+      <tr><td class="id">GC-46</td><td>8つの指標の初期値を測る仕組みが動いている</td><td>DX推進部</td></tr>
+      <tr><td class="id">GC-47</td><td>データの分類・保存・保持（保存期間 Q-09）の設定を確かめた</td><td>内部監査</td></tr>
+      <tr><td class="id">GC-48</td><td>未決事項の扱いが整理されている（決定済み／期限付きで持ち越し）</td><td>DX推進部 責任者</td></tr>
+      <tr><td class="id">GC-49</td><td>性能が 8-1 の目安（案）を満たす、または満たさない理由と対策が記録されている</td><td>DX推進部（基盤・セキュリティ）</td></tr>
+      <tr><td class="id">GC-50</td><td>復元訓練で RTO 4時間以内・RPO 1時間以内（案）を達成した</td><td>DX推進部（基盤・セキュリティ）</td></tr>
+      <tr><td class="id">GC-51</td><td>サポート体制・問い合わせ窓口・エスカレーション先（Q-18）が決まった</td><td>DX推進部 責任者</td></tr>
+      <tr><td class="id">GC-52</td><td>公開承認（マージとは別のリスク判断）を行い、公開の範囲と戻し方が決まった</td><td>公開承認者（Q-21）</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">目標値は「改善の目安」です。未達の項目がある場合は、理由と代わりの対策を記録し、「条件付きGo」として限定した範囲で公開することができます。ただし GC-43（重大な不具合0件）と GC-44（権限・監査・隔離）は条件付きにしません <span class="src">S7</span> <span class="src p">提案</span>。</div>
+
+  <div class="tw"><table>
+    <thead><tr><th>主なリスク</th><th>対策</th></tr></thead>
+    <tbody>
+      <tr><td>RISK-04 本番データ・個人情報の漏えい</td><td>Staging も作り物のデータ。本番データの利用は別途承認</td></tr>
+      <tr><td>RISK-05 過剰な権限・内部不正</td><td>権限テスト全件、権限の棚卸し、職務分離</td></tr>
+      <tr><td>RISK-17 試作の仮の仕組みが本番に残る</td><td>GC-27 の引継ぎ一覧と照らし合わせ、仮の認証・仮の権限が残っていないことを確認</td></tr>
+    </tbody>
+  </table></div>
+  <p><b>決める未決事項（G4 まで）</b>：Q-18（SLA・サポート体制・エスカレーション窓口）。</p>
+</section>
+
+<!-- ============ 9 Release ============ -->
+<section class="sec" id="s9">
+  <h2><span class="no">9</span>PH5　Release（正式提供）</h2>
+  <p class="sub">中心の問い：<b>本番環境で、対象ユーザーへ正式提供する</b></p>
+
+  <div class="ask hu">公開承認を受けた成果物だけを本番に配備し、対象の部署・支店へ<b>順番に</b>広げます。困ったときにすぐ戻せる状態を保ちます。</div>
+  <div class="easy">いよいよ入居です。ただし全員が同じ日に引っ越すのではなく、1家族ずつ。何かあったら前の家に戻れるようにしておきます。</div>
+
+  <h3>9-1. 段階的な公開（工場そのものの場合）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>順番</th><th>対象 <span class="src p">提案</span></th><th>広げる前に見ること</th></tr></thead>
+    <tbody>
+      <tr><td>第1弾</td><td>MVP に参加した部署とモデル現場、その支店</td><td>障害・問い合わせの件数、利用の続き具合</td></tr>
+      <tr><td>第2弾</td><td>本社の本部と、ほかの支店・営業所（海の工事・陸の工事の両方）</td><td>支店ごとの違い（海と陸、地域）を記録し、手順書を直す（RISK-12）</td></tr>
+      <tr><td>第3弾</td><td>全社。協力会社・発注者が使う道具は、見せる範囲（Q-23）を守って順に</td><td>見せる範囲の権限テスト、同意の取り方</td></tr>
+    </tbody>
+  </table></div>
+  <p>各弾の前に、公開承認者が範囲を承認します（Q-21 で決める承認者・代理のルールによる）。19部署のすべてを一度に対象にはしません。</p>
+
+  <h3>9-2. 主な活動</h3>
+  <ol class="steps">
+    <li><div><b>公開承認を記録する</b>だれが・いつ・どの成果物（版）を・どの範囲に公開してよいとしたかを残す（マージとは別の判断）</div></li>
+    <li><div><b>配備する</b>デプロイジョブが、承認済みの成果物だけを本番に配備する（人は手で配備しない）</div></li>
+    <li><div><b>案内する</b>利用者に、使い始め方（<a href="みらいSF%20操作・運用手順書%20V1.0.html">操作・運用手順書</a>）と問い合わせ窓口を知らせる。desknet's NEO／AppSuite の通知は「入口」として使う（BR-11）</div></li>
+    <li><div><b>見守る</b>公開直後の安定化期間は、障害・問い合わせ・利用状況を毎日見る（期間の長さは G4 で決める）</div></li>
+    <li><div><b>戻す判断</b>重大な障害が出たら、PR に書いた戻し方で戻す。戻したことも記録する</div></li>
+  </ol>
+
+  <h3>9-3. 参加者と役割</h3>
+  <div class="tw"><table class="raci">
+    <thead><tr><th>活動</th><th>経営層</th><th>公開承認者<br>（業務責任者＋DX推進部）</th><th>DX推進部<br>（受付・ライン）</th><th>DX推進部<br>（基盤・セキュリティ）</th><th>依頼者・利用部署</th><th>内部監査</th></tr></thead>
+    <tbody>
+      <tr><td>公開承認</td><td>I</td><td>R/A</td><td>C</td><td>C</td><td>I</td><td>I</td></tr>
+      <tr><td>配備</td><td>－</td><td>I</td><td>C</td><td>R/A（デプロイジョブ）</td><td>－</td><td>－</td></tr>
+      <tr><td>利用者への案内・窓口</td><td>－</td><td>C</td><td>R/A</td><td>－</td><td>I</td><td>－</td></tr>
+      <tr><td>安定化の見守り・戻す判断</td><td>I</td><td>A</td><td>R</td><td>R</td><td>C</td><td>I</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>9-4. 成果物と測る指標</h3>
+  <ul>
+    <li>公開記録（範囲・版・承認）、配備ログ、利用者向けの案内</li>
+    <li>問い合わせの件数と内容、障害の件数と影響、利用率</li>
+    <li>KPI-05 マージ後の不具合と本番影響（重大0件）</li>
+  </ul>
+
+  <h3>9-5. 終了条件（G5 運用移行判定）</h3>
+  <p><span class="src">S7</span> の「受入3段階（ゲート → システム受入 → 運用確認）」のうち、最後の「運用確認」を G5 で行います（ゲートとシステム受入は G4）。判定者：DX推進部 責任者（承認）＋業務責任者（確認）。</p>
+  <div class="tw"><table>
+    <thead><tr><th class="id">ID</th><th>チェック項目</th></tr></thead>
+    <tbody>
+      <tr><td class="id">GC-53</td><td>安定化期間に重大な障害が0件で、問い合わせの件数が落ち着いた（件数の推移で確認）</td></tr>
+      <tr><td class="id">GC-54</td><td>運用体制（受付担当・運用担当・当番・エスカレーション先）が決まり、引継ぎを終えた</td></tr>
+      <tr><td class="id">GC-55</td><td>月次の指標の報告が1回以上回った（8つの指標の運用確認）</td></tr>
+      <tr><td class="id">GC-56</td><td>改善要望・不具合が受付に登録され、次のリリースに乗る流れが動いている</td></tr>
+      <tr><td class="id">GC-57</td><td>次の公開範囲（第2弾以降）の計画がある</td></tr>
+    </tbody>
+  </table></div>
+  <div class="warn"><b>やってはいけないこと</b>：公開承認なしで配備する（承認なし公開0件、NFR-39）／マージしたことを公開承認の代わりにする（BR-08）／全社に一度に公開する。</div>
+</section>
+
+<!-- ============ 10 運用・改善 ============ -->
+<section class="sec" id="s10">
+  <h2><span class="no">10</span>PH6　運用・改善</h2>
+  <p class="sub">中心の問い：<b>計測 → 学習 → 改善 → 次リリース</b></p>
+
+  <div class="ask ac">使われ方と困りごとを<b>数字で測り</b>、定例で振り返り、改善を新しい依頼として受け付け、<b>次のリリース</b>として届け続けます。ここにゴールはなく、回し続ける状態がゴールです。</div>
+
+  <h3>10-1. 改善の輪</h3>
+  <ol class="steps">
+    <li><div><b>計測</b>8つの指標（KPI-01〜08）、建設土木の指標（KPI-F1〜F8）、受付の使いやすさの指標（KPI-U1〜U4）、費用（予算の80%で警告・100%で停止）を月次で集計する</div></li>
+    <li><div><b>学習</b>月次・四半期の定例で、品質・費用・現場の声を振り返る。止まっている依頼（3日以上）や差戻しの理由の内訳から、つまずきの原因を探す</div></li>
+    <li><div><b>改善</b>障害・利用状況・要望・依存部品の更新を、新しい依頼（「不具合の報告」「いまある道具を良くしたい」）として受付に登録する（FR-43）</div></li>
+    <li><div><b>次リリース</b>依頼の大きさと色で道のりを決め（<a href="#s12">12章</a> の T1〜T3）、G3・G4 を通して公開する。定例リリースは月1回＋緊急の修正 <span class="src p">提案</span></div></li>
+  </ol>
+
+  <h3>10-2. 次リリースが通るゲート</h3>
+  <div class="tw"><table>
+    <thead><tr><th>リリースの中身</th><th>通るゲート</th></tr></thead>
+    <tbody>
+      <tr><td>小さな改善・不具合の修正（T1）</td><td>依頼の承認 → 検証（Staging相当）→ <b>G4 公開承認</b></td></tr>
+      <tr><td>新しい青信号の道具（T2）</td><td>依頼の承認 → Prototype → MVP → <b>G3</b> → Staging → <b>G4</b></td></tr>
+      <tr><td>新しい黄信号の道具（T3）</td><td>依頼の承認 → PoC → <b>G1</b> → Prototype → MVP → <b>G3</b> → Staging → <b>G4</b></td></tr>
+      <tr><td>工場そのもののルールの変更（CI定義・権限・注文書のひな形・信号ルール・カタログ）</td><td>工場の変更手順（FR-46）を通し、工場の管理責任者が承認。弱くなる検査・広がる権限があれば内部監査にも連絡</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>10-3. 黄信号への挑戦（旧 STEP 4）</h3>
+  <p>工場が運用・改善に入り、次の条件がそろったら、黄信号の道具（たたき台・比べっこ・見落としチェック）を T3 の道のりで扱い始めます。赤信号は対象外のままです。 <span class="src">S3</span></p>
+  <ul>
+    <li>黄の道具を確認する技術者・担当者が、部署ごとに指名されている（Q-07）</li>
+    <li>赤信号の判断にAIが入りこんでいないことを、指標で見続けている（KPI-F6）</li>
+    <li>結果は必ず担当者・技術者が見てから使う、という手順が操作・運用手順書にある</li>
+  </ul>
+
+  <h3>10-4. 定期的な見直し</h3>
+  <div class="tw"><table>
+    <thead><tr><th>頻度</th><th>見直すこと</th></tr></thead>
+    <tbody>
+      <tr><td>毎月</td><td>指標・費用の報告、権限設定の点検、止まっている依頼の確認</td></tr>
+      <tr><td>四半期</td><td>指標と改善計画のレビュー、削減見込みと実費用の比較、復旧訓練（案） <span class="src">S7</span></td></tr>
+      <tr><td>年1回</td><td>信号ルールと部署別道具カタログ（19部署・118件）の見直し、採用製品の最新情報の確認、法令・規程への適合レビュー</td></tr>
+    </tbody>
+  </table></div>
+  <p>作業の手順と担当は <a href="みらいSF%20操作・運用手順書%20V1.0.html">操作・運用手順書 V1.0</a> にあります。</p>
+
+  <h3>10-5. 測る指標</h3>
+  <ul>
+    <li>KPI-01〜08（全社）：目標値は Q-12（G3 で決定）。例：受入条件充足率100%、重大な不具合0件、予算内、中断作業の再開成功率95%以上</li>
+    <li>KPI-F1〜F8（建設土木）、KPI-U1〜U4（受付の使いやすさ）</li>
+  </ul>
+  <div class="tw"><table>
+    <thead><tr><th>主なリスク</th><th>対策</th></tr></thead>
+    <tbody>
+      <tr><td>RISK-06 費用が増える</td><td>予算の80%で警告・100%で停止、案件ごとの見える化、四半期ごとの比較</td></tr>
+      <tr><td>RISK-09 属人化・運用の知識不足</td><td>手順書・教育、担当を複数育てる</td></tr>
+      <tr><td>RISK-13 赤信号の判断にAIが入りこむ</td><td>承認前チェック（FR-50）と赤の確認、KPI-F6 で監視</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============ 11 ============ -->
+<section class="sec" id="s11">
+  <h2><span class="no">11</span>ゲート判定の進め方</h2>
+  <p class="sub">判定会議の流れと、残す記録の形を決めます。</p>
+
+  <h3>11-1. 判定会議の流れ</h3>
+  <ol class="steps">
+    <li><div><b>判定の申請</b>DX推進部が、チェック項目（GC）ごとの結果と証跡をまとめて申請する</div></li>
+    <li><div><b>証跡の確認</b>判定者（確認・意見の人を含む）が、会議の前に証跡を確認する。内部監査は権限・証跡・統制の観点で意見を出す</div></li>
+    <li><div><b>判定</b>承認する人が、Go／条件付きGo／No-Go／やり直しのどれかを決める</div></li>
+    <li><div><b>記録</b>判定記録（11-3）を残し、受付の依頼やリポジトリから参照できる場所に保存する（BR-19）</div></li>
+    <li><div><b>引継ぎ</b>条件付きGoの条件と、持ち越した未決事項を、次のゲートのチェック項目に加える</div></li>
+  </ol>
+  <div class="easy">ゲートは「試験の合否発表」ではなく、「次へ進むための約束の確認」です。足りないものがあっても、理由と対策がはっきりしていれば条件付きで進めます。ただし、安全の土台（権限・隔離・重大な不具合）だけは条件付きにしません。</div>
+
+  <h3>11-2. 判定の結果と、その後の動き</h3>
+  <div class="tw"><table>
+    <thead><tr><th>結果</th><th>意味</th><th>その後</th></tr></thead>
+    <tbody>
+      <tr><td><span class="sig g">Go</span></td><td>すべてのチェック項目を満たした</td><td>次のフェーズへ</td></tr>
+      <tr><td><span class="sig y">条件付きGo</span></td><td>重要でない項目に未達があるが、対策・期限・責任者が決まっている</td><td>次のフェーズへ。条件は次のゲートで必ず確認</td></tr>
+      <tr><td><span class="sig r">No-Go</span></td><td>成立しない、または見合わない</td><td>中止。理由と再検討の条件を記録</td></tr>
+      <tr><td>やり直し</td><td>判断に足りる証拠がない</td><td>同じフェーズで追加の確認。範囲を決め直す</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>11-3. 判定記録のひな形</h3>
+  <div class="tw"><table>
+    <thead><tr><th>項目</th><th>書くこと</th></tr></thead>
+    <tbody>
+      <tr><td>ゲート</td><td>G0〜G5 のどれか、対象（工場そのもの／道具の受付番号）</td></tr>
+      <tr><td>判定日時</td><td>年月日・時刻</td></tr>
+      <tr><td>判定者</td><td>承認・確認・意見のそれぞれの人（Entra ID で識別された利用者）</td></tr>
+      <tr><td>結果</td><td>Go／条件付きGo／No-Go／やり直し</td></tr>
+      <tr><td>チェック項目ごとの結果</td><td>GC-xx ごとに「満たす／満たさない／対象外」と、証跡の場所（PR、試験記録、報告書）</td></tr>
+      <tr><td>根拠</td><td>判断の理由。未達がある場合はその理由</td></tr>
+      <tr><td>条件</td><td>条件付きGoの条件、対策、期限、責任者</td></tr>
+      <tr><td>決めた未決事項</td><td>このゲートで決まった Q-xx と決定内容。持ち越したものと次の期限</td></tr>
+      <tr><td>承認する予算・要員</td><td>次のフェーズの予算・要員（C-14）</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>11-4. 判定記録を確かめるテスト（TC-P）</h3>
+  <div class="tw"><table>
+    <thead><tr><th class="id">TC</th><th>確かめること</th><th>期待する結果</th></tr></thead>
+    <tbody>
+      <tr><td class="id">TC-P01</td><td>判定記録の必須項目</td><td>判定者・日時・結果・根拠がそろっていない記録は「判定済み」にできない</td></tr>
+      <tr><td class="id">TC-P02</td><td>未達のチェック項目があるのに「Go」にする</td><td>できない。「条件付きGo」にして条件・期限・責任者を書く必要がある</td></tr>
+      <tr><td class="id">TC-P03</td><td>権限・隔離・重大な不具合（GC-13〜15、GC-43、GC-44）が未達のまま進める</td><td>条件付きGoにもできない</td></tr>
+      <tr><td class="id">TC-P04</td><td>前のゲートの記録がないまま、MVP・Staging・本番の環境に配備する</td><td>配備されない（デプロイジョブが承認記録を確かめる）</td></tr>
+      <tr><td class="id">TC-P05</td><td>No-Go の記録</td><td>理由と再検討の条件が残る</td></tr>
+      <tr><td class="id">TC-P06</td><td>道具の依頼で、当てはめの型（T1〜T3）が決まっていない</td><td>承認済みにできない（承認時に型を記録）</td></tr>
+    </tbody>
+  </table></div>
+  <div class="prop">TC-P01〜06 を、本番の受付とデプロイの仕組みでどこまで自動化するかは、G2 の本番実装方針で決めます。自動化しない部分は、判定記録のチェックリストで人が確かめます。</div>
+</section>
+
+<!-- ============ 12 ============ -->
+<section class="sec" id="s12">
+  <h2><span class="no">12</span>道具ごとの当てはめ（テーラリング）</h2>
+  <p class="sub">1つ1つの依頼は、大きさと信号の色で通るフェーズを変えます。BR-20</p>
+
+  <div class="easy">棚を1つ付けるのに地盤調査はいりません。でも新しい離れを建てるなら調査から始めます。依頼も同じで、小さな改善は短い道のり、新しくて慎重さが必要な道具は長い道のりにします。</div>
+
+  <h3>12-1. 4つの型と、通るフェーズ</h3>
+  <div class="tw"><table class="mx">
+    <thead><tr><th>型</th><th>どんな依頼</th><th>PoC</th><th>G1</th><th>Prototype</th><th>MVP</th><th>Staging</th><th>Release</th><th>運用・改善</th></tr></thead>
+    <tbody>
+      <tr><td><b>T1</b></td><td>小さな改善・不具合の修正（既存の道具、青・黄、PR1本ほどの大きさ）</td><td>－</td><td>－</td><td>－</td><td>－</td><td>●</td><td>●</td><td>●</td></tr>
+      <tr><td><b>T2</b></td><td>新しい道具（青信号）</td><td>－</td><td>－</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td></tr>
+      <tr><td><b>T3</b></td><td>新しい道具（黄信号）</td><td>●</td><td>●</td><td>●</td><td>●<br><small>技術者のチェック付き</small></td><td>●</td><td>●</td><td>●</td></tr>
+      <tr><td><b>赤</b></td><td>「決める」仕事を含む依頼</td><td colspan="7">対象外。範囲を「材料集め・表示」に変えて、黄または青として受け直す（BR-03）</td></tr>
+      <tr><td><b>＋現場向け</b></td><td>海の上・電波の弱い現場・屋外で使う道具</td><td colspan="7">T1〜T3 のどれでも、MVP（T1 は Staging）でモデル現場の試用を必ず行う（状態「現場試用」）。圏外で入力が消えない・二重に登録されないことを確かめる</td></tr>
+    </tbody>
+  </table></div>
+  <p class="hint">●＝通る　－＝通らない。T3 の PoC では、精度や技術の不確かさを確かめます（例：請求書の読み取りの精度）。黄信号の道具の MVP は、結果を必ず担当者・技術者が見てから使う手順で行います。</p>
+
+  <h3>12-2. 依頼の状態とフェーズの対応</h3>
+  <p>受付ステーションの状態（試作 V1.0 の10状態と、本番で加える「公開承認待ち」「取消」）は、フェーズと次のように対応します。</p>
+  <div class="tw"><table>
+    <thead><tr><th>依頼の状態</th><th>フェーズ・ゲート</th><th>説明</th></tr></thead>
+    <tbody>
+      <tr><td>受付／内容確認中／承認待ち</td><td>企画</td><td>困りごと・目的・合格の条件を整える。<b>承認＝その道具の G0</b>。承認するときに型（T1〜T3）を記録する（TC-P06）</td></tr>
+      <tr><td>承認済み／実装中</td><td>作る（T3 は PoC → G1、T2・T3 は Prototype を含む）</td><td>AIが隔離された作業場で作り、プレビューで利用者が操作を確かめる</td></tr>
+      <tr><td>検証中</td><td>検査と人の確認（Staging相当）</td><td>PR・プレビュー・人の確認・ステージングでの検証</td></tr>
+      <tr><td>現場試用</td><td>MVP の限定利用（モデル現場）</td><td>現場向けの道具だけ。屋外・手袋・電波の弱い所・海の上で試す</td></tr>
+      <tr><td>公開承認待ち（本番で追加）</td><td><b>G4 リリース判定</b></td><td>マージとは別のリスク判断として公開を承認する</td></tr>
+      <tr><td>完了</td><td>Release → 運用・改善</td><td>公開され使える状態。改善は新しい依頼として受け付ける</td></tr>
+      <tr><td>差戻し／見送り／取消（本番で追加）</td><td>－</td><td>理由を必ず記録する。差戻しは直して再提出すると受付に戻る</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">道具（B）では、MVP の限定利用（現場試用）と Staging の検証を、同じステージング環境で行うことがあります。その場合も「使われるか」と「安全・安定か」は別のチェックとして記録します <span class="src p">提案</span>。</div>
+
+  <h3>12-3. 見本の9件の当てはめ（例）</h3>
+  <p>受付ステーション試作 V1.0 に入っている見本の依頼を、どの型で進めるかの例です。型は承認者が承認のときに決めます。 <span class="src">S5</span> <span class="src p">提案</span></p>
+  <div class="tw"><table>
+    <thead><tr><th class="id">受付番号</th><th>件名（部署）</th><th>色（候補／決定）</th><th>いまの状態</th><th>型の例</th><th>いまのフェーズ・ポイント</th></tr></thead>
+    <tbody>
+      <tr><td class="id">REQ-2026-0001</td><td>工事写真の圏外保存（現場（海の工事））</td><td><span class="sig y">黄</span>／<span class="sig y">黄</span></td><td>現場試用</td><td>T3＋現場向け</td><td>MVP の限定利用。圏外で消えない・二重に登録されない・撮影日時を書きかえられないことを海の上で確かめる</td></tr>
+      <tr><td class="id">REQ-2026-0002</td><td>作業船の予定をひと目で見たい（船舶事業部）</td><td><span class="sig y">黄</span>／<span class="sig g">青</span></td><td>実装中</td><td>T2＋現場向け</td><td>作っている段階。予定の表示と二重予約の防止だけで、船を出すかの判断は含めない（そのため青に決定）</td></tr>
+      <tr><td class="id">REQ-2026-0003</td><td>KY記録の書きもれ確認（安全）</td><td><span class="sig y">黄</span>／－</td><td>承認待ち</td><td>T3＋現場向け</td><td>企画（G0 前）。協力会社も使うため、見せる範囲を承認前チェックで確かめる</td></tr>
+      <tr><td class="id">REQ-2026-0004</td><td>請求書の仕訳候補（経理部）</td><td><span class="sig y">黄</span>／－</td><td>内容確認中</td><td>T3</td><td>企画。承認後は PoC で読み取りの精度を確かめてから G1</td></tr>
+      <tr><td class="id">REQ-2026-0005</td><td>残業上限の早めのお知らせ（人事・労務）</td><td><span class="sig y">黄</span>／<span class="sig y">黄</span></td><td>完了</td><td>T3＋現場向け</td><td>運用・改善。通知の記録と、見られる人の範囲を見続ける</td></tr>
+      <tr><td class="id">REQ-2026-0006</td><td>入札・発注情報のお知らせ（営業本部）</td><td><span class="sig g">青</span>／－</td><td>受付</td><td>T2</td><td>企画。「新しい外部サービスとの接続」は人の承認が必要</td></tr>
+      <tr><td class="id">REQ-2026-0007</td><td>見積金額を自動で決めたい（技術本部（設計・積算））</td><td><span class="sig r">赤</span>／－</td><td>差戻し</td><td>赤 → 受け直し</td><td>対象外。「過去工事との見積比べ（黄）」などに範囲を変え、T3 として再提出</td></tr>
+      <tr><td class="id">REQ-2026-0008</td><td>協力会社書類の回収状況（購買部）</td><td><span class="sig y">黄</span>／<span class="sig y">黄</span></td><td>検証中</td><td>T3＋現場向け</td><td>検査と人の確認（Staging相当）。協力会社は自社の書類だけが見えることを権限テストで確かめる</td></tr>
+      <tr><td class="id">REQ-2026-0009</td><td>天気・波・潮の予報を現場で見たい（現場（海の工事））</td><td><span class="sig y">黄</span>／<span class="sig y">黄</span></td><td>承認済み</td><td>T3＋現場向け</td><td>作り始め。予報は「目安」として見せ、「作業できる／できない」は表示しない。出航・作業中止は人が決める</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============ 13 ============ -->
+<section class="sec" id="s13">
+  <h2><span class="no">13</span>旧段階との対応</h2>
+  <p class="sub">これまでの3つの段階の表を、6フェーズに読みかえます。未決事項 Q-04 は本書で解決します。</p>
+
+  <div class="tw"><table>
+    <thead><tr><th>V1.0（本書）</th><th>8工程（業務検証ループ）<span class="src">S1</span></th><th>旧 Phase <span class="src">S1</span><span class="src">S7</span></th><th>旧 STEP（建設土木）<span class="src">S3</span></th></tr></thead>
+    <tbody>
+      <tr><td><b>PH1 PoC</b></td><td>1 目的・制約の整理＋技術検証</td><td>Phase 0 標準化、Phase 1 単一案件</td><td>STEP 0 決まりを作る</td></tr>
+      <tr><td><b>G1 Go / No-Go</b></td><td>工程1の判断（着手するか）</td><td>－</td><td>－</td></tr>
+      <tr><td><b>PH2 Prototype</b></td><td>2 サンプルWebUI</td><td>－</td><td>－</td></tr>
+      <tr><td><b>PH3 MVP</b></td><td>3 本番実装方針の確定、4 主要業務1本の実装、5 MVPの限定利用</td><td>Phase 2 チーム利用</td><td>STEP 1 事務所で1つ、STEP 2 モデル現場で試す</td></tr>
+      <tr><td><b>PH4 Staging</b></td><td>6 本番相当の検証</td><td>Phase 3 公開まで接続</td><td>（STEP 2 の仕上げ）</td></tr>
+      <tr><td><b>PH5 Release</b></td><td>7 段階的な公開</td><td>Phase 3 完了</td><td>STEP 3 ほかの現場へ</td></tr>
+      <tr><td><b>PH6 運用・改善</b></td><td>8 運用改善</td><td>Phase 4 継続改善</td><td>STEP 4 黄信号へ挑戦</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>13-1. 旧 Phase の終了条件はどこへ行ったか</h3>
+  <div class="tw"><table>
+    <thead><tr><th>旧 Phase の終了条件 <span class="src">S7</span></th><th>V1.0 での扱い</th></tr></thead>
+    <tbody>
+      <tr><td>Phase 0：人間が同じ手順で再現できる（第三者が1件の変更を回せる）。要件定義書・詳細仕様書と標準一式が承認される</td><td>G0（GC-01）と PoC（GC-11、GC-20）。本書群 V1.0 の承認は G0 の材料</td></tr>
+      <tr><td>Phase 1：小機能1件を証跡付きで完了。受入条件充足率100%、重大な不具合0件、承認記録とCIログの紐付け</td><td>PoC の終了条件（GC-11〜12）。重大な不具合0件は G4（GC-43）でも確認</td></tr>
+      <tr><td>Phase 2：複数人の依頼を安全に処理（同時100名規模（案））</td><td>MVP（GC-34〜41）で複数人の利用、Staging（GC-49）で同時100名</td></tr>
+      <tr><td>Phase 3：マージと公開の分離、ステージング検証、公開承認、ロールバックを実地で確認</td><td>Staging（GC-42〜52）と Release（9章）</td></tr>
+      <tr><td>Phase 4：8つの指標で品質と費用を測りながら改善（定常状態）</td><td>運用・改善（10章）、G5（GC-55）</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">これまでの「Phase と STEP の2本立てで判定がずれる」問題（精査結果 F-16）は、本書の6フェーズに一本化することで解消します。</div>
+</section>
+
+<!-- ============ 14 ============ -->
+<section class="sec" id="s14">
+  <h2><span class="no">14</span>現在地と次の一手</h2>
+  <p class="sub">2026年10月21日時点で、みらいSF（工場そのもの）がどこにいるかを示します。</p>
+
+  <div class="cards">
+    <div class="card ai"><h4>先行して進んでいること</h4><p>受付ステーション試作 V1.0（S5）で、<b>Prototype にあたる画面の試作</b>ができています。使いやすさの改善6点を入れ、ブラウザでの動作確認（3つの役割で44項目、すべて合格、スクリプトのエラーなし。2026-10-21）を終えています。ただし、実際の利用者による操作テストはまだです。</p></div>
+    <div class="card ci"><h4>まだ始まっていないこと</h4><p><b>PoC（ラインの技術検証）は未着手</b>です。G0（着手判定）もまだです。AIの実装・CI・PRの一本線、Entra ID での識別、権限の境界は、まだ確かめていません。</p></div>
+  </div>
+
+  <h3>14-1. G1（Go / No-Go）までにやること（この順番で）</h3>
+  <ol class="steps">
+    <li><div><b>本書群 V1.0 のレビュー</b>要件定義書・詳細仕様書・本書・操作・運用手順書を、業務責任者の代表・内部監査に読んでもらう</div></li>
+    <li><div><b>G0 着手判定</b>GC-01〜05 をそろえ、経営層に PoC の開始を承認してもらう</div></li>
+    <li><div><b>PoC の計画</b>題材（FEAT-001 または SITE-001）、製品の候補（Q-02）、Entra ID の試験用グループ（Q-13）、作業量・費用の上限を決める</div></li>
+    <li><div><b>PoC の実施</b>4-3 の活動を行い、GC-11〜20 の証跡を集める</div></li>
+    <li><div><b>試作を見てもらう（並行してよい）</b>受付ステーション試作 V1.0 を、依頼者・受付担当・承認者の代表に触ってもらい、意見を集める <span class="src p">提案</span></div></li>
+    <li><div><b>G1 Go / No-Go</b>PoC報告書と試作への意見をもとに判定し、Prototype の進め方（操作テストを行う／省略する）を決める</div></li>
+  </ol>
+  <div class="note">日付はここでは決めません。各フェーズは期間ではなく終了条件で進みます（BR-16）。予定は G0 の判定のときに、PoC の上限とあわせて決めます。</div>
+</section>
+
+<!-- ============ 15 ============ -->
+<section class="sec" id="s15">
+  <h2><span class="no">15</span>用語</h2>
+  <p class="sub">本書で使う言葉です。ほかの用語は <a href="みらいSF%20要件定義書%20V1.0.html">要件定義書</a> の用語集を見てください。</p>
+  <dl class="gl">
+    <dt>フェーズ</dt><dd>1つの問いに答えるための段階。PH1〜PH6</dd>
+    <dt>ゲート</dt><dd>フェーズとフェーズの間で、人が「次へ進んでよいか」を判定する関所。G0〜G5</dd>
+    <dt>終了条件</dt><dd>次へ進むために満たすべき条件。本書ではチェック項目（GC-xx）として書く</dd>
+    <dt>PoC</dt><dd>Proof of Concept。技術的に成立するかを小さく確かめること</dd>
+    <dt>Go / No-Go</dt><dd>先へ進む（Go）か、やめる（No-Go）かの判定。条件付きGo・やり直しもある</dd>
+    <dt>Prototype</dt><dd>利用者が理解・操作できるかを確かめるための試作。本番の仕組みではない</dd>
+    <dt>MVP</dt><dd>Minimum Viable Product。価値を確かめられる最小限の製品。限られた利用者に実際に使ってもらう</dd>
+    <dt>Staging</dt><dd>本番と同じ条件で、安全・安定を確かめる本番前の検証</dd>
+    <dt>Release</dt><dd>本番環境で、対象の利用者に正式に提供すること</dd>
+    <dt>段階的な公開</dt><dd>対象の部署・支店を順番に広げて公開すること</dd>
+    <dt>安定化期間</dt><dd>公開の直後、障害・問い合わせを毎日見守る期間</dd>
+    <dt>限定パイロット環境</dt><dd>MVP で使う、利用者を限った環境（オンプレミス想定）</dd>
+    <dt>テーラリング</dt><dd>依頼の大きさと色で、通るフェーズを変えること（T1〜T3）</dd>
+    <dt>モデル現場</dt><dd>新しい道具を最初に試してもらう現場。MVP では海の現場を推奨</dd>
+    <dt>現場の試し係</dt><dd>モデル現場で屋外・手袋・電波の弱い所などで実際に使い、「使える／使えない」を判断する人</dd>
+    <dt>公開承認</dt><dd>本番に公開してよいかの人の判断。マージ（完成版への取り込み）とは別のリスク判断</dd>
+    <dt>RTO／RPO</dt><dd>RTO＝止まってから戻すまでの時間の目標。RPO＝失ってよいデータの時間の幅の目標</dd>
+    <dt>P95</dt><dd>100回のうち95回はこの時間以内、という速さの目安</dd>
+    <dt>RACI</dt><dd>R＝実施する、A＝最終責任を持つ、C＝相談を受ける、I＝結果を知らされる</dd>
+  </dl>
+</section>
+
+<!-- ============ 16 ============ -->
+<section class="sec" id="s16">
+  <h2><span class="no">16</span>承認欄</h2>
+  <p class="sub">本書の6フェーズとゲートで、みらいSFの導入を進めてよいかを判断し、記名します。</p>
+  <div class="sign">
+    <div><small>作成</small><br>DX推進部<br><br><small>日付：　　年　　月　　日</small></div>
+    <div><small>確認</small><br>業務責任者（代表）・内部監査<br><br><small>日付：　　年　　月　　日</small></div>
+    <div><small>承認</small><br>経営層<br><br><small>日付：　　年　　月　　日</small></div>
+  </div>
+</section>
+</main>
+</div>
+
+<footer class="ft">
+  みらいソフトウェアファクトリー フェーズ計画書 V1.0（MSF-PLN-2026-001）｜DX推進部｜2026年10月21日<br>
+  本書は企画構想案・建設土木版・部署別道具カタログ（みらい建設工業版）・受付ステーション試作 V1.0・要件定義書正式版・やさしい版 v0.1 をもとに作成しました。「提案」と記した事項と（案）の目標値は、関係者の合意で確定します。人名はすべて架空です。部署名は公開情報をもとにした例で、実際の組織の区切りとは異なる場合があります。
+</footer>
+<button class="totop" id="totop" type="button" aria-label="ページの先頭へ">↑</button>
+
+<script>
+
+(function(){
+  var root=document.documentElement, KEY='mirai-sf-doc-theme';
+  try{ var t=localStorage.getItem(KEY); if(t==='light'||t==='dark') root.setAttribute('data-theme',t); }catch(e){}
+  document.getElementById('themeBtn').addEventListener('click',function(){
+    var cur=root.getAttribute('data-theme') || (window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+    var nx=cur==='dark'?'light':'dark'; root.setAttribute('data-theme',nx);
+    try{ localStorage.setItem(KEY,nx); }catch(e){}
+  });
+  var links=[].slice.call(document.querySelectorAll('#tocList a'));
+  var map={}; links.forEach(function(a){ map[a.getAttribute('href').slice(1)]=a; });
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(es){ es.forEach(function(e){ if(e.isIntersecting){ links.forEach(function(a){a.classList.remove('on');}); var a=map[e.target.id]; if(a) a.classList.add('on'); } }); },{rootMargin:'-20% 0px -70% 0px'});
+    document.querySelectorAll('section.sec').forEach(function(s){ io.observe(s); });
+  }
+  var tt=document.getElementById('totop');
+  window.addEventListener('scroll',function(){ tt.classList.toggle('show', window.scrollY>600); },{passive:true});
+  tt.addEventListener('click',function(){ window.scrollTo({top:0}); });
+  document.querySelectorAll('.filter').forEach(function(f){
+    var tb=document.getElementById(f.getAttribute('data-for')); if(!tb) return;
+    var inp=f.querySelector('input'), pr='';
+    function run(){
+      var q=inp.value.trim().toLowerCase();
+      var rows=[].slice.call(tb.querySelectorAll('tbody tr')), lastGrp=null, grpHas=false;
+      function closeGrp(){ if(lastGrp) lastGrp.style.display=grpHas?'':'none'; }
+      rows.forEach(function(r){
+        if(r.classList.contains('grp')){ closeGrp(); lastGrp=r; grpHas=false; return; }
+        var bd=r.querySelector('.b,.sig');
+        var ok=(!q||r.textContent.toLowerCase().indexOf(q)>=0)&&(!pr||(bd&&bd.textContent===pr));
+        r.style.display=ok?'':'none'; if(ok) grpHas=true;
+      });
+      closeGrp();
+    }
+    inp.addEventListener('input',run);
+    f.querySelectorAll('button').forEach(function(b){ b.addEventListener('click',function(){ pr=b.getAttribute('data-p'); f.querySelectorAll('button').forEach(function(x){x.classList.toggle('on',x===b);}); run(); }); });
+  });
+})();
+
+</script>
+</body>
+</html>
