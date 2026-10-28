@@ -8,7 +8,8 @@ async function login(page: Page): Promise<void> {
   await page.getByLabel('メールアドレス').fill(EMAIL);
   await page.getByLabel('パスワード').fill(PASSWORD);
   await page.getByRole('button', { name: 'ログイン' }).click();
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('SF受付・運用コンソール');
+  await page.waitForSelector('button[data-v="home"]');
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('ソフトウェアファクトリー受付・運用コンソール');
 }
 
 async function clickText(page: Page, text: string, exact = true): Promise<boolean> {
@@ -103,7 +104,7 @@ async function setRole(page: Page, role: string): Promise<void> {
 
 test('ログインしてコンソールが表示される', async ({ page }) => {
   await login(page);
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('みらい建設工業 SF受付・運用コンソール');
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('みらい建設工業 ソフトウェアファクトリー受付・運用コンソール');
   await expect(page.locator('.rail')).toContainText('新しい依頼');
   await expect(page.locator('.rail')).toContainText('ボード');
   await expect(page.locator('.rail')).toContainText('SecOps');
@@ -124,7 +125,7 @@ test('依頼を登録し、再読み込みしてもDBから残る', async ({ pag
   await createRequest(page, title);
   await expect(page.locator('body')).toContainText('受付');
   await page.reload();
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('SF受付・運用コンソール');
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('ソフトウェアファクトリー受付・運用コンソール');
   await gotoView(page, 'list');
   await page.waitForTimeout(400);
   await expect(page.locator('body')).toContainText(title);
