@@ -26,5 +26,12 @@ export default defineConfig({
         url: `${BASE_URL}/healthz`,
         reuseExistingServer: true,
         timeout: 60_000,
+        // E2E では承認依頼メールをローカルの送信BOXへ必ず書き出す（宛先が無いと積まれないため）
+        env: {
+          ...(Object.fromEntries(Object.entries(process.env).filter(([, v]) => typeof v === 'string')) as Record<string, string>),
+          MAIL_MODE: process.env.MAIL_MODE ?? 'file',
+          MAIL_APPROVAL_TO: process.env.MAIL_APPROVAL_TO ?? 'approver@example.com',
+          MAIL_OUTBOX_DIR: process.env.MAIL_OUTBOX_DIR ?? '.mail/e2e-outbox',
+        },
       },
 });

@@ -195,6 +195,35 @@ test('承認できる（承認者のみ）', async ({ page }) => {
   await expect(row).toContainText('承認済み');
 });
 
+test('承認依頼メールが依頼詳細と送信BOXに表示される', async ({ page }) => {
+  await login(page);
+  const title = `メール確認 ${Date.now()}`;
+  await createRequest(page, title);
+
+  // 受付担当として 内容確認中 → 承認待ち（この時点でサーバが承認依頼メールを1通積む）
+  await setRole(page, 'desk');
+  await gotoView(page, 'board');
+  expect(await clickInCard(page, title, '内容確認中')).toBe(true);
+  await page.waitForTimeout(900);
+  expect(await clickInCard(page, title, '承認待ち')).toBe(true);
+  await page.waitForTimeout(1200);
+
+  // 依頼詳細にメールの状態が出る
+  await gotoView(page, 'list');
+  await page.locator(`tr:has-text("${title}")`).click();
+  await expect(page.locator('#drawer')).toContainText('承認依頼メール');
+  await expect(page.locator('#drawer')).toContainText('送信済み');
+  await page.locator('#dx').click();
+  await page.waitForTimeout(300);
+
+  // 運用 > メール送信 に送信BOXが出る（再読み込みして最新のDB状態から）
+  await page.reload();
+  await gotoView(page, 'ops');
+  await page.locator('[data-vt="otab|mail"]').click();
+  await expect(page.locator('#mailbox')).toContainText('メール送信BOX');
+  await expect(page.locator('#mailbox')).toContainText('送信済み');
+});
+
 test('一覧の検索で0件の表示になる', async ({ page }) => {
   await login(page);
   await gotoView(page, 'list');

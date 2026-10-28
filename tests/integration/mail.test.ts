@@ -100,6 +100,14 @@ describe('承認依頼メール', () => {
     expect(mail.status).toBe('sent');
     expect(mail.attempts).toBe(1);
     expect(mail.last_error).toBeNull();
+
+    // 依頼詳細にもメールの状態が出る（画面の依頼詳細で表示する）
+    const detail = await app.inject({ method: 'GET', url: `/api/requests/${created.id}`, headers: { cookie: auth.cookie } });
+    expect(detail.statusCode).toBe(200);
+    const body = detail.json() as { request: { mail: { id: string; status: string; to: string; sentAt: string | null } | null } };
+    expect(body.request.mail?.status).toBe('sent');
+    expect(body.request.mail?.to).toBe('approver@example.com');
+    expect(body.request.mail?.sentAt).toBeTruthy();
   });
 
   it('承認者のメールが分かればそちらへ送る', async () => {

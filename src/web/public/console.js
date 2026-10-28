@@ -1171,7 +1171,7 @@ const SF = (function(){
   });
 
   /* ---- drawer ---- */
-  function openDrawer(id){ S.open=id; S.dtab='sum'; renderDrawer(); $('#drawer').classList.add('show'); $('#dmask').classList.add('show'); }
+  function openDrawer(id){ S.open=id; S.dtab='sum'; renderDrawer(); $('#drawer').classList.add('show'); $('#dmask').classList.add('show'); refreshRequestMail(id); }
   function closeDrawer(){ S.open=null; $('#drawer').classList.remove('show'); $('#dmask').classList.remove('show'); }
   $('#dmask').addEventListener('click', closeDrawer);
   function renderDrawer(){
@@ -1191,7 +1191,11 @@ const SF = (function(){
       (pp ? '<div>開発ライン：<b>L'+pp.step+' '+E(SF.LINE[pp.step])+'</b>　Issue '+(pp.issue?'#'+pp.issue:'－')+'　PR '+(pp.pr?'#'+pp.pr:'－')+'　マージ '+(pp.merged?E(pp.merged):'－')+(pp.esc?'　<span class="sv s1">停止中 '+E(pp.esc)+'</span>':'')+'</div><div class="chks" style="margin-top:6px">'+chkChips(r, pp)+'</div>' : '')+
       (ap ? '<div style="margin-top:6px">運用中：<b>'+E(ap.id)+' v'+E(ap.ver)+'</b>（'+E(ap.wave)+'）　'+pill(health(ap).l, health(ap).k)+'</div>' : '')+
       '<div class="data-row" style="margin-top:8px">'+(pp?'<button type="button" class="btn sm" data-go="devops|line">'+ico('i-git')+'DevOps で見る</button>':'')+(ap?'<button type="button" class="btn sm" data-go="ops|apps">'+ico('i-pulse')+'運用で見る</button>':'')+'</div></div>' : '';
-    if (S.dtab==='sum') body = turnBox + lineBox +
+    const mailBox = r.mail ? '<div class="box"><h4>'+ico('i-inbox')+'承認依頼メール</h4>'+
+      '<div>状態：'+mailChip(r.mail.status)+'　宛先：'+E(r.mail.to)+(r.mail.sentAt?'　送信：'+E(SF.fmt(r.mail.sentAt)):'')+'</div>'+
+      (r.mail.status==='failed' ? '<div class="hint" style="margin-top:6px">'+E(r.mail.lastError||'送信できませんでした')+'</div><div style="margin-top:8px"><button class="btn sm pri" id="mretry" type="button">'+ico('i-undo')+'メールを再送</button></div>' : '')+
+      (r.mail.status==='pending'||r.mail.status==='sending' ? '<p class="hint" style="margin:6px 0 0">送信キューに積まれています。少し待つと送信済みになります。</p>' : '')+'</div>' : '';
+    if (S.dtab==='sum') body = turnBox + mailBox + lineBox +
       '<div class="box"><h4>'+ico('i-flag')+'信号の色</h4><div>判定の候補：'+sig(j.c)+'　承認者の決定：'+(r.signalFinal?sig(r.signalFinal):'<span class="muted">未決定</span>')+'</div><ul class="reasons">'+j.reasons.map(x=>'<li><i class="'+x.c+'"></i>'+E(x.t)+'</li>').join('')+'</ul></div>'+
       '<div class="box"><h4>'+ico('i-inbox')+'依頼の中身</h4><dl class="kv">'+
         '<dt>起票者</dt><dd>'+E(r.applicant)+(r.contact?'（'+E(r.contact)+'）':'')+'</dd><dt>部署</dt><dd>'+E(dep?dep.name:'')+'</dd><dt>依頼区分</dt><dd>'+E(r.kind)+'</dd>'+
@@ -1231,6 +1235,13 @@ const SF = (function(){
     if ($('#ycp')) $('#ycp').addEventListener('click',()=>{ try{ navigator.clipboard.writeText(SF.toYAML(r)).then(()=>toast('コピーしました'),()=>toast('コピーできませんでした',true)); }catch(_){ toast('コピーできませんでした',true); } });
     if ($('#ydl')) $('#ydl').addEventListener('click',()=>SF.download(r.id+'_注文書.yaml', SF.toYAML(r), 'text/yaml') ? toast('ダウンロードしました') : toast('ダウンロードできませんでした', true));
     if ($('#cad')) $('#cad').addEventListener('click',()=>{ const t=$('#ctx').value.trim(); if(!t) return toast('コメントを入力してください',true); const now=SF.nowISO(); r.comments=r.comments||[]; r.comments.push({at:now,by:me().name,text:t}); r.updatedAt=now; persist(); toast('コメントしました'); renderDrawer(); });
+    if ($('#mretry')) $('#mretry').addEventListener('click', async () => {
+      try {
+        const res = await window.__MSF__.api('POST','/api/mail/outbox/'+encodeURIComponent(r.mail.id)+'/retry');
+        r.mail.status = (res && res.status) || 'sent'; r.mail.sentAt = SF.nowISO(); r.mail.lastError = null;
+        toast(r.mail.status==='sent' ? '承認依頼メールを再送しました' : '再送しましたが送信できませんでした', r.mail.status!=='sent'); renderDrawer();
+      } catch(e){ toast((e && e.message) || '再送できませんでした', true); }
+    });
   }
   document.addEventListener('keydown', e => { if (e.key==='Escape'){ if ($('#mmask').classList.contains('show')) closeModal(); else if (S.open) closeDrawer(); } });
 
@@ -1514,6 +1525,46 @@ const SF = (function(){
   function goTo(g){ const [v, t] = g; if (v==='ops') S.otab = t; if (v==='devops') S.dvtab = t; if (v==='secops') S.sctab = t; go(v); }
 
   /* ================= 運用（リリース後の管理） ================= */
+  /* ---- 承認依頼メール（サーバの送信キュー） ---- */
+  const MAIL_LABEL = {pending:'送信待ち', sending:'送信中', sent:'送信済み', failed:'送信できませんでした'};
+  function mailChip(s){ const k = s==='sent'?'ok':s==='failed'?'ng':s==='sending'?'warn':''; return pill(MAIL_LABEL[s]||s, k); }
+
+  // 依頼詳細を開いたら、サーバ側のメール状態だけ取り直す（送信はコミット後なので画面を更新したい）
+  function refreshRequestMail(id){
+    const msf = window.__MSF__; if(!msf || !msf.api) return;
+    msf.api('GET','/api/requests/'+encodeURIComponent(id)).then(res => {
+      const r = find(id); if(!r || !res || !res.request) return;
+      const next = res.request.mail || null;
+      if (JSON.stringify(next) === JSON.stringify(r.mail || null)) return;
+      r.mail = next; if (S.open===id) renderDrawer();
+    }).catch(()=>{});
+  }
+
+  async function loadMailBox(){
+    const el = $('#mailbox'); if(!el) return;
+    const msf = window.__MSF__; if(!msf || !msf.api){ el.innerHTML='<p class="muted">サーバに接続していません</p>'; return; }
+    const canWrite = S.role==='desk' || S.role==='approver' || Boolean(msf.user && msf.user.isAdmin);
+    try {
+      const st = await msf.api('GET','/api/mail/status');
+      const mode = st.mode==='off' ? '送らない設定（off）' : st.mode==='file' ? 'ローカルの送信BOX（file）' : st.mode==='sendmail' ? 'ローカルMTA（sendmail）' : 'SMTP（smtp）';
+      let list = null;
+      if (canWrite) list = await msf.api('GET','/api/mail/outbox?limit=20');
+      let html = '<div class="card pad"><h2 class="h2">'+ico('i-inbox')+'メール送信BOX</h2>'+
+        '<p>送信方法：<b>'+E(mode)+'</b>　送信済み <b>'+st.sent+'</b> 件　送信待ち <b>'+(st.pending+st.sending)+'</b> 件　失敗 <b>'+st.failed+'</b> 件'+(st.lastSentAt?'　最終送信：'+E(SF.fmt(st.lastSentAt)):'')+'</p>';
+      if (canWrite) html += '<div class="data-row"><button class="btn sm" id="mflush" type="button">'+ico('i-undo')+'未送信をまとめて送る</button><button class="btn sm" id="mreload" type="button">'+ico('i-arrow')+'再読み込み</button></div>';
+      else html += '<p class="hint">送信BOXの一覧は受付担当・承認者・管理者だけが見られます。</p>';
+      if (canWrite && list && list.items.length){
+        html += '<div class="tw" style="margin-top:12px"><table class="t"><thead><tr><th>作成</th><th>宛先</th><th>件名</th><th>状態</th><th></th></tr></thead><tbody>'+
+          list.items.map(m=>'<tr><td>'+E(SF.fmt(m.createdAt))+'</td><td>'+E(m.to)+'</td><td>'+E(m.subject)+'</td><td>'+mailChip(m.status)+(m.lastError?'<br><small class="muted">'+E(m.lastError)+'</small>':'')+'</td><td>'+(m.status==='failed'?'<button class="btn sm" data-mretry="'+E(m.id)+'" type="button">再送</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
+      } else if (canWrite && list) html += '<p class="muted" style="margin-top:12px">まだメールはありません。</p>';
+      html += '</div>';
+      el.innerHTML = html;
+      if ($('#mflush')) $('#mflush').addEventListener('click', async () => { try { const r = await msf.api('POST','/api/mail/flush'); toast('送信しました（成功 '+r.sent+'／失敗 '+r.failed+'）'); loadMailBox(); } catch(e){ toast((e && e.message) || '送信できませんでした', true); } });
+      if ($('#mreload')) $('#mreload').addEventListener('click', loadMailBox);
+      $$('[data-mretry]').forEach(b=>b.addEventListener('click', async () => { try { await msf.api('POST','/api/mail/outbox/'+encodeURIComponent(b.dataset.mretry)+'/retry'); toast('再送しました'); loadMailBox(); } catch(e){ toast((e && e.message) || '再送できませんでした', true); } }));
+    } catch(e){ el.innerHTML='<p class="muted">送信BOXを取得できませんでした（'+E((e && e.message) || '')+'）</p>'; }
+  }
+
   function renderOps(){
     const o = O(), t = S.otab || 'apps';
     const openInc = o.incidents.filter(i => i.status!=='完了'), fbOpen = o.feedback.filter(f => f.status==='未対応');
@@ -1557,11 +1608,15 @@ const SF = (function(){
         '<h3 class="h3">'+ico('i-db')+'バックアップ（直近7日）</h3><div class="bkp">'+o.backups.slice().reverse().map(b => '<div class="'+(b.result==='成功'?'ok':'warn')+'"><b>'+E(ymdOf(b.at))+'</b><span>'+E(b.result)+'</span><small>'+E(b.size)+'</small></div>').join('')+'</div>'+
         '<p class="hint">目標（案）：RPO 1時間・RTO 4時間。バックアップが失敗したら S2 として再実行または手動で取ります。リストア検証は毎月、復旧訓練は四半期ごと（案）。</p>';
     }
+    if (t==='mail'){
+      body = '<div id="mailbox"><p class="muted">読み込み中…</p></div>';
+    }
     $('#view').innerHTML =
       '<div class="btool"><h2 class="h2" style="margin:0">'+ico('i-pulse')+'運用（リリース後の管理）</h2><span class="sp"></span><span class="muted" style="font-size:12.5px">数値とできごとは操作確認用の見本です</span></div>'+
       '<div class="kpis">'+kcard('稼働中の道具', o.apps.length, 'i-rocket', '件')+kcard('平均の稼働率（30日）', avg, 'i-pulse', '%')+kcard('対応中の障害', openInc.length, 'i-alert', '件', openInc.some(i=>['S1','S2'].includes(i.sev)&&!i.restored)?'ng':openInc.length?'warn':'')+kcard('未対応の利用者の声', fbOpen.length, 'i-chat', '件', fbOpen.length?'warn':'')+kcard('期限切れの定期作業', rtOver.length, 'i-clock', '件', rtOver.length?'ng':'')+'</div>'+
-      vtabs('otab', [['apps','道具の稼働','i-rocket'],['inc','障害対応','i-alert',openInc.length||''],['fb','利用者の声','i-chat',fbOpen.length||''],['rt','定期作業','i-clock',rtOver.length||'']])+'<div class="vbody">'+body+'</div>';
+      vtabs('otab', [['apps','道具の稼働','i-rocket'],['inc','障害対応','i-alert',openInc.length||''],['fb','利用者の声','i-chat',fbOpen.length||''],['rt','定期作業','i-clock',rtOver.length||''],['mail','メール送信','i-inbox']])+'<div class="vbody">'+body+'</div>';
     bindTabs(renderOps); bindCommon();
+    if (t==='mail') loadMailBox();
   }
 
   /* ================= DevOps ================= */

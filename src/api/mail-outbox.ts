@@ -270,3 +270,32 @@ export async function mailSummary(): Promise<{
     lastSentAt: counts?.last_sent_at ? counts.last_sent_at.toISOString() : null,
   };
 }
+
+/** 依頼に紐づく「いちばん新しい承認依頼メール」の状態（依頼詳細の表示用）。 */
+export interface RequestMailStatus {
+  id: string;
+  status: MailState;
+  to: string;
+  sentAt: string | null;
+  lastError: string | null;
+  attempts: number;
+}
+
+export async function latestMailForRequest(requestId: string): Promise<RequestMailStatus | null> {
+  const row = await one<MailRow>(
+    `select ${SELECT_COLUMNS} from mail_outbox
+      where request_id = $1 and kind = 'approval_request'
+      order by created_at desc, id desc
+      limit 1`,
+    [requestId],
+  );
+  if (!row) return null;
+  return {
+    id: row.id,
+    status: row.status,
+    to: row.to_email,
+    sentAt: row.sent_at ? row.sent_at.toISOString() : null,
+    lastError: row.last_error,
+    attempts: row.attempts,
+  };
+}

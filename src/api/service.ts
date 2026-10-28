@@ -43,7 +43,7 @@ import type { RequestInput, TransitionInput } from './schemas.js';
 import { buildOrderYaml } from '../shared/order.js';
 import { createIssue, isGithubConfigured } from './github.js';
 import { buildCsv, buildExportJson, measureOf } from '../shared/export.js';
-import { deliverOutboxMail, enqueueApprovalMailInTx } from './mail-outbox.js';
+import { deliverOutboxMail, enqueueApprovalMailInTx, latestMailForRequest } from './mail-outbox.js';
 
 export interface Actor {
   user: SessionUser;
@@ -133,6 +133,7 @@ async function toDetail(row: RequestRow, actor: Actor): Promise<RequestDetail> {
     }),
     approverIsMe: !row.approver_user_id || row.approver_user_id === actor.userId,
     isOwner,
+    mail: await latestMailForRequest(row.id),
   };
 }
 
