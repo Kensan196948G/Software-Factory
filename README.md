@@ -17,6 +17,7 @@
 | 目的 | 要望の入口を1つにし、信号の色・合格の条件・承認を記録して、検査可能な注文書にする |
 | 利用者（MVP） | 個人利用者1名。依頼者・受付担当・承認者の3役を兼ね、画面のロール切替で確認する |
 | 主要フロー | ①依頼を登録する ②承認する（信号決定・承認前チェック） ③進める・差し戻す・見る |
+| WebUI | `offline-Application/mirai-construction-sf-console.html`（原本）をそのまま採用。受付データは API/DB と同期する（`src/web/public/bridge.js`） |
 | 開発ライン連携 | 承認済み注文書のYAML生成・コピーに加え、GitHub Issue を自動作成（`POST /api/requests/:id/handoff`） |
 
 ## 構成
@@ -24,7 +25,7 @@
 ```
 src/api/     Fastify + PostgreSQL（認証・受付・状態遷移・承認・監査・入出力）
 src/shared/  ドメイン（信号・合格の条件・ものさし・遷移・注文書YAML・CSV）
-src/web/     React + Vite（9画面 / 未実装・承認待ち）
+src/web/     受付・運用コンソール（原本 + APIブリッジ）
 db/          migration / seed（19部署・118道具・見本9件）
 tests/       unit / integration / e2e
 docs/        要件・仕様・設計・DB・API・テスト・デプロイ・制限

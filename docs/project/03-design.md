@@ -1,6 +1,11 @@
 # WebUI 設計（OpenDesign 成果物）と確認事項
 
-版: v1.1（承認済み） / 2026-10-28
+版: v1.2（UI変更承認） / 2026-10-28
+
+> **2026-10-28 追加指示（ユーザー）**: WebUI は `offline-Application/mirai-construction-sf-console.html` の内容に **100%合わせる**。
+> これに伴い、実装はコンソール原本（8ビュー: ホーム/新しい依頼/ボード/一覧/運用/DevOps/SecOps/データ）を採用し、
+> 受付データのみ API/DB と同期する（`src/web/public/bridge.js`）。
+> 以前の設計成果物（OpenDesign）は履歴として保持するが、画面の正はコンソール原本とする。
 
 > 2026-10-28 にユーザーが **Y（承認）**。Q1=PC中心、Q2=1ユーザー＋パスワード＋ロール切替（＋Cloudflare Access OTP）、
 > Q3=注文書YAML＋**GitHub Issue自動作成**、Q4=見本9件、Q5=9画面。詳細は `04-approval.md`。

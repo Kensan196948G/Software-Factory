@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ログイン — みらい建設工業 SF受付・運用コンソール</title>
+<style>
+  :root{--bg:#f4f3ee;--surface:#fff;--ink:#1b222b;--muted:#5f6874;--line:#e1ddd2;--navy:#16314f;--safety:#f5b800;--r:#c9302c;
+    --font:"Hiragino Sans","Hiragino Kaku Gothic ProN","BIZ UDPGothic","Noto Sans JP","Yu Gothic UI","Meiryo",system-ui,sans-serif}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--ink);font-family:var(--font)}
+  .card{width:min(420px,92vw);background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 12px 32px rgba(20,30,40,.10);padding:26px}
+  .brand{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+  .mark{width:44px;height:44px;border-radius:13px;background:var(--navy);display:grid;place-items:center;color:var(--safety);font-weight:800;font-size:18px}
+  h1{font-size:19px;margin:0}
+  .sub{font-size:12px;color:var(--muted);margin:2px 0 18px}
+  label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:12px 0 5px}
+  input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;font:inherit;font-size:14px;background:#fff}
+  input:focus{outline:3px solid #f7d774;outline-offset:1px;border-color:var(--safety)}
+  button{width:100%;margin-top:18px;padding:12px;border:0;border-radius:10px;background:var(--navy);color:#fff;font:inherit;font-weight:800;font-size:14px;cursor:pointer}
+  button:disabled{opacity:.6;cursor:not-allowed}
+  .err{display:none;margin-top:12px;padding:10px 12px;border-radius:10px;background:#fbe2e1;color:#8c1f1c;font-size:12.5px}
+  .err.show{display:block}
+  .hint{margin-top:14px;font-size:11.5px;color:var(--muted);line-height:1.7}
+</style>
+</head>
+<body>
+<form class="card" id="form">
+  <div class="brand"><div class="mark">SF</div><div><h1>受付・運用コンソール</h1><div class="sub">みらい建設工業 みらいソフトウェアファクトリー</div></div></div>
+  <p class="sub">検証環境のアカウントでログインしてください。</p>
+  <label for="email">メールアドレス</label>
+  <input id="email" name="email" type="email" autocomplete="username" required />
+  <label for="password">パスワード</label>
+  <input id="password" name="password" type="password" autocomplete="current-password" required />
+  <button type="submit" id="submit">ログイン</button>
+  <div class="err" id="err" role="alert"></div>
+  <p class="hint">Cloudflare Access 配下では、この画面は表示されません（ワンタイムパスワードで認証されます）。</p>
+</form>
+<script src="/login.js"></script>
+</body>
+</html>

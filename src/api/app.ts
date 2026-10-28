@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config } from './config.js';
 import { ApiError, Errors, applySecurityHeaders, correlationId, sendError } from './http.js';
@@ -30,6 +30,7 @@ import {
   deleteDraft,
   exportAll,
   getDetail,
+  getBootData,
   getDraft,
   getOrder,
   homeFor,
@@ -413,16 +414,64 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
     };
   });
 
-  /* ───────── static SPA ───────── */
+  /* ───────── 画面（コンソール原本 + 起動データ） ───────── */
   const webDist = resolve(process.cwd(), 'dist/web');
+  const appHtmlPath = resolve(webDist, 'index.html');
+
+  function renderAppHtml(ctx: AuthContext, boot: unknown): string | null {
+    if (!existsSync(appHtmlPath)) return null;
+    const template = readFileSync(appHtmlPath, 'utf8');
+    const json = JSON.stringify(boot).replace(/</g, '\\u003c');
+    return template.replace('<!--MSF_BOOT-->', `<script type="application/json" id="msf-boot">${json}</script>`);
+  }
+
+  app.get('/', async (req, reply) => {
+    const ctx = req.auth;
+    if (!ctx) {
+      if (config.authMode === 'access') {
+        void reply.status(401).type('text/html').send('<p>認証できませんでした。Cloudflare Access の設定を確認してください。</p>');
+        return;
+      }
+      void reply.redirect('/login');
+      return;
+    }
+    const data = await getBootData();
+    const html = renderAppHtml(ctx, {
+      user: ctx.user,
+      role: ctx.user.actingRole,
+      csrf: ctx.session.csrf_token,
+      seq: data.seq,
+      items: data.items,
+    });
+    if (!html) {
+      void reply.status(503).type('text/plain').send('画面がビルドされていません（pnpm build）');
+      return;
+    }
+    void reply.type('text/html; charset=utf-8').send(html);
+  });
+
+  app.get('/login', async (req, reply) => {
+    if (req.auth) {
+      void reply.redirect('/');
+      return;
+    }
+    const loginPath = resolve(webDist, 'login.html');
+    if (existsSync(loginPath)) {
+      void reply.type('text/html; charset=utf-8').send(readFileSync(loginPath, 'utf8'));
+      return;
+    }
+    void reply.type('text/html; charset=utf-8').send('<!doctype html><meta charset="utf-8"><p>ログイン画面がありません（pnpm build）</p>');
+  });
+
+  /* ───────── static assets（index は上のルートで配信） ───────── */
   if (opts.serveStatic !== false && existsSync(webDist)) {
-    await app.register(fastifyStatic, { root: webDist, prefix: '/', index: ['index.html'] });
+    await app.register(fastifyStatic, { root: webDist, prefix: '/', index: false });
     app.setNotFoundHandler((req, reply) => {
       if (req.url.startsWith('/api/') || req.url === '/healthz' || req.url === '/readyz') {
         void reply.status(404).send(Errors.notFound('API').toBody(correlationId(req)));
         return;
       }
-      void reply.type('text/html').sendFile('index.html');
+      void reply.redirect('/');
     });
   } else {
     app.setNotFoundHandler((req, reply) => {
