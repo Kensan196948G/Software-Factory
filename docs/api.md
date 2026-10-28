@@ -37,6 +37,11 @@
 | — | `GET /api/export.json` / `export.csv` | 全件出力（監査ログに記録） | 要ログイン |
 | — | `POST /api/import` | JSON取込（全件置換・検証付き） | 承認者/管理者・`ALLOW_IMPORT=1` |
 | API-08 | `GET /api/audit-logs` | 監査ログ（ハッシュ連鎖の検証結果つき） | 管理者 |
+| — | `GET /api/ops` / `PUT /api/ops` | 運用・DevOps・SecOps の画面状態（id=1 の単一ドキュメント・版番号つき） | GET: 要ログイン / PUT: 受付担当・承認者・管理者 |
+| — | `GET /api/mail/status` | 承認依頼メールの設定と件数（Secrets・サーバ内パスは含めない） | 要ログイン |
+| — | `GET /api/mail/outbox` | 送信BOX（`status=pending|sending|sent|failed`、`limit`） | 受付担当・承認者・管理者 |
+| — | `POST /api/mail/outbox/{id}/retry` | 送信に失敗した1通を再送（送信済み・不正IDは404） | 受付担当・管理者 |
+| — | `POST /api/mail/flush` | 未送信ぶんをまとめて送る（最大20件。10分以上stuckした送信中も拾う） | 管理者 |
 | — | `POST /api/admin/reset-demo` | 見本データへ戻す（開発のみ） | 管理者・非production |
 
 ## 3. 状態遷移の可否（要点）
@@ -55,7 +60,21 @@
 `GET /api/requests/{id}/order` は `text` としてYAMLを返す（`yaml` フィールド）。
 `schema_version` / `order_version` を持ち、`signal.suggested` と `signal.decided` を分ける。`data_handling` は日本語ラベル。
 
-## 5. 例
+## 5. 承認依頼メール（送信キュー）
+
+依頼が「承認待ち」になったとき、承認者へメールを1通送る（IF-02/FR-44 の最小実装）。
+
+- 積む: 状態遷移（と「承認後に内容を編集して承認待ちへ戻す」更新）と同じトランザクションで `mail_outbox` に1行。メールが消えない。
+- 送る: コミット後に best-effort。送信前に `status='sending'` へ原子的に移す（claim）ので二重送信しない。
+  失敗しても遷移は成功し、`status='failed'` と `last_error` が残る（応答の `warnings` に `INFO-002`）。
+  `POST /api/mail/outbox/{id}/retry` で再送でき、10分以上 `sending` のままの行は `flush` が拾い直す。
+- 宛先: ①承認者のメール（`request.approver_user_id`。現状の作成APIは設定しない）→ ②`request.approver` がメール形式ならそれ →
+  ③同じ表示名の利用者のメール → ④`MAIL_APPROVAL_TO`。どれも無ければ積まない。
+- 送信経路（`MAIL_MODE`）: `off`（送らない・本番の既定）/ `file`（`.mail/outbox` へ `.eml` を書き出す・開発とテストの既定）/ `sendmail`（ローカルMTAへ `sendmail -t -i`）。
+- Secrets は持たない（SMTP のホスト・認証は未実装。`docs/limitations.md` L-04）。
+- 監査: `mail.enqueue` / `mail.sent` / `mail.failed` を監査ログに残す（送信結果の更新と同じトランザクション）。
+
+## 6. 例
 
 ```bash
 curl -c c.txt -X POST http://127.0.0.1:8781/api/auth/login \

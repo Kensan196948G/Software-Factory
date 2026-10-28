@@ -4,12 +4,14 @@ import {
   authHeaders,
   buildTestApp,
   loginAs,
+  loginAsMember,
   prepareTestDb,
   sampleRequest,
   TEST_USER,
   truncateBusiness,
 } from './helpers.js';
 import { createSessionForUser } from '../../src/api/auth.js';
+import { getBootData } from '../../src/api/service.js';
 import { query } from '../../src/api/db.js';
 import { verifyAuditChain } from '../../src/api/audit.js';
 
@@ -416,5 +418,86 @@ describe('セッションの有効期限', () => {
     ]);
     const res = await app.inject({ method: 'GET', url: '/api/home', headers: { cookie: `msf_session=${session.token}` } });
     expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('下書きのサーバ保存（端末をまたいで再開）', () => {
+  it('PUT → GET → DELETE ができ、本人の下書きだけを返す', async () => {
+    const auth = await loginAs(app);
+    const put = await app.inject({
+      method: 'PUT',
+      url: '/api/draft',
+      headers: authHeaders(auth),
+      payload: { draft: { title: '書きかけの依頼' }, step: 2, editId: null, at: new Date().toISOString() },
+    });
+    expect(put.statusCode).toBe(200);
+
+    const get = await app.inject({ method: 'GET', url: '/api/draft', headers: { cookie: auth.cookie } });
+    expect(get.statusCode).toBe(200);
+    const body = get.json() as { draft: { payload: { title: string }; step: number } };
+    expect(body.draft.payload.title).toBe('書きかけの依頼');
+    expect(body.draft.step).toBe(2);
+
+    const del = await app.inject({ method: 'DELETE', url: '/api/draft', headers: authHeaders(auth) });
+    expect(del.statusCode).toBe(200);
+    const after = await app.inject({ method: 'GET', url: '/api/draft', headers: { cookie: auth.cookie } });
+    expect((after.json() as { draft: unknown }).draft).toBeNull();
+  });
+
+  it('起動データに下書きが含まれる（画面HTMLはビルド有無に依存するためサービスで検証）', async () => {
+    const auth = await loginAs(app);
+    await app.inject({
+      method: 'PUT',
+      url: '/api/draft',
+      headers: authHeaders(auth),
+      payload: { draft: { title: '別端末で再開する下書き' }, step: 1, editId: null, at: new Date().toISOString() },
+    });
+    const boot = (await getBootData(auth.user.id)) as { draft: { draft: { title: string } } | null };
+    expect(boot.draft?.draft.title).toBe('別端末で再開する下書き');
+  });
+});
+
+describe('運用・DevOps・SecOps のDB保存', () => {
+  it('未保存なら null、保存すると取得でき、起動データにも入る', async () => {
+    const auth = await loginAs(app);
+    await query('delete from ops_state');
+    const before = await app.inject({ method: 'GET', url: '/api/ops', headers: { cookie: auth.cookie } });
+    expect(before.statusCode).toBe(200);
+    expect((before.json() as { data: unknown }).data).toBeNull();
+
+    const save = await app.inject({
+      method: 'PUT',
+      url: '/api/ops',
+      headers: authHeaders(auth),
+      payload: { data: { apps: [{ id: 'APP-001', name: 'テスト' }], incidents: [] } },
+    });
+    expect(save.statusCode).toBe(200);
+    expect((save.json() as { version: number }).version).toBe(1);
+
+    const after = await app.inject({ method: 'GET', url: '/api/ops', headers: { cookie: auth.cookie } });
+    expect((after.json() as { data: { apps: { id: string }[] } }).data.apps[0]?.id).toBe('APP-001');
+
+    const boot = (await getBootData(auth.user.id)) as {
+      ops: { data: { apps: { id: string }[] }; version: number } | null;
+    };
+    expect(boot.ops?.data.apps[0]?.id).toBe('APP-001');
+  });
+
+  it('未ログインは401、配列など不正な形は400、依頼者は書き込めない（403）', async () => {
+    const unauth = await app.inject({ method: 'GET', url: '/api/ops' });
+    expect(unauth.statusCode).toBe(401);
+    const auth = await loginAs(app);
+    const bad = await app.inject({ method: 'PUT', url: '/api/ops', headers: authHeaders(auth), payload: { data: [1, 2, 3] } });
+    expect(bad.statusCode).toBe(400);
+
+    // 運用・DevOps・SecOps は共有の状態。依頼者は上書きできない
+    const requester = await loginAsMember(app);
+    const denied = await app.inject({
+      method: 'PUT',
+      url: '/api/ops',
+      headers: authHeaders(requester),
+      payload: { data: { apps: [], incidents: [] } },
+    });
+    expect(denied.statusCode).toBe(403);
   });
 });

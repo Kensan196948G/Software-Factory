@@ -19,6 +19,9 @@ test-results/
 playwright-report/
 blob-report/
 
+# 承認依頼メールの送信BOX（ローカルの .eml）
+.mail/
+
 # logs / OS
 *.log
 .DS_Store

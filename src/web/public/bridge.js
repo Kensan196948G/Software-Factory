@@ -137,10 +137,44 @@
   /* ── 起動時: サーバデータをコンソールの保存形式へ ── */
   const items = boot.items.map(toConsole);
   const seq = Math.max(Number(boot.seq) || 0, ...items.map((i) => Number(String(i.id).slice(-4)) || 0), 0);
+  const bootOps = boot.ops && boot.ops.data ? boot.ops.data : null;
   try {
-    localStorage.setItem(KEY, JSON.stringify({ seq, items }));
+    localStorage.setItem(KEY, JSON.stringify({ seq, items, ...(bootOps ? { ops: bootOps } : {}) }));
+    // 下書きはサーバが正（端末をまたいで再開できる）。ただし、まだ送れていない端末の下書きは消さない。
+    if (boot.draft && boot.draft.draft) {
+      let local = null;
+      try {
+        local = JSON.parse(localStorage.getItem(KEY + '-draft') || 'null');
+      } catch {
+        local = null;
+      }
+      const localAt = local && local.at ? Date.parse(local.at) : NaN;
+      const serverAt = boot.draft.at ? Date.parse(boot.draft.at) : NaN;
+      const keepLocal = Number.isFinite(localAt) && !(Number.isFinite(serverAt) && serverAt >= localAt);
+      if (!keepLocal) localStorage.setItem(KEY + '-draft', JSON.stringify(boot.draft));
+    }
   } catch {
     /* localStorage が使えない場合はコンソールのメモリ保持に任せる */
+  }
+
+  let opsSnapshot = bootOps ? JSON.stringify(bootOps) : null;
+  let opsTimer = null;
+
+  async function putOps(data) {
+    try {
+      await api('PUT', '/api/ops', { data });
+    } catch (err) {
+      if (window.__MSF_UI__ && window.__MSF_UI__.toast) window.__MSF_UI__.toast(err.message || '運用データを保存できませんでした', true);
+    }
+  }
+
+  function scheduleOpsSync(data) {
+    if (!data || !data.ops) return;
+    const json = JSON.stringify(data.ops);
+    if (json === opsSnapshot) return;
+    opsSnapshot = json;
+    clearTimeout(opsTimer);
+    opsTimer = setTimeout(() => putOps(data.ops), 400);
   }
 
   let csrf = boot.csrf || '';
@@ -242,6 +276,7 @@
   }
 
   function persist(data) {
+    scheduleOpsSync(data);
     if (syncing) {
       pending = true;
       return;
@@ -258,6 +293,20 @@
           persist(data);
         }
       });
+  }
+
+  let draftTimer = null;
+  function saveDraft(o) {
+    if (!o || !o.draft) return;
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(() => {
+      api('PUT', '/api/draft', { draft: o.draft, step: o.step, editId: o.editId ?? null, at: o.at }).catch(() => undefined);
+    }, 250);
+  }
+
+  function clearDraft() {
+    clearTimeout(draftTimer);
+    api('DELETE', '/api/draft').catch(() => undefined);
   }
 
   function initialRole() {
@@ -287,5 +336,17 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', relabel);
   else relabel();
 
-  window.__MSF__ = { initialRole, persist, switchRole, user: boot.user, api };
+  // 初回起動時: サーバに運用データが無ければ、コンソールが生成した見本を保存して実データ化する
+  function seedOpsIfNeeded() {
+    if (opsSnapshot !== null) return;
+    const d = window.__MSF_UI__ && window.__MSF_UI__.data ? window.__MSF_UI__.data() : null;
+    if (d && d.ops) {
+      opsSnapshot = JSON.stringify(d.ops);
+      void putOps(d.ops);
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(seedOpsIfNeeded, 800));
+  else setTimeout(seedOpsIfNeeded, 800);
+
+  window.__MSF__ = { initialRole, persist, switchRole, saveDraft, clearDraft, user: boot.user, api };
 })();

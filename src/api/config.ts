@@ -32,6 +32,13 @@ export interface AppConfig {
   /** GitHub Issue 自動作成（未設定なら無効） */
   githubToken: string;
   githubRepo: string;
+  /** 承認依頼メールの送信経路。off=送らない / file=ローカルの送信BOX / sendmail=ローカルMTA */
+  mailMode: 'off' | 'file' | 'sendmail';
+  mailFrom: string;
+  /** 承認者のメールアドレスが引けないときの宛先（空なら送らない） */
+  mailApprovalTo: string;
+  mailOutboxDir: string;
+  sendmailPath: string;
 }
 
 type RawConfig = Record<string, string | undefined>;
@@ -49,6 +56,13 @@ function readConfigFile(path: string | undefined): RawConfig {
 
 function pick(file: RawConfig, key: string, envKey = key): string | undefined {
   return process.env[envKey] ?? file[key];
+}
+
+/** MAIL_MODE の解釈。本番の既定は off（通知連携は対象外のため勝手に送らない）。 */
+function mailModeOf(raw: string | undefined, isProduction: boolean): 'off' | 'file' | 'sendmail' {
+  const value = (raw ?? (isProduction ? 'off' : 'file')).trim().toLowerCase();
+  if (value === 'off' || value === 'file' || value === 'sendmail') return value;
+  throw new Error(`MAIL_MODE が不正です: ${value}（off / file / sendmail のいずれか）`);
 }
 
 export function loadConfig(overrides: RawConfig = {}): AppConfig {
@@ -97,6 +111,11 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
     accessServiceTokenIds: (pick(file, 'ACCESS_SERVICE_TOKEN_IDS') ?? '').split(',').map((v) => v.trim()).filter(Boolean),
     githubToken: pick(file, 'GITHUB_TOKEN') ?? '',
     githubRepo: pick(file, 'GITHUB_REPO') ?? 'Kensan196948G/Software-Factory',
+    mailMode: mailModeOf(pick(file, 'MAIL_MODE'), isProduction),
+    mailFrom: pick(file, 'MAIL_FROM') ?? 'no-reply@mirai-sf.local',
+    mailApprovalTo: (pick(file, 'MAIL_APPROVAL_TO') ?? '').trim(),
+    mailOutboxDir: pick(file, 'MAIL_OUTBOX_DIR') ?? '.mail/outbox',
+    sendmailPath: pick(file, 'SENDMAIL_PATH') ?? '/usr/sbin/sendmail',
   };
 }
 
