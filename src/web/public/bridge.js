@@ -140,9 +140,19 @@
   const bootOps = boot.ops && boot.ops.data ? boot.ops.data : null;
   try {
     localStorage.setItem(KEY, JSON.stringify({ seq, items, ...(bootOps ? { ops: bootOps } : {}) }));
-    // 下書きはサーバが正（端末をまたいで再開できる）。起動時にサーバの下書きを反映する。
-    if (boot.draft && boot.draft.draft) localStorage.setItem(KEY + '-draft', JSON.stringify(boot.draft));
-    else localStorage.removeItem(KEY + '-draft');
+    // 下書きはサーバが正（端末をまたいで再開できる）。ただし、まだ送れていない端末の下書きは消さない。
+    if (boot.draft && boot.draft.draft) {
+      let local = null;
+      try {
+        local = JSON.parse(localStorage.getItem(KEY + '-draft') || 'null');
+      } catch {
+        local = null;
+      }
+      const localAt = local && local.at ? Date.parse(local.at) : NaN;
+      const serverAt = boot.draft.at ? Date.parse(boot.draft.at) : NaN;
+      const keepLocal = Number.isFinite(localAt) && !(Number.isFinite(serverAt) && serverAt >= localAt);
+      if (!keepLocal) localStorage.setItem(KEY + '-draft', JSON.stringify(boot.draft));
+    }
   } catch {
     /* localStorage が使えない場合はコンソールのメモリ保持に任せる */
   }

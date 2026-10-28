@@ -4,6 +4,7 @@ import {
   authHeaders,
   buildTestApp,
   loginAs,
+  loginAsMember,
   prepareTestDb,
   sampleRequest,
   TEST_USER,
@@ -482,11 +483,21 @@ describe('運用・DevOps・SecOps のDB保存', () => {
     expect(boot.ops?.data.apps[0]?.id).toBe('APP-001');
   });
 
-  it('未ログインは401、配列など不正な形は400', async () => {
+  it('未ログインは401、配列など不正な形は400、依頼者は書き込めない（403）', async () => {
     const unauth = await app.inject({ method: 'GET', url: '/api/ops' });
     expect(unauth.statusCode).toBe(401);
     const auth = await loginAs(app);
     const bad = await app.inject({ method: 'PUT', url: '/api/ops', headers: authHeaders(auth), payload: { data: [1, 2, 3] } });
     expect(bad.statusCode).toBe(400);
+
+    // 運用・DevOps・SecOps は共有の状態。依頼者は上書きできない
+    const requester = await loginAsMember(app);
+    const denied = await app.inject({
+      method: 'PUT',
+      url: '/api/ops',
+      headers: authHeaders(requester),
+      payload: { data: { apps: [], incidents: [] } },
+    });
+    expect(denied.statusCode).toBe(403);
   });
 });

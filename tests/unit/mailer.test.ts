@@ -66,6 +66,14 @@ describe('宛先とヘッダ', () => {
     expect(encodeHeader('承認依頼')).toBe(`=?UTF-8?B?${Buffer.from('承認依頼', 'utf8').toString('base64')}?=`);
   });
 
+  it('件名の改行（ヘッダ注入）は行を増やさない', () => {
+    const mime = buildMimeMessage({ to: 'approver@example.com', subject: '承認\r\nBcc: evil@example.com', body: '本文' });
+    const headerBlock = mime.split('\r\n\r\n')[0]!;
+    expect(headerBlock).not.toContain('\nBcc:');
+    expect(headerBlock).not.toContain('\r\nBcc:');
+    expect(headerBlock.split('\r\n').filter((l) => l.startsWith('Bcc:')).length).toBe(0);
+  });
+
   it('MIME は UTF-8 の base64 で、本文を復元できる', () => {
     const mime = buildMimeMessage(
       { to: 'approver@example.com', subject: '承認依頼 テスト', body: '本文です。\n2行目', requestId: 'REQ-2026-0012' },
@@ -106,6 +114,19 @@ describe('送信経路（外部サービスを呼ばない）', () => {
     expect(result.detail).toContain('宛先が不正');
   });
 
+  it('MTA が stdin を読まずに終了しても落ちない（EPIPE）', async () => {
+    const dir = tempDir();
+    const script = join(dir, 'sendmail-noread.sh');
+    writeFileSync(script, '#!/bin/sh\nexit 0\n');
+    chmodSync(script, 0o755);
+    const result = await deliverMail(
+      { to: 'approver@example.com', subject: 's', body: 'b'.repeat(4096) },
+      { mode: 'sendmail', sendmailPath: script },
+    );
+    // 0 で終わるので成功として扱う。重要なのは未処理例外で落ちないこと
+    expect(result.ok).toBe(true);
+  });
+
   it('sendmail が 0 で終われば成功、非 0 なら理由付きで失敗する', async () => {
     const dir = tempDir();
     const okScript = join(dir, 'sendmail-ok.sh');
@@ -128,6 +149,6 @@ describe('送信経路（外部サービスを呼ばない）', () => {
   it('設定の要約に Secrets を含めない', () => {
     const status = mailStatus();
     expect(status.mode).toBe('file');
-    expect(Object.keys(status).sort()).toEqual(['from', 'mode', 'outboxDir', 'ready']);
+    expect(Object.keys(status).sort()).toEqual(['from', 'mode', 'ready']);
   });
 });

@@ -3,7 +3,16 @@ import type { FastifyInstance } from 'fastify';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { authHeaders, buildTestApp, loginAs, prepareTestDb, sampleRequest, TEST_USER, truncateBusiness } from './helpers.js';
+import {
+  authHeaders,
+  buildTestApp,
+  loginAs,
+  loginAsMember,
+  prepareTestDb,
+  sampleRequest,
+  TEST_USER,
+  truncateBusiness,
+} from './helpers.js';
 import { query } from '../../src/api/db.js';
 import { config } from '../../src/api/config.js';
 
@@ -173,5 +182,47 @@ describe('承認依頼メール', () => {
     expect(retry.statusCode).toBe(200);
     expect((retry.json() as { status: string }).status).toBe('sent');
     rmSync(scratch, { recursive: true, force: true });
+  });
+
+  it('状態遷移が失敗（版競合）したときはメールを積まない', async () => {
+    const auth = await loginAs(app);
+    const created = await createRequestAs(auth);
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/requests/${created.id}/transitions`,
+      headers: authHeaders(auth),
+      payload: { to: 'review', version: created.version + 99 },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(await mailsOf(created.id)).toHaveLength(0);
+  });
+
+  it('送信済み・不正なIDは再送できず、依頼者は再送できない', async () => {
+    const auth = await loginAs(app);
+    const created = await createRequestAs(auth);
+    await moveToWait(auth, created.id, created.version);
+    const id = (await mailsOf(created.id))[0]!.id;
+
+    const sentAgain = await app.inject({
+      method: 'POST',
+      url: `/api/mail/outbox/${id}/retry`,
+      headers: authHeaders(auth),
+    });
+    expect(sentAgain.statusCode).toBe(404);
+
+    const bogus = await app.inject({
+      method: 'POST',
+      url: '/api/mail/outbox/99999999999999999999/retry',
+      headers: authHeaders(auth),
+    });
+    expect(bogus.statusCode).toBe(404);
+
+    const requester = await loginAsMember(app);
+    const forbidden = await app.inject({
+      method: 'POST',
+      url: `/api/mail/outbox/${id}/retry`,
+      headers: authHeaders(requester),
+    });
+    expect(forbidden.statusCode).toBe(403);
   });
 });

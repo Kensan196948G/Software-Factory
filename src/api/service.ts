@@ -56,6 +56,22 @@ export function actorOf(user: SessionUser): Actor {
   return { user, userId: user.id, role: user.actingRole, displayName: user.displayName };
 }
 
+/**
+ * 積んだメールを送る（コミット後）。送信の失敗で業務（状態遷移・更新）を失敗させない。
+ * 送れなかったときは警告だけ返し、再送は `POST /api/mail/outbox/{id}/retry` で行える。
+ */
+async function deliverQueuedMail(
+  mailId: string,
+  warnings: { code: string; message: string }[],
+): Promise<void> {
+  const delivered = await deliverOutboxMail(mailId).catch(() => null);
+  if (delivered?.status === 'sent') return;
+  warnings.push({
+    code: 'INFO-002',
+    message: `承認依頼メールを送れませんでした（あとで再送できます）: ${delivered?.error ?? '送信できませんでした'}`,
+  });
+}
+
 const runtime = loadConfig();
 
 async function catalogSignalFor(row: { tool_id: string | null }, cache?: Map<string, Signal>): Promise<Signal | null> {
@@ -454,6 +470,7 @@ export async function updateRequest(
   correlationId: string,
 ): Promise<{ detail: RequestDetail; warnings: { code: string; message: string }[] }> {
   const warnings: { code: string; message: string }[] = [];
+  let queuedMailId: string | null = null;
   await withTransaction(async (client) => {
     const row = await getRequestRowForUpdate(client, id);
     if (!row) throw Errors.notFound('依頼');
@@ -524,6 +541,22 @@ export async function updateRequest(
          values ($1,$2,$3,$4,$5,$6,$7)`,
         [id, actor.displayName, actor.userId, actor.role, `状態を「承認待ち」に変更`, '内容の変更により承認を取り消しました', correlationId],
       );
+      // 承認を取り消して「承認待ち」へ戻したときも、承認者へ依頼メールを送る
+      queuedMailId = await enqueueApprovalMailInTx(
+        client,
+        {
+          id,
+          title: input.title,
+          applicant: input.applicant,
+          deptCode: input.deptCode,
+          approver: input.approver,
+          approverUserId: row.approver_user_id,
+          signal,
+          criteriaCount: input.criteria.filter((c) => c.trim()).length,
+        },
+        actor,
+        correlationId,
+      );
     }
     await appendAuditInTx(client, actor, {
       action: 'request.update',
@@ -534,6 +567,7 @@ export async function updateRequest(
       diff: { version, afterApproval },
     });
   });
+  if (queuedMailId) await deliverQueuedMail(queuedMailId, warnings);
   return { detail: await getDetail(id, actor), warnings };
 }
 
@@ -699,16 +733,7 @@ export async function performTransition(
     if (input.to === 'cancel') warnings.push({ code: 'INFO-001', message: '取消にしました。データは残り、一覧の表示切替で確認できます' });
   });
 
-  if (queuedMailId) {
-    // 送信の失敗で業務（状態遷移）を失敗させない。
-    const delivered = await deliverOutboxMail(queuedMailId).catch(() => null);
-    if (delivered?.status === 'failed') {
-      warnings.push({
-        code: 'INFO-002',
-        message: `承認依頼メールを送れませんでした（あとで再送できます）: ${delivered.error ?? ''}`,
-      });
-    }
-  }
+  if (queuedMailId) await deliverQueuedMail(queuedMailId, warnings);
 
   return { detail: await getDetail(id, actor), warnings };
 }

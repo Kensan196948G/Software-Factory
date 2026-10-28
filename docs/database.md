@@ -29,7 +29,7 @@
 | `attachment` | ENT-04 | 添付のメタ情報のみ（name, size, sha256） |
 | `draft` | 5-6 | 下書き（利用者ごとに1件、本人のみ） |
 | `ops_state` | — | 運用・DevOps・SecOps の画面状態（id=1 の単一JSONB・版番号） |
-| `mail_outbox` | — | 承認依頼メールの送信キュー（依頼の状態遷移と同じトランザクションで積む。失敗しても業務は止めない） |
+| `mail_outbox` | — | 承認依頼メールの送信キュー（依頼の状態遷移と同じトランザクションで積む。`sending` で確保して二重送信を防ぎ、失敗しても業務は止めない） |
 | `audit_log` | ENT-11 | 監査ログ（追記のみ・ハッシュ連鎖・UPDATE/DELETEをトリガで拒否） |
 | `idempotency` | — | 操作キー（二重登録の防止） |
 | `schema_migrations` | — | 適用済みmigration |
@@ -69,6 +69,14 @@ pg_restore -c -d mirai_sf_dev mirai_sf_dev_YYYYMMDD.dump
 ### ロールバック方針
 
 migrationはadditiveのみ。破壊的変更は行わない。障害時はバックアップから復元し、コードは直前のSHAへ戻す（`docs/deployment.md`）。
+
+### 追加migration（2026-10-28）
+
+| ファイル | 内容 |
+|---|---|
+| `0002_ops_state.sql` | `ops_state`（id=1 の単一JSONB・版番号） |
+| `0003_mail_outbox.sql` | `mail_outbox` と索引（承認依頼メールの送信キュー） |
+| `0004_mail_outbox_claim.sql` | `sending` 状態・`claimed_at`・「送信済みなら `sent_at` 必須」の制約（二重送信の防止） |
 
 ## 5. インデックス
 

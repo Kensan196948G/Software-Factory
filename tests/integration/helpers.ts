@@ -12,22 +12,40 @@ export const TEST_USER = {
   deptCode: 'dx',
 };
 
+/** 管理者ではない利用者（権限の否定テスト用）。 */
+export const TEST_MEMBER = {
+  email: 'member@example.com',
+  password: 'member-pass-1234',
+  displayName: 'メンバー 花子',
+  deptCode: 'dx',
+};
+
+async function ensureUser(
+  client: { query: (text: string, params?: unknown[]) => Promise<{ rows: { id: string }[]; rowCount: number | null }> },
+  user: { email: string; password: string; displayName: string; deptCode: string },
+  roles: string[],
+  isAdmin: boolean,
+): Promise<void> {
+  const existing = await client.query('select id from app_user where email = $1', [user.email]);
+  if (existing.rowCount) return;
+  const hash = await hashPassword(user.password);
+  const inserted = await client.query(
+    `insert into app_user (email, display_name, dept_code, password_hash, is_admin) values ($1,$2,$3,$4,$5) returning id`,
+    [user.email, user.displayName, user.deptCode, hash, isAdmin],
+  );
+  const id = inserted.rows[0]?.id;
+  if (!id) return;
+  for (const role of roles) {
+    await client.query('insert into user_role (user_id, role) values ($1,$2)', [id, role]);
+  }
+}
+
 export async function prepareTestDb(): Promise<void> {
   const client = await pool.connect();
   try {
     await seedMaster(client);
-    const existing = await client.query('select id from app_user where email = $1', [TEST_USER.email]);
-    if (!existing.rowCount) {
-      const hash = await hashPassword(TEST_USER.password);
-      const inserted = await client.query<{ id: string }>(
-        `insert into app_user (email, display_name, dept_code, password_hash, is_admin) values ($1,$2,$3,$4,true) returning id`,
-        [TEST_USER.email, TEST_USER.displayName, TEST_USER.deptCode, hash],
-      );
-      const id = inserted.rows[0]?.id;
-      for (const role of ['requester', 'desk', 'approver']) {
-        await client.query('insert into user_role (user_id, role) values ($1,$2)', [id, role]);
-      }
-    }
+    await ensureUser(client, TEST_USER, ['requester', 'desk', 'approver'], true);
+    await ensureUser(client, TEST_MEMBER, ['requester'], false);
   } finally {
     client.release();
   }
@@ -52,11 +70,15 @@ export interface Authed {
   user: { id: string };
 }
 
-export async function loginAs(app: FastifyInstance, role?: string): Promise<Authed> {
+async function login(
+  app: FastifyInstance,
+  user: { email: string; password: string },
+  role?: string,
+): Promise<Authed> {
   const res = await app.inject({
     method: 'POST',
     url: '/api/auth/login',
-    payload: { email: TEST_USER.email, password: TEST_USER.password },
+    payload: { email: user.email, password: user.password },
   });
   expect(res.statusCode).toBe(200);
   const body = res.json() as { csrf: string; user: { id: string } };
@@ -74,6 +96,16 @@ export async function loginAs(app: FastifyInstance, role?: string): Promise<Auth
     expect(switched.statusCode).toBe(200);
   }
   return authed;
+}
+
+/** 管理者（3役すべて）でログインする。 */
+export async function loginAs(app: FastifyInstance, role?: string): Promise<Authed> {
+  return login(app, TEST_USER, role);
+}
+
+/** 管理者ではない利用者（依頼者のみ）でログインする。権限の否定テスト用。 */
+export async function loginAsMember(app: FastifyInstance): Promise<Authed> {
+  return login(app, TEST_MEMBER);
 }
 
 export function authHeaders(auth: Authed): Record<string, string> {

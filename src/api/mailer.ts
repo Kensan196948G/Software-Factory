@@ -40,6 +40,11 @@ export interface DeliverOptions {
 
 const HEADER_UNSAFE = /[\r\n]/;
 
+/** ヘッダに入れる値を1行にする（改行・復帰は空白へ）。 */
+function oneLine(value: string): string {
+  return value.replace(/[\r\n]+/g, ' ');
+}
+
 /** メールアドレスとして使える形か（ヘッダ注入を防ぐため改行は必ず弾く）。 */
 export function isEmailAddress(value: string): boolean {
   if (!value || value.length > 254 || HEADER_UNSAFE.test(value)) return false;
@@ -69,7 +74,7 @@ export function buildMimeMessage(mail: MailDraft, now: Date = new Date()): strin
     `Subject: ${encodeHeader(mail.subject)}`,
     `Date: ${rfc2822Date(now)}`,
     `Message-ID: <${randomUUID()}@mirai-sf.local>`,
-    ...(mail.requestId ? [`X-Mirai-SF-Request-Id: ${mail.requestId.replace(HEADER_UNSAFE, ' ')}`] : []),
+    ...(mail.requestId ? [`X-Mirai-SF-Request-Id: ${oneLine(mail.requestId)}`] : []),
     'MIME-Version: 1.0',
     'Content-Type: text/plain; charset=UTF-8',
     'Content-Transfer-Encoding: base64',
@@ -78,7 +83,7 @@ export function buildMimeMessage(mail: MailDraft, now: Date = new Date()): strin
 }
 
 function encodeAddress(address: string): string {
-  return address.replace(HEADER_UNSAFE, ' ');
+  return oneLine(address);
 }
 
 /** 送信経路の設定を読む（テストで上書きできるように引数でも渡せる）。 */
@@ -119,6 +124,8 @@ export async function deliverMail(mail: MailDraft, options: DeliverOptions = {})
     };
     let stderr = '';
     const child = spawn(sendmail, ['-t', '-i'], { stdio: ['pipe', 'ignore', 'pipe'] });
+    // MTA が stdin を読まずに終了すると EPIPE になる。未処理だとプロセスごと落ちるため必ず受ける。
+    child.stdin?.on('error', () => undefined);
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       finish({ ok: false, transport: mode, detail: 'sendmail が応答しません（10秒で打ち切り）' });
@@ -139,13 +146,12 @@ export async function deliverMail(mail: MailDraft, options: DeliverOptions = {})
   });
 }
 
-/** 画面・APIに出す設定の要約（Secrets は含めない）。 */
-export function mailStatus(): { mode: MailMode; ready: boolean; from: string; outboxDir: string | null } {
+/** 画面・APIに出す設定の要約（Secrets・サーバ内パスは含めない）。 */
+export function mailStatus(): { mode: MailMode; ready: boolean; from: string } {
   return {
     mode: config.mailMode,
     ready: config.mailMode !== 'off',
     from: config.mailFrom,
-    outboxDir: config.mailMode === 'file' ? outboxDir() : null,
   };
 }
 

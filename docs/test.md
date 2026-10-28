@@ -19,16 +19,16 @@ BASE_URL=... SMOKE_EMAIL=... SMOKE_PASSWORD=... pnpm exec tsx scripts/smoke.ts
 |---|---|---|
 | Typecheck（Web/テスト + API） | **PASS** | エラー0 |
 | Lint | **PASS** | 警告0（max-warnings=0） |
-| Unit | **53 / 53 PASS** | 信号R1〜R6・条件チェック・ものさし・遷移・権限・承認チェック・YAML/CSV・承認依頼メール（本文/MIME/宛先/送信経路） |
-| Integration | **33 / 33 PASS** | 実PostgreSQL（`mirai_sf_test`）。認証/CSRF/採番/冪等/承認/差戻し/取消/版競合/出力/監査/下書きのサーバ保存/運用状態のDB保存/承認依頼メールの送信キュー |
+| Unit | **55 / 55 PASS** | 信号R1〜R6・条件チェック・ものさし・遷移・権限・承認チェック・YAML/CSV・承認依頼メール（本文/MIME/宛先/ヘッダ注入/送信経路/EPIPE） |
+| Integration | **35 / 35 PASS** | 実PostgreSQL（`mirai_sf_test`）。認証/CSRF/採番/冪等/承認/差戻し/取消/版競合/出力/監査/下書きのサーバ保存/運用状態のDB保存/承認依頼メール（送信キュー・失敗分離・再送の拒否） |
 | E2E（開発ビルド） | **8 / 8 PASS** | コンソール原本UI: ログイン、登録→再読込でDBから復元、役割切替、承認、0件検索、ログイン失敗、下書きの別端末再開、運用データのDB復元 |
 | E2E（本番ビルド＋Preview DB） | **未再実行** | 前回は 6 / 6 PASS。今回の変更（下書き・運用・メール）の反映後は未実行 |
 | Build | **PASS** | `dist/api` と `dist/web` |
 | DB verify | **PASS** | 19部署／118道具（青52/黄47/赤19）／採番／監査ハッシュ連鎖 |
-| Secret scan | **PASS** | 追跡89ファイル |
+| Secret scan | **PASS** | 追跡96ファイル |
 | GitHub Issue 自動作成 | **PASS** | 受付 `REQ-2026-0009` から Issue #2 を作成（実測） |
 | Cloudflare Preview | **PASS（Access保護）** | `https://sf.mirai-dx-platform.com` は Access のサインインへ302。origin の `/healthz` は tunnel 経由で200 |
-| CI（GitHub Actions） | **未実行（Blocker）** | `.github/workflows/` がポリシーゲートで拒否。`docs/patches/ci.workflow.yml` を人間が適用する |
+| CI（GitHub Actions `quality`） | **PRで実行** | `.github/workflows/ci.yml`（適用済み）。typecheck / lint / unit / migration（空DB・冪等）/ seed / db:verify / integration / build / secret scan をPRのたびに実行。結果はPR #7 のChecksを参照 |
 
 ## 3. テスト構成
 
@@ -57,4 +57,5 @@ BASE_URL=... SMOKE_EMAIL=... SMOKE_PASSWORD=... pnpm exec tsx scripts/smoke.ts
 ## 5. 未実施・残り
 
 - Cloudflare Access の**ワンタイムパスワードでの実ログイン**は、受信メールが必要なため自動化していない。Access のリダイレクトとポリシーは実測済み。人間の最終確認が必要（`docs/deployment.md` §4）。
-- CI は未適用（上記 Blocker）。ローカルで同一手順を実行し、結果を本表に記録した。
+- E2E（本番ビルド＋Preview DB）は今回未再実行。Preview への反映後に同じ8シナリオを実行する。
+- 承認依頼メールの送信は `file` / `sendmail` のみ実測。実SMTP（認証・TLS）は未実装のため未実行。

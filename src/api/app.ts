@@ -64,7 +64,7 @@ declare module 'fastify' {
 }
 
 /** 承認依頼メールの状態（クエリ検証に使う）。 */
-const MAIL_STATES = ['pending', 'sent', 'failed'] as const;
+const MAIL_STATES = ['pending', 'sending', 'sent', 'failed'] as const;
 
 export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<FastifyInstance> {
   const app = Fastify({
@@ -497,6 +497,8 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
 
   app.put('/api/ops', async (req) => {
     const ctx = mutate(req);
+    // 運用・DevOps・SecOps は共有の状態。依頼者は書き換えられない。
+    if (!ctx.user.isAdmin && !['desk', 'approver'].includes(ctx.user.actingRole)) throw Errors.noPermission();
     const body = req.body as { data?: unknown };
     if (!body || body.data === undefined) throw Errors.required('data');
     return saveOpsState(body.data, actorOf(ctx.user), correlationId(req));
@@ -527,7 +529,7 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
     const ctx = mutate(req);
     if (!ctx.user.isAdmin && ctx.user.actingRole !== 'desk') throw Errors.noPermission();
     const id = (req.params as { id: string }).id;
-    if (!/^\d+$/.test(id)) throw Errors.notFound('送信できるメール');
+    if (!/^\d{1,18}$/.test(id)) throw Errors.notFound('送信できるメール');
     const result = await deliverOutboxMail(id);
     if (!result) throw Errors.notFound('送信できるメール');
     return result;
