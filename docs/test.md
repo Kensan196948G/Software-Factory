@@ -28,7 +28,7 @@ BASE_URL=... SMOKE_EMAIL=... SMOKE_PASSWORD=... pnpm exec tsx scripts/smoke.ts
 | Secret scan | **PASS** | 追跡96ファイル |
 | GitHub Issue 自動作成 | **PASS** | 受付 `REQ-2026-0009` から Issue #2 を作成（実測） |
 | Cloudflare Preview | **PASS（Access保護）** | `https://sf.mirai-dx-platform.com` は Access のサインインへ302。origin の `/healthz` は tunnel 経由で200 |
-| CI（GitHub Actions `quality`） | **PRで実行** | `.github/workflows/ci.yml`（適用済み）。typecheck / lint / unit / migration（空DB・冪等）/ seed / db:verify / integration / build / secret scan をPRのたびに実行。結果はPR #7 のChecksを参照 |
+| CI（GitHub Actions `quality`） | **PASS**（PR #7 の run） | `.github/workflows/ci.yml`（適用済み）。typecheck / lint / unit / migration（空DB・冪等）/ seed / db:verify / integration / build / secret scan をPRのたびに実行 |
 
 ## 3. テスト構成
 
