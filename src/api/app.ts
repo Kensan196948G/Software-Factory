@@ -26,25 +26,27 @@ import {
   actorOf,
   addComment,
   handoffToGithub,
+  createDraftItem,
   createRequest,
-  deleteDraft,
+  deleteAllDrafts,
+  deleteDraftItem,
   exportAll,
   getDetail,
   getBootData,
-  getDraft,
   getOpsState,
   saveOpsState,
   getOrder,
   homeFor,
+  listDrafts,
   importAll,
   listForActor,
   performTransition,
-  putDraft,
   resetDemo,
+  updateDraftItem,
   updateRequest,
 } from './service.js';
 import { getCatalogTools, listDepartments } from './repo.js';
-import { deliverOutboxMail, deliverPendingMail, listOutbox, mailSummary } from './mail-outbox.js';
+import { deliverOutboxMail, deliverPendingMail, enqueueStallReminders, listOutbox, mailSummary } from './mail-outbox.js';
 import { verifyAuditChain } from './audit.js';
 import {
   commentSchema,
@@ -315,29 +317,36 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
   });
 
   /* ───────── draft ───────── */
-  app.get('/api/draft', async (req) => {
+  /* ───────── 下書き（利用者ごとに複数件） ───────── */
+  app.get('/api/drafts', async (req) => {
     const ctx = auth(req);
-    const draft = await getDraft(ctx.user.id);
-    if (!draft) return { draft: null };
-    return {
-      draft: {
-        payload: draft.payload,
-        step: draft.step,
-        editId: draft.edit_id,
-        at: draft.saved_at.toISOString(),
-      },
-    };
+    return listDrafts(ctx.user.id);
   });
 
-  app.put('/api/draft', async (req) => {
+  app.post('/api/drafts', async (req) => {
     const ctx = mutate(req);
     const body = draftSchema.parse(req.body);
-    return putDraft(ctx.user.id, body.draft, body.step, body.editId ?? null);
+    return { draft: await createDraftItem(ctx.user.id, body.draft, body.step, body.editId ?? null) };
   });
 
-  app.delete('/api/draft', async (req) => {
+  app.put('/api/drafts/:id', async (req) => {
     const ctx = mutate(req);
-    return deleteDraft(ctx.user.id);
+    const body = draftSchema.parse(req.body);
+    const id = (req.params as { id: string }).id;
+    if (!/^[0-9a-f-]{36}$/i.test(id)) throw Errors.notFound('下書き');
+    return { draft: await updateDraftItem(ctx.user.id, id, body.draft, body.step, body.editId ?? null) };
+  });
+
+  app.delete('/api/drafts/:id', async (req) => {
+    const ctx = mutate(req);
+    const id = (req.params as { id: string }).id;
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return { ok: true };
+    return deleteDraftItem(ctx.user.id, id);
+  });
+
+  app.delete('/api/drafts', async (req) => {
+    const ctx = mutate(req);
+    return deleteAllDrafts(ctx.user.id);
   });
 
   /* ───────── export / import ───────── */
@@ -399,6 +408,37 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
     };
   });
 
+  // 監査ログのCSV（管理者）。監査の証跡をそのまま持ち出せるようにする。
+  app.get('/api/audit-logs.csv', async (req, reply) => {
+    const ctx = auth(req);
+    if (!ctx.user.isAdmin) throw Errors.noPermission();
+    const rows = await (await import('./db.js')).many<{
+      id: number;
+      at: Date;
+      actor_name: string | null;
+      role: string;
+      action: string;
+      target_type: string;
+      target_id: string | null;
+      result: string;
+      correlation_id: string | null;
+      hash: string;
+    }>('select id, at, actor_name, role, action, target_type, target_id, result, correlation_id, hash from audit_log order by id desc limit 5000');
+    const cell = (v: unknown): string => {
+      const text = v === null || v === undefined ? '' : String(v);
+      return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    };
+    const header = ['id', 'at', 'actor_name', 'role', 'action', 'target_type', 'target_id', 'result', 'correlation_id', 'hash'];
+    const lines = rows.map((r) =>
+      [r.id, r.at.toISOString(), r.actor_name ?? '', r.role, r.action, r.target_type, r.target_id ?? '', r.result, r.correlation_id ?? '', r.hash]
+        .map(cell)
+        .join(','),
+    );
+    reply.header('Content-Type', 'text/csv; charset=utf-8');
+    reply.header('Content-Disposition', `attachment; filename="audit-logs-${stamp()}.csv"`);
+    return '\uFEFF' + [header.join(','), ...lines].join('\r\n') + '\r\n';
+  });
+
   /* ───────── admin（開発・検証用） ───────── */
   app.post('/api/admin/reset-demo', async (req) => {
     const ctx = mutate(req);
@@ -448,7 +488,7 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
       csrf: ctx.session.csrf_token,
       seq: data.seq,
       items: data.items,
-      draft: data.draft,
+      drafts: data.drafts,
       ops: data.ops,
     });
     if (!html) {
@@ -499,9 +539,11 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
     const ctx = mutate(req);
     // 運用・DevOps・SecOps は共有の状態。依頼者は書き換えられない。
     if (!ctx.user.isAdmin && !['desk', 'approver'].includes(ctx.user.actingRole)) throw Errors.noPermission();
-    const body = req.body as { data?: unknown };
+    const body = req.body as { data?: unknown; version?: unknown };
     if (!body || body.data === undefined) throw Errors.required('data');
-    return saveOpsState(body.data, actorOf(ctx.user), correlationId(req));
+    const version = Number(body.version);
+    if (!Number.isInteger(version) || version < 0) throw Errors.shape('version');
+    return saveOpsState(body.data, version, actorOf(ctx.user), correlationId(req));
   });
 
   /* ───────── 承認依頼メール（outbox） ───────── */
@@ -539,6 +581,17 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
     const ctx = mutate(req);
     if (!ctx.user.isAdmin) throw Errors.noPermission();
     return deliverPendingMail(20);
+  });
+
+  // 滞留通知（催促メール）。日次ジョブからも同じ処理を呼ぶ（scripts/reminders.ts）
+  app.post('/api/mail/reminders', async (req) => {
+    const ctx = mutate(req);
+    if (!ctx.user.isAdmin) throw Errors.noPermission();
+    const days = Number((req.body as { days?: unknown } | undefined)?.days ?? 3);
+    if (!Number.isInteger(days) || days < 1 || days > 365) throw Errors.shape('days');
+    const result = await enqueueStallReminders({ days });
+    const delivery = await deliverPendingMail(20);
+    return { ...result, delivery };
   });
 
   app.get('/api/auth/csrf', async (req) => {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -9,6 +10,7 @@ import {
   isEmailAddress,
   mailStatus,
   renderApprovalRequest,
+  renderStallReminder,
 } from '../../src/api/mailer.js';
 
 const tempDirs: string[] = [];
@@ -150,5 +152,111 @@ describe('送信経路（外部サービスを呼ばない）', () => {
     const status = mailStatus();
     expect(status.mode).toBe('file');
     expect(Object.keys(status).sort()).toEqual(['from', 'mode', 'ready']);
+  });
+});
+
+
+describe('滞留通知メール', () => {
+  it('滞留日数・状態・リンクを載せる', () => {
+    const mail = renderStallReminder({
+      requestId: 'REQ-2026-0007',
+      title: '工事写真の圏外保存',
+      applicant: '山田 太郎',
+      deptName: '海上土木部',
+      statusLabel: '承認待ち',
+      days: 3,
+      baseUrl: 'https://sf.example.com/',
+    });
+    expect(mail.subject).toContain('滞留');
+    expect(mail.subject).toContain('REQ-2026-0007');
+    expect(mail.body).toContain('「承認待ち」のまま 3 日止まっています');
+    expect(mail.body).toContain('https://sf.example.com/');
+    expect(mail.body).toContain('1日1回');
+  });
+});
+
+
+/** テスト用の最小SMTPサーバ（DATA をそのまま集める）。 */
+async function startFakeSmtp(): Promise<{ port: number; lines: string[]; close: () => Promise<void> }> {
+  const lines: string[] = [];
+  const server = net.createServer((socket) => {
+    let buf = '';
+    let inData = false;
+    socket.write('220 fake ESMTP\r\n');
+    socket.on('data', (chunk: Buffer) => {
+      buf += chunk.toString('utf8');
+      for (;;) {
+        const idx = buf.indexOf('\r\n');
+        if (idx < 0) break;
+        const line = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        if (inData) {
+          if (line === '.') {
+            inData = false;
+            socket.write('250 OK\r\n');
+          } else {
+            lines.push(line);
+          }
+          continue;
+        }
+        const cmd = line.toUpperCase();
+        if (cmd.startsWith('EHLO')) socket.write('250-fake\r\n250 OK\r\n');
+        else if (cmd === 'DATA') {
+          inData = true;
+          socket.write('354 End data\r\n');
+        } else if (cmd === 'QUIT') {
+          socket.write('221 Bye\r\n');
+          socket.end();
+        } else socket.write('250 OK\r\n');
+      }
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address() as net.AddressInfo;
+  return {
+    port: address.port,
+    lines,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+describe('SMTP送信', () => {
+  it('SMTPサーバへ1通渡す（ヘッダとリクエストIDが乗る）', async () => {
+    const smtp = await startFakeSmtp();
+    try {
+      const result = await deliverMail(
+        { to: 'approver@example.com', subject: '承認依頼', body: '本文', requestId: 'REQ-2026-0099' },
+        {
+          mode: 'smtp',
+          smtpHost: '127.0.0.1',
+          smtpPort: smtp.port,
+          smtpSecure: false,
+          smtpRequireTls: false,
+          smtpUser: '',
+          smtpPass: '',
+        },
+      );
+      expect(result.ok).toBe(true);
+      const raw = smtp.lines.join('\n');
+      expect(raw).toContain('To: approver@example.com');
+      expect(raw.toLowerCase()).toContain('x-mirai-sf-request-id: req-2026-0099');
+    } finally {
+      await smtp.close();
+    }
+  });
+
+  it('接続できないときは ok:false（例外にしない）', async () => {
+    const result = await deliverMail(
+      { to: 'approver@example.com', subject: 's', body: 'b' },
+      { mode: 'smtp', smtpHost: '127.0.0.1', smtpPort: 1, smtpSecure: false, smtpRequireTls: false, smtpUser: '', smtpPass: '' },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.transport).toBe('smtp');
+  });
+
+  it('SMTP_HOST が未設定なら ok:false', async () => {
+    const result = await deliverMail({ to: 'approver@example.com', subject: 's', body: 'b' }, { mode: 'smtp', smtpHost: '' });
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('SMTP_HOST');
   });
 });

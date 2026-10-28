@@ -141,30 +141,44 @@
   try {
     localStorage.setItem(KEY, JSON.stringify({ seq, items, ...(bootOps ? { ops: bootOps } : {}) }));
     // 下書きはサーバが正（端末をまたいで再開できる）。ただし、まだ送れていない端末の下書きは消さない。
-    if (boot.draft && boot.draft.draft) {
-      let local = null;
+    if (Array.isArray(boot.drafts) && boot.drafts.length) {
+      let local = [];
       try {
-        local = JSON.parse(localStorage.getItem(KEY + '-draft') || 'null');
+        const parsed = JSON.parse(localStorage.getItem(KEY + '-drafts') || '[]');
+        local = Array.isArray(parsed) ? parsed : [];
       } catch {
-        local = null;
+        local = [];
       }
-      const localAt = local && local.at ? Date.parse(local.at) : NaN;
-      const serverAt = boot.draft.at ? Date.parse(boot.draft.at) : NaN;
-      const keepLocal = Number.isFinite(localAt) && !(Number.isFinite(serverAt) && serverAt >= localAt);
-      if (!keepLocal) localStorage.setItem(KEY + '-draft', JSON.stringify(boot.draft));
+      const byId = new Map();
+      for (const d of local) if (d && d.id) byId.set(d.id, d);
+      for (const d of boot.drafts) {
+        if (!d || !d.id) continue;
+        const mine = byId.get(d.id);
+        const mineAt = mine && mine.at ? Date.parse(mine.at) : NaN;
+        const serverAt = d.at ? Date.parse(d.at) : NaN;
+        if (!mine || !(Number.isFinite(mineAt) && mineAt > serverAt)) byId.set(d.id, d);
+      }
+      // 端末にしか無い下書き（未送信）は残す
+      const merged = [...byId.values()];
+      localStorage.setItem(KEY + '-drafts', JSON.stringify(merged));
     }
   } catch {
     /* localStorage が使えない場合はコンソールのメモリ保持に任せる */
   }
 
   let opsSnapshot = bootOps ? JSON.stringify(bootOps) : null;
+  let opsVersion = boot.ops && boot.ops.version ? boot.ops.version : 0;
   let opsTimer = null;
 
   async function putOps(data) {
     try {
-      await api('PUT', '/api/ops', { data });
+      const res = await api('PUT', '/api/ops', { data, version: opsVersion });
+      if (res && typeof res.version === 'number') opsVersion = res.version;
     } catch (err) {
-      if (window.__MSF_UI__ && window.__MSF_UI__.toast) window.__MSF_UI__.toast(err.message || '運用データを保存できませんでした', true);
+      const message = (err && err.message) || '運用データを保存できませんでした';
+      if (window.__MSF_UI__ && window.__MSF_UI__.toast) window.__MSF_UI__.toast(message, true);
+      // 版番号が合わない＝ほかの端末が先に更新した。最新を読み込み直す（上書きしない）
+      if (/先に更新|version/i.test(message)) setTimeout(() => location.reload(), 600);
     }
   }
 
@@ -295,18 +309,28 @@
       });
   }
 
-  let draftTimer = null;
+  let draftTimers = new Map();
   function saveDraft(o) {
-    if (!o || !o.draft) return;
-    clearTimeout(draftTimer);
-    draftTimer = setTimeout(() => {
-      api('PUT', '/api/draft', { draft: o.draft, step: o.step, editId: o.editId ?? null, at: o.at }).catch(() => undefined);
-    }, 250);
+    if (!o || !o.draft) return Promise.resolve(null);
+    const key = o.id || 'new';
+    clearTimeout(draftTimers.get(key));
+    return new Promise((resolve) => {
+      draftTimers.set(
+        key,
+        setTimeout(() => {
+          draftTimers.delete(key);
+          const body = { draft: o.draft, step: o.step, editId: o.editId ?? null };
+          const req = o.id ? api('PUT', `/api/drafts/${encodeURIComponent(o.id)}`, body) : api('POST', '/api/drafts', body);
+          req.then(resolve).catch(() => resolve(null));
+        }, 250),
+      );
+    });
   }
 
-  function clearDraft() {
-    clearTimeout(draftTimer);
-    api('DELETE', '/api/draft').catch(() => undefined);
+  function clearDraft(id) {
+    for (const timer of draftTimers.values()) clearTimeout(timer);
+    draftTimers.clear();
+    return api('DELETE', id ? `/api/drafts/${encodeURIComponent(id)}` : '/api/drafts').catch(() => undefined);
   }
 
   function initialRole() {

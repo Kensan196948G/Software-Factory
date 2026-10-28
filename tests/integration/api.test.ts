@@ -407,6 +407,19 @@ describe('一覧・ホーム・カタログ・出力', () => {
     const chain = (res.json() as { chain: { ok: boolean } }).chain;
     expect(chain.ok).toBe(true);
   });
+
+  it('監査ログをCSVで書き出せる（管理者のみ）', async () => {
+    const auth = await loginAs(app);
+    const res = await app.inject({ method: 'GET', url: '/api/audit-logs.csv', headers: { cookie: auth.cookie } });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/csv');
+    expect(res.body).toContain('id,at,actor_name,role,action,target_type,target_id,result,correlation_id,hash');
+    expect(res.body.split('\n').length).toBeGreaterThan(2);
+
+    const member = await loginAsMember(app);
+    const denied = await app.inject({ method: 'GET', url: '/api/audit-logs.csv', headers: { cookie: member.cookie } });
+    expect(denied.statusCode).toBe(403);
+  });
 });
 
 describe('セッションの有効期限', () => {
@@ -422,38 +435,63 @@ describe('セッションの有効期限', () => {
 });
 
 describe('下書きのサーバ保存（端末をまたいで再開）', () => {
-  it('PUT → GET → DELETE ができ、本人の下書きだけを返す', async () => {
+  it('作成・一覧・更新・削除ができ、本人の下書きだけを扱う', async () => {
     const auth = await loginAs(app);
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/drafts',
+      headers: authHeaders(auth),
+      payload: { draft: { title: '1件目' }, step: 1, editId: null },
+    });
+    expect(created.statusCode).toBe(200);
+    const first = (created.json() as { draft: { id: string } }).draft;
+
+    const second = await app.inject({
+      method: 'POST',
+      url: '/api/drafts',
+      headers: authHeaders(auth),
+      payload: { draft: { title: '2件目' }, step: 2, editId: null },
+    });
+    const secondId = (second.json() as { draft: { id: string } }).draft.id;
+
+    const list = await app.inject({ method: 'GET', url: '/api/drafts', headers: { cookie: auth.cookie } });
+    const items = (list.json() as { items: { id: string; draft: { title: string } }[] }).items;
+    expect(items.map((i) => i.draft.title)).toEqual(['2件目', '1件目']);
+
     const put = await app.inject({
       method: 'PUT',
-      url: '/api/draft',
+      url: `/api/drafts/${first.id}`,
       headers: authHeaders(auth),
-      payload: { draft: { title: '書きかけの依頼' }, step: 2, editId: null, at: new Date().toISOString() },
+      payload: { draft: { title: '1件目を更新' }, step: 1, editId: null },
     });
     expect(put.statusCode).toBe(200);
 
-    const get = await app.inject({ method: 'GET', url: '/api/draft', headers: { cookie: auth.cookie } });
-    expect(get.statusCode).toBe(200);
-    const body = get.json() as { draft: { payload: { title: string }; step: number } };
-    expect(body.draft.payload.title).toBe('書きかけの依頼');
-    expect(body.draft.step).toBe(2);
+    // ほかの利用者の下書きは更新できない（404）
+    const member = await loginAsMember(app);
+    const denied = await app.inject({
+      method: 'PUT',
+      url: `/api/drafts/${first.id}`,
+      headers: authHeaders(member),
+      payload: { draft: { title: 'のっとり' }, step: 0, editId: null },
+    });
+    expect(denied.statusCode).toBe(404);
 
-    const del = await app.inject({ method: 'DELETE', url: '/api/draft', headers: authHeaders(auth) });
+    const del = await app.inject({ method: 'DELETE', url: `/api/drafts/${secondId}`, headers: authHeaders(auth) });
     expect(del.statusCode).toBe(200);
-    const after = await app.inject({ method: 'GET', url: '/api/draft', headers: { cookie: auth.cookie } });
-    expect((after.json() as { draft: unknown }).draft).toBeNull();
+    const after = await app.inject({ method: 'GET', url: '/api/drafts', headers: { cookie: auth.cookie } });
+    expect((after.json() as { items: { id: string }[] }).items.map((i) => i.id)).toEqual([first.id]);
   });
 
-  it('起動データに下書きが含まれる（画面HTMLはビルド有無に依存するためサービスで検証）', async () => {
+  it('起動データに下書き一覧が含まれる', async () => {
     const auth = await loginAs(app);
     await app.inject({
-      method: 'PUT',
-      url: '/api/draft',
+      method: 'POST',
+      url: '/api/drafts',
       headers: authHeaders(auth),
-      payload: { draft: { title: '別端末で再開する下書き' }, step: 1, editId: null, at: new Date().toISOString() },
+      payload: { draft: { title: '起動データの下書き' }, step: 1, editId: null },
     });
-    const boot = (await getBootData(auth.user.id)) as { draft: { draft: { title: string } } | null };
-    expect(boot.draft?.draft.title).toBe('別端末で再開する下書き');
+    const boot = (await getBootData(auth.user.id)) as { drafts: { draft: { title: string } }[] };
+    expect(boot.drafts[0]?.draft.title).toBe('起動データの下書き');
   });
 });
 
@@ -469,7 +507,7 @@ describe('運用・DevOps・SecOps のDB保存', () => {
       method: 'PUT',
       url: '/api/ops',
       headers: authHeaders(auth),
-      payload: { data: { apps: [{ id: 'APP-001', name: 'テスト' }], incidents: [] } },
+      payload: { data: { apps: [{ id: 'APP-001', name: 'テスト' }], incidents: [] }, version: 0 },
     });
     expect(save.statusCode).toBe(200);
     expect((save.json() as { version: number }).version).toBe(1);
@@ -487,8 +525,19 @@ describe('運用・DevOps・SecOps のDB保存', () => {
     const unauth = await app.inject({ method: 'GET', url: '/api/ops' });
     expect(unauth.statusCode).toBe(401);
     const auth = await loginAs(app);
-    const bad = await app.inject({ method: 'PUT', url: '/api/ops', headers: authHeaders(auth), payload: { data: [1, 2, 3] } });
+    const bad = await app.inject({ method: 'PUT', url: '/api/ops', headers: authHeaders(auth), payload: { data: [1, 2, 3], version: 0 } });
     expect(bad.statusCode).toBe(400);
+
+    // 版番号が無い・古い場合は受け付けない（楽観ロック）
+    const noVersion = await app.inject({ method: 'PUT', url: '/api/ops', headers: authHeaders(auth), payload: { data: { apps: [] } } });
+    expect(noVersion.statusCode).toBe(400);
+    const stale = await app.inject({
+      method: 'PUT',
+      url: '/api/ops',
+      headers: authHeaders(auth),
+      payload: { data: { apps: [] }, version: 999 },
+    });
+    expect(stale.statusCode).toBe(409);
 
     // 運用・DevOps・SecOps は共有の状態。依頼者は上書きできない
     const requester = await loginAsMember(app);
@@ -496,7 +545,7 @@ describe('運用・DevOps・SecOps のDB保存', () => {
       method: 'PUT',
       url: '/api/ops',
       headers: authHeaders(requester),
-      payload: { data: { apps: [], incidents: [] } },
+      payload: { data: { apps: [], incidents: [] }, version: 0 },
     });
     expect(denied.statusCode).toBe(403);
   });

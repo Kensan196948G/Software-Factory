@@ -108,6 +108,36 @@ DNS伝播後は不要。ブラウザで名前解決できない場合は削除�
 - 監査ログのハッシュ連鎖（`/api/audit-logs`）
 - ログ: `journalctl --user -u mirai-sf-api`（個人情報は出力しない）
 
+### 7-1. 日次の滞留通知（任意）
+
+承認待ち・公開承認待ちのまま N 日止まった依頼へ、1日1回だけ催促メールを送る。
+
+```bash
+# 手動（1回だけ）
+REMINDER_DAYS=3 node scripts/local-run.mjs tsx scripts/reminders.ts
+
+# systemd user timer の例（毎朝 8:30）
+# ~/.config/systemd/user/mirai-sf-reminders.service
+#   [Service]
+#   Type=oneshot
+#   WorkingDirectory=/mnt/storage/Software-Factory/Software-Factory
+#   ExecStart=/usr/bin/env REMINDER_DAYS=3 /usr/bin/node scripts/local-run.mjs tsx scripts/reminders.ts
+# ~/.config/systemd/user/mirai-sf-reminders.timer
+#   [Timer]
+#   OnCalendar=*-*-* 08:30:00
+#   Persistent=true
+#   [Install]
+#   WantedBy=timers.target
+systemctl --user enable --now mirai-sf-reminders.timer
+```
+
+同じ依頼・同じ日は unique 制約で1通に落ちるため、何度実行しても重複しない。
+
+### 7-2. CI（GitHub Actions）
+
+- `quality`: typecheck / lint / unit / migration（空DB・冪等）/ seed / db:verify / integration / build / secret scan
+- `e2e`: Postgres サービス＋ビルド＋Playwright（`quality` 成功後に実行）
+
 ## 8. 既知の制約
 
 - Access のサービストークン発行は、現在のAPIトークンに `access-service-token.write` が無いため未実施。外形監視を自動化する場合はトークン権限の追加が必要。

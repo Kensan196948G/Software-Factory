@@ -22,7 +22,7 @@ async function resetDraft(page: Page): Promise<void> {
       /* localStorage が使えない環境では何もしない */
     }
     const msf = (window as unknown as { __MSF__?: { api?: (method: string, path: string) => Promise<unknown> } }).__MSF__;
-    if (msf?.api) await msf.api('DELETE', '/api/draft').catch(() => undefined);
+    if (msf?.api) await msf.api('DELETE', '/api/drafts').catch(() => undefined);
   });
 }
 
@@ -195,6 +195,13 @@ test('承認できる（承認者のみ）', async ({ page }) => {
   await expect(row).toContainText('承認済み');
 });
 
+test('監査ログがデータ画面に出てCSVを書き出せる', async ({ page }) => {
+  await login(page);
+  await gotoView(page, 'data');
+  await expect(page.locator('#auditbox')).toContainText('監査ログ（サーバ）');
+  await expect(page.locator('#auditbox a[href="/api/audit-logs.csv"]')).toBeVisible();
+});
+
 test('承認依頼メールが依頼詳細と送信BOXに表示される', async ({ page }) => {
   await login(page);
   const title = `メール確認 ${Date.now()}`;
@@ -278,18 +285,18 @@ test('運用データがDBに保存され、再読み込みで復元される', 
   const apps = state.data.apps as { name: string }[];
   const before = apps[0]!.name;
   const changed = `E2E変更 ${Date.now()}`;
-  await page.evaluate(async (data) => {
+  await page.evaluate(async ({ data, version }) => {
     // @ts-expect-error 画面が公開しているAPIヘルパー
-    await window.__MSF__.api('PUT', '/api/ops', { data });
-  }, { ...state.data, apps: [{ ...apps[0], name: changed }, ...apps.slice(1)] });
+    await window.__MSF__.api('PUT', '/api/ops', { data, version });
+  }, { data: { ...state.data, apps: [{ ...apps[0], name: changed }, ...apps.slice(1)] }, version: state.version });
 
   await page.reload();
   await page.click('button[data-v="ops"]');
   await expect(page.locator('body')).toContainText(changed);
 
   // 元に戻す
-  await page.evaluate(async (data) => {
+  await page.evaluate(async ({ data, version }) => {
     // @ts-expect-error 画面が公開しているAPIヘルパー
-    await window.__MSF__.api('PUT', '/api/ops', { data });
-  }, { ...state.data, apps: [{ ...apps[0], name: before }, ...apps.slice(1)] });
+    await window.__MSF__.api('PUT', '/api/ops', { data, version });
+  }, { data: { ...state.data, apps: [{ ...apps[0], name: before }, ...apps.slice(1)] }, version: state.version + 1 });
 });

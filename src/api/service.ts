@@ -73,6 +73,17 @@ async function deliverQueuedMail(
 }
 
 const runtime = loadConfig();
+/** 承認者欄（表示名）から利用者を引き当てる。見つからなければ null（名前だけで運用）。 */
+async function resolveApproverUserId(client: PoolClient, approver: string): Promise<string | null> {
+  const name = (approver ?? '').trim();
+  if (!name) return null;
+  const { rows } = await client.query<{ id: string }>(
+    'select id from app_user where display_name = $1 and is_active order by created_at limit 1',
+    [name],
+  );
+  return rows[0]?.id ?? null;
+}
+
 
 async function catalogSignalFor(row: { tool_id: string | null }, cache?: Map<string, Signal>): Promise<Signal | null> {
   if (!row.tool_id) return null;
@@ -358,6 +369,7 @@ export async function createRequest(
       allocated = await allocateId(client);
     }
     const { id, seq, year } = allocated;
+    const approverUserId = await resolveApproverUserId(client, input.approver);
     await client.query(
       `insert into request (
         id, seq, year, applicant, applicant_user_id, dept_code, contact, title, kind, tool_id,
@@ -401,7 +413,7 @@ export async function createRequest(
         input.spread ?? null,
         input.wishDate ?? null,
         input.approver,
-        null,
+        approverUserId,
         actor.userId,
       ],
     );
@@ -483,6 +495,7 @@ export async function updateRequest(
     if (!editableByOwner && !editableByStaff) throw Errors.noPermission();
     if (['done', 'hold', 'cancel'].includes(row.status)) throw Errors.noPermission();
 
+    const approverUserId = await resolveApproverUserId(client, input.approver);
     const afterApproval = ['approved', 'dev', 'verify', 'field', 'release_wait'].includes(row.status);
     const nextStatus = afterApproval ? 'wait' : row.status;
     const signal = afterApproval ? null : row.signal_decided;
@@ -494,7 +507,7 @@ export async function updateRequest(
         problem=$8, purpose=$9, users=$10, people=$11, places=$12, scope=$13, out_of_scope=$14,
         criteria=$15, decides=$16, data_handling=$17, parties=$18, constraints=$19, constraints_other=$20,
         requires_human_approval=$21, frequency=$22, minutes_per_time=$23, data_ready=$24, spread=$25,
-        wish_date=$26, approver=$27, status=$28, signal_decided=$29, order_version=order_version + $30,
+        wish_date=$26, approver=$27, approver_user_id=$32, status=$28, signal_decided=$29, order_version=order_version + $30,
         version=version+1, updated_at=now(), updated_by=$31
       where id=$1`,
       [
@@ -529,6 +542,7 @@ export async function updateRequest(
         signal,
         afterApproval ? 1 : 0,
         actor.userId,
+        approverUserId,
       ],
     );
     await client.query(
@@ -763,28 +777,96 @@ export async function addComment(id: string, text: string, actor: Actor, correla
 
 /* ─────────────────────────── 下書き ─────────────────────────── */
 
-export async function getDraft(userId: string) {
-  return one<{ payload: unknown; step: number; edit_id: string | null; saved_at: Date }>(
-    'select payload, step, edit_id, saved_at from draft where user_id = $1',
+export interface DraftView {
+  id: string;
+  draft: unknown;
+  step: number;
+  editId: string | null;
+  label: string;
+  at: string;
+}
+
+interface DraftRow {
+  id: string;
+  payload: unknown;
+  step: number;
+  edit_id: string | null;
+  label: string;
+  saved_at: Date;
+}
+
+function toDraftView(row: DraftRow): DraftView {
+  return {
+    id: row.id,
+    draft: row.payload,
+    step: row.step,
+    editId: row.edit_id,
+    label: row.label,
+    at: row.saved_at.toISOString(),
+  };
+}
+
+function draftLabel(payload: unknown): string {
+  const title = payload && typeof payload === 'object' ? (payload as { title?: unknown }).title : '';
+  return String(typeof title === 'string' ? title : '')
+    .trim()
+    .slice(0, 60);
+}
+
+/** 下書き（利用者ごとに複数件。新しい順）。 */
+export async function listDrafts(userId: string): Promise<{ items: DraftView[] }> {
+  const { rows } = await query<DraftRow>(
+    'select id::text as id, payload, step, edit_id, label, saved_at from draft_item where user_id = $1 order by saved_at desc limit 50',
     [userId],
   );
+  return { items: rows.map(toDraftView) };
 }
 
-export async function putDraft(userId: string, payload: unknown, step: number, editId: string | null) {
-  await query(
-    `insert into draft (user_id, payload, step, edit_id, saved_at) values ($1,$2,$3,$4,now())
-     on conflict (user_id) do update set payload=$2, step=$3, edit_id=$4, saved_at=now()`,
-    [userId, JSON.stringify(payload), step, editId],
+export async function createDraftItem(
+  userId: string,
+  payload: unknown,
+  step: number,
+  editId: string | null,
+): Promise<DraftView> {
+  const row = await one<DraftRow>(
+    `insert into draft_item (user_id, payload, step, edit_id, label, saved_at)
+     values ($1, $2, $3, $4, $5, now())
+     returning id::text as id, payload, step, edit_id, label, saved_at`,
+    [userId, JSON.stringify(payload), step, editId, draftLabel(payload)],
   );
+  if (!row) throw Errors.internal('下書きを保存できませんでした');
+  return toDraftView(row);
+}
+
+/** 本人の下書きだけを更新する（他人の下書きは 404）。 */
+export async function updateDraftItem(
+  userId: string,
+  id: string,
+  payload: unknown,
+  step: number,
+  editId: string | null,
+): Promise<DraftView> {
+  const row = await one<DraftRow>(
+    `update draft_item
+        set payload = $3, step = $4, edit_id = $5, label = $6, saved_at = now()
+      where id = $1 and user_id = $2
+      returning id::text as id, payload, step, edit_id, label, saved_at`,
+    [id, userId, JSON.stringify(payload), step, editId, draftLabel(payload)],
+  );
+  if (!row) throw Errors.notFound('下書き');
+  return toDraftView(row);
+}
+
+export async function deleteDraftItem(userId: string, id: string): Promise<{ ok: true }> {
+  await query('delete from draft_item where id = $1 and user_id = $2', [id, userId]);
   return { ok: true };
 }
 
-export async function deleteDraft(userId: string) {
-  await query('delete from draft where user_id = $1', [userId]);
-  return { ok: true };
+/** 本人の下書きを全部消す（画面の「すべて破棄」・テストの初期化用）。 */
+export async function deleteAllDrafts(userId: string): Promise<{ ok: true; deleted: number }> {
+  const result = await query('delete from draft_item where user_id = $1', [userId]);
+  return { ok: true, deleted: result.rowCount ?? 0 };
 }
-
-/* ─────────────────────────── 入出力 ─────────────────────────── */
 
 /** 運用・DevOps・SecOps の状態を取得する（無ければ null）。 */
 export async function getOpsState(): Promise<{ data: unknown; version: number } | null> {
@@ -793,34 +875,57 @@ export async function getOpsState(): Promise<{ data: unknown; version: number } 
 }
 
 /** 運用・DevOps・SecOps の状態を保存する（単一ドキュメント・バージョン付き）。 */
-export async function saveOpsState(data: unknown, actor: Actor, correlationId: string): Promise<{ version: number }> {
+export async function saveOpsState(
+  data: unknown,
+  expectedVersion: number,
+  actor: Actor,
+  correlationId: string,
+): Promise<{ version: number }> {
   if (data === null || typeof data !== 'object' || Array.isArray(data)) {
     throw Errors.shape('ops');
   }
   const size = Buffer.byteLength(JSON.stringify(data), 'utf8');
   if (size > 1_500_000) throw Errors.tooLong('ops');
   return withTransaction(async (client) => {
-    const result = await client.query<{ version: number }>(
-      `insert into ops_state (id, data, version, updated_at, updated_by)
-       values (1, $1, 1, now(), $2)
-       on conflict (id) do update set data = excluded.data, version = ops_state.version + 1, updated_at = now(), updated_by = excluded.updated_by
-       returning version`,
-      [JSON.stringify(data), actor.userId],
-    );
+    let version: number | undefined;
+    if (expectedVersion === 0) {
+      // 初回だけ作る。同時に初期化されたら負けた側は 409（上書きしない）。
+      const inserted = await client.query<{ version: number }>(
+        `insert into ops_state (id, data, version, updated_at, updated_by)
+         values (1, $1, 1, now(), $2)
+         on conflict (id) do nothing
+         returning version`,
+        [JSON.stringify(data), actor.userId],
+      );
+      version = inserted.rows[0]?.version;
+    } else {
+      // 版番号が合うときだけ更新する（楽観ロック）。古い画面からの上書きを防ぐ。
+      const updated = await client.query<{ version: number }>(
+        `update ops_state
+            set data = $1, version = version + 1, updated_at = now(), updated_by = $3
+          where id = 1 and version = $2
+          returning version`,
+        [JSON.stringify(data), expectedVersion, actor.userId],
+      );
+      version = updated.rows[0]?.version;
+    }
+    if (!version) throw Errors.conflict('ほかの人が先に更新しました（最新を表示します）');
     await appendAuditInTx(client, actor, {
       action: 'ops.save',
       targetType: 'ops_state',
       targetId: '1',
       result: 'success',
       correlationId,
-      diff: { bytes: size },
+      diff: { bytes: size, version },
     });
-    return { version: result.rows[0]?.version ?? 1 };
+    return { version };
   });
 }
 
 /** 画面起動用のデータ（履歴・コメントを含む）。監査ログには記録しない。 */
-export async function getBootData(userId: string): Promise<{ seq: number; items: unknown[]; draft: unknown; ops: unknown }> {
+export async function getBootData(
+  userId: string,
+): Promise<{ seq: number; items: unknown[]; drafts: DraftView[]; ops: unknown }> {
   const { rows } = await listRequests({ limit: 5000 });
   const items = [];
   for (const row of rows) {
@@ -832,17 +937,12 @@ export async function getBootData(userId: string): Promise<{ seq: number; items:
     });
   }
   const seq = rows.reduce((max, r) => Math.max(max, r.seq), 0);
-  const draftRow = await one<{ payload: unknown; step: number; edit_id: string | null; saved_at: Date }>(
-    'select payload, step, edit_id, saved_at from draft where user_id = $1',
-    [userId],
-  );
+  const drafts = await listDrafts(userId);
   const ops = await getOpsState();
   return {
     seq,
     items,
-    draft: draftRow
-      ? { draft: draftRow.payload, step: draftRow.step, editId: draftRow.edit_id, at: draftRow.saved_at.toISOString() }
-      : null,
+    drafts: drafts.items,
     ops: ops ? { data: ops.data, version: ops.version } : null,
   };
 }

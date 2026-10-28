@@ -10,6 +10,7 @@ import {
   loginAsMember,
   prepareTestDb,
   sampleRequest,
+  TEST_MEMBER,
   TEST_USER,
   truncateBusiness,
 } from './helpers.js';
@@ -43,12 +44,15 @@ beforeEach(async () => {
   await truncateBusiness();
 });
 
-async function createRequestAs(auth: Awaited<ReturnType<typeof loginAs>>) {
+async function createRequestAs(
+  auth: Awaited<ReturnType<typeof loginAs>>,
+  overrides: Record<string, unknown> = {},
+) {
   const res = await app.inject({
     method: 'POST',
     url: '/api/requests',
     headers: authHeaders(auth),
-    payload: sampleRequest(),
+    payload: sampleRequest(overrides),
   });
   expect(res.statusCode).toBe(201);
   return (res.json() as { request: { id: string; version: number } }).request;
@@ -190,6 +194,84 @@ describe('承認依頼メール', () => {
     expect(retry.statusCode).toBe(200);
     expect((retry.json() as { status: string }).status).toBe('sent');
     rmSync(scratch, { recursive: true, force: true });
+  });
+
+  it('承認者欄が利用者と一致すれば、その人を承認者にしてメールを送る', async () => {
+    const auth = await loginAs(app);
+    const created = await createRequestAs(auth, { approver: TEST_MEMBER.displayName });
+    const member = await query<{ id: string }>('select id from app_user where email = $1', [TEST_MEMBER.email]);
+    const bound = await query<{ approver_user_id: string | null }>('select approver_user_id from request where id = $1', [
+      created.id,
+    ]);
+    expect(bound.rows[0]!.approver_user_id).toBe(member.rows[0]!.id);
+
+    await moveToWait(auth, created.id, created.version);
+    const mails = await mailsOf(created.id);
+    expect(mails[0]!.to_email).toBe(TEST_MEMBER.email);
+  });
+
+  it('承認者が別人なら、ほかの承認者は承認できない', async () => {
+    const auth = await loginAs(app);
+    const created = await createRequestAs(auth, { approver: TEST_MEMBER.displayName });
+    await moveToWait(auth, created.id, created.version);
+
+    const approver = await loginAs(app, 'approver');
+    const detail = await app.inject({ method: 'GET', url: `/api/requests/${created.id}`, headers: { cookie: approver.cookie } });
+    const version = (detail.json() as { request: { version: number } }).request.version;
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/requests/${created.id}/transitions`,
+      headers: authHeaders(approver),
+      payload: { to: 'approved', version, signal: 'y', checklistAcknowledged: true },
+    });
+    expect(res.statusCode).toBe(409);
+    expect((res.json() as { error: { code: string } }).error.code).toBe('ERR-201');
+  });
+
+  it('滞留通知は1日1回だけ積まれる', async () => {
+    const auth = await loginAs(app);
+    const created = await createRequestAs(auth);
+    await moveToWait(auth, created.id, created.version);
+    // 5日前から動いていないことにする
+    await query(`update request set updated_at = now() - interval '5 days' where id = $1`, [created.id]);
+
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/mail/reminders',
+      headers: authHeaders(auth),
+      payload: { days: 3 },
+    });
+    expect(first.statusCode).toBe(200);
+    const r1 = first.json() as { queued: number; delivery: { sent: number; failed: number } };
+    expect(r1.queued).toBe(1);
+    expect(r1.delivery.sent).toBe(1);
+
+    // 同じ日にもう一度回しても増えない（unique: request × kind × 日付）
+    const second = await app.inject({
+      method: 'POST',
+      url: '/api/mail/reminders',
+      headers: authHeaders(auth),
+      payload: { days: 3 },
+    });
+    expect((second.json() as { queued: number }).queued).toBe(0);
+
+    const rows = await query<{ kind: string; status: string }>(
+      'select kind, status from mail_outbox where request_id = $1 order by id',
+      [created.id],
+    );
+    expect(rows.rows.map((r) => r.kind)).toEqual(['approval_request', 'reminder']);
+    expect(rows.rows[1]!.status).toBe('sent');
+  });
+
+  it('滞留通知は管理者だけが実行できる', async () => {
+    const member = await loginAsMember(app);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/mail/reminders',
+      headers: authHeaders(member),
+      payload: { days: 3 },
+    });
+    expect(res.statusCode).toBe(403);
   });
 
   it('状態遷移が失敗（版競合）したときはメールを積まない', async () => {

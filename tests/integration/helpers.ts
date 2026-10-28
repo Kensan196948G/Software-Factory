@@ -45,7 +45,7 @@ export async function prepareTestDb(): Promise<void> {
   try {
     await seedMaster(client);
     await ensureUser(client, TEST_USER, ['requester', 'desk', 'approver'], true);
-    await ensureUser(client, TEST_MEMBER, ['requester'], false);
+    await ensureUser(client, TEST_MEMBER, ['requester', 'approver'], false);
   } finally {
     client.release();
   }

@@ -22,7 +22,7 @@ export default defineConfig({
   webServer: process.env.E2E_NO_SERVER
     ? undefined
     : {
-        command: 'node scripts/local-run.mjs tsx src/api/server.ts',
+        command: process.env.E2E_SERVER_CMD ?? 'node scripts/local-run.mjs tsx src/api/server.ts',
         url: `${BASE_URL}/healthz`,
         reuseExistingServer: true,
         timeout: 60_000,
