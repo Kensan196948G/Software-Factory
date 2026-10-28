@@ -13,8 +13,8 @@ import type { PoolClient } from 'pg';
 import { one, query, withTransaction } from './db.js';
 import { appendAuditTx } from './audit.js';
 import { config } from './config.js';
-import { deliverMail, isEmailAddress, renderApprovalRequest, type MailMode } from './mailer.js';
-import type { Signal } from '../shared/domain.js';
+import { deliverMail, isEmailAddress, renderApprovalRequest, renderStallReminder, type MailMode } from './mailer.js';
+import { STATUS_LABEL, type Signal, type Status } from '../shared/domain.js';
 
 export type MailState = 'pending' | 'sending' | 'sent' | 'failed';
 
@@ -269,4 +269,121 @@ export async function mailSummary(): Promise<{
     failed: Number(counts?.failed ?? 0),
     lastSentAt: counts?.last_sent_at ? counts.last_sent_at.toISOString() : null,
   };
+}
+
+/** 依頼に紐づく「いちばん新しい承認依頼メール」の状態（依頼詳細の表示用）。 */
+export interface RequestMailStatus {
+  id: string;
+  status: MailState;
+  to: string;
+  sentAt: string | null;
+  lastError: string | null;
+  attempts: number;
+}
+
+export async function latestMailForRequest(requestId: string): Promise<RequestMailStatus | null> {
+  const row = await one<MailRow>(
+    `select ${SELECT_COLUMNS} from mail_outbox
+      where request_id = $1 and kind = 'approval_request'
+      order by created_at desc, id desc
+      limit 1`,
+    [requestId],
+  );
+  if (!row) return null;
+  return {
+    id: row.id,
+    status: row.status,
+    to: row.to_email,
+    sentAt: row.sent_at ? row.sent_at.toISOString() : null,
+    lastError: row.last_error,
+    attempts: row.attempts,
+  };
+}
+
+
+/** 滞留通知（催促メール）の対象になる状態。 */
+const STALLED_STATUSES: Status[] = ['wait', 'release_wait'];
+
+/**
+ * 「承認待ち・公開承認待ち」のまま N 日動いていない依頼へ、催促メールを1日1回積む。
+ * 同じ日に何度呼ばれても unique 制約で1通に落ちる。
+ */
+export async function enqueueStallReminders(options: { days: number; limit?: number }): Promise<{
+  days: number;
+  candidates: number;
+  queued: number;
+  skipped: number;
+}> {
+  const days = Math.max(1, Math.min(Math.trunc(options.days), 365));
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+  if (config.mailMode === 'off') return { days, candidates: 0, queued: 0, skipped: 0 };
+
+  return withTransaction(async (client) => {
+    const { rows } = await client.query<{
+      id: string;
+      title: string;
+      applicant: string;
+      dept_code: string;
+      approver: string;
+      approver_user_id: string | null;
+      status: Status;
+    }>(
+      `select id, title, applicant, dept_code, approver, approver_user_id, status
+         from request
+        where deleted = false
+          and status = any($1::text[])
+          and updated_at < now() - ($2 || ' days')::interval
+        order by updated_at
+        limit $3`,
+      [STALLED_STATUSES, String(days), limit],
+    );
+
+    let queued = 0;
+    for (const row of rows) {
+      const to = await resolveRecipient(client, {
+        id: row.id,
+        title: row.title,
+        applicant: row.applicant,
+        deptCode: row.dept_code,
+        approver: row.approver,
+        approverUserId: row.approver_user_id,
+        signal: null,
+        criteriaCount: 0,
+      });
+      if (!to) continue;
+
+      const dept = await client.query<{ name: string }>('select name from department where code = $1', [row.dept_code]);
+      const mail = renderStallReminder({
+        requestId: row.id,
+        title: row.title,
+        applicant: row.applicant,
+        deptName: dept.rows[0]?.name ?? row.dept_code,
+        statusLabel: STATUS_LABEL[row.status] ?? row.status,
+        days,
+        baseUrl: config.appBaseUrl,
+      });
+      const inserted = await client.query<{ id: string }>(
+        `insert into mail_outbox (request_id, kind, to_email, subject, body, reminder_date)
+         values ($1, 'reminder', $2, $3, $4, (now() at time zone 'Asia/Tokyo')::date)
+         on conflict do nothing
+         returning id::text as id`,
+        [row.id, to, mail.subject, mail.body],
+      );
+      const id = inserted.rows[0]?.id;
+      if (!id) continue;
+      queued += 1;
+      await appendAuditTx(client, {
+        action: 'mail.reminder',
+        targetType: 'mail_outbox',
+        targetId: id,
+        result: 'success',
+        actorUserId: null,
+        actorName: '受付ステーション',
+        role: 'system',
+        correlationId: null,
+        diff: { requestId: row.id, days },
+      });
+    }
+    return { days, candidates: rows.length, queued, skipped: rows.length - queued };
+  });
 }

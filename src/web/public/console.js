@@ -732,7 +732,7 @@ const SF = (function(){
   const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   const loaded = SF.load(KEY);
-  const S = {data: loaded.data, persistent: loaded.persistent, role:(window.__MSF__?window.__MSF__.initialRole():'requester'), view:'home', step:0, draft:null, editId:null, dpTab:'card', fq:'', fd:'', fs:'', fc:'', open:null, dtab:'sum', pickDept:'', fresh:null, critUndo:{}, bmine:false};
+  const S = {data: loaded.data, persistent: loaded.persistent, role:(window.__MSF__?window.__MSF__.initialRole():'requester'), view:'home', step:0, draft:null, draftId:null, editId:null, dpTab:'card', fq:'', fd:'', fs:'', fc:'', open:null, dtab:'sum', pickDept:'', fresh:null, critUndo:{}, bmine:false};
   const me = () => SF.roleOf(S.role);
   const find = id => S.data.items.find(x=>x.id===id);
   const colorOf = r => r.signalFinal || SF.judge(r).c;
@@ -748,25 +748,49 @@ const SF = (function(){
   }
   window.__MSF_UI__ = { toast: toast, data: () => S.data };
 
-  /* ---- 下書きの自動保存（このブラウザの中だけ） ---- */
-  const DKEY = KEY + '-draft';
+  /* ---- 下書き（サーバが正・利用者ごとに複数件。端末をまたいで再開できる） ---- */
+  const DKEY = KEY + '-draft';        // 旧: 単一の下書き（読み込み互換のみ）
+  const DKEY_LIST = KEY + '-drafts';  // 新: 下書きの一覧
   let draftMem = null, draftTimer = null;
-  function readDraft(){
-    try { const s = localStorage.getItem(DKEY); if (s) { const o = JSON.parse(s); if (o && o.draft && typeof o.draft === 'object') return o; } } catch(e) {}
-    return draftMem;
+
+  function readDrafts(){
+    try { const s = localStorage.getItem(DKEY_LIST); if (s) { const a = JSON.parse(s); if (Array.isArray(a)) return a.filter(o => o && o.draft && typeof o.draft === 'object'); } } catch(e) {}
+    return draftMem && Array.isArray(draftMem) ? draftMem : [];
   }
+  function writeDraftsList(a){ draftMem = a; try { localStorage.setItem(DKEY_LIST, JSON.stringify(a)); } catch(e) {} }
+  function removeDraftLocal(id){ writeDraftsList(readDrafts().filter(o => o.id !== id)); }
+
   function writeDraft(){
     if (!S.draft) return;
-    const o = {draft:S.draft, editId:S.editId, step:S.step, at:SF.nowISO()};
-    draftMem = o; try { localStorage.setItem(DKEY, JSON.stringify(o)); } catch(e) {}
-    if (window.__MSF__ && window.__MSF__.saveDraft) window.__MSF__.saveDraft(o);
+    const o = {id:S.draftId || null, draft:S.draft, editId:S.editId, step:S.step, at:SF.nowISO()};
+    const list = readDrafts().filter(x => x.id !== o.id);
+    list.unshift(o); writeDraftsList(list);
+    if (window.__MSF__ && window.__MSF__.saveDraft) {
+      window.__MSF__.saveDraft(o).then(res => {
+        const saved = res && res.draft;
+        if (!saved || !saved.id) return;
+        if (S.draftId !== saved.id) S.draftId = saved.id;
+        const next = readDrafts().map(x => x.id === saved.id || (x.id === null && saved.editId === x.editId) ? Object.assign({}, x, {id: saved.id}) : x);
+        writeDraftsList(next);
+      }).catch(() => undefined);
+    }
     const a = $('#autosv'); if (a) a.innerHTML = ico('i-check')+'下書きを自動保存しました　'+E(SF.fmt(o.at).slice(11));
   }
   function saveDraftSoon(){ clearTimeout(draftTimer); draftTimer = setTimeout(writeDraft, 400); }
-  function clearDraft(){ clearTimeout(draftTimer); draftMem = null; try { localStorage.removeItem(DKEY); } catch(e) {} if (window.__MSF__ && window.__MSF__.clearDraft) window.__MSF__.clearDraft(); }
+
+  function clearDraft(){
+    clearTimeout(draftTimer);
+    const id = S.draftId;
+    if (id) {
+      removeDraftLocal(id);
+      if (window.__MSF__ && window.__MSF__.clearDraft) window.__MSF__.clearDraft(id).catch(() => undefined);
+    }
+    try { localStorage.removeItem(DKEY); } catch(e) {}
+    S.draftId = null;
+  }
   function hasContent(d){ return !!d && (!!d.toolRef || ['title','problem','purpose','scope','outScope'].some(k => String(d[k]||'').trim()) || (d.criteria||[]).some(x => String(x).trim())); }
   function draftLabel(o){ return o.draft.title && o.draft.title.trim() ? o.draft.title : '（件名はまだありません）'; }
-  function resumeDraft(o){ S.draft = o.draft; S.editId = o.editId || null; S.step = Math.min(Math.max(0, +o.step||0), STEPS.length-1); S.pickDept=''; go('new'); toast('書きかけの依頼の続きから再開します'); }
+  function resumeDraft(o){ if(!o) return; S.draft = o.draft; S.draftId = o.id || null; S.editId = o.editId || null; S.step = Math.min(Math.max(0, +o.step||0), STEPS.length-1); S.pickDept=''; go('new'); toast('書きかけの依頼の続きから再開します'); }
   function discardDraft(after){ clearDraft(); S.draft = null; S.editId = null; toast('下書きを破棄しました'); if (after) after(); }
 
   /* ---- 状態の変更（共通） ---- */
@@ -839,7 +863,7 @@ const SF = (function(){
     const second = S.role==='requester' ? it.filter(r=>r.applicant===me().name && !SF.turnOf(S.role, r, me().name)) : it.filter(r=>active(r) && SF.stayDays(r)>=SF.STAY_WARN && !SF.turnOf(S.role, r, me().name)).sort((x,y)=>SF.stayDays(y)-SF.stayDays(x));
     const secondT = S.role==='requester' ? 'あなたの依頼（ほかの人の番）' : '止まっている依頼（'+SF.STAY_WARN+'日以上・ほかの人の番）';
     const ev = []; it.forEach(r => r.history.forEach(x => ev.push({r, x}))); ev.sort((a,b)=>a.x.at<b.x.at?1:-1);
-    const dr = readDraft(), showDr = dr && hasContent(dr.draft);
+    const drafts = readDrafts().filter(o => hasContent(o.draft));
     const tbtn = x => {
       const r = x.r;
       if (S.role==='requester' && r.status==='back') return '<button class="btn sm go" type="button" data-tedit="'+E(r.id)+'">'+ico('i-edit')+'直す</button>';
@@ -850,7 +874,7 @@ const SF = (function(){
     const row = x => '<div class="trow'+(SF.stayDays(x.r)>=SF.STAY_ALERT?' al':SF.stayDays(x.r)>=SF.STAY_WARN?' wn':'')+'" data-id="'+E(x.r.id)+'"><div class="tm"><span class="no">'+E(x.r.id)+'</span>'+st(x.r.status)+sig(colorOf(x.r))+stay(x.r, true)+'</div><b>'+E(x.r.title)+'</b><div class="ta">'+ico('i-arrow')+E(x.a)+'</div><div class="tb">'+tbtn(x)+'</div></div>';
     $('#view').innerHTML =
       '<div class="hero hero2"><div><h2>'+greet+'、'+E(me().name.split(' ')[0])+'さん</h2><p>'+(all ? 'いま、<b>あなたの番</b>が <b class="big">'+all+'</b> 件あります'+(late?'（うち '+late+' 件の依頼は '+SF.STAY_WARN+' 日以上止まっています）':'')+'。' : 'いま、あなたが動かすものはありません。')+'</p></div><button class="btn go" id="cta" type="button">'+ico('i-plus')+'新しい依頼をはじめる'+ico('i-arrow')+'</button></div>'+
-      (showDr ? '<div class="card pad drc"><span class="ib">'+ico('i-edit')+'</span><div><b>書きかけの依頼があります</b><div class="muted" style="font-size:13px">'+(dr.editId?E(dr.editId)+' の編集　':'')+'「'+E(draftLabel(dr))+'」　STEP '+((+dr.step||0)+1)+'／'+STEPS.length+'まで入力　'+E(SF.fmt(dr.at))+' に自動保存</div></div><span class="sp"></span><button class="btn sm pri" id="drgo" type="button">'+ico('i-arrow')+'続きから再開</button><button class="btn sm dng" id="drx" type="button">'+ico('i-trash')+'破棄</button></div>' : '')+
+      (drafts.length ? '<div class="card pad drc"><span class="ib">'+ico('i-edit')+'</span><div><b>書きかけの依頼があります（'+drafts.length+'件）</b>' + drafts.slice(0,3).map(o => '<div class="mini" style="margin-top:6px"><span class="no">STEP '+((+o.step||0)+1)+'</span><b>'+E(draftLabel(o))+'</b><small class="muted">'+E(SF.fmt(o.at))+' に自動保存</small><span class="sp"></span><button class="btn sm pri" type="button" data-dres="'+E(o.id)+'">'+ico('i-arrow')+'続きから再開</button><button class="btn sm dng" type="button" data-ddis="'+E(o.id)+'">'+ico('i-trash')+'破棄</button></div>').join('') + (drafts.length>3 ? '<div class="muted" style="font-size:12.5px;margin-top:4px">ほか '+(drafts.length-3)+' 件</div>' : '') + '</div></div>' : '')+
       '<div class="card pad turn"><h2 class="h2">'+ico('i-flag')+'あなたの番<em class="cnt">'+all+'</em><span class="muted" style="font-size:12.5px;font-weight:400;margin-left:auto">'+E(me().l)+'として、次に動かすものです（止まっている日数の長い順）</span></h2>'+
         (all ? turn.map(row).join('')+ot.map(orow).join('') : '<p class="muted" style="margin:0">'+ico('i-check')+' いまはありません。ほかの人の番の依頼は、ボードと一覧で見られます。</p>')+'</div>'+
       '<div class="ostrip"><button type="button" data-goto="ops|apps">'+ico('i-pulse')+'<span>運用中の道具 <b>'+o.apps.length+'</b> 件</span></button><button type="button" data-goto="ops|inc" class="'+(nInc?'wn':'')+'">'+ico('i-alert')+'<span>対応中の障害 <b>'+nInc+'</b> 件</span></button><button type="button" data-goto="devops|line">'+ico('i-git')+'<span>開発ラインの依頼 <b>'+nPipe+'</b> 件</span></button><button type="button" data-goto="secops|vul" class="'+(nOver?'al':'')+'">'+ico('i-lock')+'<span>期限切れの脆弱性 <b>'+nOver+'</b> 件</span></button></div>'+
@@ -862,8 +886,8 @@ const SF = (function(){
       '<div class="card pad" style="margin-top:16px"><h2 class="h2">'+ico('i-flag')+'信号の色の割合</h2><div class="ratio" id="ratio"><i class="g"></i><i class="y"></i><i class="r"></i></div><div class="rl"><span>'+sig('g')+' '+t.g+'件</span><span>'+sig('y')+' '+t.y+'件</span><span>'+sig('r')+' '+t.r+'件</span></div>'+
       '<p class="hint" style="margin-top:12px">青＝任せる／黄＝担当者のチェック付き／赤＝AIに決めさせない。最終的な色は承認者が決めます。</p></div>';
     $('#cta').addEventListener('click', startNew);
-    if ($('#drgo')) $('#drgo').addEventListener('click', () => resumeDraft(readDraft()));
-    if ($('#drx')) $('#drx').addEventListener('click', () => confirmBox('下書きを破棄', '「'+draftLabel(dr)+'」の入力内容を消します。元に戻せません。', '破棄する', () => discardDraft(renderHome)));
+    $$('#view [data-dres]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); resumeDraft(readDrafts().find(o => o.id === b.dataset.dres)); }));
+    $$('#view [data-ddis]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); const o = readDrafts().find(x => x.id === b.dataset.ddis); if (!o) return; confirmBox('下書きを破棄', '「'+draftLabel(o)+'」の入力内容を消します。元に戻せません。', '破棄する', () => { removeDraftLocal(o.id); if (window.__MSF__ && window.__MSF__.clearDraft) window.__MSF__.clearDraft(o.id).catch(() => undefined); renderHome(); }); }));
     $$('#view [data-id]').forEach(a=>a.addEventListener('click',()=>openDrawer(a.dataset.id)));
     $$('#view [data-goto]').forEach(a=>a.addEventListener('click',e=>{ e.stopPropagation(); goTo(a.dataset.goto.split('|')); }));
     $$('#view [data-tnx]').forEach(b=>b.addEventListener('click',e=>{ e.stopPropagation(); const r=find(b.dataset.tnx); if(r) advance(r); }));
@@ -888,12 +912,13 @@ const SF = (function(){
   function freshDraft(){ clearDraft(); S.draft = SF.blank(S.role); S.draft.criteria=['']; S.editId=null; S.step=0; S.pickDept=''; go('new'); }
   function startNew(){
     if (S.view==='new' && S.draft) return toast('入力中の依頼を表示しています（新しく始めるときは「下書きを破棄」）');
-    const o = readDraft();
-    if (o && hasContent(o.draft)){
+    const list = readDrafts().filter(o => hasContent(o.draft));
+    if (list.length){
       modal(ico('i-edit')+'書きかけの依頼があります',
-        '<p style="margin:0 0 8px">'+(o.editId?'<b>'+E(o.editId)+'</b> の編集が途中です。':'前回の入力が自動保存されています。')+'</p><div class="drc in"><span class="ib">'+ico('i-doc')+'</span><div><b>'+E(draftLabel(o))+'</b><div class="muted" style="font-size:12.5px">STEP '+((+o.step||0)+1)+'／'+STEPS.length+'　'+E(SF.fmt(o.at))+' に自動保存</div></div></div>',
-        '<button class="btn dng" id="dfnew" type="button">'+ico('i-trash')+'破棄して新しく始める</button><button class="btn pri" id="dfres" type="button">'+ico('i-arrow')+'続きから再開</button>');
-      $('#dfres').addEventListener('click', () => { closeModal(); resumeDraft(o); });
+        '<p style="margin:0 0 8px">続きから再開する下書きを選んでください。新しく始めることもできます。</p>'+
+        list.slice(0,5).map(o => '<div class="drc in" style="margin-top:8px"><span class="ib">'+ico('i-doc')+'</span><div><b>'+E(draftLabel(o))+'</b><div class="muted" style="font-size:12.5px">STEP '+((+o.step||0)+1)+'／'+STEPS.length+'　'+E(SF.fmt(o.at))+' に自動保存</div></div><span class="sp"></span><button class="btn pri" type="button" data-res="'+E(o.id)+'">続きから再開</button></div>').join(''),
+        '<button class="btn dng" id="dfnew" type="button">'+ico('i-plus')+'新しく始める</button>');
+      $$('#modal [data-res]').forEach(b => b.addEventListener('click', () => { const o = readDrafts().find(x => x.id === b.dataset.res); closeModal(); if (o) resumeDraft(o); }));
       $('#dfnew').addEventListener('click', () => { closeModal(); freshDraft(); });
       return;
     }
@@ -901,14 +926,13 @@ const SF = (function(){
   }
   function startEdit(id){
     const r=find(id); if(!r) return;
-    const o = readDraft();
-    if (o && o.editId===id && hasContent(o.draft)){ closeDrawer(); return resumeDraft(o); }
-    const begin = () => { clearDraft(); S.draft = JSON.parse(JSON.stringify(r)); if(!S.draft.criteria.length) S.draft.criteria=['']; S.editId=id; S.step=0; S.pickDept=''; closeDrawer(); go('new'); };
-    if (o && hasContent(o.draft)) return confirmBox('書きかけの依頼があります', '「'+draftLabel(o)+'」の書きかけがあります。編集を始めると、この書きかけは破棄されます。よろしいですか？', '破棄して編集する', begin);
+    const cur = readDrafts().find(o => o.editId===id && hasContent(o.draft));
+    if (cur){ closeDrawer(); return resumeDraft(cur); }
+    const begin = () => { clearDraft(); S.draft = JSON.parse(JSON.stringify(r)); if(!S.draft.criteria.length) S.draft.criteria=['']; S.draftId=null; S.editId=id; S.step=0; S.pickDept=''; closeDrawer(); go('new'); };
     begin();
   }
   function renderWizard(){
-    if (!S.draft) { const o = readDraft(); if (o && hasContent(o.draft)) { S.draft=o.draft; S.editId=o.editId||null; S.step=Math.min(+o.step||0, STEPS.length-1); } else { S.draft = SF.blank(S.role); S.draft.criteria=['']; } }
+    if (!S.draft) { S.draft = SF.blank(S.role); S.draft.criteria=['']; S.draftId = null; }
     const resub = S.editId && S.draft.status==='back' && SF.canMoveR(S.role, S.draft, 'received', me().name);
     if (S.step!==4) S.critUndo = {};
     const s = STEPS[S.step];
@@ -1140,6 +1164,23 @@ const SF = (function(){
   const ymd = () => { const d=new Date(); return d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0'); };
   function exportJSON(){ addAudit('JSONを書き出し', 'データ', S.data.items.length+'件'); persist(); SF.download('受付データ_'+ymd()+'.json', JSON.stringify(S.data,null,2), 'application/json') ? toast('JSONを書き出しました') : toast('書き出せませんでした', true); }
 
+  /* ---- 監査ログ（サーバ・管理者のみ） ---- */
+  async function loadAuditBox(){
+    const el = $('#auditbox'); if (!el) return;
+    const msf = window.__MSF__;
+    const title = '<h2 class="h2">' + ico('i-shield') + '監査ログ（サーバ）</h2>';
+    if (!msf || !msf.user || !msf.user.isAdmin){ el.innerHTML = title + '<p class="muted">管理者だけが見られます。</p>'; return; }
+    try {
+      const res = await msf.api('GET', '/api/audit-logs?limit=20');
+      el.innerHTML = title +
+        '<p class="hint" style="margin-top:0">追記のみ・ハッシュ連鎖。直近20件を表示します（CSVは最大5000件）。</p>' +
+        '<div class="tw"><table class="t"><thead><tr><th>時刻</th><th>操作</th><th>対象</th><th>人</th><th>結果</th></tr></thead><tbody>' +
+        ((res && res.items) || []).map(a => '<tr><td>' + E(SF.fmt(a.at)) + '</td><td>' + E(a.action) + '</td><td>' + E(a.target_type) + (a.target_id ? ' ' + E(a.target_id) : '') + '</td><td>' + E(a.actor) + '</td><td>' + E(a.result) + '</td></tr>').join('') +
+        '</tbody></table></div>' +
+        '<div class="data-row" style="margin-top:10px"><a class="btn sm" href="/api/audit-logs.csv" download>' + ico('i-down') + 'CSVで書き出す</a></div>';
+    } catch (e){ el.innerHTML = title + '<p class="muted">取得できませんでした</p>'; }
+  }
+
   /* ---- data ---- */
   function renderData(){
     $('#view').innerHTML =
@@ -1160,6 +1201,8 @@ const SF = (function(){
     $('#dc').addEventListener('click', () => SF.download('受付一覧_'+ymd()+'.csv', SF.toCSV(S.data.items), 'text/csv') ? toast('CSVを書き出しました') : toast('書き出せませんでした', true));
     $('#di').addEventListener('click', () => $('#importFile').click());
     $('#dr').addEventListener('click', () => confirmBox('サンプルに戻す','登録した内容はすべて消え、最初のサンプルデータに戻ります。よろしいですか？','サンプルに戻す',()=>{ S.data=SF.seed(); persist(); toast('サンプルデータに戻しました'); renderData(); }));
+    $('#view').insertAdjacentHTML('beforeend', '<div id="auditbox" class="card pad" style="margin-top:16px">読み込み中…</div>');
+    loadAuditBox();
   }
   $('#importFile').addEventListener('change', e => {
     const f = e.target.files[0]; if(!f) return; const rd = new FileReader();
@@ -1171,7 +1214,7 @@ const SF = (function(){
   });
 
   /* ---- drawer ---- */
-  function openDrawer(id){ S.open=id; S.dtab='sum'; renderDrawer(); $('#drawer').classList.add('show'); $('#dmask').classList.add('show'); }
+  function openDrawer(id){ S.open=id; S.dtab='sum'; renderDrawer(); $('#drawer').classList.add('show'); $('#dmask').classList.add('show'); refreshRequestMail(id); }
   function closeDrawer(){ S.open=null; $('#drawer').classList.remove('show'); $('#dmask').classList.remove('show'); }
   $('#dmask').addEventListener('click', closeDrawer);
   function renderDrawer(){
@@ -1191,7 +1234,11 @@ const SF = (function(){
       (pp ? '<div>開発ライン：<b>L'+pp.step+' '+E(SF.LINE[pp.step])+'</b>　Issue '+(pp.issue?'#'+pp.issue:'－')+'　PR '+(pp.pr?'#'+pp.pr:'－')+'　マージ '+(pp.merged?E(pp.merged):'－')+(pp.esc?'　<span class="sv s1">停止中 '+E(pp.esc)+'</span>':'')+'</div><div class="chks" style="margin-top:6px">'+chkChips(r, pp)+'</div>' : '')+
       (ap ? '<div style="margin-top:6px">運用中：<b>'+E(ap.id)+' v'+E(ap.ver)+'</b>（'+E(ap.wave)+'）　'+pill(health(ap).l, health(ap).k)+'</div>' : '')+
       '<div class="data-row" style="margin-top:8px">'+(pp?'<button type="button" class="btn sm" data-go="devops|line">'+ico('i-git')+'DevOps で見る</button>':'')+(ap?'<button type="button" class="btn sm" data-go="ops|apps">'+ico('i-pulse')+'運用で見る</button>':'')+'</div></div>' : '';
-    if (S.dtab==='sum') body = turnBox + lineBox +
+    const mailBox = r.mail ? '<div class="box"><h4>'+ico('i-inbox')+'承認依頼メール</h4>'+
+      '<div>状態：'+mailChip(r.mail.status)+'　宛先：'+E(r.mail.to)+(r.mail.sentAt?'　送信：'+E(SF.fmt(r.mail.sentAt)):'')+'</div>'+
+      (r.mail.status==='failed' ? '<div class="hint" style="margin-top:6px">'+E(r.mail.lastError||'送信できませんでした')+'</div><div style="margin-top:8px"><button class="btn sm pri" id="mretry" type="button">'+ico('i-undo')+'メールを再送</button></div>' : '')+
+      (r.mail.status==='pending'||r.mail.status==='sending' ? '<p class="hint" style="margin:6px 0 0">送信キューに積まれています。少し待つと送信済みになります。</p>' : '')+'</div>' : '';
+    if (S.dtab==='sum') body = turnBox + mailBox + lineBox +
       '<div class="box"><h4>'+ico('i-flag')+'信号の色</h4><div>判定の候補：'+sig(j.c)+'　承認者の決定：'+(r.signalFinal?sig(r.signalFinal):'<span class="muted">未決定</span>')+'</div><ul class="reasons">'+j.reasons.map(x=>'<li><i class="'+x.c+'"></i>'+E(x.t)+'</li>').join('')+'</ul></div>'+
       '<div class="box"><h4>'+ico('i-inbox')+'依頼の中身</h4><dl class="kv">'+
         '<dt>起票者</dt><dd>'+E(r.applicant)+(r.contact?'（'+E(r.contact)+'）':'')+'</dd><dt>部署</dt><dd>'+E(dep?dep.name:'')+'</dd><dt>依頼区分</dt><dd>'+E(r.kind)+'</dd>'+
@@ -1231,6 +1278,13 @@ const SF = (function(){
     if ($('#ycp')) $('#ycp').addEventListener('click',()=>{ try{ navigator.clipboard.writeText(SF.toYAML(r)).then(()=>toast('コピーしました'),()=>toast('コピーできませんでした',true)); }catch(_){ toast('コピーできませんでした',true); } });
     if ($('#ydl')) $('#ydl').addEventListener('click',()=>SF.download(r.id+'_注文書.yaml', SF.toYAML(r), 'text/yaml') ? toast('ダウンロードしました') : toast('ダウンロードできませんでした', true));
     if ($('#cad')) $('#cad').addEventListener('click',()=>{ const t=$('#ctx').value.trim(); if(!t) return toast('コメントを入力してください',true); const now=SF.nowISO(); r.comments=r.comments||[]; r.comments.push({at:now,by:me().name,text:t}); r.updatedAt=now; persist(); toast('コメントしました'); renderDrawer(); });
+    if ($('#mretry')) $('#mretry').addEventListener('click', async () => {
+      try {
+        const res = await window.__MSF__.api('POST','/api/mail/outbox/'+encodeURIComponent(r.mail.id)+'/retry');
+        r.mail.status = (res && res.status) || 'sent'; r.mail.sentAt = SF.nowISO(); r.mail.lastError = null;
+        toast(r.mail.status==='sent' ? '承認依頼メールを再送しました' : '再送しましたが送信できませんでした', r.mail.status!=='sent'); renderDrawer();
+      } catch(e){ toast((e && e.message) || '再送できませんでした', true); }
+    });
   }
   document.addEventListener('keydown', e => { if (e.key==='Escape'){ if ($('#mmask').classList.contains('show')) closeModal(); else if (S.open) closeDrawer(); } });
 
@@ -1514,6 +1568,46 @@ const SF = (function(){
   function goTo(g){ const [v, t] = g; if (v==='ops') S.otab = t; if (v==='devops') S.dvtab = t; if (v==='secops') S.sctab = t; go(v); }
 
   /* ================= 運用（リリース後の管理） ================= */
+  /* ---- 承認依頼メール（サーバの送信キュー） ---- */
+  const MAIL_LABEL = {pending:'送信待ち', sending:'送信中', sent:'送信済み', failed:'送信できませんでした'};
+  function mailChip(s){ const k = s==='sent'?'ok':s==='failed'?'ng':s==='sending'?'warn':''; return pill(MAIL_LABEL[s]||s, k); }
+
+  // 依頼詳細を開いたら、サーバ側のメール状態だけ取り直す（送信はコミット後なので画面を更新したい）
+  function refreshRequestMail(id){
+    const msf = window.__MSF__; if(!msf || !msf.api) return;
+    msf.api('GET','/api/requests/'+encodeURIComponent(id)).then(res => {
+      const r = find(id); if(!r || !res || !res.request) return;
+      const next = res.request.mail || null;
+      if (JSON.stringify(next) === JSON.stringify(r.mail || null)) return;
+      r.mail = next; if (S.open===id) renderDrawer();
+    }).catch(()=>{});
+  }
+
+  async function loadMailBox(){
+    const el = $('#mailbox'); if(!el) return;
+    const msf = window.__MSF__; if(!msf || !msf.api){ el.innerHTML='<p class="muted">サーバに接続していません</p>'; return; }
+    const canWrite = S.role==='desk' || S.role==='approver' || Boolean(msf.user && msf.user.isAdmin);
+    try {
+      const st = await msf.api('GET','/api/mail/status');
+      const mode = st.mode==='off' ? '送らない設定（off）' : st.mode==='file' ? 'ローカルの送信BOX（file）' : st.mode==='sendmail' ? 'ローカルMTA（sendmail）' : 'SMTP（smtp）';
+      let list = null;
+      if (canWrite) list = await msf.api('GET','/api/mail/outbox?limit=20');
+      let html = '<div class="card pad"><h2 class="h2">'+ico('i-inbox')+'メール送信BOX</h2>'+
+        '<p>送信方法：<b>'+E(mode)+'</b>　送信済み <b>'+st.sent+'</b> 件　送信待ち <b>'+(st.pending+st.sending)+'</b> 件　失敗 <b>'+st.failed+'</b> 件'+(st.lastSentAt?'　最終送信：'+E(SF.fmt(st.lastSentAt)):'')+'</p>';
+      if (canWrite) html += '<div class="data-row"><button class="btn sm" id="mflush" type="button">'+ico('i-undo')+'未送信をまとめて送る</button><button class="btn sm" id="mreload" type="button">'+ico('i-arrow')+'再読み込み</button></div>';
+      else html += '<p class="hint">送信BOXの一覧は受付担当・承認者・管理者だけが見られます。</p>';
+      if (canWrite && list && list.items.length){
+        html += '<div class="tw" style="margin-top:12px"><table class="t"><thead><tr><th>作成</th><th>宛先</th><th>件名</th><th>状態</th><th></th></tr></thead><tbody>'+
+          list.items.map(m=>'<tr><td>'+E(SF.fmt(m.createdAt))+'</td><td>'+E(m.to)+'</td><td>'+E(m.subject)+'</td><td>'+mailChip(m.status)+(m.lastError?'<br><small class="muted">'+E(m.lastError)+'</small>':'')+'</td><td>'+(m.status==='failed'?'<button class="btn sm" data-mretry="'+E(m.id)+'" type="button">再送</button>':'')+'</td></tr>').join('')+'</tbody></table></div>';
+      } else if (canWrite && list) html += '<p class="muted" style="margin-top:12px">まだメールはありません。</p>';
+      html += '</div>';
+      el.innerHTML = html;
+      if ($('#mflush')) $('#mflush').addEventListener('click', async () => { try { const r = await msf.api('POST','/api/mail/flush'); toast('送信しました（成功 '+r.sent+'／失敗 '+r.failed+'）'); loadMailBox(); } catch(e){ toast((e && e.message) || '送信できませんでした', true); } });
+      if ($('#mreload')) $('#mreload').addEventListener('click', loadMailBox);
+      $$('[data-mretry]').forEach(b=>b.addEventListener('click', async () => { try { await msf.api('POST','/api/mail/outbox/'+encodeURIComponent(b.dataset.mretry)+'/retry'); toast('再送しました'); loadMailBox(); } catch(e){ toast((e && e.message) || '再送できませんでした', true); } }));
+    } catch(e){ el.innerHTML='<p class="muted">送信BOXを取得できませんでした（'+E((e && e.message) || '')+'）</p>'; }
+  }
+
   function renderOps(){
     const o = O(), t = S.otab || 'apps';
     const openInc = o.incidents.filter(i => i.status!=='完了'), fbOpen = o.feedback.filter(f => f.status==='未対応');
@@ -1557,11 +1651,15 @@ const SF = (function(){
         '<h3 class="h3">'+ico('i-db')+'バックアップ（直近7日）</h3><div class="bkp">'+o.backups.slice().reverse().map(b => '<div class="'+(b.result==='成功'?'ok':'warn')+'"><b>'+E(ymdOf(b.at))+'</b><span>'+E(b.result)+'</span><small>'+E(b.size)+'</small></div>').join('')+'</div>'+
         '<p class="hint">目標（案）：RPO 1時間・RTO 4時間。バックアップが失敗したら S2 として再実行または手動で取ります。リストア検証は毎月、復旧訓練は四半期ごと（案）。</p>';
     }
+    if (t==='mail'){
+      body = '<div id="mailbox"><p class="muted">読み込み中…</p></div>';
+    }
     $('#view').innerHTML =
       '<div class="btool"><h2 class="h2" style="margin:0">'+ico('i-pulse')+'運用（リリース後の管理）</h2><span class="sp"></span><span class="muted" style="font-size:12.5px">数値とできごとは操作確認用の見本です</span></div>'+
       '<div class="kpis">'+kcard('稼働中の道具', o.apps.length, 'i-rocket', '件')+kcard('平均の稼働率（30日）', avg, 'i-pulse', '%')+kcard('対応中の障害', openInc.length, 'i-alert', '件', openInc.some(i=>['S1','S2'].includes(i.sev)&&!i.restored)?'ng':openInc.length?'warn':'')+kcard('未対応の利用者の声', fbOpen.length, 'i-chat', '件', fbOpen.length?'warn':'')+kcard('期限切れの定期作業', rtOver.length, 'i-clock', '件', rtOver.length?'ng':'')+'</div>'+
-      vtabs('otab', [['apps','道具の稼働','i-rocket'],['inc','障害対応','i-alert',openInc.length||''],['fb','利用者の声','i-chat',fbOpen.length||''],['rt','定期作業','i-clock',rtOver.length||'']])+'<div class="vbody">'+body+'</div>';
+      vtabs('otab', [['apps','道具の稼働','i-rocket'],['inc','障害対応','i-alert',openInc.length||''],['fb','利用者の声','i-chat',fbOpen.length||''],['rt','定期作業','i-clock',rtOver.length||''],['mail','メール送信','i-inbox']])+'<div class="vbody">'+body+'</div>';
     bindTabs(renderOps); bindCommon();
+    if (t==='mail') loadMailBox();
   }
 
   /* ================= DevOps ================= */

@@ -12,10 +12,11 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
+import nodemailer from 'nodemailer';
 import { config } from './config.js';
 import { SIGNAL_LABEL, type Signal } from '../shared/domain.js';
 
-export type MailMode = 'off' | 'file' | 'sendmail';
+export type MailMode = 'off' | 'file' | 'sendmail' | 'smtp';
 
 export interface MailDraft {
   to: string;
@@ -36,6 +37,13 @@ export interface DeliverOptions {
   mode?: MailMode;
   outboxDir?: string;
   sendmailPath?: string;
+  /** SMTP の接続先（テストで差し替える）。未指定は config を使う。 */
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpSecure?: boolean;
+  smtpRequireTls?: boolean;
+  smtpUser?: string;
+  smtpPass?: string;
 }
 
 const HEADER_UNSAFE = /[\r\n]/;
@@ -114,6 +122,8 @@ export async function deliverMail(mail: MailDraft, options: DeliverOptions = {})
     }
   }
 
+  if (mode === 'smtp') return deliverSmtp(mail, options);
+
   const sendmail = options.sendmailPath ?? config.sendmailPath;
   return new Promise<DeliveryResult>((done) => {
     let settled = false;
@@ -144,6 +154,44 @@ export async function deliverMail(mail: MailDraft, options: DeliverOptions = {})
     });
     child.stdin?.end(mime);
   });
+}
+
+/** 認証情報がエラーメッセージ経由で漏れないように伏せる。 */
+function scrub(message: string): string {
+  const pass = config.smtpPass;
+  return pass ? message.split(pass).join('***') : message;
+}
+
+async function deliverSmtp(mail: MailDraft, options: DeliverOptions): Promise<DeliveryResult> {
+  const host = options.smtpHost ?? config.smtpHost;
+  if (!host) return { ok: false, transport: 'smtp', detail: 'SMTP_HOST が未設定です' };
+  const user = options.smtpUser ?? config.smtpUser;
+  const pass = options.smtpPass ?? config.smtpPass;
+  const transporter = nodemailer.createTransport({
+    host,
+    port: options.smtpPort ?? config.smtpPort,
+    secure: options.smtpSecure ?? config.smtpSecure,
+    requireTLS: options.smtpRequireTls ?? config.smtpRequireTls,
+    ...(user ? { auth: { user, pass } } : {}),
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
+    tls: { minVersion: 'TLSv1.2' },
+  });
+  try {
+    const info = await transporter.sendMail({
+      from: config.mailFrom,
+      to: mail.to,
+      subject: mail.subject,
+      text: mail.body,
+      ...(mail.requestId ? { headers: { 'X-Mirai-SF-Request-Id': oneLine(mail.requestId) } } : {}),
+    });
+    return { ok: true, transport: 'smtp', detail: info.messageId ?? 'sent' };
+  } catch (err) {
+    return { ok: false, transport: 'smtp', detail: scrub((err as Error).message || 'SMTP で送信できませんでした') };
+  } finally {
+    transporter.close();
+  }
 }
 
 /** 画面・APIに出す設定の要約（Secrets・サーバ内パスは含めない）。 */
@@ -188,5 +236,37 @@ export function renderApprovalRequest(input: ApprovalMailInput): { subject: stri
     '',
     '※ このメールは自動送信です。心当たりがない場合は受付担当へご連絡ください。',
   );
+  return { subject, body: lines.join('\n') };
+}
+
+export interface StallReminderInput {
+  requestId: string;
+  title: string;
+  applicant: string;
+  deptName: string;
+  statusLabel: string;
+  days: number;
+  baseUrl: string;
+}
+
+/** 滞留通知メールの件名・本文（純粋関数）。 */
+export function renderStallReminder(input: StallReminderInput): { subject: string; body: string } {
+  const url = `${input.baseUrl.replace(/\/+$/, '')}/`;
+  const subject = `【みらいSF】滞留のご確認 ${input.requestId}（${input.days}日）`;
+  const lines = [
+    `${input.deptName} ご担当者さま`,
+    '',
+    'みらいSF 受付ステーションです。',
+    `次の依頼が「${input.statusLabel}」のまま ${input.days} 日止まっています。`,
+    '',
+    `受付番号: ${input.requestId}`,
+    `件名: ${input.title}`,
+    `依頼者: ${input.applicant}`,
+    `状態: ${input.statusLabel}`,
+    '',
+    `進め方を確認する画面: ${url}（止まっている依頼から開いてください）`,
+    '',
+    '※ このメールは自動送信です。同じ依頼への通知は1日1回です。',
+  ];
   return { subject, body: lines.join('\n') };
 }

@@ -19,16 +19,17 @@ BASE_URL=... SMOKE_EMAIL=... SMOKE_PASSWORD=... pnpm exec tsx scripts/smoke.ts
 |---|---|---|
 | Typecheck（Web/テスト + API） | **PASS** | エラー0 |
 | Lint | **PASS** | 警告0（max-warnings=0） |
-| Unit | **55 / 55 PASS** | 信号R1〜R6・条件チェック・ものさし・遷移・権限・承認チェック・YAML/CSV・承認依頼メール（本文/MIME/宛先/ヘッダ注入/送信経路/EPIPE） |
-| Integration | **35 / 35 PASS** | 実PostgreSQL（`mirai_sf_test`）。認証/CSRF/採番/冪等/承認/差戻し/取消/版競合/出力/監査/下書きのサーバ保存/運用状態のDB保存/承認依頼メール（送信キュー・失敗分離・再送の拒否） |
-| E2E（開発ビルド） | **8 / 8 PASS** | コンソール原本UI: ログイン、登録→再読込でDBから復元、役割切替、承認、0件検索、ログイン失敗、下書きの別端末再開、運用データのDB復元 |
-| E2E（本番ビルド＋Preview DB） | **未再実行** | 前回は 6 / 6 PASS。今回の変更（下書き・運用・メール）の反映後は未実行 |
+| Unit | **59 / 59 PASS** | 信号R1〜R6・条件チェック・ものさし・遷移・権限・承認チェック・YAML/CSV・承認依頼メール（本文/MIME/宛先/ヘッダ注入/送信経路/EPIPE） |
+| Integration | **40 / 40 PASS** | 実PostgreSQL（`mirai_sf_test`）。認証/CSRF/採番/冪等/承認/差戻し/取消/版競合/出力/監査/下書きのサーバ保存/運用状態のDB保存/承認依頼メール（送信キュー・失敗分離・再送の拒否） |
+| E2E（開発ビルド） | **10 / 10 PASS** | コンソール原本UI: ログイン、登録→再読込でDBから復元、役割切替、承認、0件検索、ログイン失敗、下書きの別端末再開、運用データのDB復元 |
+| E2E（本番ビルド） | **10 / 10 PASS** | `dist` 起動（dev DB・`AUTH_MODE=password`・`COOKIE_SECURE=0` の検証用設定） |
+| E2E（Preview DB / `mirai_sf`） | **未実行（Blocker）** | `preview.conf` の `SEED_ADMIN_PASSWORD` が空でログインできない。migration は適用済み。実行者がパスワードを用意すれば同じ10シナリオを流せる |
 | Build | **PASS** | `dist/api` と `dist/web` |
 | DB verify | **PASS** | 19部署／118道具（青52/黄47/赤19）／採番／監査ハッシュ連鎖 |
 | Secret scan | **PASS** | 追跡96ファイル |
 | GitHub Issue 自動作成 | **PASS** | 受付 `REQ-2026-0009` から Issue #2 を作成（実測） |
 | Cloudflare Preview | **PASS（Access保護）** | `https://sf.mirai-dx-platform.com` は Access のサインインへ302。origin の `/healthz` は tunnel 経由で200 |
-| CI（GitHub Actions `quality`） | **PASS**（PR #7 の run） | `.github/workflows/ci.yml`（適用済み）。typecheck / lint / unit / migration（空DB・冪等）/ seed / db:verify / integration / build / secret scan をPRのたびに実行 |
+| CI（GitHub Actions） | **quality + e2e** | `quality`（typecheck/lint/unit/migration/seed/db:verify/integration/build/secret scan）と `e2e`（Postgres＋ビルド＋Playwright）をPRのたびに実行 |
 
 ## 3. テスト構成
 
@@ -36,10 +37,10 @@ BASE_URL=... SMOKE_EMAIL=... SMOKE_PASSWORD=... pnpm exec tsx scripts/smoke.ts
 |---|---|
 | `tests/unit/domain.test.ts` | 信号の色（R1〜R6、赤はR1/R2のみ）、合格の条件（26語・仮置き・短い・OK）、書き換え候補、ものさし、5観点、遷移表、役割権限、理由必須、承認前チェック、承認検証、あなたの番、滞留 |
 | `tests/unit/output.test.ts` | 注文書YAML（項目・引用・改行・空リスト・日本語ラベル・日付）、CSV（BOM/CRLF/引用/11列）、JSON |
-| `tests/unit/mailer.test.ts` | 承認依頼メール: 本文の項目、信号なし、宛先の検証（ヘッダ注入の拒否）、RFC 2047、MIME（UTF-8/base64）、file/off/sendmail の送信経路、設定要約 |
-| `tests/integration/api.test.ts` | ログイン・401/403・CSRF、採番、信号候補、冪等キー、入力検証、承認（受付担当は不可・承認者のみ）、注文書生成、ゆるい色の理由、差戻し→再提出、取消、版競合、不正遷移、カタログ、ホーム、CSV/JSON、監査連鎖、セッション期限、下書きのサーバ保存、運用状態のDB保存 |
-| `tests/integration/mail.test.ts` | 承認待ちで1通積まれる／送信済みになる、承認者のメール優先、送信BOXと件数のAPI、`MAIL_MODE=off` は積まない、送信失敗でも遷移は成功・再送できる |
-| `tests/e2e/console.spec.ts` | コンソール原本UI: ログイン、登録→DB永続、役割切替、承認（承認者のみ）、0件検索、ログイン失敗、下書きの別端末再開、運用データのDB復元 |
+| `tests/unit/mailer.test.ts` | 承認依頼メール: 本文・滞留通知の項目、宛先の検証（ヘッダ注入の拒否）、RFC 2047、MIME、file/off/sendmail/smtp の送信経路（SMTPは擬似サーバ）、EPIPE、設定要約 |
+| `tests/integration/api.test.ts` | ログイン・401/403・CSRF、採番、信号候補、冪等キー、入力検証、承認、注文書生成、差戻し→再提出、取消、版競合、不正遷移、カタログ、ホーム、CSV/JSON、監査連鎖、監査CSV、セッション期限、下書きの複数件、運用状態のDB保存と楽観ロック |
+| `tests/integration/mail.test.ts` | 承認待ちで1通積まれる／送信済みになる、承認者のメール優先（`approver_user_id`）、承認者が別人なら承認できない、送信BOXと件数のAPI、送信失敗でも遷移は成功・再送できる、滞留通知は1日1回、`MAIL_MODE=off` は積まない |
+| `tests/e2e/console.spec.ts` | コンソール原本UI: ログイン、登録→DB永続、役割切替、承認（承認者のみ）、監査ログとCSV、承認依頼メールの表示と送信BOX、0件検索、ログイン失敗、下書きの別端末再開、運用データのDB復元 |
 
 ## 4. E2E のシナリオ
 
@@ -57,5 +58,6 @@ BASE_URL=... SMOKE_EMAIL=... SMOKE_PASSWORD=... pnpm exec tsx scripts/smoke.ts
 ## 5. 未実施・残り
 
 - Cloudflare Access の**ワンタイムパスワードでの実ログイン**は、受信メールが必要なため自動化していない。Access のリダイレクトとポリシーは実測済み。人間の最終確認が必要（`docs/deployment.md` §4）。
-- E2E（本番ビルド＋Preview DB）は今回未再実行。Preview への反映後に同じ8シナリオを実行する。
-- 承認依頼メールの送信は `file` / `sendmail` のみ実測。実SMTP（認証・TLS）は未実装のため未実行。
+- E2E（Preview DB `mirai_sf`）は、`preview.conf` の `SEED_ADMIN_PASSWORD` が空のため未実行（migration は適用済み）。
+- 承認依頼メールの実SMTP送信は未検証。ローカルの擬似SMTPサーバ（unit）で、接続・DATA・ヘッダまでを確認している。
+- 滞留通知の日次実行は、外部スケジューラ（systemd timer / cron）の登録が別途必要（`docs/deployment.md` 7-1）。

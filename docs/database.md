@@ -27,7 +27,8 @@
 | `comment` | ENT-03 | コメント（差戻し理由も残す） |
 | `approval` | ENT-07 | 承認・差戻し・見送りの記録（決定色・候補色・チェック結果・版） |
 | `attachment` | ENT-04 | 添付のメタ情報のみ（name, size, sha256） |
-| `draft` | 5-6 | 下書き（利用者ごとに1件、本人のみ） |
+| `draft` | 5-6 | 旧・下書き（利用者ごとに1件。0006 で `draft_item` へ引き継ぎ済み） |
+| `draft_item` | 5-6 | 下書き（利用者ごとに複数件。本人のみ・新しい順） |
 | `ops_state` | — | 運用・DevOps・SecOps の画面状態（id=1 の単一JSONB・版番号） |
 | `mail_outbox` | — | 承認依頼メールの送信キュー（依頼の状態遷移と同じトランザクションで積む。`sending` で確保して二重送信を防ぎ、失敗しても業務は止めない） |
 | `audit_log` | ENT-11 | 監査ログ（追記のみ・ハッシュ連鎖・UPDATE/DELETEをトリガで拒否） |
@@ -77,6 +78,8 @@ migrationはadditiveのみ。破壊的変更は行わない。障害時はバッ
 | `0002_ops_state.sql` | `ops_state`（id=1 の単一JSONB・版番号） |
 | `0003_mail_outbox.sql` | `mail_outbox` と索引（承認依頼メールの送信キュー） |
 | `0004_mail_outbox_claim.sql` | `sending` 状態・`claimed_at`・「送信済みなら `sent_at` 必須」の制約（二重送信の防止） |
+| `0005_mail_reminder.sql` | `kind='reminder'`・`reminder_date`・1日1回の unique 索引（滞留通知） |
+| `0006_drafts_multi.sql` | `draft_item`（複数下書き）と旧 `draft` からの引き継ぎ |
 
 ## 5. インデックス
 

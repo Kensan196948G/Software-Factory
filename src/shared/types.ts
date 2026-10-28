@@ -88,6 +88,15 @@ export interface RequestDetail extends RequestRecord {
   criteriaChecks: { text: string; kind: string; message: string; vagueWords: string[]; rewrites: unknown[] }[];
   approverIsMe: boolean;
   isOwner: boolean;
+  /** 承認依頼メールの最新状態（まだ送っていなければ null） */
+  mail: {
+    id: string;
+    status: 'pending' | 'sending' | 'sent' | 'failed';
+    to: string;
+    sentAt: string | null;
+    lastError: string | null;
+    attempts: number;
+  } | null;
 }
 
 export interface SessionUser {

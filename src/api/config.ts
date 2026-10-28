@@ -33,12 +33,19 @@ export interface AppConfig {
   githubToken: string;
   githubRepo: string;
   /** 承認依頼メールの送信経路。off=送らない / file=ローカルの送信BOX / sendmail=ローカルMTA */
-  mailMode: 'off' | 'file' | 'sendmail';
+  mailMode: 'off' | 'file' | 'sendmail' | 'smtp';
   mailFrom: string;
   /** 承認者のメールアドレスが引けないときの宛先（空なら送らない） */
   mailApprovalTo: string;
   mailOutboxDir: string;
   sendmailPath: string;
+  /** SMTP（MAIL_MODE=smtp）の接続先。認証情報は設定ファイル（0600）か環境変数だけに置く。 */
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecure: boolean;
+  smtpRequireTls: boolean;
+  smtpUser: string;
+  smtpPass: string;
 }
 
 type RawConfig = Record<string, string | undefined>;
@@ -59,10 +66,10 @@ function pick(file: RawConfig, key: string, envKey = key): string | undefined {
 }
 
 /** MAIL_MODE の解釈。本番の既定は off（通知連携は対象外のため勝手に送らない）。 */
-function mailModeOf(raw: string | undefined, isProduction: boolean): 'off' | 'file' | 'sendmail' {
+function mailModeOf(raw: string | undefined, isProduction: boolean): 'off' | 'file' | 'sendmail' | 'smtp' {
   const value = (raw ?? (isProduction ? 'off' : 'file')).trim().toLowerCase();
-  if (value === 'off' || value === 'file' || value === 'sendmail') return value;
-  throw new Error(`MAIL_MODE が不正です: ${value}（off / file / sendmail のいずれか）`);
+  if (value === 'off' || value === 'file' || value === 'sendmail' || value === 'smtp') return value;
+  throw new Error(`MAIL_MODE が不正です: ${value}（off / file / sendmail / smtp のいずれか）`);
 }
 
 export function loadConfig(overrides: RawConfig = {}): AppConfig {
@@ -116,6 +123,12 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
     mailApprovalTo: (pick(file, 'MAIL_APPROVAL_TO') ?? '').trim(),
     mailOutboxDir: pick(file, 'MAIL_OUTBOX_DIR') ?? '.mail/outbox',
     sendmailPath: pick(file, 'SENDMAIL_PATH') ?? '/usr/sbin/sendmail',
+    smtpHost: pick(file, 'SMTP_HOST') ?? '',
+    smtpPort: Number(pick(file, 'SMTP_PORT') ?? 587),
+    smtpSecure: (pick(file, 'SMTP_SECURE') ?? '0') === '1',
+    smtpRequireTls: (pick(file, 'SMTP_REQUIRE_TLS') ?? '1') === '1',
+    smtpUser: pick(file, 'SMTP_USER') ?? '',
+    smtpPass: pick(file, 'SMTP_PASS') ?? '',
   };
 }
 
