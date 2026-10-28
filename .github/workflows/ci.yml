@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_ENV: test
+  DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mirai_sf_test
+  MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mirai_sf_test
+  TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mirai_sf_test
+  TEST_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mirai_sf_test
+  APP_BASE_URL: http://127.0.0.1:8781
+  SESSION_SECRET: ci-session-secret-not-a-real-secret
+  ORIGIN_SHARED_SECRET: ci-origin-secret-not-a-real-secret
+  REQUIRE_ORIGIN_SECRET: '0'
+  SEED_ADMIN_EMAIL: ci@example.com
+  SEED_ADMIN_PASSWORD: ci-password-for-tests
+  ALLOW_SELF_APPROVAL: '1'
+  ALLOW_IMPORT: '1'
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mirai_sf_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm exec tsc -p tsconfig.json --noEmit && pnpm exec tsc -p tsconfig.api.json --noEmit
+
+      - name: Lint
+        run: pnpm exec eslint . --max-warnings=0
+
+      - name: Unit tests
+        run: pnpm exec vitest run --config vitest.config.ts
+
+      - name: Migration（空DBから）
+        run: pnpm exec tsx scripts/db.ts migrate
+
+      - name: Migration 再実行（冪等）
+        run: pnpm exec tsx scripts/db.ts migrate
+
+      - name: Seed
+        run: pnpm exec tsx scripts/db.ts seed
+
+      - name: DB verify
+        run: pnpm exec tsx scripts/db.ts verify
+
+      - name: Integration tests
+        run: pnpm exec vitest run --config vitest.integration.config.ts
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Secret scan
+        run: node scripts/secret-scan.mjs
+
+      - name: Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: dist/
+          if-no-files-found: ignore
+          retention-days: 7
