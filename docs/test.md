@@ -23,7 +23,7 @@ BASE_URL=... SMOKE_EMAIL=... SMOKE_PASSWORD=... pnpm exec tsx scripts/smoke.ts
 | Integration | **40 / 40 PASS** | 実PostgreSQL（`mirai_sf_test`）。認証/CSRF/採番/冪等/承認/差戻し/取消/版競合/出力/監査/下書きのサーバ保存/運用状態のDB保存/承認依頼メール（送信キュー・失敗分離・再送の拒否） |
 | E2E（開発ビルド） | **10 / 10 PASS** | コンソール原本UI: ログイン、登録→再読込でDBから復元、役割切替、承認、0件検索、ログイン失敗、下書きの別端末再開、運用データのDB復元 |
 | E2E（本番ビルド） | **10 / 10 PASS** | `dist` 起動（dev DB・`AUTH_MODE=password`・`COOKIE_SECURE=0` の検証用設定） |
-| E2E（Preview DB / `mirai_sf`） | **未実行（Blocker）** | `preview.conf` の `SEED_ADMIN_PASSWORD` が空でログインできない。migration は適用済み。実行者がパスワードを用意すれば同じ10シナリオを流せる |
+| E2E（Preview DB / `mirai_sf`） | **未実行（Blocker）** | `preview.conf` の `SEED_ADMIN_PASSWORD` が空でログインできない。migration は適用済み。Preview 自体は再ビルド・再起動済み（`/console.js` 新版・公開URLは Access 302） |
 | Build | **PASS** | `dist/api` と `dist/web` |
 | DB verify | **PASS** | 19部署／118道具（青52/黄47/赤19）／採番／監査ハッシュ連鎖 |
 | Secret scan | **PASS** | 追跡96ファイル |
