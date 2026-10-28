@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg';
 import { one, query, withTransaction } from './db.js';
 import { config, loadConfig } from './config.js';
-import { Errors } from './http.js';
+import { ApiError, Errors } from './http.js';
 import { appendAudit } from './audit.js';
 import {
   getCatalogSignals,
@@ -41,6 +41,7 @@ import type { Role, Signal, Status } from '../shared/domain.js';
 import type { RequestDetail, RequestRecord, SessionUser } from '../shared/types.js';
 import type { RequestInput, TransitionInput } from './schemas.js';
 import { buildOrderYaml } from '../shared/order.js';
+import { createIssue, isGithubConfigured } from './github.js';
 import { buildCsv, buildExportJson, measureOf } from '../shared/export.js';
 
 export interface Actor {
@@ -271,9 +272,12 @@ function nextJstYear(): number {
 
 async function allocateId(client: PoolClient): Promise<{ id: string; seq: number; year: number }> {
   const year = nextJstYear();
+  // 既存データの最大値も考慮する（seed 済みDBや取込後の再開でも衝突させない）
   const result = await client.query<{ last_seq: number }>(
-    `insert into request_counter (year, last_seq) values ($1, 1)
-     on conflict (year) do update set last_seq = request_counter.last_seq + 1
+    `insert into request_counter (year, last_seq)
+     values ($1, coalesce((select max(seq) from request where year = $1), 0) + 1)
+     on conflict (year) do update
+       set last_seq = greatest(request_counter.last_seq, coalesce((select max(seq) from request where year = $1), 0)) + 1
      returning last_seq`,
     [year],
   );
@@ -812,6 +816,75 @@ export async function importAll(payload: { items: Record<string, unknown>[]; seq
     });
     return { ok: true, count: payload.items.length };
   });
+}
+
+/* ─────────────────────────── 開発ラインへの投入（Issue作成） ─────────────────────────── */
+
+export async function handoffToGithub(
+  id: string,
+  actor: Actor,
+  correlationId: string,
+): Promise<{ issueNo: number; issueUrl: string; created: boolean; detail: RequestDetail }> {
+  if (!isGithubConfigured()) {
+    throw new ApiError('ERR-405', 'GitHub連携が設定されていません（管理者に確認してください）', 409);
+  }
+  if (!['desk', 'approver'].includes(actor.role)) throw Errors.noPermission();
+
+  const row = await getRequestRow(id);
+  if (!row) throw Errors.notFound('依頼');
+  if (!row.signal_decided || row.order_version < 1 || ['received', 'review', 'wait', 'back', 'hold', 'cancel'].includes(row.status)) {
+    throw Errors.orderNotApproved();
+  }
+  if (row.issue_no) {
+    return { issueNo: row.issue_no, issueUrl: `https://github.com/${config.githubRepo}/issues/${row.issue_no}`, created: false, detail: await getDetail(id, actor) };
+  }
+
+  const catalogSignal = await catalogSignalFor(row);
+  const suggested = suggestedOf(row, catalogSignal);
+  const departmentName = row.dept_name ?? (await getDepartmentName(row.dept_code)) ?? row.dept_code;
+  const yaml = buildOrderYaml({
+    request: mapRequest(row),
+    suggested: suggested.color,
+    departmentName,
+    catalogToolName: row.tool_name ?? '',
+  });
+
+  const issue = await createIssue({
+    requestId: id,
+    title: `[MSF] ${id} ${row.title}`,
+    orderYaml: yaml,
+    approver: row.approver,
+    signalLabel: SIGNAL_LABEL[(row.signal_decided ?? suggested.color) as Signal],
+    deptLabel: departmentName,
+    tailoring: row.tailoring,
+    previewUrl: config.appBaseUrl,
+  });
+
+  await withTransaction(async (client) => {
+    const locked = await getRequestRowForUpdate(client, id);
+    if (!locked) throw Errors.notFound('依頼');
+    if (locked.issue_no) return; // 同時実行で先に作られた場合は何もしない
+    await client.query('update request set issue_no = $2, version = version + 1, updated_at = now(), updated_by = $3 where id = $1', [
+      id,
+      issue.number,
+      actor.userId,
+    ]);
+    await client.query(
+      `insert into request_history (request_id, actor_name, actor_user_id, role, action, note, correlation_id)
+       values ($1,$2,$3,$4,'開発ラインへ投入',$5,$6)`,
+      [id, actor.displayName, actor.userId, actor.role, `GitHub Issue #${issue.number} を作成しました`, correlationId],
+    );
+    await appendAuditInTx(client, actor, {
+      action: 'request.handoff',
+      targetType: 'request',
+      targetId: id,
+      result: 'success',
+      correlationId,
+      diff: { issue: issue.number },
+    });
+  });
+
+  return { issueNo: issue.number, issueUrl: issue.url, created: true, detail: await getDetail(id, actor) };
 }
 
 /* ─────────────────────────── デモ初期化（開発・検証用） ─────────────────────────── */

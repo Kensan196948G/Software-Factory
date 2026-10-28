@@ -280,12 +280,26 @@ export async function seedDemo(client: PoolClient): Promise<number> {
 }
 
 /** 開発用の一括初期化（部署→道具→管理者→見本データ）。 */
+async function reconcileCounters(client: PoolClient): Promise<void> {
+  const rows = await client.query<{ year: number; max_seq: number }>(
+    'select year, max(seq)::int as max_seq from request group by year',
+  );
+  for (const row of rows.rows) {
+    await client.query(
+      `insert into request_counter (year, last_seq) values ($1,$2)
+       on conflict (year) do update set last_seq = greatest(request_counter.last_seq, $2)`,
+      [row.year, row.max_seq],
+    );
+  }
+}
+
 export async function seedAll(client: PoolClient): Promise<{ departments: number; tools: number; demo: number; admin: string }> {
   const master = await seedMaster(client);
   const admin = await seedAdmin(client);
   const hasRequests = await client.query('select 1 from request limit 1');
   let demo = 0;
   if (!hasRequests.rowCount) demo = await seedDemo(client);
+  await reconcileCounters(client);
   return { ...master, demo, admin: admin.email };
 }
 

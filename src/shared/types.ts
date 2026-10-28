@@ -100,6 +100,16 @@ export interface SessionUser {
   actingRole: Role;
 }
 
+export interface RequestSummary extends RequestRecord {
+  suggested: Signal;
+  measure: number;
+  staleDays: number;
+  staleLevel: 'ok' | 'warn' | 'danger';
+  yourTurn: { target: boolean; action: string };
+  nextBy?: Role;
+  approverIsMe: boolean;
+}
+
 export interface HomeResponse {
   role: Role;
   counts: {
@@ -109,14 +119,14 @@ export interface HomeResponse {
     total: number;
     draft: boolean;
   };
-  yourTurn: RequestRecord[];
-  staleOthers: RequestRecord[];
-  myRequests: RequestRecord[];
+  yourTurn: RequestSummary[];
+  staleOthers: RequestSummary[];
+  myRequests: RequestSummary[];
   recent: HistoryEntry[];
 }
 
 export interface ListResponse {
-  items: RequestRecord[];
+  items: RequestSummary[];
   total: number;
   page: number;
   pageSize: number;
@@ -153,5 +163,9 @@ export interface MetaResponse {
   now: string;
   staleWarnDays: number;
   staleDangerDays: number;
+  allowSelfApproval: boolean;
+  allowImport: boolean;
+  authMode: 'password' | 'access';
+  githubConfigured: boolean;
   approvers: { name: string; email: string }[];
 }

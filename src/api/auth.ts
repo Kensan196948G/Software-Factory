@@ -3,7 +3,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { PoolClient } from 'pg';
 import { query, withTransaction } from './db.js';
 import { config } from './config.js';
-import { verifyPassword } from './password.js';
+import { hashPassword, verifyPassword } from './password.js';
 import { Errors } from './http.js';
 import { appendAudit } from './audit.js';
 import type { Role } from '../shared/domain.js';
@@ -36,6 +36,12 @@ interface SessionJoinRow extends SessionRow {
   dept_code: string;
   is_admin: boolean;
   roles: Role[];
+}
+
+const ROLE_ORDER: Role[] = ['requester', 'desk', 'approver'];
+
+function sortRoles(roles: Role[]): Role[] {
+  return [...roles].sort((a, b) => ROLE_ORDER.indexOf(a) - ROLE_ORDER.indexOf(b));
 }
 
 export function hashToken(token: string): string {
@@ -80,7 +86,7 @@ export async function login(
     throw Errors.sessionExpired();
   }
 
-  const roles: Role[] = row.roles.length > 0 ? row.roles : ['requester'];
+  const roles: Role[] = sortRoles(row.roles.length > 0 ? row.roles : ['requester']);
   const actingRole: Role = roles.includes('desk') ? 'desk' : roles[0]!;
   const token = randomBytes(32).toString('base64url');
   const csrf = randomBytes(24).toString('base64url');
@@ -133,7 +139,7 @@ export async function resolveSession(req: FastifyRequest): Promise<AuthContext |
     await query('delete from session where id = $1', [sessionId]);
     return null;
   }
-  const roles: Role[] = found.roles.length > 0 ? found.roles : ['requester'];
+  const roles: Role[] = sortRoles(found.roles.length > 0 ? found.roles : ['requester']);
   const actingRole: Role = roles.includes(found.acting_role) ? found.acting_role : roles[0]!;
   return {
     session: {
@@ -155,6 +161,96 @@ export async function resolveSession(req: FastifyRequest): Promise<AuthContext |
   };
 }
 
+/** Cloudflare Access のヘッダから利用者を決める（メール or サービストークン）。 */
+export function resolveAccessIdentity(headers: Record<string, string | string[] | undefined>): string | null {
+  const emailHeader = headers['cf-access-authenticated-user-email'];
+  if (typeof emailHeader === 'string' && emailHeader && isAccessEmailAllowed(emailHeader)) {
+    return emailHeader.toLowerCase();
+  }
+  const clientId = headers['cf-access-client-id'];
+  if (typeof clientId === 'string' && config.accessServiceTokenIds.includes(clientId)) {
+    // サービストークンは「管理者の代理」として扱う（自動検証用）
+    return (config.accessAllowedEmails[0] ?? config.seedAdminEmail).toLowerCase();
+  }
+  return null;
+}
+
+export function isAccessEmailAllowed(email: string): boolean {
+  const value = email.trim().toLowerCase();
+  if (!value) return false;
+  if (config.accessAllowedEmails.includes(value)) return true;
+  if (config.accessAllowedDomain && value.endsWith(`@${config.accessAllowedDomain}`)) return true;
+  return false;
+}
+
+/**
+ * Cloudflare Access の認証済みメールからセッションを作る（AUTH_MODE=access）。
+ * 初回は利用者を作成する（個人MVP・検証環境）。本番は Entra ID のグループで役割を決める。
+ */
+export async function accessLogin(
+  email: string,
+  ip: string,
+): Promise<{ ctx: AuthContext; token: string; csrf: string; expiresAt: Date }> {
+  const normalized = email.trim().toLowerCase();
+  if (!isAccessEmailAllowed(normalized)) throw Errors.noPermission();
+
+  let user = (await query<UserRow>(USER_WITH_ROLES, [normalized])).rows[0] ?? null;
+  if (!user) {
+    const randomHash = await hashPassword(randomBytes(32).toString('base64url'));
+    const inserted = await query<{ id: string }>(
+      `insert into app_user (email, display_name, dept_code, password_hash, is_admin)
+       values ($1,$2,$3,$4,true) returning id`,
+      [normalized, normalized.split('@')[0] ?? normalized, 'dx', randomHash],
+    );
+    const id = inserted.rows[0]?.id;
+    if (!id) throw Errors.internal();
+    for (const role of ['requester', 'desk', 'approver']) {
+      await query('insert into user_role (user_id, role) values ($1,$2) on conflict do nothing', [id, role]);
+    }
+    user = (await query<UserRow>(USER_WITH_ROLES, [normalized])).rows[0] ?? null;
+    if (!user) throw Errors.internal();
+  }
+
+  const roles: Role[] = sortRoles(user.roles.length > 0 ? user.roles : ['requester']);
+  const actingRole: Role = roles.includes('desk') ? 'desk' : roles[0]!;
+  const token = randomBytes(32).toString('base64url');
+  const csrf = randomBytes(24).toString('base64url');
+  const expiresAt = new Date(Date.now() + config.sessionTtlHours * 3600_000);
+  const sessionId = hashToken(token);
+  await query(
+    `insert into session (id, user_id, acting_role, csrf_token, expires_at) values ($1,$2,$3,$4,$5)`,
+    [sessionId, user.id, actingRole, csrf, expiresAt],
+  );
+  await appendAudit({
+    action: 'login_access',
+    targetType: 'session',
+    targetId: user.id,
+    result: 'success',
+    actorUserId: user.id,
+    actorName: user.display_name,
+    role: actingRole,
+    diff: { ip, email: normalized },
+  }).catch(() => undefined);
+
+  return {
+    ctx: {
+      session: { id: sessionId, user_id: user.id, acting_role: actingRole, csrf_token: csrf, expires_at: expiresAt },
+      user: {
+        id: user.id,
+        email: user.email,
+        displayName: user.display_name,
+        deptCode: user.dept_code,
+        isAdmin: user.is_admin,
+        roles,
+        actingRole,
+      },
+    },
+    token,
+    csrf,
+    expiresAt,
+  };
+}
+
 export function requireAuth(ctx: AuthContext | null): AuthContext {
   if (!ctx) throw Errors.sessionExpired();
   return ctx;
@@ -168,7 +264,12 @@ export function verifyCsrf(req: FastifyRequest, ctx: AuthContext): void {
   if (typeof header !== 'string' || header !== ctx.session.csrf_token) throw Errors.noPermission();
   const origin = req.headers.origin;
   if (origin) {
-    const allowed = new Set([config.appBaseUrl, ...(process.env.EXTRA_ORIGINS ?? '').split(',').filter(Boolean)]);
+    const host = req.headers.host;
+    const allowed = new Set([
+      config.appBaseUrl,
+      ...(host ? [`http://${host}`, `https://${host}`] : []),
+      ...(process.env.EXTRA_ORIGINS ?? '').split(',').filter(Boolean),
+    ]);
     if (!allowed.has(origin)) throw Errors.noPermission();
   }
 }

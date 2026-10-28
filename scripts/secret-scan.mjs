@@ -21,6 +21,7 @@ const ALLOW = [
   /CHANGE_ME/,
   /example\.com/,
   /test-pass/,
+  /wrong-password/,
   /postgresql:\/\/postgres:postgres@/,
   /SEED_ADMIN_PASSWORD=dummy/,
 ];

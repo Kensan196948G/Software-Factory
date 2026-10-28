@@ -34,7 +34,8 @@
 | FR-25 | JSON出力・取込（全件置換） | 実装 | `export.json`、`POST /api/import` |
 | FR-26 | カタログ（19部署・118件） | 実装（API） | `catalog_tool` |
 | FR-27 | カタログのマスタ管理 | 一部（seed/DB） | `department`／`catalog_tool` |
-| FR-28〜46 | 開発ライン（AI実装・CI・PR・公開・通知） | Backlog | 注文書YAMLまで |
+| FR-28 | 承認済み注文書からIssueを作る | 実装 | `POST /api/requests/:id/handoff`（Issue #2 で実測） |
+| FR-29〜46 | 開発ライン（AI実装・CI・PR・公開・通知） | Backlog | 注文書YAML＋Issueまで |
 | FR-47 | 下書き自動保存・再開 | 実装（API） | `draft`、SCR-08 |
 | FR-48 | 次へ／元に戻す | 一部（APIは遷移） | SCR-03/05、UIでトースト |
 | FR-49 | 選べる状態だけ表示・理由 | 実装（API） | `transitionOptions` |

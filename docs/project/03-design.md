@@ -1,6 +1,9 @@
 # WebUI 設計（OpenDesign 成果物）と確認事項
 
-版: v1.0（承認待ち） / 2026-10-28
+版: v1.1（承認済み） / 2026-10-28
+
+> 2026-10-28 にユーザーが **Y（承認）**。Q1=PC中心、Q2=1ユーザー＋パスワード＋ロール切替（＋Cloudflare Access OTP）、
+> Q3=注文書YAML＋**GitHub Issue自動作成**、Q4=見本9件、Q5=9画面。詳細は `04-approval.md`。
 
 ## 1. OpenDesign の利用
 

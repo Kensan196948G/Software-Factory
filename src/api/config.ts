@@ -24,6 +24,14 @@ export interface AppConfig {
   allowSelfApproval: boolean;
   /** JSON 取込（全件置換）を許可するか。 */
   allowImport: boolean;
+  /** password: アプリのログイン画面 / access: Cloudflare Access のヘッダを信頼 */
+  authMode: 'password' | 'access';
+  accessAllowedEmails: string[];
+  accessAllowedDomain: string;
+  accessServiceTokenIds: string[];
+  /** GitHub Issue 自動作成（未設定なら無効） */
+  githubToken: string;
+  githubRepo: string;
 }
 
 type RawConfig = Record<string, string | undefined>;
@@ -80,6 +88,15 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
     sessionTtlHours: Number(pick(file, 'SESSION_TTL_HOURS') ?? 12),
     allowSelfApproval: (pick(file, 'ALLOW_SELF_APPROVAL') ?? '1') === '1',
     allowImport: (pick(file, 'ALLOW_IMPORT') ?? '1') === '1',
+    authMode: (pick(file, 'AUTH_MODE') ?? 'password') === 'access' ? 'access' : 'password',
+    accessAllowedEmails: (pick(file, 'ACCESS_ALLOWED_EMAILS') ?? '')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean),
+    accessAllowedDomain: (pick(file, 'ACCESS_ALLOWED_DOMAIN') ?? '').trim().toLowerCase(),
+    accessServiceTokenIds: (pick(file, 'ACCESS_SERVICE_TOKEN_IDS') ?? '').split(',').map((v) => v.trim()).filter(Boolean),
+    githubToken: pick(file, 'GITHUB_TOKEN') ?? '',
+    githubRepo: pick(file, 'GITHUB_REPO') ?? 'Kensan196948G/Software-Factory',
   };
 }
 

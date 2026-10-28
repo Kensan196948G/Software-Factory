@@ -1,5 +1,9 @@
 # みらいソフトウェアファクトリー — 受付ステーション MVP
 
+- Repository: https://github.com/Kensan196948G/Software-Factory （private）
+- 検証環境: https://sf.mirai-dx-platform.com （Cloudflare Access・ワンタイムパスワード・12時間）
+- 保存場所: `/mnt/storage/Software-Factory/Software-Factory`
+
 みらい建設工業の「困りごと」を受け付け、信号の色（青・黄・赤）と合格の条件を整え、承認済みの注文書として開発ラインへ渡すまでの**受付ステーション**MVPです。
 
 - 正本の要件: `docs/みらいSF 要件定義書 V1.0.html`（MSF-REQ-2026-001）
@@ -13,6 +17,7 @@
 | 目的 | 要望の入口を1つにし、信号の色・合格の条件・承認を記録して、検査可能な注文書にする |
 | 利用者（MVP） | 個人利用者1名。依頼者・受付担当・承認者の3役を兼ね、画面のロール切替で確認する |
 | 主要フロー | ①依頼を登録する ②承認する（信号決定・承認前チェック） ③進める・差し戻す・見る |
+| 開発ライン連携 | 承認済み注文書のYAML生成・コピーに加え、GitHub Issue を自動作成（`POST /api/requests/:id/handoff`） |
 
 ## 構成
 
@@ -21,7 +26,6 @@ src/api/     Fastify + PostgreSQL（認証・受付・状態遷移・承認・�
 src/shared/  ドメイン（信号・合格の条件・ものさし・遷移・注文書YAML・CSV）
 src/web/     React + Vite（9画面 / 未実装・承認待ち）
 db/          migration / seed（19部署・118道具・見本9件）
-worker/      Cloudflare Worker（Preview配信 + APIプロキシ）
 tests/       unit / integration / e2e
 docs/        要件・仕様・設計・DB・API・テスト・デプロイ・制限
 ```
@@ -76,6 +80,12 @@ pnpm db:verify      # DB の整合性（19部署/118道具/採番/監査ハッ�
 | `ORIGIN_SHARED_SECRET` / `REQUIRE_ORIGIN_SECRET` | Cloudflare Worker → origin の共有秘密 |
 | `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | 初期管理者（seed 時のみ） |
 | `ALLOW_SELF_APPROVAL` | 個人MVPの自己承認許可（本番は false） |
+
+## 認証（検証環境）
+
+- 前段: Cloudflare Access（`@mirai-const.co.jp` を許可、ワンタイムパスワード、セッション12時間）。
+- アプリ: `AUTH_MODE=access` で Access の認証ヘッダを信頼（パスワード画面は表示しない）。
+- ローカル開発: `AUTH_MODE=password`（`scripts/bootstrap-local.mjs` の初期管理者）。
 
 ## セキュリティ
 

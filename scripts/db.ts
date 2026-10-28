@@ -150,8 +150,10 @@ async function verify(): Promise<void> {
     );
     add('部署外部キー整合', (orphan.rows[0]?.count ?? 0) === 0, `不整合 ${orphan.rows[0]?.count} 件`);
 
-    const seq = await client.query<{ year: number; last_seq: number }>('select year, last_seq from request_counter');
-    add('採番カウンタ', seq.rowCount !== null && seq.rowCount >= 0, JSON.stringify(seq.rows));
+    const seq = await client.query<{ year: number; last_seq: number }>('select year, last_seq from request_counter order by year');
+    const maxByYear = await client.query<{ year: number; max_seq: number }>('select year, max(seq)::int as max_seq from request group by year');
+    const counterOk = maxByYear.rows.every((row) => (seq.rows.find((s) => s.year === row.year)?.last_seq ?? 0) >= row.max_seq);
+    add('採番カウンタ', counterOk, JSON.stringify(seq.rows));
 
     const gap = await client.query<{ count: number }>(
       `select count(*)::int as count from request where seq > 9999 or seq < 1`,

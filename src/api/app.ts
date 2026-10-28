@@ -9,6 +9,8 @@ import { ZodError } from 'zod';
 import { healthCheck } from './db.js';
 import {
   CSRF_COOKIE,
+  accessLogin,
+  resolveAccessIdentity,
   checkLoginRate,
   clearSessionCookies,
   login,
@@ -23,6 +25,7 @@ import {
 import {
   actorOf,
   addComment,
+  handoffToGithub,
   createRequest,
   deleteDraft,
   exportAll,
@@ -81,7 +84,20 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
         throw new ApiError('ERR-101', 'この操作をする権限がありません', 403);
       }
     }
-    req.auth = await resolveSession(req);
+    let ctx = await resolveSession(req);
+    if (!ctx && config.authMode === 'access') {
+      const identity = resolveAccessIdentity(req.headers);
+      if (identity) {
+        try {
+          const result = await accessLogin(identity, req.ip);
+          setSessionCookies(reply, result.token, result.csrf, result.expiresAt);
+          ctx = result.ctx;
+        } catch {
+          ctx = null;
+        }
+      }
+    }
+    req.auth = ctx;
   });
 
   app.addHook('onSend', async (req, reply, payload) => {
@@ -190,6 +206,8 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
     staleDangerDays: 7,
     allowSelfApproval: config.allowSelfApproval,
     allowImport: config.allowImport,
+    authMode: config.authMode,
+    githubConfigured: Boolean(config.githubToken),
     approvers: [
       { name: '鈴木 一郎', email: 'suzuki@example.com' },
       { name: '田中 誠司', email: 'tanaka@example.com' },
@@ -251,6 +269,12 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
     const { id } = req.params as { id: string };
     const body = commentSchema.parse(req.body);
     return addComment(id, body.text, actorOf(ctx.user), correlationId(req));
+  });
+
+  app.post('/api/requests/:id/handoff', async (req) => {
+    const ctx = mutate(req);
+    const { id } = req.params as { id: string };
+    return handoffToGithub(id, actorOf(ctx.user), correlationId(req));
   });
 
   app.get('/api/requests/:id/order', async (req) => {

@@ -54,10 +54,15 @@ pnpm db:verify
 | PostgreSQL | 16（`mirai_sf_dev` / `mirai_sf_test`） |
 | API | `127.0.0.1:8781`（`pnpm dev:api`） |
 | Web | `127.0.0.1:5178`（`pnpm dev:web`、`/api` を 8781 へプロキシ） |
-| Preview | Cloudflare Worker `mirai-sf-preview` + Tunnel → `127.0.0.1:8782` |
+| Preview | `https://sf.mirai-dx-platform.com`（Cloudflare Tunnel + Access）→ `127.0.0.1:8782` |
 | 設定 | `~/.config/mirai-sf/local.json`（`node scripts/bootstrap-local.mjs` で生成） |
 
-## 7. 既知の制限（詳細は `docs/limitations.md`）
+## 7. リポジトリ
+
+- GitHub: `Kensan196948G/Software-Factory`（private）
+- 保存場所: `/mnt/storage/Software-Factory/Software-Factory`（旧 `/home/kensan/Projects/Software-Factory-Project` は symlink）
+
+## 8. 既知の制限（詳細は `docs/limitations.md`）
 
 - 1ユーザー・3役の切替。自己承認は既定で許可（本番は SSO＋複数ユーザーで禁止）。
 - 添付はメタ情報のみ。通知・Entra ID・AI実装・PR自動化は未実装。
