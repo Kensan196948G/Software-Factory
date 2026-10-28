@@ -10,6 +10,20 @@ async function login(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'ログイン' }).click();
   await page.waitForSelector('button[data-v="home"]');
   await expect(page.getByRole('heading', { level: 1 })).toContainText('ソフトウェアファクトリー受付・運用コンソール');
+  await resetDraft(page);
+}
+
+/** 下書きはサーバにも残る（端末をまたいで再開できる）。テストは毎回まっさらから始める。 */
+async function resetDraft(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    try {
+      localStorage.clear();
+    } catch {
+      /* localStorage が使えない環境では何もしない */
+    }
+    const msf = (window as unknown as { __MSF__?: { api?: (method: string, path: string) => Promise<unknown> } }).__MSF__;
+    if (msf?.api) await msf.api('DELETE', '/api/draft').catch(() => undefined);
+  });
 }
 
 async function clickText(page: Page, text: string, exact = true): Promise<boolean> {
@@ -188,4 +202,65 @@ test('一覧の検索で0件の表示になる', async ({ page }) => {
   await page.locator('#lq').fill('該当なし-zzzz-9999');
   await page.waitForTimeout(400);
   await expect(page.locator('body')).toContainText('条件に合う依頼がありません');
+});
+
+test('下書きがサーバに保存され、別端末（別コンテキスト）で再開できる', async ({ page, browser }) => {
+  await login(page);
+  const title = `下書きE2E ${Date.now()}`;
+  try {
+    await clickText(page, '新しい依頼');
+    await page.waitForTimeout(300);
+    await clickText(page, '新しい道具がほしい', false);
+    await nextStep(page);
+    await clickText(page, '現場の担当者');
+    await clickText(page, '事務所');
+    await nextStep(page);
+    await setValue(page, 'main input[type=text]', 0, title);
+    await page.waitForTimeout(1500);
+
+    const origin = new URL(page.url()).origin;
+    const cookies = await page.context().cookies();
+    const other = await browser.newContext();
+    await other.addCookies(cookies);
+    const p2 = await other.newPage();
+    await p2.goto(`${origin}/`);
+    await expect(p2.getByText('書きかけの依頼があります')).toBeVisible();
+    await expect(p2.locator('body')).toContainText(title);
+    await p2.getByRole('button', { name: '続きから再開' }).click();
+    await expect(p2.locator('main input[type=text]').first()).toHaveValue(title);
+    await other.close();
+  } finally {
+    await resetDraft(page);
+  }
+});
+
+test('運用データがDBに保存され、再読み込みで復元される', async ({ page }) => {
+  await login(page);
+  // 初回表示で見本データがDBへ保存される（seed-on-first-load）
+  await expect
+    .poll(async () => {
+      const res = await page.request.get('/api/ops');
+      const body = await res.json();
+      return Boolean(body.data && Array.isArray(body.data.apps));
+    })
+    .toBe(true);
+
+  const state = await (await page.request.get('/api/ops')).json();
+  const apps = state.data.apps as { name: string }[];
+  const before = apps[0]!.name;
+  const changed = `E2E変更 ${Date.now()}`;
+  await page.evaluate(async (data) => {
+    // @ts-expect-error 画面が公開しているAPIヘルパー
+    await window.__MSF__.api('PUT', '/api/ops', { data });
+  }, { ...state.data, apps: [{ ...apps[0], name: changed }, ...apps.slice(1)] });
+
+  await page.reload();
+  await page.click('button[data-v="ops"]');
+  await expect(page.locator('body')).toContainText(changed);
+
+  // 元に戻す
+  await page.evaluate(async (data) => {
+    // @ts-expect-error 画面が公開しているAPIヘルパー
+    await window.__MSF__.api('PUT', '/api/ops', { data });
+  }, { ...state.data, apps: [{ ...apps[0], name: before }, ...apps.slice(1)] });
 });

@@ -32,6 +32,8 @@ import {
   getDetail,
   getBootData,
   getDraft,
+  getOpsState,
+  saveOpsState,
   getOrder,
   homeFor,
   importAll,
@@ -42,6 +44,7 @@ import {
   updateRequest,
 } from './service.js';
 import { getCatalogTools, listDepartments } from './repo.js';
+import { deliverOutboxMail, deliverPendingMail, listOutbox, mailSummary } from './mail-outbox.js';
 import { verifyAuditChain } from './audit.js';
 import {
   commentSchema,
@@ -59,6 +62,9 @@ declare module 'fastify' {
     auth: AuthContext | null;
   }
 }
+
+/** 承認依頼メールの状態（クエリ検証に使う）。 */
+const MAIL_STATES = ['pending', 'sent', 'failed'] as const;
 
 export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<FastifyInstance> {
   const app = Fastify({
@@ -435,13 +441,15 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
       void reply.redirect('/login');
       return;
     }
-    const data = await getBootData();
+    const data = await getBootData(ctx.user.id);
     const html = renderAppHtml(ctx, {
       user: ctx.user,
       role: ctx.user.actingRole,
       csrf: ctx.session.csrf_token,
       seq: data.seq,
       items: data.items,
+      draft: data.draft,
+      ops: data.ops,
     });
     if (!html) {
       void reply.status(503).type('text/plain').send('画面がビルドされていません（pnpm build）');
@@ -480,6 +488,57 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
   }
 
   // 起動時にクッキー名を公開（フロントの二重送信 CSRF 用）
+  /* ───────── 運用・DevOps・SecOps の状態 ───────── */
+  app.get('/api/ops', async (req) => {
+    auth(req);
+    const state = await getOpsState();
+    return state ?? { data: null, version: 0 };
+  });
+
+  app.put('/api/ops', async (req) => {
+    const ctx = mutate(req);
+    const body = req.body as { data?: unknown };
+    if (!body || body.data === undefined) throw Errors.required('data');
+    return saveOpsState(body.data, actorOf(ctx.user), correlationId(req));
+  });
+
+  /* ───────── 承認依頼メール（outbox） ───────── */
+  app.get('/api/mail/status', async (req) => {
+    auth(req);
+    return mailSummary();
+  });
+
+  app.get('/api/mail/outbox', async (req) => {
+    const ctx = auth(req);
+    if (!['desk', 'approver'].includes(ctx.user.actingRole) && !ctx.user.isAdmin) throw Errors.noPermission();
+    const q = req.query as { status?: string; limit?: string };
+    const status = q.status;
+    if (status !== undefined && !MAIL_STATES.includes(status as (typeof MAIL_STATES)[number])) {
+      throw Errors.notAllowedValue('status');
+    }
+    return listOutbox({
+      ...(status ? { status: status as (typeof MAIL_STATES)[number] } : {}),
+      limit: Number(q.limit ?? 20) || 20,
+    });
+  });
+
+  // 送信失敗ぶんの再送（受付担当・管理者）。CSRF あり。
+  app.post('/api/mail/outbox/:id/retry', async (req) => {
+    const ctx = mutate(req);
+    if (!ctx.user.isAdmin && ctx.user.actingRole !== 'desk') throw Errors.noPermission();
+    const id = (req.params as { id: string }).id;
+    if (!/^\d+$/.test(id)) throw Errors.notFound('送信できるメール');
+    const result = await deliverOutboxMail(id);
+    if (!result) throw Errors.notFound('送信できるメール');
+    return result;
+  });
+
+  app.post('/api/mail/flush', async (req) => {
+    const ctx = mutate(req);
+    if (!ctx.user.isAdmin) throw Errors.noPermission();
+    return deliverPendingMail(20);
+  });
+
   app.get('/api/auth/csrf', async (req) => {
     const ctx = req.auth;
     return { csrf: ctx ? ctx.session.csrf_token : null, cookieName: CSRF_COOKIE };

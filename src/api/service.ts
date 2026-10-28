@@ -43,6 +43,7 @@ import type { RequestInput, TransitionInput } from './schemas.js';
 import { buildOrderYaml } from '../shared/order.js';
 import { createIssue, isGithubConfigured } from './github.js';
 import { buildCsv, buildExportJson, measureOf } from '../shared/export.js';
+import { deliverOutboxMail, enqueueApprovalMailInTx } from './mail-outbox.js';
 
 export interface Actor {
   user: SessionUser;
@@ -545,6 +546,7 @@ export async function performTransition(
   correlationId: string,
 ): Promise<{ detail: RequestDetail; warnings: { code: string; message: string }[] }> {
   const warnings: { code: string; message: string }[] = [];
+  let queuedMailId: string | null = null;
   await withTransaction(async (client) => {
     const row = await getRequestRowForUpdate(client, id);
     if (!row) throw Errors.notFound('依頼');
@@ -676,8 +678,37 @@ export async function performTransition(
       correlationId,
       diff: { from: row.status, to: input.to, reason: reason || null, signal: decided },
     });
+    // 承認待ちになったら、承認依頼メールを同じトランザクションで積む（送信はコミット後）。
+    if (nextStatus === 'wait') {
+      queuedMailId = await enqueueApprovalMailInTx(
+        client,
+        {
+          id,
+          title: row.title,
+          applicant: row.applicant,
+          deptCode: row.dept_code,
+          approver: row.approver,
+          approverUserId: row.approver_user_id,
+          signal: decided,
+          criteriaCount: row.criteria.length,
+        },
+        actor,
+        correlationId,
+      );
+    }
     if (input.to === 'cancel') warnings.push({ code: 'INFO-001', message: '取消にしました。データは残り、一覧の表示切替で確認できます' });
   });
+
+  if (queuedMailId) {
+    // 送信の失敗で業務（状態遷移）を失敗させない。
+    const delivered = await deliverOutboxMail(queuedMailId).catch(() => null);
+    if (delivered?.status === 'failed') {
+      warnings.push({
+        code: 'INFO-002',
+        message: `承認依頼メールを送れませんでした（あとで再送できます）: ${delivered.error ?? ''}`,
+      });
+    }
+  }
 
   return { detail: await getDetail(id, actor), warnings };
 }
@@ -729,8 +760,41 @@ export async function deleteDraft(userId: string) {
 
 /* ─────────────────────────── 入出力 ─────────────────────────── */
 
+/** 運用・DevOps・SecOps の状態を取得する（無ければ null）。 */
+export async function getOpsState(): Promise<{ data: unknown; version: number } | null> {
+  const row = await one<{ data: unknown; version: number }>('select data, version from ops_state where id = 1');
+  return row ? { data: row.data, version: row.version } : null;
+}
+
+/** 運用・DevOps・SecOps の状態を保存する（単一ドキュメント・バージョン付き）。 */
+export async function saveOpsState(data: unknown, actor: Actor, correlationId: string): Promise<{ version: number }> {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    throw Errors.shape('ops');
+  }
+  const size = Buffer.byteLength(JSON.stringify(data), 'utf8');
+  if (size > 1_500_000) throw Errors.tooLong('ops');
+  return withTransaction(async (client) => {
+    const result = await client.query<{ version: number }>(
+      `insert into ops_state (id, data, version, updated_at, updated_by)
+       values (1, $1, 1, now(), $2)
+       on conflict (id) do update set data = excluded.data, version = ops_state.version + 1, updated_at = now(), updated_by = excluded.updated_by
+       returning version`,
+      [JSON.stringify(data), actor.userId],
+    );
+    await appendAuditInTx(client, actor, {
+      action: 'ops.save',
+      targetType: 'ops_state',
+      targetId: '1',
+      result: 'success',
+      correlationId,
+      diff: { bytes: size },
+    });
+    return { version: result.rows[0]?.version ?? 1 };
+  });
+}
+
 /** 画面起動用のデータ（履歴・コメントを含む）。監査ログには記録しない。 */
-export async function getBootData(): Promise<{ seq: number; items: unknown[] }> {
+export async function getBootData(userId: string): Promise<{ seq: number; items: unknown[]; draft: unknown; ops: unknown }> {
   const { rows } = await listRequests({ limit: 5000 });
   const items = [];
   for (const row of rows) {
@@ -742,7 +806,19 @@ export async function getBootData(): Promise<{ seq: number; items: unknown[] }> 
     });
   }
   const seq = rows.reduce((max, r) => Math.max(max, r.seq), 0);
-  return { seq, items };
+  const draftRow = await one<{ payload: unknown; step: number; edit_id: string | null; saved_at: Date }>(
+    'select payload, step, edit_id, saved_at from draft where user_id = $1',
+    [userId],
+  );
+  const ops = await getOpsState();
+  return {
+    seq,
+    items,
+    draft: draftRow
+      ? { draft: draftRow.payload, step: draftRow.step, editId: draftRow.edit_id, at: draftRow.saved_at.toISOString() }
+      : null,
+    ops: ops ? { data: ops.data, version: ops.version } : null,
+  };
 }
 
 export async function exportAll(actor: Actor) {

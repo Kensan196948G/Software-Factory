@@ -10,6 +10,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/unit/**/*.test.ts'],
+    setupFiles: ['tests/unit/setup-env.ts'],
     testTimeout: 20000,
     hookTimeout: 30000,
     reporters: ['default'],

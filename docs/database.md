@@ -28,6 +28,8 @@
 | `approval` | ENT-07 | 承認・差戻し・見送りの記録（決定色・候補色・チェック結果・版） |
 | `attachment` | ENT-04 | 添付のメタ情報のみ（name, size, sha256） |
 | `draft` | 5-6 | 下書き（利用者ごとに1件、本人のみ） |
+| `ops_state` | — | 運用・DevOps・SecOps の画面状態（id=1 の単一JSONB・版番号） |
+| `mail_outbox` | — | 承認依頼メールの送信キュー（依頼の状態遷移と同じトランザクションで積む。失敗しても業務は止めない） |
 | `audit_log` | ENT-11 | 監査ログ（追記のみ・ハッシュ連鎖・UPDATE/DELETEをトリガで拒否） |
 | `idempotency` | — | 操作キー（二重登録の防止） |
 | `schema_migrations` | — | 適用済みmigration |

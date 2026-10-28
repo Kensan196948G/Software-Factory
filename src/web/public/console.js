@@ -746,7 +746,7 @@ const SF = (function(){
     if (act) t.querySelector('.tact').addEventListener('click', () => { t.remove(); act.fn(); });
     $('#toast').appendChild(t); setTimeout(()=>t.remove(), act?7000:3000);
   }
-  window.__MSF_UI__ = { toast: toast };
+  window.__MSF_UI__ = { toast: toast, data: () => S.data };
 
   /* ---- 下書きの自動保存（このブラウザの中だけ） ---- */
   const DKEY = KEY + '-draft';
@@ -759,10 +759,11 @@ const SF = (function(){
     if (!S.draft) return;
     const o = {draft:S.draft, editId:S.editId, step:S.step, at:SF.nowISO()};
     draftMem = o; try { localStorage.setItem(DKEY, JSON.stringify(o)); } catch(e) {}
+    if (window.__MSF__ && window.__MSF__.saveDraft) window.__MSF__.saveDraft(o);
     const a = $('#autosv'); if (a) a.innerHTML = ico('i-check')+'下書きを自動保存しました　'+E(SF.fmt(o.at).slice(11));
   }
   function saveDraftSoon(){ clearTimeout(draftTimer); draftTimer = setTimeout(writeDraft, 400); }
-  function clearDraft(){ clearTimeout(draftTimer); draftMem = null; try { localStorage.removeItem(DKEY); } catch(e) {} }
+  function clearDraft(){ clearTimeout(draftTimer); draftMem = null; try { localStorage.removeItem(DKEY); } catch(e) {} if (window.__MSF__ && window.__MSF__.clearDraft) window.__MSF__.clearDraft(); }
   function hasContent(d){ return !!d && (!!d.toolRef || ['title','problem','purpose','scope','outScope'].some(k => String(d[k]||'').trim()) || (d.criteria||[]).some(x => String(x).trim())); }
   function draftLabel(o){ return o.draft.title && o.draft.title.trim() ? o.draft.title : '（件名はまだありません）'; }
   function resumeDraft(o){ S.draft = o.draft; S.editId = o.editId || null; S.step = Math.min(Math.max(0, +o.step||0), STEPS.length-1); S.pickDept=''; go('new'); toast('書きかけの依頼の続きから再開します'); }

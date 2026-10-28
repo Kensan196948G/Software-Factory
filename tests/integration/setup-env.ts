@@ -10,3 +10,8 @@ process.env.REQUIRE_ORIGIN_SECRET = '0';
 process.env.COOKIE_SECURE = '0';
 process.env.TRUST_PROXY = '0';
 process.env.APP_BASE_URL = 'http://127.0.0.1:8781';
+// 承認依頼メールはローカルの送信BOXへ書き出す（外部サービスを呼ばない）
+process.env.MAIL_MODE = 'file';
+process.env.MAIL_OUTBOX_DIR = '.mail/test-outbox';
+process.env.MAIL_APPROVAL_TO = 'approver@example.com';
+process.env.MAIL_FROM = 'no-reply@example.com';

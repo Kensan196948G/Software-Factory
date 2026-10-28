@@ -35,7 +35,7 @@ export async function prepareTestDb(): Promise<void> {
 
 export async function truncateBusiness(): Promise<void> {
   await query(
-    `truncate table request, request_history, comment, approval, attachment, draft, idempotency, request_counter, session, audit_log restart identity cascade`,
+    `truncate table request, request_history, comment, approval, attachment, draft, idempotency, request_counter, session, audit_log, mail_outbox, ops_state restart identity cascade`,
   );
 }
 
