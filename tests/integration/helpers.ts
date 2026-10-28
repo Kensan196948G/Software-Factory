@@ -48,6 +48,8 @@ export async function buildTestApp(): Promise<FastifyInstance> {
 export interface Authed {
   cookie: string;
   csrf: string;
+  /** 起動データなど利用者IDが要るアサーションで使う */
+  user: { id: string };
 }
 
 export async function loginAs(app: FastifyInstance, role?: string): Promise<Authed> {
@@ -57,11 +59,11 @@ export async function loginAs(app: FastifyInstance, role?: string): Promise<Auth
     payload: { email: TEST_USER.email, password: TEST_USER.password },
   });
   expect(res.statusCode).toBe(200);
-  const body = res.json() as { csrf: string };
+  const body = res.json() as { csrf: string; user: { id: string } };
   const setCookie = res.headers['set-cookie'];
   const cookies = Array.isArray(setCookie) ? setCookie : [setCookie ?? ''];
   const cookie = cookies.map((c) => c.split(';')[0]).join('; ');
-  const authed = { cookie, csrf: body.csrf };
+  const authed = { cookie, csrf: body.csrf, user: body.user };
   if (role) {
     const switched = await app.inject({
       method: 'POST',

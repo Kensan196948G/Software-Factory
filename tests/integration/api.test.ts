@@ -10,6 +10,7 @@ import {
   truncateBusiness,
 } from './helpers.js';
 import { createSessionForUser } from '../../src/api/auth.js';
+import { getBootData } from '../../src/api/service.js';
 import { query } from '../../src/api/db.js';
 import { verifyAuditChain } from '../../src/api/audit.js';
 
@@ -442,7 +443,7 @@ describe('下書きのサーバ保存（端末をまたいで再開）', () => {
     expect((after.json() as { draft: unknown }).draft).toBeNull();
   });
 
-  it('起動データ（画面HTML）に下書きが含まれる', async () => {
+  it('起動データに下書きが含まれる（画面HTMLはビルド有無に依存するためサービスで検証）', async () => {
     const auth = await loginAs(app);
     await app.inject({
       method: 'PUT',
@@ -450,11 +451,7 @@ describe('下書きのサーバ保存（端末をまたいで再開）', () => {
       headers: authHeaders(auth),
       payload: { draft: { title: '別端末で再開する下書き' }, step: 1, editId: null, at: new Date().toISOString() },
     });
-    const html = await app.inject({ method: 'GET', url: '/', headers: { cookie: auth.cookie } });
-    expect(html.statusCode).toBe(200);
-    const m = /<script type="application\/json" id="msf-boot">([\s\S]*?)<\/script>/.exec(html.body);
-    expect(m).not.toBeNull();
-    const boot = JSON.parse(m![1]!) as { draft: { draft: { title: string } } | null };
+    const boot = (await getBootData(auth.user.id)) as { draft: { draft: { title: string } } | null };
     expect(boot.draft?.draft.title).toBe('別端末で再開する下書き');
   });
 });
@@ -479,10 +476,10 @@ describe('運用・DevOps・SecOps のDB保存', () => {
     const after = await app.inject({ method: 'GET', url: '/api/ops', headers: { cookie: auth.cookie } });
     expect((after.json() as { data: { apps: { id: string }[] } }).data.apps[0]?.id).toBe('APP-001');
 
-    const html = await app.inject({ method: 'GET', url: '/', headers: { cookie: auth.cookie } });
-    const m = /<script type="application\/json" id="msf-boot">([\s\S]*?)<\/script>/.exec(html.body);
-    const boot = JSON.parse(m![1]!) as { ops: { data: { apps: { id: string }[] }; version: number } };
-    expect(boot.ops.data.apps[0]?.id).toBe('APP-001');
+    const boot = (await getBootData(auth.user.id)) as {
+      ops: { data: { apps: { id: string }[] }; version: number } | null;
+    };
+    expect(boot.ops?.data.apps[0]?.id).toBe('APP-001');
   });
 
   it('未ログインは401、配列など不正な形は400', async () => {
