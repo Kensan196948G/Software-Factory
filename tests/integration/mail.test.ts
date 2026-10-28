@@ -16,6 +16,7 @@ import {
 } from './helpers.js';
 import { query } from '../../src/api/db.js';
 import { config } from '../../src/api/config.js';
+import { deliverPendingMail } from '../../src/api/mail-outbox.js';
 
 let app: FastifyInstance;
 
@@ -29,6 +30,7 @@ interface MailRow {
   status: string;
   attempts: number;
   last_error: string | null;
+  next_attempt_at: Date | null;
 }
 
 beforeAll(async () => {
@@ -208,6 +210,46 @@ describe('承認依頼メール', () => {
     await moveToWait(auth, created.id, created.version);
     const mails = await mailsOf(created.id);
     expect(mails[0]!.to_email).toBe(TEST_MEMBER.email);
+  });
+
+  it('送信失敗は指数バックオフで自動リトライされる（回数上限あり）', async () => {
+    const scratch = mkdtempSync(join(tmpdir(), 'msf-retry-'));
+    const notADir = join(scratch, 'not-a-dir');
+    writeFileSync(notADir, 'ディレクトリではない');
+    const restore = { dir: config.mailOutboxDir, max: config.mailRetryMax, base: config.mailRetryBaseMinutes };
+    config.mailOutboxDir = notADir;
+    config.mailRetryMax = 2;
+    config.mailRetryBaseMinutes = 5;
+    let created: { id: string; version: number };
+    try {
+      const auth = await loginAs(app);
+      created = await createRequestAs(auth);
+      await moveToWait(auth, created.id, created.version);
+
+      const failed = await mailsOf(created.id);
+      expect(failed[0]!.status).toBe('failed');
+      expect(failed[0]!.next_attempt_at).toBeTruthy();
+      expect(new Date(failed[0]!.next_attempt_at as unknown as string).getTime()).toBeGreaterThan(Date.now());
+
+      // 期日前なので、すぐ flush しても再送しない
+      const tooEarly = await deliverPendingMail(10);
+      expect(tooEarly.attempted).toBe(0);
+
+      // 期日を過ぎたら再送する（宛先を直せば送信済みになる）
+      config.mailOutboxDir = restore.dir;
+      await query(`update mail_outbox set next_attempt_at = now() - interval '1 minute' where request_id = $1`, [created.id]);
+      const retried = await deliverPendingMail(10);
+      expect(retried.attempted).toBeGreaterThanOrEqual(1);
+      expect(retried.sent).toBeGreaterThanOrEqual(1);
+      const after = await mailsOf(created.id);
+      expect(after[0]!.status).toBe('sent');
+      expect(after[0]!.attempts).toBe(2);
+    } finally {
+      config.mailOutboxDir = restore.dir;
+      config.mailRetryMax = restore.max;
+      config.mailRetryBaseMinutes = restore.base;
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 
   it('承認者が別人なら、ほかの承認者は承認できない', async () => {

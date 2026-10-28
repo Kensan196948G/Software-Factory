@@ -80,6 +80,7 @@ migrationはadditiveのみ。破壊的変更は行わない。障害時はバッ
 | `0004_mail_outbox_claim.sql` | `sending` 状態・`claimed_at`・「送信済みなら `sent_at` 必須」の制約（二重送信の防止） |
 | `0005_mail_reminder.sql` | `kind='reminder'`・`reminder_date`・1日1回の unique 索引（滞留通知） |
 | `0006_drafts_multi.sql` | `draft_item`（複数下書き）と旧 `draft` からの引き継ぎ |
+| `0007_mail_retry.sql` | `next_attempt_at`（失敗時の指数バックオフ再送）と索引 |
 
 ## 5. インデックス
 

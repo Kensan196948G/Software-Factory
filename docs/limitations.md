@@ -15,7 +15,8 @@
 | L-07 | 現場試用の「感想を書く」はコメント追加で代替 | 専用の試用記録フォームはない | 州のヒアリングで設計 | Backlog |
 | L-08 | 一覧の信号絞り込みはサーバ取得後にJSで実施 | 数千件規模ではメモリを使う | SQLで候補色を計算 or マテリアライズ | 性能 |
 | L-09 | 添付・印刷・多言語の一部は未実装 | 仕様の一部 | 各Issue | Backlog |
-| L-10 | 滞留通知は外部スケジューラ前提（アプリ内に常駐ジョブはない） | `pnpm reminders` を回さないと催促は送られない | systemd timer / cron を登録（`docs/deployment.md` 7章） | 運用 |
+| L-11 | Cloudflare Access 越しE2Eは `access-service-token.write` 権限が無く未実行 | 公開URLの自動検証が止まっている | APIトークンに権限を足し `tests/e2e/access.spec.ts` を実行 | 運用 |
+| L-10 | 滞留通知・下書きTTLは外部スケジューラ前提（アプリ内に常駐ジョブはない） | timer を止めると催促・掃除が止まる（メールの自動再送も同じジョブ） | `mirai-sf-reminders.timer` を有効に保つ（`docs/deployment.md` 7-1） | 運用 |
 
 ## 2. セキュリティの残存リスク
 
@@ -27,6 +28,7 @@
 | S-04 | origin共有秘密が漏れるとWorker迂回 | Tunnelは公開せず、ホスト名を秘匿 | Cloudflare側の設定漏えい |
 | S-05 | 監査ログの改ざん | 追記トリガ＋ハッシュ連鎖 | DB管理者権限では可能 |
 | S-06 | 依存関係の脆弱性 | Dependabot/監査は未設定 | 本番前に `pnpm audit` と更新 |
+| S-08 | 監査アーカイブ（`pnpm audit:archive`）はファイル側の世代管理のみ | DBの監査行は追記のみで削除しないため、DB容量は増える | 保存先の容量監視・長期保存先の決定 | 運用 |
 | S-07 | 承認依頼・滞留通知メール（送信BOX / SMTP） | 宛先は承認者または設定値のみ。ヘッダ注入（改行）を拒否。本番の既定は `MAIL_MODE=off`。SMTP認証情報は `local.json`（0600）か環境変数だけから読む | `.mail/` とSMTP認証情報の管理は運用側。SMTPの証明書検証は nodemailer 既定（TLS 1.2以上） |
 
 ## 2-2. WebUI（コンソール原本）の制限

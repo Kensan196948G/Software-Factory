@@ -110,7 +110,7 @@ DNS伝播後は不要。ブラウザで名前解決できない場合は削除�
 - 監査ログのハッシュ連鎖（`/api/audit-logs`）
 - ログ: `journalctl --user -u mirai-sf-api`（個人情報は出力しない）
 
-### 7-1. 日次の滞留通知（任意）
+### 7-1. 日次の滞留通知・下書きTTL（登録済み）
 
 承認待ち・公開承認待ちのまま N 日止まった依頼へ、1日1回だけ催促メールを送る。
 
@@ -134,8 +134,19 @@ systemctl --user enable --now mirai-sf-reminders.timer
 ```
 
 同じ依頼・同じ日は unique 制約で1通に落ちるため、何度実行しても重複しない。
+下書きの保存期限（`DRAFT_TTL_DAYS`、既定30日）切れの削除と、期限が来たメールの自動再送も同じジョブで行う。
 
-### 7-2. CI（GitHub Actions）
+2026-10-28 に `mirai-sf-reminders.timer`（毎日 08:30 JST）を登録し、初回実行で催促メール1通（`status='sent'`）を実測。
+
+### 7-2. 監査ログのアーカイブ
+
+```bash
+pnpm audit:archive    # 差分を ~/.local/state/mirai-sf/audit/audit-YYYY-MM-DD.jsonl.gz へ出力（既定365日で世代管理）
+```
+
+DBの監査行は追記のみで消さない（アーカイブは外部コピー）。実行前後でハッシュ連鎖を検証する。
+
+### 7-3. CI（GitHub Actions）
 
 - `quality`: typecheck / lint / unit / migration（空DB・冪等）/ seed / db:verify / integration / build / secret scan
 - `e2e`: Postgres サービス＋ビルド＋Playwright（`quality` 成功後に実行）

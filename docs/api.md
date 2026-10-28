@@ -33,7 +33,7 @@
 | — | `GET /api/home` | あなたの番・件数・滞留 | 要ログイン |
 | — | `GET /api/requests` | 一覧（`q` `dept` `status` `signal` `mine` `includeDeleted` `page` `pageSize`） | 要ログイン |
 | — | `GET /api/drafts` / `POST /api/drafts` | 下書きの一覧（新しい順・最大50）／作成 | 要ログイン（本人のみ） |
-| — | `PUT /api/drafts/{id}` / `DELETE /api/drafts/{id}` | 下書きの更新／削除（他人の下書きは404） | 要ログイン（本人のみ） |
+| — | `PUT /api/drafts/{id}` / `DELETE /api/drafts/{id}` | 下書きの更新／削除（他人の下書きは404）。保存期限 `DRAFT_TTL_DAYS`（既定30日）を過ぎたものは日次ジョブが消す | 要ログイン（本人のみ） |
 | — | `DELETE /api/drafts` | 本人の下書きをすべて削除 | 要ログイン |
 | — | `GET /api/catalog/departments` / `tools` / `summary` | カタログ | 要ログイン |
 | — | `GET /api/export.json` / `export.csv` | 全件出力（監査ログに記録） | 要ログイン |
@@ -71,7 +71,7 @@
 - 積む: 状態遷移（と「承認後に内容を編集して承認待ちへ戻す」更新）と同じトランザクションで `mail_outbox` に1行。メールが消えない。
 - 送る: コミット後に best-effort。送信前に `status='sending'` へ原子的に移す（claim）ので二重送信しない。
   失敗しても遷移は成功し、`status='failed'` と `last_error` が残る（応答の `warnings` に `INFO-002`）。
-  `POST /api/mail/outbox/{id}/retry` で再送でき、10分以上 `sending` のままの行は `flush` が拾い直す。
+  `POST /api/mail/outbox/{id}/retry` は**手動再送**（バックオフを待たない）。自動再送は `next_attempt_at` と `MAIL_RETRY_MAX`/`MAIL_RETRY_BASE_MINUTES`（指数バックオフ）で、日次ジョブと `flush` が期日を過ぎた行を拾う。10分以上 `sending` のままの行も拾い直す。
 - 宛先: ①承認者のメール（`request.approver_user_id`。現状の作成APIは設定しない）→ ②`request.approver` がメール形式ならそれ →
   ③同じ表示名の利用者のメール → ④`MAIL_APPROVAL_TO`。どれも無ければ積まない。
 - 送信経路（`MAIL_MODE`）: `off`（送らない・本番の既定）/ `file`（`.mail/outbox` へ `.eml` を書き出す・開発とテストの既定）/ `sendmail`（ローカルMTAへ `sendmail -t -i`）/ `smtp`（`SMTP_HOST` `SMTP_PORT` `SMTP_SECURE` `SMTP_REQUIRE_TLS` `SMTP_USER` `SMTP_PASS`。認証情報は local.json（0600）か環境変数だけに置く）。

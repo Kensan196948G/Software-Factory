@@ -491,7 +491,10 @@ export async function updateRequest(
 
     const isOwner = row.applicant_user_id === actor.userId;
     const editableByOwner = isOwner && ['received', 'back'].includes(row.status);
-    const editableByStaff = ['desk', 'approver'].includes(actor.role) && ['received', 'review', 'wait'].includes(row.status);
+    // 承認後でも受付担当・承認者は編集できる（編集すると承認を取り消して承認待ちへ戻す）
+    const editableByStaff =
+      ['desk', 'approver'].includes(actor.role) &&
+      ['received', 'review', 'wait', 'approved', 'dev', 'verify', 'field', 'release_wait'].includes(row.status);
     if (!editableByOwner && !editableByStaff) throw Errors.noPermission();
     if (['done', 'hold', 'cancel'].includes(row.status)) throw Errors.noPermission();
 
@@ -866,6 +869,16 @@ export async function deleteDraftItem(userId: string, id: string): Promise<{ ok:
 export async function deleteAllDrafts(userId: string): Promise<{ ok: true; deleted: number }> {
   const result = await query('delete from draft_item where user_id = $1', [userId]);
   return { ok: true, deleted: result.rowCount ?? 0 };
+}
+
+/** 保存期限を過ぎた下書きを消す（日次ジョブから呼ぶ）。0以下なら何もしない。 */
+export async function purgeExpiredDrafts(days: number = config.draftTtlDays): Promise<{ deleted: number }> {
+  if (!Number.isFinite(days) || days <= 0) return { deleted: 0 };
+  const result = await query(
+    `delete from draft_item where saved_at < now() - ($1 || ' days')::interval`,
+    [String(Math.trunc(days))],
+  );
+  return { deleted: result.rowCount ?? 0 };
 }
 
 /** 運用・DevOps・SecOps の状態を取得する（無ければ null）。 */

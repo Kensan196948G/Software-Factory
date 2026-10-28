@@ -9,10 +9,19 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   fullyParallel: false,
   workers: 1,
-  retries: 0,
+  retries: process.env.CI ? 1 : 0,
   reporter: [['list']],
   use: {
     baseURL: BASE_URL,
+    // Cloudflare Access 越しのスモーク（E2E_ACCESS_URL 指定時のみ）。トークンは環境変数だけに置く。
+    ...(process.env.E2E_ACCESS_CLIENT_ID && process.env.E2E_ACCESS_CLIENT_SECRET
+      ? {
+          extraHTTPHeaders: {
+            'CF-Access-Client-Id': process.env.E2E_ACCESS_CLIENT_ID,
+            'CF-Access-Client-Secret': process.env.E2E_ACCESS_CLIENT_SECRET,
+          },
+        }
+      : {}),
     headless: true,
     locale: 'ja-JP',
     trace: 'retain-on-failure',

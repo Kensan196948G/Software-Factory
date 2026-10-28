@@ -149,14 +149,20 @@ jobs:
       - name: Build
         run: pnpm run build
 
+      - name: Playwright ブラウザのキャッシュ
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
       - name: Playwright ブラウザの導入
         run: pnpm exec playwright install --with-deps chromium
 
       - name: E2E（9シナリオ）
         run: pnpm exec playwright test
 
-      - name: Artifacts（失敗時のみ）
-        if: failure()
+      - name: Artifacts（常に保存）
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-artifacts

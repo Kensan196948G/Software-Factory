@@ -164,15 +164,24 @@ export async function enqueueApprovalMailInTx(
  * 送信前に status='sending' へ移してから送るので、同時に呼ばれても二重送信しない。
  * pending / failed / 古い sending を受け付ける。sent は二重送信しない。
  */
-export async function deliverOutboxMail(id: string): Promise<{ id: string; status: MailState; error?: string } | null> {
+export async function deliverOutboxMail(
+  id: string,
+  options: { force?: boolean } = {},
+): Promise<{ id: string; status: MailState; error?: string } | null> {
+  const maxAttempts = Math.max(1, Math.trunc(config.mailRetryMax));
+  const force = options.force === true;
   const claimed = await one<MailRow>(
     `update mail_outbox
         set status = 'sending', attempts = attempts + 1, claimed_at = now()
       where id = $1
-        and (status in ('pending', 'failed')
-             or (status = 'sending' and claimed_at < now() - ($2 || ' minutes')::interval))
+        and (
+          status = 'pending'
+          or (status = 'failed'
+              and ($4::boolean or (attempts < $3 and (next_attempt_at is null or next_attempt_at <= now()))))
+          or (status = 'sending' and claimed_at < now() - ($2 || ' minutes')::interval)
+        )
       returning ${SELECT_COLUMNS}`,
-    [id, String(STALE_CLAIM_MINUTES)],
+    [id, String(STALE_CLAIM_MINUTES), maxAttempts, force],
   );
   if (!claimed) return null;
 
@@ -189,9 +198,12 @@ export async function deliverOutboxMail(id: string): Promise<{ id: string; statu
     await client.query(
       `update mail_outbox
           set status = $2, last_error = $3, claimed_at = null,
-              sent_at = case when $2 = 'sent' then now() else sent_at end
+              sent_at = case when $2 = 'sent' then now() else sent_at end,
+              next_attempt_at = case when $2 = 'failed'
+                                     then now() + (($4::numeric) * power(2, attempts)) * interval '1 minute'
+                                     else null end
         where id = $1`,
-      [id, status, error],
+      [id, status, error, Math.max(1, config.mailRetryBaseMinutes)],
     );
     await appendAuditTx(client, {
       action: result.ok ? 'mail.sent' : 'mail.failed',
@@ -210,13 +222,15 @@ export async function deliverOutboxMail(id: string): Promise<{ id: string; statu
 
 /** 未送信のぶんを順に送る（再送・起動時の掃除に使う）。 */
 export async function deliverPendingMail(limit = 20): Promise<{ attempted: number; sent: number; failed: number }> {
+  const maxAttempts = Math.max(1, Math.trunc(config.mailRetryMax));
   const { rows } = await query<{ id: string }>(
     `select id::text as id from mail_outbox
       where status = 'pending'
+         or (status = 'failed' and attempts < $3 and (next_attempt_at is null or next_attempt_at <= now()))
          or (status = 'sending' and claimed_at < now() - ($2 || ' minutes')::interval)
-      order by created_at, id
+      order by coalesce(next_attempt_at, created_at), id
       limit $1`,
-    [Math.min(Math.max(limit, 1), 100), String(STALE_CLAIM_MINUTES)],
+    [Math.min(Math.max(limit, 1), 100), String(STALE_CLAIM_MINUTES), maxAttempts],
   );
   let sent = 0;
   let failed = 0;

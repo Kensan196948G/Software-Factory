@@ -11,7 +11,7 @@ import {
   truncateBusiness,
 } from './helpers.js';
 import { createSessionForUser } from '../../src/api/auth.js';
-import { getBootData } from '../../src/api/service.js';
+import { getBootData, purgeExpiredDrafts } from '../../src/api/service.js';
 import { query } from '../../src/api/db.js';
 import { verifyAuditChain } from '../../src/api/audit.js';
 
@@ -493,6 +493,31 @@ describe('下書きのサーバ保存（端末をまたいで再開）', () => {
     const boot = (await getBootData(auth.user.id)) as { drafts: { draft: { title: string } }[] };
     expect(boot.drafts[0]?.draft.title).toBe('起動データの下書き');
   });
+
+  it('保存期限を過ぎた下書きは消える（TTL）', async () => {
+    const auth = await loginAs(app);
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/drafts',
+      headers: authHeaders(auth),
+      payload: { draft: { title: '古い下書き' }, step: 1, editId: null },
+    });
+    const id = (created.json() as { draft: { id: string } }).draft.id;
+    await query(`update draft_item set saved_at = now() - interval '40 days' where id = $1`, [id]);
+    await app.inject({
+      method: 'POST',
+      url: '/api/drafts',
+      headers: authHeaders(auth),
+      payload: { draft: { title: '新しい下書き' }, step: 1, editId: null },
+    });
+
+    const purged = await purgeExpiredDrafts(30);
+    expect(purged.deleted).toBeGreaterThanOrEqual(1);
+    const list = await app.inject({ method: 'GET', url: '/api/drafts', headers: { cookie: auth.cookie } });
+    const titles = (list.json() as { items: { draft: { title: string } }[] }).items.map((i) => i.draft.title);
+    expect(titles).toContain('新しい下書き');
+    expect(titles).not.toContain('古い下書き');
+  });
 });
 
 describe('運用・DevOps・SecOps のDB保存', () => {
@@ -548,5 +573,60 @@ describe('運用・DevOps・SecOps のDB保存', () => {
       payload: { data: { apps: [], incidents: [] }, version: 0 },
     });
     expect(denied.statusCode).toBe(403);
+  });
+});
+
+describe('承認後の編集（承認取消→承認待ち）', () => {
+  it('承認後でも受付担当は編集でき、承認待ちへ戻って依頼メールが再送される', async () => {
+    const desk = await loginAs(app);
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/requests',
+      headers: authHeaders(desk),
+      payload: sampleRequest(),
+    });
+    expect(created.statusCode).toBe(201);
+    const id = (created.json() as { request: { id: string; version: number } }).request.id;
+
+    const review = await app.inject({
+      method: 'POST',
+      url: `/api/requests/${id}/transitions`,
+      headers: authHeaders(desk),
+      payload: { to: 'review', version: 1 },
+    });
+    expect(review.statusCode).toBe(200);
+    const wait = await app.inject({
+      method: 'POST',
+      url: `/api/requests/${id}/transitions`,
+      headers: authHeaders(desk),
+      payload: { to: 'wait', version: (review.json() as { detail: { version: number } }).detail.version },
+    });
+    expect(wait.statusCode).toBe(200);
+
+    const approver = await loginAs(app, 'approver');
+    const waitVersion = (wait.json() as { detail: { version: number } }).detail.version;
+    const approved = await app.inject({
+      method: 'POST',
+      url: `/api/requests/${id}/transitions`,
+      headers: authHeaders(approver),
+      payload: { to: 'approved', version: waitVersion, signal: 'y', checklistAcknowledged: true },
+    });
+    expect(approved.statusCode).toBe(200);
+    const approvedVersion = (approved.json() as { detail: { version: number } }).detail.version;
+
+    // 承認後に受付担当が内容を変える → 承認取消して承認待ちへ戻る（到達可能になった分岐）
+    const patched = await app.inject({
+      method: 'PATCH',
+      url: `/api/requests/${id}`,
+      headers: authHeaders(desk),
+      payload: { ...sampleRequest({ title: '承認後に直した依頼' }), version: approvedVersion },
+    });
+    expect(patched.statusCode).toBe(200);
+    const body = patched.json() as { detail: { status: string }; warnings: { code: string }[] };
+    expect(body.detail.status).toBe('wait');
+    expect(body.warnings.map((w) => w.code)).toContain('ERR-202');
+
+    const mails = await query<{ n: number }>('select count(*)::int as n from mail_outbox where request_id = $1', [id]);
+    expect(mails.rows[0]!.n).toBe(2);
   });
 });

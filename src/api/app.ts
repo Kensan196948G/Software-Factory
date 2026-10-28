@@ -572,7 +572,7 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
     if (!ctx.user.isAdmin && ctx.user.actingRole !== 'desk') throw Errors.noPermission();
     const id = (req.params as { id: string }).id;
     if (!/^\d{1,18}$/.test(id)) throw Errors.notFound('送信できるメール');
-    const result = await deliverOutboxMail(id);
+    const result = await deliverOutboxMail(id, { force: true });
     if (!result) throw Errors.notFound('送信できるメール');
     return result;
   });

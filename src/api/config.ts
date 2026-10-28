@@ -46,6 +46,11 @@ export interface AppConfig {
   smtpRequireTls: boolean;
   smtpUser: string;
   smtpPass: string;
+  /** 送信失敗の自動リトライ（回数・初回間隔）。日次/手動の flush が期日を過ぎたものを送る。 */
+  mailRetryMax: number;
+  mailRetryBaseMinutes: number;
+  /** 下書きの保存期限（日）。日次ジョブが期限切れを消す。0以下は削除しない。 */
+  draftTtlDays: number;
 }
 
 type RawConfig = Record<string, string | undefined>;
@@ -129,6 +134,9 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
     smtpRequireTls: (pick(file, 'SMTP_REQUIRE_TLS') ?? '1') === '1',
     smtpUser: pick(file, 'SMTP_USER') ?? '',
     smtpPass: pick(file, 'SMTP_PASS') ?? '',
+    mailRetryMax: Number(pick(file, 'MAIL_RETRY_MAX') ?? 3),
+    mailRetryBaseMinutes: Number(pick(file, 'MAIL_RETRY_BASE_MINUTES') ?? 5),
+    draftTtlDays: Number(pick(file, 'DRAFT_TTL_DAYS') ?? 30),
   };
 }
 

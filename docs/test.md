@@ -20,9 +20,12 @@ BASE_URL=... SMOKE_EMAIL=... SMOKE_PASSWORD=... pnpm exec tsx scripts/smoke.ts
 | Typecheck（Web/テスト + API） | **PASS** | エラー0 |
 | Lint | **PASS** | 警告0（max-warnings=0） |
 | Unit | **59 / 59 PASS** | 信号R1〜R6・条件チェック・ものさし・遷移・権限・承認チェック・YAML/CSV・承認依頼メール（本文/MIME/宛先/ヘッダ注入/送信経路/EPIPE） |
-| Integration | **40 / 40 PASS** | 実PostgreSQL（`mirai_sf_test`）。認証/CSRF/採番/冪等/承認/差戻し/取消/版競合/出力/監査/下書きのサーバ保存/運用状態のDB保存/承認依頼メール（送信キュー・失敗分離・再送の拒否） |
-| E2E（開発ビルド） | **10 / 10 PASS** | コンソール原本UI: ログイン、登録→再読込でDBから復元、役割切替、承認、0件検索、ログイン失敗、下書きの別端末再開、運用データのDB復元 |
+| Integration | **43 / 43 PASS** | 実PostgreSQL（`mirai_sf_test`）。認証/CSRF/採番/冪等/承認/差戻し/取消/版競合/出力/監査/下書きのサーバ保存/運用状態のDB保存/承認依頼メール（送信キュー・失敗分離・再送の拒否） |
+| E2E（開発ビルド） | **10 / 10 PASS**（+1 skip: Access 越しスモークは認証情報未設定のため skip） | コンソール原本UI: ログイン、登録→再読込でDBから復元、役割切替、承認、0件検索、ログイン失敗、下書きの別端末再開、運用データのDB復元 |
 | E2E（本番ビルド） | **10 / 10 PASS** | `dist` 起動（dev DB・`AUTH_MODE=password`・`COOKIE_SECURE=0` の検証用設定） |
+| SMTP（ローカル受け皿） | **到達 1通** | 実アプリを `MAIL_MODE=smtp`（AUTH PLAIN 付きの受け皿）で起動し、承認依頼が `status='sent'`・`.eml` 1通を実測。TLS は未実測（テスト用証明書の生成が承認されず） |
+| 監査アーカイブ | **PASS** | `pnpm audit:archive` で 621件を `audit-2026-10-28.jsonl.gz` へ差分出力（ハッシュ連鎖 621件 OK） |
+| E2E（Cloudflare Access 越し） | **未実行（Blocker）** | サービストークン作成に Cloudflare API の `access-service-token.write` 権限が必要（現行トークンでは403）。スモークは `tests/e2e/access.spec.ts` に実装済みで、`E2E_ACCESS_URL` と資格情報を設定すれば実行できる |
 | E2E（Preview DB / `mirai_sf`） | **未実行（Blocker）** | `preview.conf` の `SEED_ADMIN_PASSWORD` が空でログインできない。migration は適用済み。Preview 自体は再ビルド・再起動済み（`/console.js` 新版・公開URLは Access 302） |
 | Build | **PASS** | `dist/api` と `dist/web` |
 | DB verify | **PASS** | 19部署／118道具（青52/黄47/赤19）／採番／監査ハッシュ連鎖 |
@@ -59,5 +62,5 @@ BASE_URL=... SMOKE_EMAIL=... SMOKE_PASSWORD=... pnpm exec tsx scripts/smoke.ts
 
 - Cloudflare Access の**ワンタイムパスワードでの実ログイン**は、受信メールが必要なため自動化していない。Access のリダイレクトとポリシーは実測済み。人間の最終確認が必要（`docs/deployment.md` §4）。
 - E2E（Preview DB `mirai_sf`）は、`preview.conf` の `SEED_ADMIN_PASSWORD` が空のため未実行（migration は適用済み）。
-- 承認依頼メールの実SMTP送信は未検証。ローカルの擬似SMTPサーバ（unit）で、接続・DATA・ヘッダまでを確認している。
-- 滞留通知の日次実行は、外部スケジューラ（systemd timer / cron）の登録が別途必要（`docs/deployment.md` 7-1）。
+- SMTP はローカル受け皿で認証付きの到達を実測済み。実プロバイダ・TLS（STARTTLS/暗黙TLS）は未検証（認証情報と証明書が必要）。
+- 滞留通知・下書きTTL・（別コマンドで）監査アーカイブは、systemd user timer `mirai-sf-reminders.timer`（毎日 08:30）で実行する（登録済み・初回実行で催促1通を実測）。
