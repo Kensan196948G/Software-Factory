@@ -1,0 +1,29 @@
+# dependencies / build
+node_modules/
+dist/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# local working artifacts (source extraction, screenshots, chrome profiles)
+_work/
+.playwright/
+test-results/
+playwright-report/
+blob-report/
+
+# logs / OS
+*.log
+.DS_Store
+Thumbs.db
+
+# cloudflare local state
+.wrangler/
+.dev.vars

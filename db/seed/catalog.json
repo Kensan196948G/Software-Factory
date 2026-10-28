@@ -1,0 +1,1064 @@
+[
+ {
+  "id": "keiei-01",
+  "dept_code": "keiei",
+  "name": "経営ダッシュボード",
+  "description": "受注・売上・利益を、支店ごと・海の工事／陸の工事ごとに1つの画面で見られる",
+  "signal": "g",
+  "seed_candidate": true,
+  "sort_order": 1
+ },
+ {
+  "id": "keiei-02",
+  "dept_code": "keiei",
+  "name": "会議の議事録まとめ",
+  "description": "会議の録音から、決まったことと宿題を整理する",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "keiei-03",
+  "dept_code": "keiei",
+  "name": "公共事業の予算・発注見通しの情報あつめ",
+  "description": "港湾・空港・河川などの国の予算や発注の見通しを集めて、短くまとめる",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "keiei-04",
+  "dept_code": "keiei",
+  "name": "グループ向け報告資料のたたき台",
+  "description": "髙松コンストラクショングループへ出す報告資料の下書きを、過去の数字から作る",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "keiei-05",
+  "dept_code": "keiei",
+  "name": "経審の点数の試算",
+  "description": "経営事項審査の点数が、何で上がり下がりするかを試算する（申請内容は人が決める）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "keiei-06",
+  "dept_code": "keiei",
+  "name": "投資・撤退の決定",
+  "description": "作業船の新しい建造などの投資は、AIは材料集めまで。決めるのは経営陣",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "eigyo-01",
+  "dept_code": "eigyo",
+  "name": "入札・発注情報のお知らせ",
+  "description": "国や港の管理者などの公告を集めて、海の工事など自社に合いそうな案件を知らせる",
+  "signal": "g",
+  "seed_candidate": true,
+  "sort_order": 1
+ },
+ {
+  "id": "eigyo-02",
+  "dept_code": "eigyo",
+  "name": "営業台帳（お客様・案件の管理）",
+  "description": "だれと、どの案件を、どこまで話したかを記録する",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "eigyo-03",
+  "dept_code": "eigyo",
+  "name": "過去の実績さがし",
+  "description": "似た港・空港・護岸の工事の実績・写真・工事成績をすぐに探せる",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "eigyo-04",
+  "dept_code": "eigyo",
+  "name": "入札参加資格・提出期限の管理",
+  "description": "資格の更新日や書類の締切を知らせる",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "eigyo-05",
+  "dept_code": "eigyo",
+  "name": "技術提案書のたたき台",
+  "description": "総合評価の技術提案で、自社技術をどこで使えるかの下書きを作る",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "eigyo-06",
+  "dept_code": "eigyo",
+  "name": "入札に参加するか・入札価格の決定",
+  "description": "参加するかどうかと入札価格は、責任者が決める",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "solution-01",
+  "dept_code": "solution",
+  "name": "民間案件の台帳と進み具合",
+  "description": "お客様ごとの案件と、どこまで進んだかがひと目でわかる",
+  "signal": "g",
+  "seed_candidate": true,
+  "sort_order": 1
+ },
+ {
+  "id": "solution-02",
+  "dept_code": "solution",
+  "name": "プロジェクトの宿題一覧",
+  "description": "打合せで出た宿題と期限を、関係者みんなで見られる",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "solution-03",
+  "dept_code": "solution",
+  "name": "再生可能エネルギーの情報あつめ",
+  "description": "風力発電など、エネルギー関連工事のニュースや制度を集めて短くまとめる",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "solution-04",
+  "dept_code": "solution",
+  "name": "提案資料のたたき台",
+  "description": "お客様の要望から、提案資料の下書きを作る",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "solution-05",
+  "dept_code": "solution",
+  "name": "複数の案の比べっこ表",
+  "description": "工期・費用・環境への影響などを、同じ形の表に並べる（数字は担当者が確認）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "solution-06",
+  "dept_code": "solution",
+  "name": "受注条件・契約条件の決定",
+  "description": "どんな条件で引き受けるかは、責任者が決める",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "sekkei-01",
+  "dept_code": "sekkei",
+  "name": "社内単価・作業船の費用データの検索",
+  "description": "過去に使った単価や、作業船を使うときの費用をすぐに引ける",
+  "signal": "g",
+  "seed_candidate": true,
+  "sort_order": 1
+ },
+ {
+  "id": "sekkei-02",
+  "dept_code": "sekkei",
+  "name": "図面・設計書の版の管理",
+  "description": "どれが最新版か一目でわかる保管場所（共通データ環境）",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "sekkei-03",
+  "dept_code": "sekkei",
+  "name": "図面からの数量拾いの補助",
+  "description": "図面から数量を拾う作業を手伝う（数量は技術者が確認）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "sekkei-04",
+  "dept_code": "sekkei",
+  "name": "過去工事との見積比べ",
+  "description": "似た工事と比べて、大きなズレがある項目を知らせる",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "sekkei-05",
+  "dept_code": "sekkei",
+  "name": "照査チェックリストの書きもれ確認",
+  "description": "照査の記入もれや、まだ確認していない項目を知らせる",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "sekkei-06",
+  "dept_code": "sekkei",
+  "name": "構造計算・設計の合否判断",
+  "description": "安全かどうかの判断は、資格を持つ技術者が行う",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "ict-01",
+  "dept_code": "ict",
+  "name": "自社技術の使い方さがし",
+  "description": "MC-Navi・MC-Caisson・AR施工支援システムなど、社内技術の説明と使った現場の例をすぐに探せる",
+  "signal": "g",
+  "seed_candidate": true,
+  "sort_order": 1
+ },
+ {
+  "id": "ict-02",
+  "dept_code": "ict",
+  "name": "NETISなど新技術の情報あつめ",
+  "description": "新しい技術の情報を集めて、短くまとめる",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "ict-03",
+  "dept_code": "ict",
+  "name": "現場での試しの記録と効果",
+  "description": "試した技術の結果と、効果の数字を記録する",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "ict-04",
+  "dept_code": "ict",
+  "name": "海底の3Dデータの変換と共有",
+  "description": "深さを測ったデータや点群を、みんなが見やすい形に変換する",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "ict-05",
+  "dept_code": "ict",
+  "name": "技術論文・発表資料のたたき台",
+  "description": "現場の成果から、発表資料の下書きを作る",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "ict-06",
+  "dept_code": "ict",
+  "name": "新しい工法を現場で使うかの決定",
+  "description": "現場で使うかどうかは、技術者と責任者が決める",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "kaijo-01",
+  "dept_code": "kaijo",
+  "name": "工事写真の整理・写真台帳",
+  "description": "撮った写真を工種・場所ごとに並べ、台帳づくりを楽にする（海の上の圏外でも消えない）",
+  "signal": "g",
+  "seed_candidate": true,
+  "sort_order": 1
+ },
+ {
+  "id": "kaijo-02",
+  "dept_code": "kaijo",
+  "name": "作業日報",
+  "description": "作業船・潜水士・天気・潮の記録を、スマホから入力。前の日の内容を引き継ぐ",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "kaijo-03",
+  "dept_code": "kaijo",
+  "name": "天気・波・潮のお知らせ",
+  "description": "予報を集めて、作業できそうな時間帯を色で見せる（作業するかは人が決める）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "kaijo-04",
+  "dept_code": "kaijo",
+  "name": "浚渫・埋立の進み具合の見える化",
+  "description": "測った海の深さから、どこまで掘れたか・埋まったかを色で見る（数量の確定は技術者）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "kaijo-05",
+  "dept_code": "kaijo",
+  "name": "打合せ簿・協議記録のたたき台",
+  "description": "打合せのメモから、決まった様式の記録を作る",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "kaijo-06",
+  "dept_code": "kaijo",
+  "name": "工程表のたたき台・遅れのお知らせ",
+  "description": "天気待ちの日数も見込んで下書きを作り、遅れそうな所を早めに知らせる",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "kaijo-07",
+  "dept_code": "kaijo",
+  "name": "起重機船の吊り計画・ケーソンを置く計画の決定",
+  "description": "重い物を海の上で吊る計画は、責任を持つ技術者が決める",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 7
+ },
+ {
+  "id": "rikujo-01",
+  "dept_code": "rikujo",
+  "name": "作業日報・工事日報",
+  "description": "スマホで現場から入力。天気・人数・機械を前の日から引き継ぐ",
+  "signal": "g",
+  "seed_candidate": true,
+  "sort_order": 1
+ },
+ {
+  "id": "rikujo-02",
+  "dept_code": "rikujo",
+  "name": "近隣の方からの問い合わせ記録",
+  "description": "解体や造成の工事で受けた問い合わせと、対応の進み具合を残す",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "rikujo-03",
+  "dept_code": "rikujo",
+  "name": "実行予算と原価の見える化",
+  "description": "予算と実際にかかったお金の差を、工種ごとに見る",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "rikujo-04",
+  "dept_code": "rikujo",
+  "name": "3D点群・ドローン写真の閲覧",
+  "description": "現場の形を3Dで見る（数量・寸法の確定は技術者）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "rikujo-05",
+  "dept_code": "rikujo",
+  "name": "解体前の調査記録の整理",
+  "description": "解体前に必要な調査の記録をまとめ、届出の期限を知らせる（調査の判断は資格者）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "rikujo-06",
+  "dept_code": "rikujo",
+  "name": "施工計画書のたたき台",
+  "description": "過去の計画書から下書きを作り、所長が手直しして決める",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "rikujo-07",
+  "dept_code": "rikujo",
+  "name": "仮設・揚重計画の決定",
+  "description": "足場やクレーンの計画を決めるのは、責任を持つ技術者",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 7
+ },
+ {
+  "id": "senpaku-01",
+  "dept_code": "senpaku",
+  "name": "作業船の予定表",
+  "description": "どの船が、いつ、どの港の現場にいるかがひと目でわかる",
+  "signal": "g",
+  "seed_candidate": true,
+  "sort_order": 1
+ },
+ {
+  "id": "senpaku-02",
+  "dept_code": "senpaku",
+  "name": "船の検査・点検の期限管理",
+  "description": "船の検査や機械の点検の期限を知らせ、期限切れの船は予定に入れられなくする",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "senpaku-03",
+  "dept_code": "senpaku",
+  "name": "船員の資格・乗船の記録",
+  "description": "だれが何の資格を持ち、どの船に乗ったかの記録（見られる人はしぼる）",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "senpaku-04",
+  "dept_code": "senpaku",
+  "name": "燃料とCO2の記録",
+  "description": "使った燃料の量から、CO2の量を計算して残す",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "senpaku-05",
+  "dept_code": "senpaku",
+  "name": "修理の記録と故障の傾向",
+  "description": "修理の記録から、故障しやすい部品や時期を見える化する",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "senpaku-06",
+  "dept_code": "senpaku",
+  "name": "船を出してよいか・作業船を使ってよいかの判断",
+  "description": "船長と責任者が決める。AIは天気や点検の材料をそろえるまで",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "kobai-01",
+  "dept_code": "kobai",
+  "name": "協力会社データベース",
+  "description": "建設業許可・保険・実績を1か所で管理する",
+  "signal": "g",
+  "seed_candidate": true,
+  "sort_order": 1
+ },
+ {
+  "id": "kobai-02",
+  "dept_code": "kobai",
+  "name": "協力会社からの書類回収",
+  "description": "安全書類（グリーンファイル）などの、出た・出ていないを見える化",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "kobai-03",
+  "dept_code": "kobai",
+  "name": "見積の比較表づくり",
+  "description": "複数社の見積を、同じ形の表に並べる",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "kobai-04",
+  "dept_code": "kobai",
+  "name": "注文書・契約書類の作成補助",
+  "description": "決まった内容から、注文書の下書きを作る",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "kobai-05",
+  "dept_code": "kobai",
+  "name": "出来高・支払いの確認補助",
+  "description": "出来高と請求の金額が合っているかを照らし合わせる",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "kobai-06",
+  "dept_code": "kobai",
+  "name": "発注先の決定・契約の締結",
+  "description": "どこに頼むかと契約は、責任者が決める",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "anzen-01",
+  "dept_code": "anzen",
+  "name": "安全パトロール記録",
+  "description": "支店の安全パトロールでの指摘と、直したかどうかを記録する",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 1
+ },
+ {
+  "id": "anzen-02",
+  "dept_code": "anzen",
+  "name": "KY・安全書類の書きもれ確認",
+  "description": "空欄や記入もれを知らせるだけ。危険の見積もりは人",
+  "signal": "y",
+  "seed_candidate": true,
+  "sort_order": 2
+ },
+ {
+  "id": "anzen-03",
+  "dept_code": "anzen",
+  "name": "暑さ指数（WBGT）のお知らせ",
+  "description": "気象データから暑さ指数を現場に知らせる（休憩・中止の判断は人）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "anzen-04",
+  "dept_code": "anzen",
+  "name": "潜水作業の記録の整理",
+  "description": "潜った時間や深さの記録をまとめ、決まりを外れそうなときに知らせる（潜水の計画は人）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "anzen-05",
+  "dept_code": "anzen",
+  "name": "ヒヤリハットの集計・傾向",
+  "description": "報告を集めて、多い場所・時間・作業を見える化する",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "anzen-06",
+  "dept_code": "anzen",
+  "name": "多言語の安全教育資料",
+  "description": "外国籍の仲間向けに資料を訳す（訳は必ず人が確認）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "anzen-07",
+  "dept_code": "anzen",
+  "name": "作業中止・立入禁止などの安全判断",
+  "description": "現場の安全に関わる決定は、責任者が行う",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 7
+ },
+ {
+  "id": "hinshitsu-01",
+  "dept_code": "hinshitsu",
+  "name": "検査記録・試験成績の管理",
+  "description": "コンクリート試験などの結果を、工事ごとに整理する",
+  "signal": "g",
+  "seed_candidate": true,
+  "sort_order": 1
+ },
+ {
+  "id": "hinshitsu-02",
+  "dept_code": "hinshitsu",
+  "name": "不具合・是正の追跡",
+  "description": "見つかった不具合が、直ったかどうかを最後まで追う",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "hinshitsu-03",
+  "dept_code": "hinshitsu",
+  "name": "ISOの記録あつめ",
+  "description": "ISO 9001・14001・45001で必要な記録が、そろっているかを示す",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "hinshitsu-04",
+  "dept_code": "hinshitsu",
+  "name": "海の濁りなどの測定記録",
+  "description": "工事中の海の濁りなどの測定値を集め、基準に近づいたら知らせる（工事を止めるかは人）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "hinshitsu-05",
+  "dept_code": "hinshitsu",
+  "name": "電子納品の形式チェック",
+  "description": "提出データの形式やファイル名のまちがいを知らせる",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "hinshitsu-06",
+  "dept_code": "hinshitsu",
+  "name": "検査の合否判定",
+  "description": "合格か不合格かを決めるのは検査員",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "iji-01",
+  "dept_code": "iji",
+  "name": "点検記録・傷んだ所の写真の管理",
+  "description": "点検の結果と写真を、施設・場所ごとに整理する",
+  "signal": "g",
+  "seed_candidate": true,
+  "sort_order": 1
+ },
+ {
+  "id": "iji-02",
+  "dept_code": "iji",
+  "name": "補修の記録の台帳",
+  "description": "いつ、どこを、どう直したかを残す",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "iji-03",
+  "dept_code": "iji",
+  "name": "保証期間・定期点検のお知らせ",
+  "description": "保証の期限や点検の時期が近いことを知らせる",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "iji-04",
+  "dept_code": "iji",
+  "name": "写真からの「要確認」候補",
+  "description": "ひび割れなどがありそうな写真に印を付ける（判断は技術者）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "iji-05",
+  "dept_code": "iji",
+  "name": "補修方法の比べっこ資料",
+  "description": "いくつかの補修方法を、費用・工期で並べた下書きを作る",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "iji-06",
+  "dept_code": "iji",
+  "name": "健全度・補修が必要かの判定",
+  "description": "施設の状態の評価は、資格を持つ技術者が行う",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "shiten-01",
+  "dept_code": "shiten",
+  "name": "支店ごとの現場一覧と連絡先",
+  "description": "どこで、どんな工事を、だれが担当しているかがわかる",
+  "signal": "g",
+  "seed_candidate": true,
+  "sort_order": 1
+ },
+ {
+  "id": "shiten-02",
+  "dept_code": "shiten",
+  "name": "地域の協力会社・役所の連絡先台帳",
+  "description": "地域の連絡先を、支店の中で同じものを使う",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "shiten-03",
+  "dept_code": "shiten",
+  "name": "災害のあとの安否確認・現場の被害報告",
+  "description": "地震や台風のあと、社員と現場の様子を集める",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "shiten-04",
+  "dept_code": "shiten",
+  "name": "事務所の申請（備品・車など）",
+  "description": "紙やメールの申請を、電子の申請にまとめる",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "shiten-05",
+  "dept_code": "shiten",
+  "name": "地域の発注予定のまとめ",
+  "description": "その地域の発注予定を集めて、短くまとめる（どれをねらうかは人）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "shiten-06",
+  "dept_code": "shiten",
+  "name": "災害復旧に出動するか・人を送るかの判断",
+  "description": "地域を助けに行くかどうかは、支店長と責任者が決める",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "somu-01",
+  "dept_code": "somu",
+  "name": "規程・マニュアルの検索",
+  "description": "「この場合どうする？」を社内規程からすぐに探す",
+  "signal": "g",
+  "seed_candidate": true,
+  "sort_order": 1
+ },
+ {
+  "id": "somu-02",
+  "dept_code": "somu",
+  "name": "許可・登録の更新期限の管理",
+  "description": "建設業許可・建設コンサルタント登録・測量業者登録など、たくさんの許可・登録の更新日を知らせる",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "somu-03",
+  "dept_code": "somu",
+  "name": "社内申請・稟議の電子化",
+  "description": "紙の申請を desknet's NEO / AppSuite の電子申請にする",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "somu-04",
+  "dept_code": "somu",
+  "name": "文書の保存期間と廃棄の管理",
+  "description": "いつまで保存し、いつ廃棄するかを管理する",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "somu-05",
+  "dept_code": "somu",
+  "name": "契約書の条文チェック補助",
+  "description": "ひな形とちがう条文に印を付ける（読み方は法務担当）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "somu-06",
+  "dept_code": "somu",
+  "name": "契約の締結・法律の判断",
+  "description": "契約してよいか、法律上どうかは人が判断する",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "jinji-01",
+  "dept_code": "jinji",
+  "name": "勤怠と時間外労働のお知らせ",
+  "description": "残業の上限に近づいた人と上司に、早めに知らせる",
+  "signal": "g",
+  "seed_candidate": true,
+  "sort_order": 1
+ },
+ {
+  "id": "jinji-02",
+  "dept_code": "jinji",
+  "name": "資格・免許の取得と期限の管理",
+  "description": "だれが何の資格を持ち、いつ更新かがわかる",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "jinji-03",
+  "dept_code": "jinji",
+  "name": "転勤・単身赴任の手続きの案内",
+  "description": "転勤や帰省のときに必要な手続きを、順番に案内する",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "jinji-04",
+  "dept_code": "jinji",
+  "name": "教育・研修の受講記録",
+  "description": "受けた研修と、まだ受けていない研修がわかる",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "jinji-05",
+  "dept_code": "jinji",
+  "name": "建設キャリアアップシステム（CCUS）の記録整理",
+  "description": "就業の記録を集計して、確認しやすくする",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "jinji-06",
+  "dept_code": "jinji",
+  "name": "求人票・研修資料のたたき台",
+  "description": "求人や研修の資料の下書きを作る（公平な表現か人が確認）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "jinji-07",
+  "dept_code": "jinji",
+  "name": "採用・評価・配置・処分の決定",
+  "description": "人に関わる判断はAIに決めさせない。人が責任を持って決める",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 7
+ },
+ {
+  "id": "keiri-01",
+  "dept_code": "keiri",
+  "name": "工事ごとの原価集計",
+  "description": "現場の入力から、工事ごとのお金を自動で集計する",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 1
+ },
+ {
+  "id": "keiri-02",
+  "dept_code": "keiri",
+  "name": "入金・支払いの予定の見える化",
+  "description": "いつ、いくら入って、いくら出るかがわかる",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "keiri-03",
+  "dept_code": "keiri",
+  "name": "請求書の受け取りと仕訳の候補",
+  "description": "届いた請求書を読み取り、仕訳の候補を出す（確定は経理担当）",
+  "signal": "y",
+  "seed_candidate": true,
+  "sort_order": 3
+ },
+ {
+  "id": "keiri-04",
+  "dept_code": "keiri",
+  "name": "経費精算の書きもれチェック",
+  "description": "領収書の不足や、ルールとちがう申請を知らせる",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "keiri-05",
+  "dept_code": "keiri",
+  "name": "内部統制（J-SOX）の証跡あつめ",
+  "description": "グループの決まりに合わせて、確認に必要な記録を集め、そろっているか示す",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "keiri-06",
+  "dept_code": "keiri",
+  "name": "支払いの承認・決算の確定",
+  "description": "お金を払うことと、決算の数字は人が確定する",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "dx-01",
+  "dept_code": "dx",
+  "name": "PC・アカウントの台帳",
+  "description": "入社・退社・転勤と連動して、PCとアカウントを管理する",
+  "signal": "g",
+  "seed_candidate": true,
+  "sort_order": 1
+ },
+ {
+  "id": "dx-02",
+  "dept_code": "dx",
+  "name": "全国の支店・現場の通信機器の状態",
+  "description": "支店や現場事務所の通信機器が動いているかを一覧で見る",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "dx-03",
+  "dept_code": "dx",
+  "name": "ヘルプデスクの受付と一次回答",
+  "description": "desknet's NEO / AppSuite で受け付け、よくある質問に答える（回答内容は担当が見守る）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "dx-04",
+  "dept_code": "dx",
+  "name": "セキュリティ通知の整理",
+  "description": "たくさんの警告をまとめ、急ぐものを上に出す",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "dx-05",
+  "dept_code": "dx",
+  "name": "ソフトウェアファクトリー自体の運用",
+  "description": "このラインの検査ルールや権限を管理する",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "dx-06",
+  "dept_code": "dx",
+  "name": "権限の付与・セキュリティ例外の承認",
+  "description": "だれに何の権限を渡すかは、人が承認する",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "kansa-01",
+  "dept_code": "kansa",
+  "name": "法令改正のお知らせ",
+  "description": "建設業法や港の工事に関係する法令の改正を集めて知らせる",
+  "signal": "g",
+  "seed_candidate": true,
+  "sort_order": 1
+ },
+ {
+  "id": "kansa-02",
+  "dept_code": "kansa",
+  "name": "監査の指摘のフォロー",
+  "description": "指摘された点が、直ったかどうかを追う",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "kansa-03",
+  "dept_code": "kansa",
+  "name": "監査の証跡あつめ・チェックリスト",
+  "description": "監査に必要な記録を集め、チェックリストを準備する",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "kansa-04",
+  "dept_code": "kansa",
+  "name": "規程と実際のずれの候補",
+  "description": "規程と実際の記録がちがいそうな所に印を付ける",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "kansa-05",
+  "dept_code": "kansa",
+  "name": "内部通報の受付台帳",
+  "description": "通報の受付と対応の記録（見られるのは担当者だけ、通報者を守る）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "kansa-06",
+  "dept_code": "kansa",
+  "name": "不正の認定・処分の判断",
+  "description": "不正かどうか、どう対応するかは人が判断する",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 6
+ },
+ {
+  "id": "koho-01",
+  "dept_code": "koho",
+  "name": "見学会・イベントの申込受付",
+  "description": "現場見学会や、港のイベントへの出展の申込と連絡をまとめる",
+  "signal": "g",
+  "seed_candidate": true,
+  "sort_order": 1
+ },
+ {
+  "id": "koho-02",
+  "dept_code": "koho",
+  "name": "写真素材の管理（了解つき）",
+  "description": "広報用の写真を、写っている人の了解の有無と一緒に管理する",
+  "signal": "g",
+  "seed_candidate": false,
+  "sort_order": 2
+ },
+ {
+  "id": "koho-03",
+  "dept_code": "koho",
+  "name": "サステナビリティ報告書のデータあつめ",
+  "description": "CO2・廃棄物・リサイクル材の量などを、報告書用に集める（数字は担当者が確認）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 3
+ },
+ {
+  "id": "koho-04",
+  "dept_code": "koho",
+  "name": "広報記事・SNS投稿のたたき台",
+  "description": "現場の話題から、記事の下書きを作る",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 4
+ },
+ {
+  "id": "koho-05",
+  "dept_code": "koho",
+  "name": "近隣・漁業関係者へのお知らせ文",
+  "description": "工事のお知らせの下書きを作る（内容は現場と確認）",
+  "signal": "y",
+  "seed_candidate": false,
+  "sort_order": 5
+ },
+ {
+  "id": "koho-06",
+  "dept_code": "koho",
+  "name": "対外発表・おわびの最終決定",
+  "description": "会社として何を発表するかは、責任者が決める",
+  "signal": "r",
+  "seed_candidate": false,
+  "sort_order": 6
+ }
+]

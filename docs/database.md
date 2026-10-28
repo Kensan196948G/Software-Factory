@@ -1,0 +1,81 @@
+# データベース（ローカル PostgreSQL）
+
+正本: 詳細仕様書 V1.0 5章（ENT-01〜11）。実装: `db/migrations/0001_init.sql`。
+
+## 1. 接続
+
+| 用途 | 接続 | 備考 |
+|---|---|---|
+| アプリ | `postgresql:///mirai_sf_dev?host=/var/run/postgresql` | ローカルunix socket（peer認証）。**インターネットへ公開しない** |
+| migration | 同上（`MIGRATION_DATABASE_URL`） | 破壊的変更は行わない・additiveのみ |
+| 結合テスト | `mirai_sf_test` | テスト開始時に `public` スキーマを作り直す（`_test` のみ） |
+| Preview | `mirai_sf`（任意） | 必要なら `DATABASE_URL` を切替。既定は開発DB |
+
+ロール: ローカルは OS ユーザー `kensan`（開発用）。CIは `postgres`。本番移行時は専用の最小権限ロールを作る（Backlog）。
+
+## 2. テーブル
+
+| テーブル | 仕様ID | 内容 |
+|---|---|---|
+| `department` | ENT-05 | 19部署（code, name, short_name, role_desc, sort_order） |
+| `catalog_tool` | ENT-06 | 118道具（id: keiei-01, dept_code, signal g/y/r, seed_candidate） |
+| `app_user` / `user_role` | — | 利用者と役割（requester/desk/approver） |
+| `session` | — | セッション（トークンはSHA-256で保存、acting_role, csrf_token, expires_at） |
+| `request` | ENT-01 | 依頼。受付番号（REQ-YYYY-NNNN）・状態12・信号・注文書版・論理削除 |
+| `request_counter` | — | 年ごとの採番（トランザクション内で原子的に増加） |
+| `request_history` | ENT-02 | 追記型の変更履歴（受付・内容を編集・状態を「〜」に変更） |
+| `comment` | ENT-03 | コメント（差戻し理由も残す） |
+| `approval` | ENT-07 | 承認・差戻し・見送りの記録（決定色・候補色・チェック結果・版） |
+| `attachment` | ENT-04 | 添付のメタ情報のみ（name, size, sha256） |
+| `draft` | 5-6 | 下書き（利用者ごとに1件、本人のみ） |
+| `audit_log` | ENT-11 | 監査ログ（追記のみ・ハッシュ連鎖・UPDATE/DELETEをトリガで拒否） |
+| `idempotency` | — | 操作キー（二重登録の防止） |
+| `schema_migrations` | — | 適用済みmigration |
+
+## 3. 制約（主なもの）
+
+- `request.title` ≤ 60、`problem`/`purpose` ≤ 2000、`users` ≥ 1、`scope` ≥ 1、`criteria` 1〜8件。
+- `status` は12値、`signal_decided`/`catalog_tool.signal` は g/y/r、`kind` 4値、`parties` 3値。
+- 受付番号は一意（`id`）、連番は一意（`seq`）。
+- 取消は `deleted=true`（論理削除）。データは消さない。
+
+## 4. 手順
+
+```bash
+pnpm db:migrate     # 空DBから再実行可能（適用済みはskip）
+pnpm db:seed        # 部署・道具・管理者・（空なら）見本9件
+pnpm db:verify      # 19部署/118道具/青52黄47赤19/採番/監査ハッシュ連鎖
+pnpm db:reset       # _dev/_test のみ・--yes 必須（全業務データを作り直す）
+```
+
+### 空DBからの再現（受入）
+
+```bash
+dropdb mirai_sf_dev && createdb -O "$USER" mirai_sf_dev
+pnpm db:migrate
+pnpm db:seed
+pnpm db:verify
+```
+
+### バックアップ / 復元
+
+```bash
+pg_dump -Fc -d mirai_sf_dev -f mirai_sf_dev_$(date +%Y%m%d).dump
+pg_restore -c -d mirai_sf_dev mirai_sf_dev_YYYYMMDD.dump
+```
+
+### ロールバック方針
+
+migrationはadditiveのみ。破壊的変更は行わない。障害時はバックアップから復元し、コードは直前のSHAへ戻す（`docs/deployment.md`）。
+
+## 5. インデックス
+
+- `request (status, updated_at desc)` / `(dept_code)` / `(applicant_user_id)` / `(approver_user_id)` / `(updated_at desc)`
+- `request_history (request_id, at)` / `comment (request_id, at)` / `approval (request_id, at)`
+- `catalog_tool (dept_code, sort_order)`
+- `audit_log (at desc)` / `(target_type, target_id)`
+
+## 6. 監査ログのハッシュ連鎖
+
+`hash = sha256(prev_hash + "|" + canonical(payload))`。`payload` は日時・操作者・役割・操作・対象・結果・差分・相関ID。
+書き込みは `pg_advisory_xact_lock(918273645)` で直列化。`verifyAuditChain()` が全件を再計算して検証する。

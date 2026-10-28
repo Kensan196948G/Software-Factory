@@ -1,0 +1,249 @@
+[
+ {
+  "name": "経営企画室",
+  "role_desc": "会社のかじ取り役。数字を見て、進む方向を決める",
+  "counts": [
+   "6",
+   "3",
+   "2",
+   "1"
+  ],
+  "code": "keiei",
+  "short_name": "経営企画",
+  "sort_order": 1
+ },
+ {
+  "name": "営業本部",
+  "role_desc": "国や自治体の工事（港・空港・護岸など）をとってくる係",
+  "counts": [
+   "6",
+   "4",
+   "1",
+   "1"
+  ],
+  "code": "eigyo",
+  "short_name": "営業",
+  "sort_order": 2
+ },
+ {
+  "name": "ソリューション営業本部",
+  "role_desc": "民間のお客様（不動産会社・発電事業者など）と一緒に計画をつくる係",
+  "counts": [
+   "6",
+   "3",
+   "2",
+   "1"
+  ],
+  "code": "solution",
+  "short_name": "ソリューション営業",
+  "sort_order": 3
+ },
+ {
+  "name": "技術本部（設計・積算・照査）",
+  "role_desc": "図面を考え、工事の値段を計算する係",
+  "counts": [
+   "6",
+   "2",
+   "3",
+   "1"
+  ],
+  "code": "sekkei",
+  "short_name": "設計・積算",
+  "sort_order": 4
+ },
+ {
+  "name": "技術本部（ICT・技術開発）",
+  "role_desc": "新しい技術を作って試し、全国の現場に広める係",
+  "counts": [
+   "6",
+   "3",
+   "2",
+   "1"
+  ],
+  "code": "ict",
+  "short_name": "ICT",
+  "sort_order": 5
+ },
+ {
+  "name": "支店工事部の現場（海の工事）",
+  "role_desc": "海の上で、港・護岸・埋立・空港などの工事を進める係",
+  "counts": [
+   "7",
+   "2",
+   "4",
+   "1"
+  ],
+  "code": "kaijo",
+  "short_name": "現場（海）",
+  "sort_order": 6
+ },
+ {
+  "name": "支店工事部の現場（陸の工事・エネルギー関連工事）",
+  "role_desc": "陸の上で、造成・解体・災害復旧・風力発電所などの工事を進める係",
+  "counts": [
+   "7",
+   "2",
+   "4",
+   "1"
+  ],
+  "code": "rikujo",
+  "short_name": "現場（陸）",
+  "sort_order": 7
+ },
+ {
+  "name": "船舶事業部（作業船）",
+  "role_desc": "浚渫船などの作業船と、船で働く人を守る係",
+  "counts": [
+   "6",
+   "4",
+   "1",
+   "1"
+  ],
+  "code": "senpaku",
+  "short_name": "船舶",
+  "sort_order": 8
+ },
+ {
+  "name": "施工本部 購買部",
+  "role_desc": "協力会社と、材料・船・機械を手配する係",
+  "counts": [
+   "6",
+   "2",
+   "3",
+   "1"
+  ],
+  "code": "kobai",
+  "short_name": "購買",
+  "sort_order": 9
+ },
+ {
+  "name": "安全品質環境本部（安全）",
+  "role_desc": "海でも陸でも、みんなをけがから守る係",
+  "counts": [
+   "7",
+   "1",
+   "5",
+   "1"
+  ],
+  "code": "anzen",
+  "short_name": "安全",
+  "sort_order": 10
+ },
+ {
+  "name": "安全品質環境本部（品質・環境）",
+  "role_desc": "出来ばえと、海や地球への影響を確かめる係",
+  "counts": [
+   "6",
+   "2",
+   "3",
+   "1"
+  ],
+  "code": "hinshitsu",
+  "short_name": "品質・環境",
+  "sort_order": 11
+ },
+ {
+  "name": "維持・補修（支店・技術本部）",
+  "role_desc": "できあがった港や空港を、長く使えるように見守る係",
+  "counts": [
+   "6",
+   "3",
+   "2",
+   "1"
+  ],
+  "code": "iji",
+  "short_name": "維持・補修",
+  "sort_order": 12
+ },
+ {
+  "name": "全国の支店・営業所（事務・地域の窓口）",
+  "role_desc": "北海道から沖縄まで、地域の窓口として現場を支える係",
+  "counts": [
+   "6",
+   "4",
+   "1",
+   "1"
+  ],
+  "code": "shiten",
+  "short_name": "支店",
+  "sort_order": 13
+ },
+ {
+  "name": "管理本部（総務・法務）",
+  "role_desc": "会社の書類とルールの係",
+  "counts": [
+   "6",
+   "4",
+   "1",
+   "1"
+  ],
+  "code": "somu",
+  "short_name": "総務・法務",
+  "sort_order": 14
+ },
+ {
+  "name": "管理本部（人事・労務）",
+  "role_desc": "人を育て、働き方を守る係",
+  "counts": [
+   "7",
+   "5",
+   "1",
+   "1"
+  ],
+  "code": "jinji",
+  "short_name": "人事・労務",
+  "sort_order": 15
+ },
+ {
+  "name": "管理本部 経理部",
+  "role_desc": "お金の出入りと、会社の財布を守る係",
+  "counts": [
+   "6",
+   "2",
+   "3",
+   "1"
+  ],
+  "code": "keiri",
+  "short_name": "経理",
+  "sort_order": 16
+ },
+ {
+  "name": "DX推進部（情報システム）",
+  "role_desc": "ITの道具をそろえ、会社の情報を守る係",
+  "counts": [
+   "6",
+   "2",
+   "3",
+   "1"
+  ],
+  "code": "dx",
+  "short_name": "DX推進",
+  "sort_order": 17
+ },
+ {
+  "name": "内部監査・コンプライアンス",
+  "role_desc": "ルールが守られているかを確かめる係",
+  "counts": [
+   "6",
+   "2",
+   "3",
+   "1"
+  ],
+  "code": "kansa",
+  "short_name": "内部監査",
+  "sort_order": 18
+ },
+ {
+  "name": "広報・サステナビリティ",
+  "role_desc": "会社のことを社会に知ってもらい、地球にやさしい会社にする係",
+  "counts": [
+   "6",
+   "2",
+   "3",
+   "1"
+  ],
+  "code": "koho",
+  "short_name": "広報",
+  "sort_order": 19
+ }
+]

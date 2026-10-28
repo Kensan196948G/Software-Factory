@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>みらいソフトウェアファクトリー 建設土木版</title>
+<style>
+:root{
+  --bg:#f6f5f0; --surface:#ffffff; --surface2:#efede5; --ink:#1c232d; --muted:#5d6672; --line:#e0dccf;
+  --navy:#1d3550; --steel:#3b4a5c;
+  --safety:#f5b800; --safety-soft:#fff6d6; --accent:#ee7d1c; --accent-soft:#ffeedd;
+  --ai:#0f9d9a; --ai-soft:#ddf4f2;
+  --ci:#4f5bd5; --ci-soft:#e8eafb;
+  --human:#d4553a; --human-soft:#fbe6e0;
+  --field:#5a8f2e; --field-soft:#e8f3dc;
+  --go:#1f9d55; --go-soft:#e1f4e8; --caution:#d99a00; --caution-soft:#fdf2d2; --stop:#c9302c; --stop-soft:#fbe2e1;
+  --shadow:0 1px 2px rgba(30,40,50,.05),0 10px 26px rgba(30,40,50,.08);
+  --font:"Hiragino Maru Gothic ProN","Hiragino Sans","BIZ UDPGothic","Noto Sans JP","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#111519; --surface:#181f27; --surface2:#212a34; --ink:#e9edf1; --muted:#a1abb7; --line:#2c3743;
+    --safety-soft:#352c0d; --accent-soft:#3a2614; --ai-soft:#0f2f2d; --ci-soft:#1f2348; --human-soft:#3a1d17; --field-soft:#1d2c13;
+    --go-soft:#11301f; --caution-soft:#352a0b; --stop-soft:#3a1616;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 26px rgba(0,0,0,.28);
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:64px}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);line-height:1.85;font-size:16.5px;-webkit-font-smoothing:antialiased}
+a{color:var(--ci)}
+.ico{width:1.2em;height:1.2em;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vertical-align:-.22em;flex:none}
+.wrap{max-width:1060px;margin:0 auto;padding:0 20px}
+#progress{position:fixed;top:0;left:0;height:4px;width:0;background:repeating-linear-gradient(45deg,var(--safety) 0 10px,#222 10px 20px);z-index:60}
+
+nav.top{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--surface) 90%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+nav.top .wrap{display:flex;align-items:center;gap:14px;height:56px}
+nav.top .brand{display:flex;align-items:center;gap:8px;font-weight:800;white-space:nowrap;color:var(--ink);text-decoration:none}
+nav.top .brand .ico{color:var(--accent);width:1.5em;height:1.5em}
+nav.top ul{display:flex;gap:2px;list-style:none;margin:0;padding:0;overflow-x:auto;scrollbar-width:none}
+nav.top ul::-webkit-scrollbar{display:none}
+nav.top li a{display:block;padding:6px 11px;border-radius:999px;font-size:13px;color:var(--muted);text-decoration:none;white-space:nowrap}
+nav.top li a.active,nav.top li a:hover{background:var(--safety-soft);color:var(--ink)}
+
+/* hero */
+.hero{position:relative;overflow:hidden;background:linear-gradient(175deg,#fff7df 0%,#f3efe4 60%,#e6eef4 100%)}
+@media (prefers-color-scheme:dark){.hero{background:linear-gradient(175deg,#2a230f 0%,#1a1d21 60%,#14202b 100%)}}
+.hazard{height:14px;background:repeating-linear-gradient(-45deg,var(--safety) 0 18px,#20262e 18px 36px);background-size:51px 14px;animation:haz 2s linear infinite}
+@keyframes haz{to{background-position:51px 0}}
+.hero .wrap{position:relative;padding-top:44px;padding-bottom:36px}
+.pills{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;padding:4px 12px;border-radius:999px;background:var(--surface);border:1px solid var(--line)}
+.pill.e{background:var(--safety);color:#20262e;border-color:var(--safety);font-weight:800}
+.pill.c{background:var(--navy);color:#fff;border-color:var(--navy);font-weight:700}
+.hero h1{font-size:clamp(28px,5vw,46px);line-height:1.3;margin:0}
+.hero h1 small{display:block;font-size:.4em;color:var(--accent);letter-spacing:.08em;margin-bottom:6px}
+.hero .lead{font-size:clamp(16px,2.2vw,19px);margin:14px 0 0;max-width:740px}
+.hero .lead mark{background:linear-gradient(transparent 60%,color-mix(in srgb,var(--safety) 60%,transparent) 60%);color:inherit;font-weight:700}
+
+/* crane scene */
+.site{position:relative;margin:30px 0 6px;height:250px;border-radius:22px;background:linear-gradient(180deg,#dbe9f4 0%,#eef4f8 70%,#d9cfb8 70%,#cfc3a7 100%);border:1px solid var(--line);box-shadow:var(--shadow);overflow:hidden}
+@media (prefers-color-scheme:dark){.site{background:linear-gradient(180deg,#1b2b3b 0%,#22323f 70%,#3b3428 70%,#332d22 100%)}}
+.tower{position:absolute;left:4%;bottom:30%;width:18px;height:200px;background:repeating-linear-gradient(45deg,transparent 0 6px,var(--safety) 6px 8px),repeating-linear-gradient(-45deg,transparent 0 6px,var(--safety) 6px 8px);border-left:3px solid var(--safety);border-right:3px solid var(--safety)}
+.jib{position:absolute;left:4%;right:3%;top:22px;height:14px;background:repeating-linear-gradient(60deg,transparent 0 8px,var(--safety) 8px 10px);border-top:3px solid var(--safety);border-bottom:3px solid var(--safety)}
+.cab{position:absolute;left:calc(4% - 6px);top:36px;width:30px;height:22px;border-radius:4px;background:var(--steel)}
+.trolley{position:absolute;top:30px;width:2px;margin-left:-1px;animation:carry 10s ease-in-out infinite;z-index:3}
+.trolley::before{content:"";position:absolute;top:-6px;left:-10px;width:22px;height:10px;border-radius:3px;background:var(--steel)}
+.trolley .cable{position:absolute;left:0;top:4px;width:2px;height:66px;background:#333}
+@media (prefers-color-scheme:dark){.trolley .cable{background:#aab}}
+.trolley .load{position:absolute;top:70px;left:-24px;width:50px;height:30px;border-radius:5px;animation:tint 10s ease-in-out infinite;border:2px solid rgba(0,0,0,.18);box-shadow:var(--shadow)}
+.trolley .load::before{content:"";position:absolute;inset:6px 8px;border:2px dashed rgba(255,255,255,.65);border-radius:3px}
+@keyframes carry{
+  0%,8%{left:22%}
+  30%,38%{left:50%}
+  60%,68%{left:78%}
+  88%,100%{left:22%}
+}
+@keyframes tint{
+  0%,8%{background:#b9c1cc}
+  14%,30%{background:var(--ai)}
+  38%,44%{background:var(--ci)}
+  60%{background:var(--ci)}
+  68%,82%{background:var(--go)}
+  92%,100%{background:#b9c1cc}
+}
+.pad{position:absolute;bottom:30%;width:130px;margin-left:-65px;text-align:center;transform:translateY(50%)}
+.pad .bub{width:58px;height:58px;margin:0 auto;border-radius:18px;display:grid;place-items:center;color:#fff;box-shadow:var(--shadow);border:3px solid #fff}
+.pad .bub .ico{width:28px;height:28px}
+.pad b{display:block;font-size:12.5px;margin-top:4px;background:var(--surface);border-radius:999px;padding:0 8px;display:inline-block;box-shadow:var(--shadow)}
+.pad.p1{left:22%}.pad.p2{left:50%}.pad.p3{left:78%}
+.pad.p1 .bub{background:var(--ai)}.pad.p2 .bub{background:var(--ci)}.pad.p3 .bub{background:var(--human)}
+.cone{position:absolute;bottom:12%;width:0;height:0;border-left:9px solid transparent;border-right:9px solid transparent;border-bottom:22px solid var(--accent)}
+.cone::after{content:"";position:absolute;left:-6px;top:9px;width:12px;height:4px;background:#fff}
+.cone.c1{left:12%}.cone.c2{left:36%}.cone.c3{left:64%}.cone.c4{left:91%}
+.site .cap{position:absolute;right:14px;bottom:8px;font-size:12px;color:#4d4433}
+@media (prefers-color-scheme:dark){.site .cap{color:#c9bc9f}}
+
+/* section */
+section.sec{padding:60px 0 6px}
+.sh{display:flex;align-items:center;gap:14px;margin-bottom:20px}
+.sh .n{flex:none;width:50px;height:50px;border-radius:14px;display:grid;place-items:center;background:var(--safety);color:#20262e;font-weight:900;font-size:19px;border:3px solid #20262e}
+.sh h2{margin:0;font-size:clamp(21px,3vw,27px);line-height:1.4}
+.sh p{margin:2px 0 0;color:var(--muted);font-size:14.5px}
+h3.sub{margin:30px 0 12px;display:flex;align-items:center;gap:8px;font-size:18px}
+h3.sub .ico{color:var(--accent)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);padding:20px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.reveal{opacity:0;transform:translateY(20px) scale(.98);transition:opacity .7s ease,transform .7s ease}
+.reveal.in{opacity:1;transform:none}
+
+.big-say{font-size:clamp(18px,2.6vw,23px);font-weight:800;line-height:1.65;text-align:center;padding:28px 22px;border-radius:24px;background:var(--surface);border:3px solid var(--safety);box-shadow:var(--shadow);position:relative}
+.big-say .a{color:var(--ai)}.big-say .c{color:var(--ci)}.big-say .f{color:var(--field)}.big-say .h{color:var(--human)}
+
+.note{display:flex;gap:12px;align-items:flex-start;padding:15px 18px;border-radius:18px;font-size:15px;margin:16px 0}
+.note .ico{width:24px;height:24px;margin-top:2px}
+.note.tip{background:var(--safety-soft)}.note.tip .ico{color:var(--caution)}
+.note.warn{background:var(--stop-soft)}.note.warn .ico{color:var(--stop)}
+.note.info{background:var(--ci-soft)}.note.info .ico{color:var(--ci)}
+
+/* tables */
+.tbl{overflow-x:auto;border-radius:20px;border:1px solid var(--line);background:var(--surface);box-shadow:var(--shadow)}
+table{width:100%;border-collapse:collapse;font-size:15px;min-width:620px}
+th,td{padding:13px 16px;text-align:left;vertical-align:middle;border-bottom:1px solid var(--line)}
+thead th{background:var(--surface2);font-size:13.5px;color:var(--muted);white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+tbody tr{transition:background .2s}
+tbody tr:hover{background:var(--safety-soft)}
+td.k{font-weight:700;white-space:nowrap}
+td.k .ico{margin-right:6px;color:var(--accent)}
+th.cv{background:var(--safety-soft);color:var(--ink)}
+td.cv{background:color-mix(in srgb,var(--safety-soft) 55%,transparent);font-weight:600}
+
+/* signal */
+.signal-wrap{display:grid;grid-template-columns:150px 1fr;gap:20px;align-items:start}
+.light{background:#20262e;border-radius:30px;padding:16px 0;display:flex;flex-direction:column;align-items:center;gap:14px;box-shadow:var(--shadow);position:sticky;top:80px}
+.lamp{width:74px;height:74px;border-radius:50%;opacity:.22;transition:opacity .3s,box-shadow .3s;cursor:pointer;border:0;padding:0}
+.lamp.g{background:var(--go)}.lamp.y{background:var(--safety)}.lamp.r{background:var(--stop)}
+.lamp.on{opacity:1}
+.lamp.g.on{box-shadow:0 0 28px var(--go)}.lamp.y.on{box-shadow:0 0 28px var(--safety)}.lamp.r.on{box-shadow:0 0 28px var(--stop)}
+.light small{color:#c8ced6;font-size:11.5px}
+.sig-rows{display:grid;gap:14px}
+.sig{display:grid;grid-template-columns:auto 1fr;gap:16px;padding:18px 20px;border-radius:20px;background:var(--surface);border:2px solid var(--line);box-shadow:var(--shadow);transition:border-color .3s,transform .3s}
+.sig.on{transform:translateX(6px)}
+.sig.g.on{border-color:var(--go)}.sig.y.on{border-color:var(--safety)}.sig.r.on{border-color:var(--stop)}
+.sig .dot{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:900}
+.sig.g .dot{background:var(--go)}.sig.y .dot{background:var(--safety);color:#20262e}.sig.r .dot{background:var(--stop)}
+.sig h4{margin:0 0 4px;font-size:17px}
+.sig.g h4{color:var(--go)}.sig.y h4{color:var(--caution)}.sig.r h4{color:var(--stop)}
+.sig p{margin:0 0 8px;font-size:14.5px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:12.5px;padding:3px 10px;border-radius:999px;background:var(--surface2);display:inline-flex;align-items:center;gap:5px}
+.sig .who{margin-top:8px;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:6px}
+
+/* systems */
+.systems{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.sys{position:relative;padding:18px;border-radius:18px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);transition:transform .3s}
+.sys:hover{transform:translateY(-5px)}
+.sys .ib{width:46px;height:46px;border-radius:14px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);margin-bottom:8px}
+.sys .ib .ico{width:24px;height:24px}
+.sys h4{margin:0 0 4px;font-size:16px}
+.sys p{margin:0;font-size:13.5px;color:var(--muted);line-height:1.65}
+.sys .tl{position:absolute;right:14px;top:16px;width:16px;height:16px;border-radius:50%}
+.sys .tl.g{background:var(--go);box-shadow:0 0 0 4px var(--go-soft)}
+.sys .tl.y{background:var(--safety);box-shadow:0 0 0 4px var(--caution-soft)}
+.sys .tl.r{background:var(--stop);box-shadow:0 0 0 4px var(--stop-soft);animation:blink 1.4s ease-in-out infinite}
+@keyframes blink{50%{opacity:.35}}
+
+/* roles */
+.four{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.chara{text-align:center;padding:20px 16px;border-radius:22px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);transition:transform .3s}
+.chara:hover{transform:translateY(-6px)}
+.chara .face{width:72px;height:72px;margin:0 auto 10px;border-radius:22px;display:grid;place-items:center;color:#fff}
+.chara .face .ico{width:34px;height:34px}
+.chara.ai .face{background:var(--ai)}.chara.ci .face{background:var(--ci)}.chara.fd .face{background:var(--field)}.chara.hu .face{background:var(--human)}
+.chara h4{margin:0;font-size:17px}
+.chara .role{display:inline-block;font-size:12px;font-weight:700;padding:2px 10px;border-radius:999px;margin:6px 0 8px}
+.chara.ai .role{background:var(--ai-soft);color:var(--ai)}.chara.ci .role{background:var(--ci-soft);color:var(--ci)}.chara.fd .role{background:var(--field-soft);color:var(--field)}.chara.hu .role{background:var(--human-soft);color:var(--human)}
+.chara p{margin:0;font-size:14px;color:var(--muted);text-align:left}
+.chara .new{display:inline-block;font-size:10.5px;font-weight:800;color:#20262e;background:var(--safety);border-radius:6px;padding:0 6px;margin-left:4px;vertical-align:2px}
+
+/* stepper */
+.loop{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:20px;align-items:start}
+.stepper{list-style:none;margin:0;padding:0;position:relative}
+.stepper::before{content:"";position:absolute;left:23px;top:22px;bottom:22px;width:3px;border-radius:2px;background:var(--line)}
+.stepper li{position:relative;display:flex;gap:12px;align-items:center;padding:6px 10px 6px 0;border-radius:16px;transition:background .35s}
+.stepper .sd{position:relative;z-index:1;flex:none;width:48px;height:48px;border-radius:16px;display:grid;place-items:center;background:var(--surface);border:2.5px solid var(--line);transition:all .35s}
+.stepper .sd .ico{width:22px;height:22px}
+.stepper li.t-in .sd{color:var(--accent)}.stepper li.t-ai .sd{color:var(--ai)}.stepper li.t-ci .sd{color:var(--ci)}.stepper li.t-fd .sd{color:var(--field)}.stepper li.t-hu .sd{color:var(--human)}
+.stepper .tx{flex:1;font-weight:700;font-size:15px}
+.stepper .tx small{display:block;font-weight:400;font-size:13px;color:var(--muted)}
+.stepper li.on{background:var(--surface2)}
+.stepper li.on .sd{transform:scale(1.1);border-color:currentColor;box-shadow:0 0 0 6px color-mix(in srgb,currentColor 16%,transparent)}
+.stepper li.done .sd::after{content:"";position:absolute;right:-6px;bottom:-6px;width:18px;height:18px;border-radius:50%;background:var(--go) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5 9-10'/%3E%3C/svg%3E") center/11px no-repeat}
+.status{font-size:12.5px;font-weight:700;padding:3px 10px;border-radius:999px;background:var(--surface2);color:var(--muted);white-space:nowrap}
+.status.run{background:var(--ci-soft);color:var(--ci)}.status.fail{background:var(--stop-soft);color:var(--stop)}.status.pass{background:var(--go-soft);color:var(--go)}
+.speech{position:relative;padding:16px 18px;border-radius:18px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);min-height:110px}
+.speech .who{display:flex;align-items:center;gap:8px;font-weight:800;margin-bottom:4px}
+.speech .who .ico{width:22px;height:22px}
+.speech p{margin:0;font-size:15px}
+.speech.anim p{animation:fadein .4s ease}
+@keyframes fadein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.ctrl{display:flex;gap:8px;margin-top:12px}
+button.btn{font:inherit;font-size:13.5px;display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}
+button.btn:hover{background:var(--surface2)}
+
+/* order */
+.vs{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.ask{padding:20px;border-radius:20px;box-shadow:var(--shadow)}
+.ask.bad{background:var(--stop-soft)}.ask.good{background:var(--go-soft)}
+.ask h4{margin:0 0 8px;display:flex;align-items:center;gap:8px;font-size:16px}
+.ask.bad h4{color:var(--stop)}.ask.good h4{color:var(--go)}
+.ask .q{font-size:17px;font-weight:800;margin:4px 0 8px}
+.ask p{margin:0;font-size:14.5px}
+.order{margin-top:18px;background:var(--surface);border-radius:20px;border:1px solid var(--line);box-shadow:var(--shadow);overflow:hidden}
+.order .head{display:flex;align-items:center;gap:10px;padding:14px 20px;background:var(--navy);color:#fff;font-weight:800;border-bottom:6px solid var(--safety)}
+.order .head .no{margin-left:auto;font-size:12px;font-weight:600;opacity:.8}
+.order dl{margin:0;display:grid;grid-template-columns:190px 1fr}
+.order dt,.order dd{margin:0;padding:12px 20px;border-bottom:1px solid var(--line)}
+.order dt{font-weight:700;background:var(--surface2);display:flex;align-items:center;gap:8px;font-size:14.5px}
+.order dt .ico{color:var(--accent)}
+.order dd{font-size:15px}
+.order dd ul{margin:0;padding-left:18px}
+.order dl>*:nth-last-child(-n+2){border-bottom:0}
+.stamp{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:800;color:var(--human);border:2px solid var(--human);border-radius:8px;padding:0 8px;transform:rotate(-4deg);margin-left:6px}
+
+/* promises */
+.promises{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.pr{position:relative;padding:20px;border-radius:20px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);transition:transform .3s;overflow:hidden}
+.pr::before{content:"";position:absolute;left:0;right:0;top:0;height:6px;background:repeating-linear-gradient(-45deg,var(--safety) 0 10px,#20262e 10px 20px)}
+.pr:hover{transform:translateY(-5px)}
+.pr .ib{width:48px;height:48px;border-radius:16px;display:grid;place-items:center;background:var(--safety-soft);color:var(--caution);margin:6px 0 10px}
+.pr .ib .ico{width:24px;height:24px}
+.pr .num{position:absolute;right:16px;top:16px;font-weight:900;font-size:30px;color:var(--surface2)}
+.pr h4{margin:0 0 6px;font-size:16.5px;line-height:1.5}
+.pr p{margin:0;font-size:14.5px;color:var(--muted)}
+.pr .eg{margin-top:10px;font-size:13px;padding:8px 12px;border-radius:12px;background:var(--surface2)}
+
+.keys{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.kbox{padding:20px;border-radius:20px;box-shadow:var(--shadow)}
+.kbox.give{background:var(--go-soft)}.kbox.keep{background:var(--stop-soft)}
+.kbox h4{margin:0 0 10px;display:flex;align-items:center;gap:8px;font-size:16.5px}
+.kbox.give h4{color:var(--go)}.kbox.keep h4{color:var(--stop)}
+.kbox ul{margin:0;padding:0;list-style:none}
+.kbox li{display:flex;gap:10px;align-items:flex-start;padding:7px 0;font-size:15px;border-bottom:1px dashed color-mix(in srgb,var(--ink) 15%,transparent)}
+.kbox li:last-child{border-bottom:0}
+.kbox li .ico{margin-top:4px}
+.kbox.give li .ico{color:var(--go)}.kbox.keep li .ico{color:var(--stop)}
+
+/* checklist */
+.checks{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.ck{display:flex;gap:10px;align-items:flex-start;padding:14px;border-radius:16px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow)}
+.ck.site-only{border:2px solid var(--field)}
+.ck .box{flex:none;width:26px;height:26px;border-radius:8px;border:2.5px solid var(--ci);display:grid;place-items:center;color:#fff;transition:background .3s}
+.ck.site-only .box{border-color:var(--field)}
+.ck .box .ico{width:16px;height:16px;opacity:0;transform:scale(.3);transition:all .3s}
+.in .ck .box{background:var(--ci)}
+.in .ck.site-only .box{background:var(--field)}
+.in .ck .box .ico{opacity:1;transform:none}
+.ck b{display:block;font-size:14.5px}
+.ck small{display:block;font-size:12.5px;color:var(--muted);line-height:1.55}
+.in .ck:nth-child(2) .box,.in .ck:nth-child(2) .box .ico{transition-delay:.12s}
+.in .ck:nth-child(3) .box,.in .ck:nth-child(3) .box .ico{transition-delay:.24s}
+.in .ck:nth-child(4) .box,.in .ck:nth-child(4) .box .ico{transition-delay:.36s}
+.in .ck:nth-child(5) .box,.in .ck:nth-child(5) .box .ico{transition-delay:.48s}
+.in .ck:nth-child(6) .box,.in .ck:nth-child(6) .box .ico{transition-delay:.6s}
+.in .ck:nth-child(7) .box,.in .ck:nth-child(7) .box .ico{transition-delay:.72s}
+.in .ck:nth-child(8) .box,.in .ck:nth-child(8) .box .ico{transition-delay:.84s}
+
+/* stairs = scaffold */
+.stairs{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;align-items:end;height:300px;padding:0 4px;position:relative}
+.stair{position:relative;border-radius:10px 10px 4px 4px;color:#fff;padding:12px 10px;height:0;transition:height 1s cubic-bezier(.2,.8,.2,1);overflow:hidden;box-shadow:var(--shadow);background:var(--steel)}
+.stair::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(45deg,transparent 0 14px,rgba(255,255,255,.08) 14px 16px),repeating-linear-gradient(-45deg,transparent 0 14px,rgba(255,255,255,.08) 14px 16px);pointer-events:none}
+.stair::before{content:"";position:absolute;left:0;right:0;top:0;height:6px;background:var(--safety)}
+.stair:nth-child(1){background:#4a5b70}.stair:nth-child(2){background:#3f6f8a}.stair:nth-child(3){background:var(--field)}.stair:nth-child(4){background:#2f8f8a}.stair:nth-child(5){background:#c26a2b}
+.in .stair{height:var(--h)}
+.stair:nth-child(2){transition-delay:.15s}.stair:nth-child(3){transition-delay:.3s}.stair:nth-child(4){transition-delay:.45s}.stair:nth-child(5){transition-delay:.6s}
+.stair .p{font-size:11.5px;font-weight:800;opacity:.9;letter-spacing:.05em;display:block;margin-top:4px}
+.stair b{display:block;font-size:14.5px;line-height:1.4;position:relative;z-index:1}
+.stair small{display:block;font-size:12px;line-height:1.5;opacity:.95;margin-top:4px;position:relative;z-index:1}
+.climber{position:absolute;width:30px;height:24px;left:calc(10% - 15px);bottom:66px;animation:climb 10s ease-in-out infinite;z-index:2;opacity:0;color:var(--safety);filter:drop-shadow(0 2px 2px rgba(0,0,0,.3))}
+.in .climber{opacity:1}
+@keyframes climb{
+  0%,12%{left:calc(10% - 15px);bottom:66px}
+  20%,32%{left:calc(30% - 15px);bottom:114px}
+  40%,52%{left:calc(50% - 15px);bottom:162px}
+  60%,72%{left:calc(70% - 15px);bottom:210px}
+  80%,95%{left:calc(90% - 15px);bottom:258px}
+  100%{left:calc(90% - 15px);bottom:258px;opacity:0}
+}
+.goals td:first-child{white-space:nowrap;font-weight:800}
+
+.measure{display:flex;gap:12px;align-items:flex-start;padding:16px;border-radius:18px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow)}
+.measure .ib{flex:none;width:42px;height:42px;border-radius:14px;display:grid;place-items:center;background:var(--field-soft);color:var(--field)}
+.measure b{display:block;font-size:14.5px;line-height:1.5}
+.measure small{color:var(--muted);font-size:12.5px;line-height:1.5;display:block}
+
+.sum{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.sumc{padding:20px;border-radius:20px;color:#fff;box-shadow:var(--shadow)}
+.sumc:nth-child(1){background:linear-gradient(150deg,#2bb2ae,var(--ai))}
+.sumc:nth-child(2){background:linear-gradient(150deg,#6a75e0,var(--ci))}
+.sumc:nth-child(3){background:linear-gradient(150deg,#7aad4a,var(--field))}
+.sumc:nth-child(4){background:linear-gradient(150deg,#e06c52,var(--human))}
+.sumc .ico{width:32px;height:32px}
+.sumc h4{margin:8px 0 6px;font-size:17px}
+.sumc p{margin:0;font-size:14px;opacity:.95}
+
+.dict{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.dict div{padding:12px 16px;border-radius:14px;background:var(--surface);border:1px solid var(--line)}
+.dict b{display:inline-block;font-size:14px;padding:1px 10px;border-radius:999px;background:var(--navy);color:#fff;margin-right:8px}
+.dict span{font-size:14.5px}
+
+.links{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:24px}
+.to-full{display:flex;align-items:center;gap:14px;padding:18px 20px;border-radius:20px;background:var(--navy);color:#eaf2fa;text-decoration:none;box-shadow:var(--shadow)}
+.to-full:hover{filter:brightness(1.1)}
+.to-full .ico{width:28px;height:28px;color:var(--safety)}
+.to-full b{display:block;color:#fff}
+.to-full small{color:#b9cde0}
+footer{margin-top:56px;padding:26px 0 40px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px}
+
+@media (max-width:900px){
+  .four,.sum{grid-template-columns:1fr 1fr}
+  .promises,.systems,.grid3{grid-template-columns:1fr 1fr}
+  .checks,.grid4{grid-template-columns:1fr 1fr}
+  .loop{grid-template-columns:1fr}
+}
+@media (max-width:640px){
+  body{font-size:15.5px}
+  .wrap{padding:0 16px}
+  .promises,.systems,.grid2,.grid3,.vs,.keys,.dict,.links{grid-template-columns:1fr}
+  .checks,.grid4{grid-template-columns:1fr}
+  .signal-wrap{grid-template-columns:1fr}
+  .light{flex-direction:row;justify-content:center;position:static;padding:12px;border-radius:24px}
+  .lamp{width:48px;height:48px}
+  .light small{display:none}
+  .pad{width:96px;margin-left:-48px}
+  .pad .bub{width:44px;height:44px;border-radius:13px}
+  .pad .bub .ico{width:22px;height:22px}
+  .pad b{font-size:10.5px}
+  .trolley .load{width:38px;left:-18px;height:24px}
+  .order dl{grid-template-columns:1fr}
+  .order dt{border-bottom:0;padding-bottom:4px}
+  .stairs{height:340px;gap:6px}
+  .stair{padding:10px 6px}
+  .stair b{font-size:12.5px}
+  .stair small{display:none}
+  .climber{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .reveal{opacity:1!important;transform:none!important}
+  .stair{height:var(--h)!important}
+}
+@media print{
+  nav.top,#progress,.ctrl{display:none}
+  .reveal{opacity:1;transform:none}
+  .stair{height:var(--h)}
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M3 13h5l2 3h4l2-3h5"/><path d="M5 5h14l2 8v6H3v-6z"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 16h6"/></symbol>
+    <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4"/><circle cx="12" cy="3.5" r="1"/><circle cx="9" cy="14" r="1.2"/><circle cx="15" cy="14" r="1.2"/><path d="M2 13v3M22 13v3"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-5-5"/><path d="M8 11l2 2 4-4"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2 20c.8-3.5 3.5-5.5 7-5.5s6.2 2 7 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .8 3.4 2.6 4 5.2"/></symbol>
+    <symbol id="i-stamp" viewBox="0 0 24 24"><path d="M9 3h6v5l-1 3h4a2 2 0 0 1 2 2v3H4v-3a2 2 0 0 1 2-2h4L9 8z"/><path d="M4 20h16"/></symbol>
+    <symbol id="i-rocket" viewBox="0 0 24 24"><path d="M12 2c3 2 5 6 5 10l-2 5H9l-2-5c0-4 2-8 5-10z"/><circle cx="12" cy="10" r="2"/><path d="M9 17l-2 4M15 17l2 4M12 17v4"/></symbol>
+    <symbol id="i-flask" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4.2 19A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.3-2L14 9V3"/><path d="M7 15h10"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-loop" viewBox="0 0 24 24"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></symbol>
+    <symbol id="i-crane" viewBox="0 0 24 24"><path d="M6 21V5M6 5h14M6 5l4 4M12 5v6M20 5v4"/><path d="M10 11h4v3h-4z"/><path d="M3 21h8"/></symbol>
+    <symbol id="i-helmet" viewBox="0 0 24 24"><path d="M3 17h18"/><path d="M5 17a7 7 0 0 1 14 0"/><path d="M10 10V6h4v4"/><path d="M4 20h16"/></symbol>
+    <symbol id="i-blueprint" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11M13 13h5M13 16h3"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+    <symbol id="i-clipboard" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="M9 10h6M9 14h6M9 18h3"/></symbol>
+    <symbol id="i-ruler" viewBox="0 0 24 24"><path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/></symbol>
+    <symbol id="i-truck" viewBox="0 0 24 24"><path d="M2 6h11v10H2zM13 9h5l4 4v3h-9z"/><circle cx="6" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+    <symbol id="i-cube" viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/><circle cx="7" cy="14" r=".6"/><circle cx="16" cy="9" r=".6"/><circle cx="17" cy="15" r=".6"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></symbol>
+    <symbol id="i-beam" viewBox="0 0 24 24"><path d="M3 6h18M3 18h18M8 6v12M16 6v12"/><path d="M8 12l8-6M8 18l8-6"/></symbol>
+    <symbol id="i-signal" viewBox="0 0 24 24"><path d="M2 20h2M7 20v-4M12 20v-8M17 20V8M22 20V4"/></symbol>
+    <symbol id="i-nosignal" viewBox="0 0 24 24"><path d="M2 20h2M7 20v-4M12 20v-8M17 20V8"/><path d="M3 3l18 18"/></symbol>
+    <symbol id="i-handshake" viewBox="0 0 24 24"><path d="M2 12l4-4 4 2 3-2 4 1 5 3"/><path d="M6 8l-4 4 6 6 2-1 2 2 2-1 2 1 4-5"/><path d="M10 13l2 2M12 11l3 3"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 10h8M8 13h5"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4h12l-2 4 2 4H5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-yen" viewBox="0 0 24 24"><path d="M6 3l6 8 6-8M12 11v10M7 13h10M7 17h10"/></symbol>
+    <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4 18a9 9 0 1 1 16 0"/><path d="M12 13l4-5"/><circle cx="12" cy="13" r="1.5"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 4v16M16 4v16"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 4h6a3 3 0 0 1 3 3v14a2 2 0 0 0-2-2H4z"/><path d="M20 4h-6a3 3 0 0 0-3 3v14a2 2 0 0 1 2-2h7z"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7L12 6.3"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+    <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 22s7-7 7-12a7 7 0 0 0-14 0c0 5 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+    <symbol id="i-glove" viewBox="0 0 24 24"><path d="M7 21v-6L4 11a1.5 1.5 0 0 1 2.3-2l1.7 2V4.5a1.5 1.5 0 0 1 3 0V10V3.5a1.5 1.5 0 0 1 3 0V10V5a1.5 1.5 0 0 1 3 0v8c0 4-2 8-6 8z"/></symbol>
+    <symbol id="i-factory" viewBox="0 0 24 24"><path d="M3 21V10l5 3V10l5 3V10l5 3V4h3v17z"/><path d="M7 17h2M12 17h2M17 17h1"/></symbol>
+  </defs>
+</svg>
+
+<div id="progress"></div>
+
+<nav class="top">
+  <div class="wrap">
+    <a class="brand" href="#top"><svg class="ico"><use href="#i-helmet"/></svg>建設土木版</a>
+    <ul id="navlist">
+      <li><a href="#c1">ひとことで</a></li>
+      <li><a href="#c2">ちがい</a></li>
+      <li><a href="#c3">信号ルール</a></li>
+      <li><a href="#c4">作るもの</a></li>
+      <li><a href="#c5">4つの役</a></li>
+      <li><a href="#c6">できるまで</a></li>
+      <li><a href="#c7">注文書</a></li>
+      <li><a href="#c8">現場の約束</a></li>
+      <li><a href="#c9">完成チェック</a></li>
+      <li><a href="#c10">進め方</a></li>
+      <li><a href="#c11">まとめ</a></li>
+    </ul>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="hazard"></div>
+  <div class="wrap">
+    <div class="pills">
+      <span class="pill e"><svg class="ico"><use href="#i-helmet"/></svg>建設土木版</span>
+      <span class="pill c"><svg class="ico"><use href="#i-spark"/></svg>やさしい解説</span>
+      <span class="pill"><svg class="ico"><use href="#i-doc"/></svg>企画構想案（ドラフト）</span>
+      <span class="pill"><svg class="ico"><use href="#i-clock"/></svg>2026年10月17日</span>
+    </div>
+    <h1><small>MIRAI SOFTWARE FACTORY ─ for Construction &amp; Civil Engineering</small>みらいソフトウェアファクトリー</h1>
+    <p class="lead">現場の「ここが面倒」「これがあったら」を、<mark>AIが組み立て、検査機と現場で確かめ、技術者がハンコを押して</mark>使える道具にする。建設土木のための「現場の道具づくりライン」です。</p>
+
+    <div class="site" aria-label="クレーンが部材を3つの工程へ運ぶ様子">
+      <div class="tower"></div><div class="jib"></div><div class="cab"></div>
+      <div class="trolley"><div class="cable"></div><div class="load"></div></div>
+      <div class="pad p1"><div class="bub"><svg class="ico"><use href="#i-bot"/></svg></div><b>AIが組み立て</b></div>
+      <div class="pad p2"><div class="bub"><svg class="ico"><use href="#i-search"/></svg></div><b>検査機と現場で確認</b></div>
+      <div class="pad p3"><div class="bub"><svg class="ico"><use href="#i-stamp"/></svg></div><b>技術者がハンコ</b></div>
+      <span class="cone c1"></span><span class="cone c2"></span><span class="cone c3"></span><span class="cone c4"></span>
+      <div class="cap">部材が緑になったら、現場で使える状態です</div>
+    </div>
+  </div>
+  <div class="hazard"></div>
+</header>
+
+<main class="wrap">
+
+<section class="sec" id="c1">
+  <div class="sh"><div class="n">1</div><div><h2>ひとことで言うと</h2><p>現場の困りごとを、早く・安全に「使える道具」にする仕組み</p></div></div>
+  <div class="big-say reveal">
+    <span class="a">組み立てはAI</span>、<span class="c">合否は検査機</span>、<span class="f">使い心地は現場</span>、<br>
+    <span class="h">安全・品質に関わる最終判断は、資格と責任を持つ技術者</span>。<br>
+    この役割分担を守って、現場で使えるシステムを作ります。
+  </div>
+  <div class="note warn reveal"><svg class="ico"><use href="#i-alert"/></svg><div><b>建設土木版でいちばん大事なこと：</b>構造の安全性・仮設の計画・作業の安全判断など、<b>人命や品質に直結する判断はAIに決めさせません</b>。AIが作るのは、技術者の仕事を早く・楽にするための道具までです。</div></div>
+</section>
+
+<section class="sec" id="c2">
+  <div class="sh"><div class="n">2</div><div><h2>一般向けのやさしい版と、どこがちがう？</h2><p>しくみは同じ。変わるのは「何を作るか」と「どこで確かめるか」です</p></div></div>
+  <div class="tbl reveal">
+    <table>
+      <thead><tr><th>くらべる所</th><th>一般向けのやさしい版</th><th class="cv"><svg class="ico"><use href="#i-helmet"/></svg> 建設土木版</th></tr></thead>
+      <tbody>
+        <tr><td class="k"><svg class="ico"><use href="#i-users"/></svg>おもな読み手</td><td>社内のみなさん・管理部門</td><td class="cv">現場所長・施工管理技術者・若手技術者・現場事務</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-clipboard"/></svg>最初の練習題材</td><td>PC貸出申請・改善提案の受付</td><td class="cv">工事写真の整理・日報・資機材の予約など現場の事務作業</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-stamp"/></svg>最後に決める人</td><td>責任者</td><td class="cv">技術者（安全・品質・構造に関わるものは必ず）</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-flask"/></svg>確かめる場所</td><td>検査機＋試し見画面</td><td class="cv">検査機＋<b>モデル現場での試用</b>（屋外・手袋・電波の弱い所）</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-db"/></svg>気をつけるデータ</td><td>社内の本番データ</td><td class="cv">発注者の図面、作業員名簿、現場の位置情報、工事写真の原本</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-signal"/></svg>動く環境</td><td>事務所のネットワーク</td><td class="cv">山間部・河川・トンネルなど<b>電波が弱い現場</b>でも動くこと</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-handshake"/></svg>関わる相手</td><td>社内</td><td class="cv">社内＋協力会社＋発注者（見せてよい範囲の区切りが必要）</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-alert"/></svg>任せ方の決め方</td><td>得意・苦手の表</td><td class="cv"><b>信号の3色ルール</b>（青・黄・赤）で線を引く</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="sec" id="c3">
+  <div class="sh"><div class="n">3</div><div><h2>信号の3色ルール</h2><p>作るシステムを、まず「どの色か」で仕分けします（ランプを押すと切り替わります）</p></div></div>
+  <div class="signal-wrap reveal">
+    <div class="light" id="light">
+      <button class="lamp g on" data-c="g" type="button" aria-label="青"></button>
+      <button class="lamp y" data-c="y" type="button" aria-label="黄"></button>
+      <button class="lamp r" data-c="r" type="button" aria-label="赤"></button>
+      <small>自動で切り替わります</small>
+    </div>
+    <div class="sig-rows">
+      <div class="sig g on" data-c="g"><div class="dot">青</div><div>
+        <h4>青：どんどん任せる</h4>
+        <p>記録・整理・検索・連絡など、まちがえてもすぐ直せて、人命や品質に直接ひびかないもの。</p>
+        <div class="chips"><span class="chip"><svg class="ico"><use href="#i-camera"/></svg>工事写真の整理</span><span class="chip"><svg class="ico"><use href="#i-clipboard"/></svg>日報の入力</span><span class="chip"><svg class="ico"><use href="#i-calendar"/></svg>資機材・重機の予約</span><span class="chip"><svg class="ico"><use href="#i-search"/></svg>図面・書類の検索</span></div>
+        <div class="who"><svg class="ico"><use href="#i-user"/></svg>決める人：現場の担当者＋IT・DX部門</div>
+      </div></div>
+      <div class="sig y" data-c="y"><div class="dot">黄</div><div>
+        <h4>黄：技術者のチェック付きで任せる</h4>
+        <p>計画や判断の「たたき台」や「見落としチェック」を出すもの。結果は必ず技術者が見て、採用するか決めます。</p>
+        <div class="chips"><span class="chip"><svg class="ico"><use href="#i-calendar"/></svg>工程表のたたき台</span><span class="chip"><svg class="ico"><use href="#i-ruler"/></svg>出来形の帳票づくり</span><span class="chip"><svg class="ico"><use href="#i-alert"/></svg>KY記録の書きもれ確認</span><span class="chip"><svg class="ico"><use href="#i-cube"/></svg>3D点群・図面の見える化</span></div>
+        <div class="who"><svg class="ico"><use href="#i-helmet"/></svg>決める人：担当の技術者（現場所長など）</div>
+      </div></div>
+      <div class="sig r" data-c="r"><div class="dot">赤</div><div>
+        <h4>赤：AIに決めさせない</h4>
+        <p>人命・構造・品質・法令に直結する最終判断。AIは資料集めや計算結果の整理まで。判断と押印は資格と責任を持つ人が行います。</p>
+        <div class="chips"><span class="chip"><svg class="ico"><use href="#i-beam"/></svg>構造計算の合否</span><span class="chip"><svg class="ico"><use href="#i-crane"/></svg>仮設・揚重計画の決定</span><span class="chip"><svg class="ico"><use href="#i-shield"/></svg>作業中止などの安全判断</span><span class="chip"><svg class="ico"><use href="#i-stamp"/></svg>発注者への正式な提出</span></div>
+        <div class="who"><svg class="ico"><use href="#i-stamp"/></svg>決める人：資格と責任を持つ技術者・責任者</div>
+      </div></div>
+    </div>
+  </div>
+  <div class="note tip reveal"><svg class="ico"><use href="#i-spark"/></svg><div>迷ったら<b>1つ上の色</b>（青か黄か迷ったら黄）として扱います。色の最終決定は、注文書を承認する人が行います。</div></div>
+</section>
+
+<section class="sec" id="c4">
+  <div class="sh"><div class="n">4</div><div><h2>どんな道具を作れそう？</h2><p>右上の丸が信号の色です（例であり、着手順は別途決めます）</p></div></div>
+  <div class="systems">
+    <div class="sys reveal"><span class="tl g"></span><div class="ib"><svg class="ico"><use href="#i-camera"/></svg></div><h4>工事写真の整理</h4><p>撮った写真を工種・測点ごとに自動で並べ、写真台帳づくりを楽にする</p></div>
+    <div class="sys reveal"><span class="tl g"></span><div class="ib"><svg class="ico"><use href="#i-clipboard"/></svg></div><h4>作業日報・工事日報</h4><p>スマホで現場から入力。天候・人員・機械を前日分から引き継げる</p></div>
+    <div class="sys reveal"><span class="tl g"></span><div class="ib"><svg class="ico"><use href="#i-truck"/></svg></div><h4>資機材・重機の予約</h4><p>複数現場で取り合いになる機械や資材の予約と空き状況の確認</p></div>
+    <div class="sys reveal"><span class="tl g"></span><div class="ib"><svg class="ico"><use href="#i-handshake"/></svg></div><h4>協力会社との書類やりとり</h4><p>提出物の受け取りと、出た・出ていないの見える化</p></div>
+    <div class="sys reveal"><span class="tl y"></span><div class="ib"><svg class="ico"><use href="#i-calendar"/></svg></div><h4>工程表のたたき台</h4><p>過去の似た工事から下書きを作り、所長が手直しして決める</p></div>
+    <div class="sys reveal"><span class="tl y"></span><div class="ib"><svg class="ico"><use href="#i-ruler"/></svg></div><h4>出来形管理の帳票づくり</h4><p>測定値を帳票へ転記。判定の確認は技術者が行う</p></div>
+    <div class="sys reveal"><span class="tl y"></span><div class="ib"><svg class="ico"><use href="#i-alert"/></svg></div><h4>KY・安全書類の書きもれ確認</h4><p>空欄や記入もれを知らせるだけ。危険の評価は人が行う</p></div>
+    <div class="sys reveal"><span class="tl y"></span><div class="ib"><svg class="ico"><use href="#i-cube"/></svg></div><h4>3D点群・図面の閲覧</h4><p>現場の3Dデータを手元で見る。数量や寸法の確定は技術者</p></div>
+    <div class="sys reveal"><span class="tl r"></span><div class="ib" style="background:var(--stop-soft);color:var(--stop)"><svg class="ico"><use href="#i-beam"/></svg></div><h4>構造・仮設・安全の最終判断</h4><p>AIには決めさせない。資料の整理や計算結果の見やすい表示までにとどめる</p></div>
+  </div>
+</section>
+
+<section class="sec" id="c5">
+  <div class="sh"><div class="n">5</div><div><h2>登場する4つの役</h2><p>一般向けの3つの役に「現場の試し係」が加わります</p></div></div>
+  <div class="four">
+    <div class="chara ai reveal"><div class="face"><svg class="ico"><use href="#i-bot"/></svg></div><h4>AIロボット</h4><span class="role">組み立てる係</span><p>注文書をもとに、囲いの中でプログラムとテストを作ります。速いけれど、まちがえることもあります。</p></div>
+    <div class="chara ci reveal"><div class="face"><svg class="ico"><use href="#i-search"/></svg></div><h4>自動の検査機</h4><span class="role">調べる係</span><p>決められた手順で毎回チェック。電波が切れた時の動きなど、現場の条件も検査に入れます。</p></div>
+    <div class="chara fd reveal"><div class="face"><svg class="ico"><use href="#i-glove"/></svg></div><h4>現場の試し係<span class="new">NEW</span></h4><span class="role">使ってみる係</span><p>モデル現場の担当者が、屋外・手袋・雨の日に実際に使って「現場で使えるか」を確かめます。</p></div>
+    <div class="chara hu reveal"><div class="face"><svg class="ico"><use href="#i-helmet"/></svg></div><h4>技術者・責任者</h4><span class="role">決める係</span><p>何を作るか、信号の色、業務として正しいか、使い始めてよいかを決めます。ハンコは人だけ。</p></div>
+  </div>
+</section>
+
+<section class="sec" id="c6">
+  <div class="sh"><div class="n">6</div><div><h2>1つの道具ができるまで</h2><p>例：「工事写真の整理アプリ」に、圏外でも保存できる機能を追加する場合</p></div></div>
+  <div class="loop">
+    <div class="card reveal">
+      <ol class="stepper" id="stepper">
+        <li class="t-in"><span class="sd"><svg class="ico"><use href="#i-inbox"/></svg></span><span class="tx">現場の困りごとを受付<small>desknet's NEO・AppSuite から依頼</small></span></li>
+        <li class="t-ai"><span class="sd"><svg class="ico"><use href="#i-bot"/></svg></span><span class="tx">AIが注文書の下書きを作る<small>信号の色の案と、わからない点の質問つき</small></span></li>
+        <li class="t-hu"><span class="sd"><svg class="ico"><use href="#i-stamp"/></svg></span><span class="tx">技術者が中身と色を決めてOK</span></li>
+        <li class="t-ai"><span class="sd"><svg class="ico"><use href="#i-blueprint"/></svg></span><span class="tx">AIが作業の段取りを決める</span></li>
+        <li class="t-ai"><span class="sd"><svg class="ico"><use href="#i-box"/></svg></span><span class="tx">囲いの中で組み立てる<small id="impl-sub">本物の図面・名簿は入れない</small></span></li>
+        <li class="t-ci"><span class="sd"><svg class="ico"><use href="#i-flask"/></svg></span><span class="tx">検査機がチェック<small>圏外・電波復帰のテストも実施</small></span><span class="status" id="ci">待機</span></li>
+        <li class="t-ai"><span class="sd"><svg class="ico"><use href="#i-doc"/></svg></span><span class="tx">提出書類と試し画面をそろえる</span></li>
+        <li class="t-fd"><span class="sd"><svg class="ico"><use href="#i-glove"/></svg></span><span class="tx">モデル現場で使ってみる<small>屋外・手袋・電波の弱い場所で</small></span><span class="status" id="fd">待機</span></li>
+        <li class="t-hu"><span class="sd"><svg class="ico"><use href="#i-eye"/></svg></span><span class="tx">技術者が書類と現場の結果を確認</span></li>
+        <li class="t-hu"><span class="sd"><svg class="ico"><use href="#i-rocket"/></svg></span><span class="tx">ほかの現場へ広げる</span></li>
+      </ol>
+      <div class="ctrl">
+        <button class="btn" id="btn-play" type="button"></button>
+        <button class="btn" id="btn-reset" type="button"><svg class="ico"><use href="#i-undo"/></svg>最初から</button>
+      </div>
+    </div>
+    <div>
+      <div class="speech reveal" id="speech"><div class="who" id="who"></div><p id="say"></p></div>
+      <div class="card reveal" style="margin-top:16px">
+        <h4 style="margin:0 0 6px;display:flex;align-items:center;gap:8px"><svg class="ico" style="color:var(--field)"><use href="#i-pin"/></svg>「モデル現場」で試すのが建設土木版の特徴</h4>
+        <p style="margin:0;font-size:14.5px;color:var(--muted)">事務所の画面で動いても、現場で使えるとは限りません。まず1つの現場で試し、困りごとがなくなってから、ほかの現場へ広げます。</p>
+      </div>
+      <div class="card reveal" style="margin-top:16px">
+        <h4 style="margin:0 0 6px;display:flex;align-items:center;gap:8px"><svg class="ico" style="color:var(--ai)"><use href="#i-db"/></svg>途中で止まっても大丈夫</h4>
+        <p style="margin:0;font-size:14.5px;color:var(--muted)">工事日報と同じように「どこまでできたか」「検査の結果」「次の作業」を毎回記録。別の日に続きから再開できます。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="c7">
+  <div class="sh"><div class="n">7</div><div><h2>ロボットへの「注文書」</h2><p>現場の言葉を、検査機で確かめられる言葉に直すのがコツです</p></div></div>
+  <div class="vs">
+    <div class="ask bad reveal"><h4><svg class="ico"><use href="#i-x"/></svg>わるいお願い</h4><div class="q">「現場で使いやすい写真アプリにして」</div><p>「使いやすい」は人それぞれ。検査機は合格・不合格を決められません。</p></div>
+    <div class="ask good reveal"><h4><svg class="ico"><use href="#i-check"/></svg>いいお願い</h4><div class="q">「電波がない所で撮った写真も消えずに残り、つながったら自動で送られる」</div><p>これなら「圏外で撮る→電波を戻す→届いたか」をテストで確かめられます。</p></div>
+  </div>
+
+  <div class="order reveal">
+    <div class="head"><svg class="ico"><use href="#i-doc"/></svg>注文書の見本：工事写真の整理アプリ（圏外保存の追加）<span class="no">No. SITE-001　信号：青</span></div>
+    <dl>
+      <dt><svg class="ico"><use href="#i-flag"/></svg>なんのため？</dt><dd>電波の弱い現場で撮った写真が送れず、事務所で整理し直す手間をなくす</dd>
+      <dt><svg class="ico"><use href="#i-users"/></svg>だれが使う？</dt><dd>現場の施工管理担当／現場事務／所長（確認）</dd>
+      <dt><svg class="ico"><use href="#i-check"/></svg>作るもの</dt><dd>圏外での一時保存、電波が戻った時の自動送信、送信済み・未送信の表示</dd>
+      <dt><svg class="ico"><use href="#i-x"/></svg>今回は作らない</dt><dd>発注者システムへの直接提出、写真の加工・編集機能</dd>
+      <dt><svg class="ico"><use href="#i-search"/></svg>合格の条件</dt><dd><ul>
+        <li>圏外で撮った写真がアプリを閉じても消えない</li>
+        <li>電波が戻ると自動で送られ、二重に登録されない</li>
+        <li>撮影日時・撮影場所の記録をあとから書きかえられない</li>
+        <li>ほかの現場の写真は見えない</li>
+      </ul></dd>
+      <dt><svg class="ico"><use href="#i-glove"/></svg>現場での確認</dt><dd>モデル現場で、手袋のまま操作できるか／屋外の明るさで画面が読めるか</dd>
+      <dt><svg class="ico"><use href="#i-lock"/></svg>守ること</dt><dd>写真の原本は加工しない／本物の工事写真・名簿・位置情報を練習用の場所に持ち込まない</dd>
+      <dt><svg class="ico"><use href="#i-stamp"/></svg>必ず人に聞くこと</dt><dd>提出様式の変更、協力会社・発注者に見せる範囲の変更、安全・品質の判定にかかわる変更<span class="stamp">要承認</span></dd>
+    </dl>
+  </div>
+</section>
+
+<section class="sec" id="c8">
+  <div class="sh"><div class="n">8</div><div><h2>現場ならではの6つの約束</h2><p>一般向けの約束に、建設土木ならではのルールを足しました</p></div></div>
+  <div class="promises">
+    <div class="pr reveal"><span class="num">01</span><div class="ib"><svg class="ico"><use href="#i-shield"/></svg></div><h4>安全・構造の判断はAIに決めさせない</h4><p>赤信号のものは、AIはお手伝いまで。判断と押印は資格と責任を持つ人。</p><div class="eg">AIの計算結果をそのまま採用しない。技術者が根拠を確かめる</div></div>
+    <div class="pr reveal"><span class="num">02</span><div class="ib"><svg class="ico"><use href="#i-lock"/></svg></div><h4>本物の図面・名簿・位置情報は囲いに入れない</h4><p>発注者からの預かりデータや作業員の個人情報は、練習用の場所に持ち込みません。</p><div class="eg">テストには作り物のデータを使う</div></div>
+    <div class="pr reveal"><span class="num">03</span><div class="ib"><svg class="ico"><use href="#i-pin"/></svg></div><h4>モデル現場で試してから広げる</h4><p>いきなり全現場に出しません。1つの現場で使ってもらい、声を聞いてから広げます。</p><div class="eg">新工法を試験施工してから本採用するのと同じ</div></div>
+    <div class="pr reveal"><span class="num">04</span><div class="ib"><svg class="ico"><use href="#i-nosignal"/></svg></div><h4>電波が弱くても止まらない</h4><p>山の中・河川敷・トンネルでも、入力した内容が消えないように作ります。</p><div class="eg">「圏外でも消えない」を合格の条件に入れる</div></div>
+    <div class="pr reveal"><span class="num">05</span><div class="ib"><svg class="ico"><use href="#i-camera"/></svg></div><h4>記録は消さない・書きかえない</h4><p>工事写真や検査記録の原本はそのまま残し、だれが・いつ・何をしたかを記録します。</p><div class="eg">あとから「本物の記録か」を説明できる状態に</div></div>
+    <div class="pr reveal"><span class="num">06</span><div class="ib"><svg class="ico"><use href="#i-handshake"/></svg></div><h4>見せてよい範囲を守る</h4><p>社内・協力会社・発注者で、見られる情報を分けます。範囲を変えるときは人の承認。</p><div class="eg">ほかの現場や他社の情報が見えないことをテストで確かめる</div></div>
+  </div>
+
+  <h3 class="sub"><svg class="ico"><use href="#i-key"/></svg>ロボットに渡すカギ・渡さないカギ</h3>
+  <div class="keys">
+    <div class="kbox give reveal"><h4><svg class="ico"><use href="#i-check"/></svg>渡すもの</h4><ul>
+      <li><svg class="ico"><use href="#i-check"/></svg>作業用の下書き場所を編集する権利</li>
+      <li><svg class="ico"><use href="#i-check"/></svg>作り物のテスト用データ（ダミーの写真・図面・名簿）</li>
+      <li><svg class="ico"><use href="#i-check"/></svg>その仕事に必要な、最小限のカギだけ</li>
+      <li><svg class="ico"><use href="#i-check"/></svg>決められた行き先へのネット接続</li>
+    </ul></div>
+    <div class="kbox keep reveal"><h4><svg class="ico"><use href="#i-x"/></svg>渡さないもの</h4><ul>
+      <li><svg class="ico"><use href="#i-x"/></svg>完成版へ直接書きこむ権利、本番システムのカギ</li>
+      <li><svg class="ico"><use href="#i-x"/></svg>発注者から預かった図面・設計データ</li>
+      <li><svg class="ico"><use href="#i-x"/></svg>作業員名簿などの個人情報、現場の位置情報</li>
+      <li><svg class="ico"><use href="#i-x"/></svg>文書に書かれた「権限を変えて」という命令に従うこと</li>
+    </ul></div>
+  </div>
+</section>
+
+<section class="sec" id="c9">
+  <div class="sh"><div class="n">9</div><div><h2>提出書類の完成チェック</h2><p>緑の枠は、建設土木版で追加した項目です</p></div></div>
+  <div class="checks reveal">
+    <div class="ck"><span class="box"><svg class="ico"><use href="#i-check"/></svg></span><div><b>なんの注文か</b><small>どの困りごと・どの注文書・信号の色</small></div></div>
+    <div class="ck"><span class="box"><svg class="ico"><use href="#i-check"/></svg></span><div><b>どこを変えたか</b><small>画面・データ・見せる範囲への影響</small></div></div>
+    <div class="ck"><span class="box"><svg class="ico"><use href="#i-check"/></svg></span><div><b>合格条件の結果</b><small>条件ごとの○×と、まだ確かめていない所</small></div></div>
+    <div class="ck"><span class="box"><svg class="ico"><use href="#i-check"/></svg></span><div><b>検査機の結果</b><small>テスト・セキュリティ検査・圏外テスト</small></div></div>
+    <div class="ck site-only"><span class="box"><svg class="ico"><use href="#i-check"/></svg></span><div><b>モデル現場での結果</b><small>屋外・手袋・電波の弱い所での使い心地</small></div></div>
+    <div class="ck site-only"><span class="box"><svg class="ico"><use href="#i-check"/></svg></span><div><b>記録の原本が守られているか</b><small>写真・検査記録が書きかわらないこと</small></div></div>
+    <div class="ck"><span class="box"><svg class="ico"><use href="#i-check"/></svg></span><div><b>元に戻す方法</b><small>うまくいかなかった時の戻し方</small></div></div>
+    <div class="ck"><span class="box"><svg class="ico"><use href="#i-check"/></svg></span><div><b>残っている心配</b><small>わかっている不具合、追加で決めること</small></div></div>
+  </div>
+  <div class="note warn reveal"><svg class="ico"><use href="#i-alert"/></svg><div>検査とモデル現場で合格しても「絶対に不具合がない」わけではありません。だから広げる前に、技術者が最後に確認します。</div></div>
+</section>
+
+<section class="sec" id="c10">
+  <div class="sh"><div class="n">10</div><div><h2>足場を一段ずつのぼる進め方</h2><p>期間ではなく「この段ができたら次へ」で進みます</p></div></div>
+  <div class="card reveal">
+    <div class="stairs">
+      <div class="stair" style="--h:22%"><b>決まりを作る</b><small>ひな形・手順・信号ルール</small><span class="p">STEP 0</span></div>
+      <div class="stair" style="--h:38%"><b>事務所で1つ</b><small>資機材予約など青信号の小さな道具</small><span class="p">STEP 1</span></div>
+      <div class="stair" style="--h:54%"><b>モデル現場で試す</b><small>1つの現場で実際に使う</small><span class="p">STEP 2</span></div>
+      <div class="stair" style="--h:70%"><b>ほかの現場へ</b><small>複数の現場・協力会社へ広げる</small><span class="p">STEP 3</span></div>
+      <div class="stair" style="--h:86%"><b>黄信号へ挑戦</b><small>技術者のチェック付きで支援機能を</small><span class="p">STEP 4</span></div>
+      <svg class="climber" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17h18" stroke="#20262e"/><path d="M5 17a7 7 0 0 1 14 0" fill="currentColor"/><path d="M10 10V6h4v4" stroke="#20262e"/></svg>
+    </div>
+  </div>
+  <div class="tbl goals reveal" style="margin-top:16px">
+    <table>
+      <thead><tr><th>段</th><th>この段の「できた！」の合図</th></tr></thead>
+      <tbody>
+        <tr><td>STEP 0</td><td>注文書のひな形と信号ルールがあり、人がやっても同じ手順で進められる</td></tr>
+        <tr><td>STEP 1</td><td>青信号の小さな道具1つを、証拠付きで完成させられる</td></tr>
+        <tr><td>STEP 2</td><td>モデル現場で使ってもらい、「現場で使える」と言ってもらえる</td></tr>
+        <tr><td>STEP 3</td><td>複数の現場・協力会社が、見せる範囲を守って安全に使える</td></tr>
+        <tr><td>STEP 4</td><td>黄信号の機能を、技術者のチェック付きで回せる（赤信号は対象外のまま）</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="sub"><svg class="ico"><use href="#i-gauge"/></svg>うまくいっているかの測り方</h3>
+  <div class="grid4">
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-clock"/></svg></div><div><b>現場の事務時間</b><small>写真整理・日報などにかかる時間がどれだけ減ったか</small></div></div>
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-calendar"/></svg></div><div><b>困りごと → 使えるまで</b><small>依頼から現場で使えるまでの日数</small></div></div>
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-users"/></svg></div><div><b>現場での利用率</b><small>作った道具が実際に使われているか</small></div></div>
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-loop"/></svg></div><div><b>書類の手戻り</b><small>提出書類の差し戻しや再作成の回数</small></div></div>
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-alert"/></svg></div><div><b>使い始めてからの不具合</b><small>現場で起きた問題とその影響</small></div></div>
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-shield"/></svg></div><div><b>信号ルールの守られ方</b><small>赤信号の判断にAIが入りこんでいないか</small></div></div>
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-yen"/></svg></div><div><b>1件あたりの費用</b><small>AI・検査機・作業場にかかったお金</small></div></div>
+    <div class="measure reveal"><div class="ib"><svg class="ico"><use href="#i-chat"/></svg></div><div><b>現場の声</b><small>「助かった」「ここが困る」の数と中身</small></div></div>
+  </div>
+  <div class="note tip reveal"><svg class="ico"><use href="#i-flag"/></svg><div>評価するのは、AIが何回動いたかではありません。<b>「現場の手間がどれだけ減り、安全と品質を守ったまま使えているか」</b>です。</div></div>
+</section>
+
+<section class="sec" id="c11">
+  <div class="sh"><div class="n">11</div><div><h2>まとめ</h2><p>これだけ覚えておけば大丈夫</p></div></div>
+  <div class="sum">
+    <div class="sumc reveal"><svg class="ico"><use href="#i-bot"/></svg><h4>組み立ては AI</h4><p>はっきりした注文書をもとに、囲いの中で小さく作る。</p></div>
+    <div class="sumc reveal"><svg class="ico"><use href="#i-search"/></svg><h4>合否は 検査機</h4><p>AIの自己申告ではなく、検査機の結果で決める。</p></div>
+    <div class="sumc reveal"><svg class="ico"><use href="#i-glove"/></svg><h4>使い心地は 現場</h4><p>モデル現場で試してから、ほかの現場へ広げる。</p></div>
+    <div class="sumc reveal"><svg class="ico"><use href="#i-helmet"/></svg><h4>最終判断は 技術者</h4><p>赤信号（安全・構造・品質）はAIに決めさせない。</p></div>
+  </div>
+  <div class="note tip reveal"><svg class="ico"><use href="#i-spark"/></svg><div>最初から現場の判断を任せる大きな仕組みは作りません。<b>青信号の小さな道具を1つ、モデル現場で使えるところまで</b>確実に回し、そこから少しずつ広げます。</div></div>
+
+  <h3 class="sub"><svg class="ico"><use href="#i-book"/></svg>ことばのミニ辞典</h3>
+  <div class="dict reveal">
+    <div><b>注文書</b><span>AIへの作業指示書。目的・合格の条件・守ることを書く</span></div>
+    <div><b>信号の色</b><span>青＝任せる、黄＝技術者チェック付き、赤＝AIに決めさせない</span></div>
+    <div><b>囲い</b><span>AIが作業する使い捨ての練習場所。本番や本物のデータとは切り離す</span></div>
+    <div><b>検査機（CI）</b><span>変更のたびに自動で動くチェックの仕組み</span></div>
+    <div><b>モデル現場</b><span>新しい道具を最初に試してもらう現場</span></div>
+    <div><b>圏外対応</b><span>電波がなくても入力が消えず、つながったら送る作り</span></div>
+    <div><b>提出書類（PR）</b><span>「こう変えました」のまとめ。証拠と判断を記録する</span></div>
+    <div><b>点群</b><span>レーザーや写真から作る、現場の形を点の集まりで表した3Dデータ</span></div>
+  </div>
+
+  <div class="links">
+    <a class="to-full" href="mirai-software-factory.html"><svg class="ico"><use href="#i-doc"/></svg><div><b>企画構想案（本編）</b><small>mirai-software-factory.html</small></div><svg class="ico" style="margin-left:auto"><use href="#i-arrow"/></svg></a>
+    <a class="to-full" href="mirai-software-factory-eli5.html"><svg class="ico"><use href="#i-spark"/></svg><div><b>やさしい解説版（一般向け）</b><small>mirai-software-factory-eli5.html</small></div><svg class="ico" style="margin-left:auto"><use href="#i-arrow"/></svg></a>
+  </div>
+</section>
+
+<footer>
+  <div>みらいソフトウェアファクトリー 企画構想案 建設土木版 やさしい解説（ドラフト）｜IT・DX部門｜2026年10月17日</div>
+  <div>本資料は本編の考え方を建設土木の業務向けに言いかえたものです。信号の色分けや例示した道具は検討のための案であり、適用時は関係法令・発注者の基準・社内規程に照らして確定してください。</div>
+</footer>
+</main>
+
+<script>
+(function(){
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var reveals = document.querySelectorAll('.reveal');
+  if ('IntersectionObserver' in window && !reduce) {
+    var io = new IntersectionObserver(function(es){
+      es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, {threshold:.12});
+    reveals.forEach(function(el){ io.observe(el); });
+  } else { reveals.forEach(function(el){ el.classList.add('in'); }); }
+
+  var bar = document.getElementById('progress');
+  var links = Array.prototype.slice.call(document.querySelectorAll('#navlist a'));
+  var secs = links.map(function(a){ return document.querySelector(a.getAttribute('href')); });
+  function onScroll(){
+    var h = document.documentElement, max = h.scrollHeight - h.clientHeight;
+    bar.style.width = (max>0 ? h.scrollTop/max*100 : 0) + '%';
+    var cur = -1;
+    secs.forEach(function(s,i){ if(s && s.getBoundingClientRect().top < 120) cur = i; });
+    links.forEach(function(a,i){ a.classList.toggle('active', i===cur); });
+  }
+  window.addEventListener('scroll', onScroll, {passive:true}); onScroll();
+
+  /* signal */
+  var order = ['g','y','r'], si = 0, sTimer = null;
+  var lamps = document.querySelectorAll('.lamp'), sigs = document.querySelectorAll('.sig');
+  function setSig(c){
+    lamps.forEach(function(l){ l.classList.toggle('on', l.getAttribute('data-c')===c); });
+    sigs.forEach(function(s){ s.classList.toggle('on', s.getAttribute('data-c')===c); });
+  }
+  lamps.forEach(function(l){ l.addEventListener('click', function(){ clearInterval(sTimer); setSig(l.getAttribute('data-c')); }); });
+  sigs.forEach(function(s){ s.addEventListener('click', function(){ clearInterval(sTimer); setSig(s.getAttribute('data-c')); }); });
+  setSig('g');
+  if (!reduce) sTimer = setInterval(function(){ si=(si+1)%3; setSig(order[si]); }, 3200);
+
+  /* stepper */
+  var items = document.querySelectorAll('#stepper li');
+  var ci = document.getElementById('ci'), fd = document.getElementById('fd');
+  var implSub = document.getElementById('impl-sub');
+  var who = document.getElementById('who'), say = document.getElementById('say'), speech = document.getElementById('speech');
+  var W = {
+    in:['#i-inbox','受付窓口','var(--accent)'],
+    ai:['#i-bot','AIロボット','var(--ai)'],
+    ci:['#i-search','検査機','var(--ci)'],
+    fd:['#i-glove','現場の試し係','var(--field)'],
+    hu:['#i-helmet','技術者（現場所長）','var(--human)']
+  };
+  var seq = [
+    {i:0,w:'in',t:'「山の中の現場だと写真が送れず、事務所で整理し直している」という依頼が届きました。'},
+    {i:1,w:'ai',t:'注文書の下書きを作りました。記録の整理なので信号は「青」の案です。「同じ写真が二重に届いたらどうしますか？」と質問も添えます。'},
+    {i:2,w:'hu',t:'内容も色も「青」でよし。撮影日時と場所が書きかわらないことも合格の条件に入れておいて。'},
+    {i:3,w:'ai',t:'作業を小さく分けて、変える場所を決めました。'},
+    {i:4,w:'ai',t:'囲いの中で組み立てます。テストにはダミーの写真を使い、本物の工事写真は入れません。',impl:'本物の図面・名簿は入れない'},
+    {i:5,w:'ci',t:'検査開始。圏外にして撮影し、電波を戻すテストもします…',ci:['run','検査中…']},
+    {i:5,w:'ci',t:'不合格です。電波が戻った時、同じ写真が2枚登録されました。',ci:['fail','不合格']},
+    {i:4,w:'ai',t:'二重登録を防ぐように直します。やり直しは決められた回数まで。',impl:'直しています（やり直し 1回目）',back:true},
+    {i:5,w:'ci',t:'もう一度検査します…',ci:['run','再検査中…']},
+    {i:5,w:'ci',t:'合格です。圏外保存・自動送信・二重登録なし、すべてOK。',ci:['pass','合格']},
+    {i:6,w:'ai',t:'提出書類と、スマホで試せる画面をそろえました。'},
+    {i:7,w:'fd',t:'河川敷の現場で使ってみます。手袋のまま押せるかな…',fd:['run','試用中…']},
+    {i:7,w:'fd',t:'ボタンは押しやすい。日なたでも画面が読めました。「現場で使える」です！',fd:['pass','現場OK']},
+    {i:8,w:'hu',t:'検査の結果と現場の声を確認。原本も守られている。ほかの現場へ広げてよし。'},
+    {i:9,w:'hu',t:'ほかの現場へ展開します。各現場の声が、次の改善の依頼になります。'},
+    {end:true,w:'hu',t:'完成！ 現場の写真整理の手間が減りました。'}
+  ];
+  var k = 0, timer = null, playing = !reduce;
+  function render(){
+    var s = seq[k];
+    items.forEach(function(li,idx){
+      li.classList.remove('on');
+      if (s.end) li.classList.add('done');
+      else if (!s.back) li.classList.toggle('done', idx < s.i);
+    });
+    if (!s.end) items[s.i].classList.add('on');
+    if (s.back) { items[4].classList.remove('done'); items[5].classList.remove('done'); }
+    if (s.impl) implSub.textContent = s.impl;
+    if (s.ci) { ci.className = 'status ' + s.ci[0]; ci.textContent = s.ci[1]; }
+    else if (!s.end && s.i < 5) { ci.className = 'status'; ci.textContent = '待機'; }
+    if (s.fd) { fd.className = 'status ' + s.fd[0]; fd.textContent = s.fd[1]; }
+    else if (!s.end && s.i < 7) { fd.className = 'status'; fd.textContent = '待機'; }
+    var w = W[s.w];
+    who.innerHTML = '<svg class="ico" style="color:'+w[2]+'"><use href="'+w[0]+'"/></svg><span style="color:'+w[2]+'">'+w[1]+'</span>';
+    say.textContent = s.t;
+    speech.classList.remove('anim'); void speech.offsetWidth; speech.classList.add('anim');
+  }
+  function step(){ k = (k+1) % seq.length; render(); }
+  function play(){ clearInterval(timer); timer = setInterval(step, 2800); }
+  var btn = document.getElementById('btn-play');
+  function setBtn(){
+    btn.innerHTML = playing ? '<svg class="ico"><use href="#i-pause"/></svg>一時停止' : '<svg class="ico"><use href="#i-play"/></svg>再生';
+  }
+  btn.addEventListener('click', function(){ playing = !playing; if (playing) play(); else clearInterval(timer); setBtn(); });
+  document.getElementById('btn-reset').addEventListener('click', function(){ k = 0; render(); if (playing) play(); });
+  render(); setBtn(); if (playing) play();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1104 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>みらいSF 要件定義書</title>
+<meta name="description" content="みらいソフトウェアファクトリーの要件定義書（非エンジニア向け）。目的・範囲・業務要件・機能要件・非機能要件・導入計画・未決事項をまとめる。">
+<style>
+:root{
+  --bg:#f5f7fa; --surface:#ffffff; --surface2:#eef2f6; --ink:#14202e; --muted:#5a6878; --line:#dce3eb;
+  --navy:#0f2a44; --navy2:#173a5c; --on-navy:#ffffff;
+  --accent:#d9731a; --accent-soft:#fff1e2;
+  --ai:#0f8a87; --ai-soft:#e0f4f3;
+  --human:#c64a30; --human-soft:#fbe8e3;
+  --ci:#4f5bd5; --ci-soft:#e9ebfb;
+  --g:#1f8a4c; --g-soft:#e3f5ea; --y:#a87308; --y-soft:#fdf3dc; --r:#c53030; --r-soft:#fbe4e4;
+  --shadow:0 1px 2px rgba(15,42,68,.06),0 8px 24px rgba(15,42,68,.07);
+  --radius:14px;
+  --font:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  --mono:ui-monospace,"SFMono-Regular","Cascadia Code",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e1621; --surface:#152130; --surface2:#1b2a3c; --ink:#e6edf5; --muted:#9fb0c3; --line:#2a3b50;
+    --navy:#0b1f33; --navy2:#16324f; --on-navy:#ffffff;
+    --accent:#f5a04f; --accent-soft:#3a2a17;
+    --ai:#4fd1cc; --ai-soft:#123534;
+    --human:#f08a72; --human-soft:#3b2019;
+    --ci:#9aa3f5; --ci-soft:#232a52;
+    --g:#5fd394; --g-soft:#173527; --y:#f0c050; --y-soft:#3a2f12; --r:#f08080; --r-soft:#3d1c1c;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0e1621; --surface:#152130; --surface2:#1b2a3c; --ink:#e6edf5; --muted:#9fb0c3; --line:#2a3b50;
+  --navy:#0b1f33; --navy2:#16324f; --on-navy:#ffffff;
+  --accent:#f5a04f; --accent-soft:#3a2a17;
+  --ai:#4fd1cc; --ai-soft:#123534;
+  --human:#f08a72; --human-soft:#3b2019;
+  --ci:#9aa3f5; --ci-soft:#232a52;
+  --g:#5fd394; --g-soft:#173527; --y:#f0c050; --y-soft:#3a2f12; --r:#f08080; --r-soft:#3d1c1c;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15.5px;line-height:1.85;letter-spacing:.01em}
+a{color:var(--ci)}
+code,kbd{font-family:var(--mono);font-size:.9em;background:var(--surface2);border:1px solid var(--line);border-radius:6px;padding:0 .35em}
+.topbar{position:sticky;top:0;z-index:20;background:var(--navy);color:var(--on-navy);display:flex;align-items:center;gap:12px;padding:10px 20px;box-shadow:0 2px 10px rgba(0,0,0,.15)}
+.topbar .brand{font-weight:700;letter-spacing:.04em;white-space:nowrap}
+.topbar .brand small{font-weight:400;opacity:.75;margin-left:8px}
+.topbar .sp{flex:1}
+.topbar a.sw,.topbar button{color:var(--on-navy);background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.22);border-radius:999px;padding:5px 12px;font:inherit;font-size:13px;cursor:pointer;text-decoration:none;white-space:nowrap}
+.topbar a.sw:hover,.topbar button:hover{background:rgba(255,255,255,.2)}
+.hero{background:linear-gradient(135deg,var(--navy) 0%,var(--navy2) 100%);color:var(--on-navy);padding:48px 20px 40px}
+.hero .in{max-width:1180px;margin:0 auto}
+.hero .kicker{display:inline-block;font-size:12.5px;letter-spacing:.12em;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:3px 12px}
+.hero h1{font-size:clamp(26px,4.4vw,40px);line-height:1.3;margin:14px 0 8px}
+.hero p{margin:0;max-width:820px;opacity:.92}
+.hero .meta{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:18px;font-size:13.5px;opacity:.9}
+.layout{max-width:1180px;margin:0 auto;padding:28px 20px 80px;display:grid;grid-template-columns:250px minmax(0,1fr);gap:32px}
+.toc{position:sticky;top:64px;align-self:start;max-height:calc(100vh - 84px);overflow:auto;font-size:13.5px;padding-right:4px}
+.toc b{display:block;font-size:12px;color:var(--muted);letter-spacing:.1em;margin:0 0 6px}
+.toc ol{list-style:none;margin:0;padding:0}
+.toc a{display:block;padding:5px 10px;border-radius:8px;color:var(--ink);text-decoration:none;border-left:3px solid transparent}
+.toc a:hover{background:var(--surface2)}
+.toc a.on{background:var(--accent-soft);border-left-color:var(--accent);font-weight:700}
+.toc-m{display:none}
+main{min-width:0}
+section.sec{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:28px 30px;margin:0 0 24px;scroll-margin-top:72px}
+section.sec>h2{display:flex;align-items:center;gap:12px;font-size:22px;line-height:1.4;margin:0 0 6px}
+section.sec>h2 .no{flex:none;display:grid;place-items:center;width:36px;height:36px;border-radius:10px;background:var(--navy);color:var(--on-navy);font-size:15px}
+section.sec>.sub{color:var(--muted);margin:0 0 18px}
+h3{font-size:17.5px;margin:26px 0 10px;padding-left:10px;border-left:4px solid var(--accent);line-height:1.5}
+h4{font-size:15.5px;margin:18px 0 6px}
+p{margin:0 0 12px}
+ul,ol{margin:0 0 12px;padding-left:1.4em}
+li{margin:2px 0}
+.easy{background:var(--ai-soft);border:1px solid color-mix(in srgb,var(--ai) 35%,transparent);border-radius:12px;padding:14px 16px 12px 16px;margin:12px 0 16px}
+.easy::before{content:"やさしく言うと";display:inline-block;font-size:12px;font-weight:700;color:var(--surface);background:var(--ai);border-radius:999px;padding:1px 10px;margin-bottom:6px}
+.note{background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin:12px 0}
+.warn{background:var(--r-soft);border:1px solid color-mix(in srgb,var(--r) 35%,transparent);border-radius:12px;padding:12px 16px;margin:12px 0}
+.prop{background:var(--y-soft);border:1px dashed color-mix(in srgb,var(--y) 60%,transparent);border-radius:12px;padding:12px 16px;margin:12px 0}
+.prop::before{content:"本書で補った提案";display:inline-block;font-size:12px;font-weight:700;color:var(--y);border:1px solid var(--y);border-radius:999px;padding:0 10px;margin-bottom:4px}
+.tw{overflow-x:auto;margin:10px 0 16px;border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.65}
+th,td{border-bottom:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+thead th{background:var(--surface2);font-size:13px;color:var(--muted);white-space:nowrap;position:sticky;top:0}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:color-mix(in srgb,var(--surface2) 50%,transparent)}
+tr.grp td{background:var(--surface2)}
+td.id,th.id{font-family:var(--mono);white-space:nowrap;font-size:13px}
+td.nw{white-space:nowrap}
+.b{display:inline-block;font-size:12px;font-weight:700;border-radius:999px;padding:1px 9px;white-space:nowrap;border:1px solid}
+.b.must{color:var(--human);border-color:var(--human);background:var(--human-soft)}
+.b.should{color:var(--ci);border-color:var(--ci);background:var(--ci-soft)}
+.b.could{color:var(--muted);border-color:var(--line);background:var(--surface2)}
+.src{display:inline-block;font-family:var(--mono);font-size:11.5px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:0 5px;margin:1px 2px 1px 0;white-space:nowrap}
+.src.p{color:var(--y);border-color:var(--y)}
+.sig{display:inline-flex;align-items:center;gap:5px;font-weight:700;font-size:13px;border-radius:999px;padding:1px 10px;white-space:nowrap}
+.sig::before{content:"";width:10px;height:10px;border-radius:50%;background:currentColor}
+.sig.g{color:var(--g);background:var(--g-soft)} .sig.y{color:var(--y);background:var(--y-soft)} .sig.r{color:var(--r);background:var(--r-soft)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:12px 0 16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.card h4{margin:0 0 6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.card p{margin:0;font-size:14px;color:var(--muted)}
+.card.ai{border-top:4px solid var(--ai)} .card.ci{border-top:4px solid var(--ci)} .card.hu{border-top:4px solid var(--human)} .card.ac{border-top:4px solid var(--accent)}
+.card.g{border-top:4px solid var(--g)} .card.y{border-top:4px solid var(--y)} .card.r{border-top:4px solid var(--r)}
+.who{font-size:12px;font-weight:700;border-radius:6px;padding:0 7px;white-space:nowrap}
+.who.ai{background:var(--ai-soft);color:var(--ai)} .who.ci{background:var(--ci-soft);color:var(--ci)} .who.hu{background:var(--human-soft);color:var(--human)}
+.steps{counter-reset:s;list-style:none;padding:0;margin:12px 0 16px;display:grid;gap:8px}
+.steps>li{counter-increment:s;display:grid;grid-template-columns:34px 1fr;gap:12px;align-items:start;background:var(--surface2);border-radius:10px;padding:10px 12px}
+.steps>li::before{content:counter(s);display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--navy);color:var(--on-navy);font-weight:700;font-size:14px}
+.steps>li b{display:block}
+figure{margin:14px 0 18px}
+.figwrap{overflow-x:auto}
+figure svg{width:100%;min-width:640px;height:auto;display:block}
+figcaption{font-size:13px;color:var(--muted);margin-top:6px;text-align:center}
+dl.gl{display:grid;grid-template-columns:minmax(120px,190px) 1fr;gap:0;margin:8px 0;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+dl.gl dt,dl.gl dd{margin:0;padding:9px 12px;border-bottom:1px solid var(--line)}
+dl.gl dt{font-weight:700;background:var(--surface2)}
+.filter{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+.filter input{flex:1 1 220px;min-width:0;font:inherit;font-size:14px;padding:7px 12px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+.filter button{font:inherit;font-size:13px;padding:5px 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}
+.filter button.on{background:var(--navy);color:var(--on-navy);border-color:var(--navy)}
+.sign{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.sign div{border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-height:110px}
+.sign small{color:var(--muted)}
+footer.ft{max-width:1180px;margin:0 auto;padding:0 20px 40px;color:var(--muted);font-size:13px}
+.totop{position:fixed;right:16px;bottom:16px;width:44px;height:44px;border-radius:50%;border:none;background:var(--navy);color:var(--on-navy);font-size:18px;cursor:pointer;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .2s}
+.totop.show{opacity:1;pointer-events:auto}
+svg .t{fill:var(--ink);font-family:var(--font)} svg .tm{fill:var(--muted);font-family:var(--font)}
+svg .bx{fill:var(--surface);stroke:var(--line)} svg .bx2{fill:var(--surface2);stroke:var(--line)}
+svg .ai{fill:var(--ai-soft);stroke:var(--ai)} svg .ci{fill:var(--ci-soft);stroke:var(--ci)} svg .hu{fill:var(--human-soft);stroke:var(--human)} svg .ac{fill:var(--accent-soft);stroke:var(--accent)}
+svg .ln{stroke:var(--muted);fill:none} svg .ar{fill:var(--muted)}
+@media (max-width:900px){
+  .layout{grid-template-columns:minmax(0,1fr);padding:18px 16px 60px;gap:0}
+  .toc{display:none}
+  .toc-m{display:block;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 14px;margin:0 0 16px}
+  .toc-m summary{cursor:pointer;font-weight:700}
+  .toc-m ol{margin:8px 0;padding-left:1.4em;font-size:14px}
+  section.sec{padding:20px 16px}
+  .hero{padding:32px 16px 28px}
+  .topbar{padding:8px 16px}
+  .topbar .brand small{display:none}
+  .sign{grid-template-columns:1fr}
+  dl.gl{grid-template-columns:1fr}
+  dl.gl dt{border-bottom:none}
+}
+@media (max-width:520px){ .topbar .hide-s{display:none} body{font-size:15px} }
+@media print{
+  .topbar,.toc,.toc-m,.totop,.filter{display:none!important}
+  body{background:#fff;font-size:11pt}
+  .layout{display:block;padding:0}
+  section.sec{box-shadow:none;border:none;padding:0;margin:0 0 18px;break-inside:auto}
+  section.sec>h2{break-after:avoid}
+  .hero{background:#fff;color:#000;padding:0 0 12px;border-bottom:2px solid #000}
+  .tw,.figwrap{overflow:visible;border:none}
+  figure svg{min-width:0}
+  thead th{position:static}
+}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <span class="brand">みらいSF<small>要件定義書 v0.1（ドラフト）</small></span>
+  <span class="sp"></span>
+  <a class="sw" href="mirai-sf-詳細仕様書.html">詳細仕様書へ →</a>
+  <a class="sw hide-s" href="mirai-software-factory.html">企画構想案</a>
+  <button type="button" id="themeBtn" aria-label="表示の明るさを切り替え">表示切替</button>
+  <button type="button" onclick="window.print()" class="hide-s">印刷</button>
+</div>
+
+<header class="hero">
+  <div class="in">
+    <span class="kicker">REQUIREMENTS DEFINITION</span>
+    <h1>みらいソフトウェアファクトリー<br>要件定義書</h1>
+    <p>社内の「困った」「これがあったら」を受け付け、AIが作り、検査機が確かめ、人が決める――そんな「システムの組み立てライン」に、<b>何が必要か（要件）</b>を、エンジニアでない方にも読めるように整理した文書です。</p>
+    <div class="meta"><span>版：0.1（ドラフト）</span><span>作成日：2026年10月17日</span><span>起案：IT・DX部門</span><span>対になる文書：詳細仕様書</span></div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="目次">
+  <b>目次</b>
+  <ol id="tocList">
+    <li><a href="#s0">0. 文書管理・読み方</a></li>
+    <li><a href="#s1">1. 背景と困りごと</a></li>
+    <li><a href="#s2">2. 目的とゴール</a></li>
+    <li><a href="#s3">3. 全体像</a></li>
+    <li><a href="#s4">4. 範囲（やること・やらないこと）</a></li>
+    <li><a href="#s5">5. 関わる人と役割</a></li>
+    <li><a href="#s6">6. 業務要件</a></li>
+    <li><a href="#s7">7. 機能要件</a></li>
+    <li><a href="#s8">8. 非機能要件</a></li>
+    <li><a href="#s9">9. データ要件</a></li>
+    <li><a href="#s10">10. 外部連携要件</a></li>
+    <li><a href="#s11">11. 前提・制約</a></li>
+    <li><a href="#s12">12. 導入計画・移行</a></li>
+    <li><a href="#s13">13. 成果の測り方</a></li>
+    <li><a href="#s14">14. リスクと対策</a></li>
+    <li><a href="#s15">15. 精査結果・未決事項</a></li>
+    <li><a href="#s16">16. 用語集</a></li>
+    <li><a href="#s17">17. 承認欄</a></li>
+  </ol>
+</nav>
+
+<main>
+<details class="toc-m"><summary>目次を開く</summary><ol>
+  <li><a href="#s0">文書管理・読み方</a></li><li><a href="#s1">背景と困りごと</a></li><li><a href="#s2">目的とゴール</a></li><li><a href="#s3">全体像</a></li><li><a href="#s4">範囲</a></li><li><a href="#s5">関わる人と役割</a></li><li><a href="#s6">業務要件</a></li><li><a href="#s7">機能要件</a></li><li><a href="#s8">非機能要件</a></li><li><a href="#s9">データ要件</a></li><li><a href="#s10">外部連携要件</a></li><li><a href="#s11">前提・制約</a></li><li><a href="#s12">導入計画・移行</a></li><li><a href="#s13">成果の測り方</a></li><li><a href="#s14">リスクと対策</a></li><li><a href="#s15">精査結果・未決事項</a></li><li><a href="#s16">用語集</a></li><li><a href="#s17">承認欄</a></li>
+</ol></details>
+
+<!-- ============ 0 ============ -->
+<section class="sec" id="s0">
+  <h2><span class="no">0</span>文書管理・この文書の読み方</h2>
+  <p class="sub">はじめに、この文書が何のためのもので、どう読めばよいかを説明します。</p>
+
+  <h3>この文書の役割</h3>
+  <p>要件定義書は、家づくりでいえば<b>「施主さんの要望書」</b>です。「どんな家に、だれが住み、何を大事にするか」を決めるもので、細かい寸法（＝どう作るか）は対になる<a href="mirai-sf-詳細仕様書.html">詳細仕様書</a>に書きます。</p>
+  <div class="tw"><table>
+    <thead><tr><th>文書</th><th>答える問い</th><th>主な読み手</th></tr></thead>
+    <tbody>
+      <tr><td><b>要件定義書（本書）</b></td><td>なぜ作るのか／何をできるようにするのか／どこまでやるのか</td><td>経営層、業務責任者、各部署の依頼者、IT・DX部門</td></tr>
+      <tr><td><a href="mirai-sf-詳細仕様書.html">詳細仕様書</a></td><td>画面・ルール・計算式・データ・権限・検査を、具体的にどう決めるのか</td><td>IT・DX部門、開発担当、検証担当、監査担当</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>もとにした資料（出典）</h3>
+  <p>本書は、プロジェクトフォルダ直下にある次の6つの資料を読み込み、内容を整理・統合したものです。各要件の右端に、どの資料にもとづくかを <span class="src">S1</span> のような記号で示します。</p>
+  <div class="tw"><table>
+    <thead><tr><th class="id">記号</th><th>資料名（ファイル）</th><th>内容</th></tr></thead>
+    <tbody>
+      <tr><td class="id">S1</td><td><a href="mirai-software-factory.html">企画構想案（mirai-software-factory.html）</a></td><td>構想の本編。到達点、実現性、推奨構成、二つのループ、作業指示書、6つの実践原則、PRの判断材料、段階導入、推奨方針、統制との対応</td></tr>
+      <tr><td class="id">S2</td><td><a href="mirai-software-factory-eli5.html">やさしい解説版（mirai-software-factory-eli5.html）</a></td><td>本編を建設現場のたとえで言いかえたもの。3つの役、注文書、6つの約束、提出書類の8項目</td></tr>
+      <tr><td class="id">S3</td><td><a href="mirai-software-factory-construction-eli5.html">建設土木版（mirai-software-factory-construction-eli5.html）</a></td><td>建設土木向けの読みかえ。信号の3色ルール、4つの役（現場の試し係）、モデル現場、圏外対応、原本保護、見せてよい範囲</td></tr>
+      <tr><td class="id">S4</td><td><a href="mirai-software-factory-construction-departments-eli5.html">部署別道具カタログ（…-departments-eli5.html）</a></td><td>17部署・105件の道具候補と信号の色、工事の一生、データのバトン、着手順のものさし、AIに決めさせない6種類</td></tr>
+      <tr><td class="id">S5</td><td><a href="intake-original-ui.html">受付ステーション（intake-original-ui.html）</a></td><td>依頼受付の動く試作（オリジナル画面）。7ステップの入力、信号判定、ものさし、ボード、注文書YAML出力など</td></tr>
+      <tr><td class="id">S6</td><td><a href="intake-appsuite-style.html">詳細受付 AppSuite風（intake-appsuite-style.html）</a></td><td>同じ受付を desknet's NEO AppSuite 風の画面で作った試作。集計画面、部品設定（実装メモ）、運用ルール例</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">S5とS6は、画面の見た目は違いますが、<b>中のルール（判定・計算・権限・出力）はまったく同じもの</b>が入っていることを確認しました。本書ではこの共通ルールを「受付の正式なルールの原案」として扱います。</div>
+
+  <h3>記号の読み方</h3>
+  <div class="tw"><table>
+    <thead><tr><th>記号</th><th>意味</th></tr></thead>
+    <tbody>
+      <tr><td><span class="b must">必須</span></td><td>これがないとラインを動かしてはいけない／最初の段階から必要なもの</td></tr>
+      <tr><td><span class="b should">推奨</span></td><td>なくても動くが、ないと使いにくい・効果が下がるもの。早い段階で用意したい</td></tr>
+      <tr><td><span class="b could">任意</span></td><td>あると便利なもの。余力があれば用意する</td></tr>
+      <tr><td><span class="src">S1</span>〜<span class="src">S6</span></td><td>上の表の出典資料</td></tr>
+      <tr><td><span class="src p">提案</span></td><td>出典資料には明記がなく、本書で<b>補った提案</b>。採用するかは関係者で合意が必要</td></tr>
+      <tr><td><span class="sig g">青</span> <span class="sig y">黄</span> <span class="sig r">赤</span></td><td>信号の3色ルール（6章で説明）。青＝任せる、黄＝担当者のチェック付き、赤＝AIに決めさせない</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>改訂履歴</h3>
+  <div class="tw"><table>
+    <thead><tr><th>版</th><th>日付</th><th>内容</th><th>作成</th></tr></thead>
+    <tbody><tr><td>0.1</td><td class="nw">2026-10-17</td><td>初版ドラフト。S1〜S6を精査し、要件として統合</td><td>IT・DX部門</td></tr></tbody>
+  </table></div>
+</section>
+
+<!-- ============ 1 ============ -->
+<section class="sec" id="s1">
+  <h2><span class="no">1</span>背景と、いまの困りごと</h2>
+  <p class="sub">なぜこの仕組みが必要なのかを、現場・部署の声と、AI活用の注意点の両面から整理します。</p>
+
+  <h3>1-1. 現場・部署で起きていること</h3>
+  <p>試作（S5・S6）に入っている依頼の例から、社内の典型的な困りごとが見えてきます。</p>
+  <div class="tw"><table>
+    <thead><tr><th>部署</th><th>いまの困りごと（依頼例）</th><th>起きている問題</th></tr></thead>
+    <tbody>
+      <tr><td class="nw">工事（現場）</td><td>山の中の現場では写真が送れず、事務所に戻ってから整理し直している</td><td>二度手間・残業</td></tr>
+      <tr><td class="nw">機材</td><td>どの重機が空いているか電話で確認しており、現場間で取り合いになる</td><td>確認の手間・調整ミス</td></tr>
+      <tr><td class="nw">安全環境</td><td>KY活動記録の空欄や記入もれが、パトロールのときに見つかる</td><td>気づくのが遅い</td></tr>
+      <tr><td class="nw">経理・財務</td><td>協力会社からの請求書を手で入力しており、月末に作業が集中する</td><td>入力負荷・ミス</td></tr>
+      <tr><td class="nw">人事・労務</td><td>時間外労働の上限に近づいていることに、月末まで気づけない</td><td>法令リスク</td></tr>
+      <tr><td class="nw">営業</td><td>発注機関のサイトを毎日見て回っている</td><td>定型作業の負荷</td></tr>
+      <tr><td class="nw">購買・外注</td><td>安全書類が出たかどうかを、電話とメールで確認している</td><td>確認の手間</td></tr>
+      <tr><td class="nw">総務など</td><td>PC貸出申請などをメールで行っている（S1の題材）</td><td>記録が残らない・追えない</td></tr>
+    </tbody>
+  </table></div>
+  <p>部署別道具カタログ（S4）では、こうした「あったら助かる道具」が<b>17部署で105件</b>洗い出されています。一方で、IT・DX部門の人手だけでは、これらを一つずつ作ることはできません。</p>
+
+  <h3>1-2. 「AIに丸投げ」では解決しない理由</h3>
+  <p>AIはプログラムを速く書けますが、まちがえることもあります。S1は次の点を明確にしています。</p>
+  <ul>
+    <li>生成されたプログラムの正しさや安全性は<b>保証されない</b>。だから独立したテストとレビューが必要</li>
+    <li>AIの「できました」という自己申告ではなく、<b>検査（CI）の実行結果</b>で合否を決める必要がある</li>
+    <li>「動く」ことと「業務として正しい」ことは別。業務の正しさは<b>使う部署の人</b>が確かめる必要がある</li>
+    <li>建設土木では、構造・仮設・安全など<b>人命や品質に直結する判断</b>をAIに決めさせてはいけない（S3）</li>
+  </ul>
+  <div class="easy">現場で毎日おこる「面倒」は山ほどあるのに、作り手が足りない。AIを使えば速く作れるが、AIまかせは危ない。だから<b>「AIが作る」「検査機が調べる」「人が決める」を役割分担した、安全な組み立てライン</b>を社内につくる――というのがこのプロジェクトです。</div>
+</section>
+
+<!-- ============ 2 ============ -->
+<section class="sec" id="s2">
+  <h2><span class="no">2</span>目的とゴール</h2>
+  <p class="sub">何をもって「成功」とするかを決めます。</p>
+
+  <h3>2-1. 目的</h3>
+  <ol>
+    <li><b>現場・部署の困りごとを、早く・安全に「使える道具」にする</b>こと <span class="src">S1</span><span class="src">S3</span></li>
+    <li>要望・仕様・実装・検証・承認・リリースを、<b>一つの管理された工程（開発ライン）</b>につなぐこと <span class="src">S1</span></li>
+    <li>AIの速さを活かしながら、<b>品質・安全・統制（ルール）を守る</b>こと <span class="src">S1</span></li>
+  </ol>
+
+  <h3>2-2. 設計の軸</h3>
+  <div class="note"><b>「自然言語で指示できるか」ではなく、「完了を機械的に判定できるか」を軸に設計する。</b> <span class="src">S1</span><br>たとえば「使いやすい申請画面」は検査機で判定できませんが、「申請者は自分の申請のみ閲覧でき、承認者だけが承認できる」は権限テストで判定できます。</div>
+
+  <h3>2-3. 到達点（できあがったときの姿）</h3>
+  <ul>
+    <li>チームが機能要望を登録すると、AIが仕様案・実装計画を作り、承認された範囲でクラウド上の<b>実装・テスト・修正・PR（変更の提出書類）作成</b>まで進める <span class="src">S1</span></li>
+    <li>人は、業務要件の確定、重要な設計判断、最終マージ（完成版への取り込み）、本番公開を<b>判断する</b> <span class="src">S1</span></li>
+    <li>建設土木では、モデル現場で「現場で使える」と確かめてから、ほかの現場へ広げる <span class="src">S3</span></li>
+  </ul>
+
+  <h3>2-4. 評価の考え方</h3>
+  <p>評価するのは、AIが何回動いたかやコードの量ではありません。</p>
+  <div class="cards">
+    <div class="card ac"><h4>全社の評価軸 <span class="src">S1</span></h4><p>「業務として受け入れられた変更を、どの品質・費用で届けたか」</p></div>
+    <div class="card ac"><h4>建設土木の評価軸 <span class="src">S3</span></h4><p>「現場の手間がどれだけ減り、安全と品質を守ったまま使えているか」</p></div>
+    <div class="card ac"><h4>管理の単位 <span class="src">S1</span></h4><p>「AIが何台動くか」ではなく「安全に統合できる変更が何件あるか」</p></div>
+  </div>
+  <p>具体的な指標は <a href="#s13">13章</a> にまとめます。</p>
+</section>
+
+<!-- ============ 3 ============ -->
+<section class="sec" id="s3">
+  <h2><span class="no">3</span>全体像</h2>
+  <p class="sub">ラインの流れと、だれが何を担当するかを一枚で示します。</p>
+
+  <figure><div class="figwrap">
+    <svg viewBox="0 0 960 430" role="img" aria-label="みらいソフトウェアファクトリーの全体の流れ">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ar"/></marker></defs>
+      <rect x="10" y="20" width="170" height="78" rx="12" class="hu" stroke-width="1.5"/>
+      <text x="95" y="50" text-anchor="middle" class="t" font-size="15" font-weight="700">① 依頼の受付</text>
+      <text x="95" y="72" text-anchor="middle" class="tm" font-size="12">受付ステーション／</text>
+      <text x="95" y="88" text-anchor="middle" class="tm" font-size="12">desknet's NEO・AppSuite</text>
+      <rect x="205" y="20" width="170" height="78" rx="12" class="ai" stroke-width="1.5"/>
+      <text x="290" y="50" text-anchor="middle" class="t" font-size="15" font-weight="700">② 注文書の下書き</text>
+      <text x="290" y="72" text-anchor="middle" class="tm" font-size="12">AIが仕様案・合格の条件</text>
+      <text x="290" y="88" text-anchor="middle" class="tm" font-size="12">・不明点を整理</text>
+      <rect x="400" y="20" width="170" height="78" rx="12" class="hu" stroke-width="1.5"/>
+      <text x="485" y="50" text-anchor="middle" class="t" font-size="15" font-weight="700">③ 承認</text>
+      <text x="485" y="72" text-anchor="middle" class="tm" font-size="12">業務責任者が内容と</text>
+      <text x="485" y="88" text-anchor="middle" class="tm" font-size="12">信号の色を決める</text>
+      <rect x="595" y="20" width="170" height="78" rx="12" class="ai" stroke-width="1.5"/>
+      <text x="680" y="50" text-anchor="middle" class="t" font-size="15" font-weight="700">④ 実装</text>
+      <text x="680" y="72" text-anchor="middle" class="tm" font-size="12">AIが隔離された作業場で</text>
+      <text x="680" y="88" text-anchor="middle" class="tm" font-size="12">作業ブランチだけ編集</text>
+      <rect x="790" y="20" width="160" height="78" rx="12" class="ci" stroke-width="1.5"/>
+      <text x="870" y="50" text-anchor="middle" class="t" font-size="15" font-weight="700">⑤ 自動検査</text>
+      <text x="870" y="72" text-anchor="middle" class="tm" font-size="12">CIが独立に合否判定</text>
+      <text x="870" y="88" text-anchor="middle" class="tm" font-size="12">不合格→上限内で修正</text>
+      <path d="M180 59 H203" class="ln" stroke-width="2" marker-end="url(#ah)"/>
+      <path d="M375 59 H398" class="ln" stroke-width="2" marker-end="url(#ah)"/>
+      <path d="M570 59 H593" class="ln" stroke-width="2" marker-end="url(#ah)"/>
+      <path d="M765 59 H788" class="ln" stroke-width="2" marker-end="url(#ah)"/>
+      <path d="M870 98 V150" class="ln" stroke-width="2" marker-end="url(#ah)"/>
+      <rect x="790" y="152" width="160" height="78" rx="12" class="ai" stroke-width="1.5"/>
+      <text x="870" y="182" text-anchor="middle" class="t" font-size="15" font-weight="700">⑥ 提出書類（PR）</text>
+      <text x="870" y="204" text-anchor="middle" class="tm" font-size="12">AIレビュー・証跡・</text>
+      <text x="870" y="220" text-anchor="middle" class="tm" font-size="12">試し見画面をそろえる</text>
+      <rect x="595" y="152" width="170" height="78" rx="12" class="hu" stroke-width="1.5"/>
+      <text x="680" y="182" text-anchor="middle" class="t" font-size="15" font-weight="700">⑦ マージ判断</text>
+      <text x="680" y="204" text-anchor="middle" class="tm" font-size="12">人が差分・証跡・</text>
+      <text x="680" y="220" text-anchor="middle" class="tm" font-size="12">業務の動きを確認</text>
+      <rect x="400" y="152" width="170" height="78" rx="12" class="ac" stroke-width="1.5"/>
+      <text x="485" y="182" text-anchor="middle" class="t" font-size="15" font-weight="700">⑧ 試験運用</text>
+      <text x="485" y="204" text-anchor="middle" class="tm" font-size="12">ステージング／</text>
+      <text x="485" y="220" text-anchor="middle" class="tm" font-size="12">建設はモデル現場で試用</text>
+      <rect x="205" y="152" width="170" height="78" rx="12" class="hu" stroke-width="1.5"/>
+      <text x="290" y="182" text-anchor="middle" class="t" font-size="15" font-weight="700">⑨ 公開承認</text>
+      <text x="290" y="204" text-anchor="middle" class="tm" font-size="12">マージとは別の判断。</text>
+      <text x="290" y="220" text-anchor="middle" class="tm" font-size="12">承認済みだけ配備</text>
+      <rect x="10" y="152" width="170" height="78" rx="12" class="bx2" stroke-width="1.5"/>
+      <text x="95" y="182" text-anchor="middle" class="t" font-size="15" font-weight="700">⑩ 運用・改善</text>
+      <text x="95" y="204" text-anchor="middle" class="tm" font-size="12">監視・障害・声を</text>
+      <text x="95" y="220" text-anchor="middle" class="tm" font-size="12">次の依頼として①へ</text>
+      <path d="M790 191 H767" class="ln" stroke-width="2" marker-end="url(#ah)"/>
+      <path d="M595 191 H572" class="ln" stroke-width="2" marker-end="url(#ah)"/>
+      <path d="M400 191 H377" class="ln" stroke-width="2" marker-end="url(#ah)"/>
+      <path d="M205 191 H182" class="ln" stroke-width="2" marker-end="url(#ah)"/>
+      <path d="M95 152 V100" class="ln" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+      <rect x="10" y="268" width="940" height="150" rx="12" class="bx" stroke-width="1"/>
+      <text x="30" y="296" class="t" font-size="14" font-weight="700">色の意味（3つの役＋建設土木の試し係）</text>
+      <rect x="30" y="312" width="22" height="22" rx="5" class="ai"/><text x="62" y="328" class="t" font-size="13">AIロボット＝作る係（速いが、まちがえることもある）</text>
+      <rect x="30" y="344" width="22" height="22" rx="5" class="ci"/><text x="62" y="360" class="t" font-size="13">自動の検査機（CI）＝調べる係（毎回同じ手順で合否を出す）</text>
+      <rect x="30" y="376" width="22" height="22" rx="5" class="hu"/><text x="62" y="392" class="t" font-size="13">人（責任者・技術者）＝決める係（ハンコを押せるのは人だけ）</text>
+      <rect x="500" y="312" width="22" height="22" rx="5" class="ac"/><text x="532" y="328" class="t" font-size="13">現場の試し係＝使ってみる係（屋外・手袋・電波の弱い所）</text>
+      <rect x="500" y="344" width="22" height="22" rx="5" class="bx2"/><text x="532" y="360" class="t" font-size="13">運用（監視・障害対応・改善の受付）</text>
+      <text x="500" y="392" class="tm" font-size="12.5">点線＝運用で見つかったことが、次の依頼としてラインの先頭へ戻る</text>
+    </svg></div>
+    <figcaption>図3-1　ラインの流れ（S1の「推奨構成」「二つのループ」、S3の「4つの役」をもとに作図）</figcaption>
+  </figure>
+
+  <h3>3-1. 二つのループ</h3>
+  <p>このラインは、大きさの違う二つの輪（ループ）で回ります。 <span class="src">S1</span></p>
+  <div class="cards">
+    <div class="card hu"><h4>A. 案件全体の「業務検証ループ」</h4><p>1つのシステム（案件）を、目的の整理→試作画面→本番方針→主要業務1本→限定利用→本番相当の検証→段階公開→運用改善、の8工程で育てる輪。各工程で人が「進めてよいか」を判断します。</p></div>
+    <div class="card ai"><h4>B. 個々の機能の「実装ループ」</h4><p>1つひとつの変更を、受付→注文書→承認→実装→検査→PR→人の確認→マージ→公開、で処理する輪。図3-1はこちらの流れです。</p></div>
+  </div>
+
+  <h3>3-2. 構成する仕組み（ざっくり）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>仕組み</th><th>たとえ（S2）</th><th>役割</th></tr></thead>
+    <tbody>
+      <tr><td>受付ステーション／desknet's NEO・AppSuite</td><td>現場事務所の受付窓口・連絡板</td><td>依頼の受付、通知、相談、承認依頼の入口。正式な判断は提出書類（PR等）に記録</td></tr>
+      <tr><td>GitHub Issues／Projects</td><td>「これを作って」の依頼の札</td><td>作業の依頼・担当・進み具合・関連PRの管理</td></tr>
+      <tr><td>Gitリポジトリ</td><td>設計図などをしまう正式な保管庫</td><td>プログラム・仕様・設計判断・テスト・運用手順の正本</td></tr>
+      <tr><td>ワークフロー制御</td><td>現場の工程管理・安全管理</td><td>承認待ち、停止・再開、予算、再試行、同時作業のぶつかり防止</td></tr>
+      <tr><td>コーディングエージェント（AI）</td><td>職人さん</td><td>計画、実装、テスト作成、修正、PR作成</td></tr>
+      <tr><td>CI（GitHub Actions等）</td><td>検査機による品質検査</td><td>毎回同じ手順のビルド・検証</td></tr>
+      <tr><td>プレビュー／ステージング</td><td>試し見の部屋・試験運用の場所</td><td>チームによる操作・業務確認</td></tr>
+      <tr><td>デプロイ基盤</td><td>引き渡し</td><td>承認済みの成果物だけを本番へ反映</td></tr>
+    </tbody>
+  </table></div>
+  <p>詳しい構成と、どの部品がどこまで担当するかは、詳細仕様書の「システム構成」に書きます。</p>
+</section>
+
+<!-- ============ 4 ============ -->
+<section class="sec" id="s4">
+  <h2><span class="no">4</span>範囲（やること・やらないこと）</h2>
+  <p class="sub">範囲を先に決めておくと、作りすぎや手戻りを防げます。</p>
+
+  <h3>4-1. このプロジェクトの対象</h3>
+  <div class="tw"><table>
+    <thead><tr><th>区分</th><th>対象とするもの</th><th>出典</th></tr></thead>
+    <tbody>
+      <tr><td class="nw"><b>入口</b></td><td>依頼の受付画面（受付ステーション／AppSuite版）、作業指示書（注文書）の作成・レビュー、信号の色の判定と決定、承認</td><td><span class="src">S1</span><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="nw"><b>ライン</b></td><td>Issue化、AIによる仕様案・実装計画・実装・テスト・修正、CIによる独立検証、AIレビュー、PRと証跡、プレビュー</td><td><span class="src">S1</span></td></tr>
+      <tr><td class="nw"><b>出口</b></td><td>人によるマージ判断、ステージング検証、公開承認、本番デプロイ、復旧手順、モデル現場での試用と展開</td><td><span class="src">S1</span><span class="src">S3</span></td></tr>
+      <tr><td class="nw"><b>運用</b></td><td>監視・障害・利用者の声を次の依頼へ戻す仕組み、指標の測定、工場自体（ルール・権限・CI）の管理</td><td><span class="src">S1</span><span class="src">S4</span></td></tr>
+      <tr><td class="nw"><b>マスタ</b></td><td>部署別道具カタログ（17部署・105件）、部署・役割・承認者などの基本情報</td><td><span class="src">S4</span><span class="src">S5</span></td></tr>
+      <tr><td class="nw"><b>統制</b></td><td>権限境界、隔離環境、品質ゲートの保護、証跡、社内統制（ISO/IEC 27001、J-SOX、NIST SSDF）との対応づけ</td><td><span class="src">S1</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>4-2. 対象外（やらないこと）</h3>
+  <div class="warn">
+    <b>AIに決めさせない仕事（赤信号）</b>は、このラインで作る道具の「機能」にしません。道具が担うのは「材料集め・整理・表示」までです。 <span class="src">S3</span><span class="src">S4</span>
+    <ul style="margin-top:6px">
+      <li><b>人命・安全の判断</b>：作業中止、立入禁止、仮設・揚重計画の決定</li>
+      <li><b>構造・品質の合否</b>：構造計算、検査、健全度、機械を使ってよいか</li>
+      <li><b>お金の最終決定</b>：入札・見積の金額、支払いの承認、決算の確定、投資</li>
+      <li><b>契約・法的な判断</b>：契約の締結、発注先の決定、法令の解釈</li>
+      <li><b>人の処遇</b>：採用・評価・配置・処分</li>
+      <li><b>会社としての発表</b>：対外発表、おわび、不正の認定</li>
+    </ul>
+  </div>
+  <div class="tw"><table>
+    <thead><tr><th>その他の対象外</th><th>理由</th><th>出典</th></tr></thead>
+    <tbody>
+      <tr><td>最初から多数のAIを並列で動かす巨大なマルチエージェント基盤</td><td>まず「最小の開発ライン」を安定させる方針のため</td><td><span class="src">S1</span></td></tr>
+      <tr><td>ライン全体の一からの自作</td><td>既存のクラウドエージェント＋GitHub＋CIから始め、自作は不足する制御部分だけにする</td><td><span class="src">S1</span></td></tr>
+      <tr><td>完成したアプリの実行基盤（Cloudflare、Neon、Supabase等）の選定</td><td>「開発エージェントが動く場所」と「アプリが動く場所」を分け、実行先は別途選定する</td><td><span class="src">S1</span></td></tr>
+      <tr><td>着手順（どの道具から作るか）の決定</td><td>本書の範囲外。6章のものさしを使って別途決める</td><td><span class="src">S4</span></td></tr>
+      <tr><td>本番データを使った開発・テスト</td><td>開発環境には作り物（ダミー）のデータだけを使う</td><td><span class="src">S1</span><span class="src">S3</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============ 5 ============ -->
+<section class="sec" id="s5">
+  <h2><span class="no">5</span>関わる人と役割</h2>
+  <p class="sub">「だれが何を決めるか」をはっきりさせることが、この仕組みのいちばんのコツです。</p>
+
+  <h3>5-1. 登場人物（人）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>役割</th><th>だれ（例）</th><th>主な仕事</th><th>出典</th></tr></thead>
+    <tbody>
+      <tr><td class="nw"><b>依頼者</b></td><td>現場の担当者、現場所長、現場事務、本社・支店の担当者</td><td>困りごと・目的・使う人・合格の条件を書いて依頼する。差戻し時に書き直す。不要になったら見送りにする</td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="nw"><b>受付担当</b></td><td>IT・DX部門</td><td>依頼の内容確認、注文書の整備、承認依頼への回付、ラインの進行管理</td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="nw"><b>承認者（業務責任者）</b></td><td>部署の責任者、現場所長</td><td>何を作るかの確定、<b>信号の色の最終決定</b>、承認、差戻し・見送り、完了の確認</td><td><span class="src">S1</span><span class="src">S3</span><span class="src">S5</span></td></tr>
+      <tr><td class="nw"><b>技術者・責任者</b></td><td>資格と責任を持つ技術者</td><td>黄・赤信号に関わる内容の確認。安全・品質・構造に関わるものは必ず判断する</td><td><span class="src">S3</span></td></tr>
+      <tr><td class="nw"><b>現場の試し係</b></td><td>モデル現場の担当者</td><td>屋外・手袋・雨の日・電波の弱い所で実際に使い、「現場で使えるか」を確かめる</td><td><span class="src">S3</span></td></tr>
+      <tr><td class="nw"><b>マージ承認者</b></td><td>IT・DX部門の責任者＋業務担当</td><td>PRの差分・証跡・業務動作を確認し、完成版への取り込みを判断する</td><td><span class="src">S1</span></td></tr>
+      <tr><td class="nw"><b>公開承認者</b></td><td>業務責任者（＋IT・DX部門）</td><td>ステージングの結果を見て、本番公開・拡大の可否を判断する</td><td><span class="src">S1</span></td></tr>
+      <tr><td class="nw"><b>工場の管理者</b></td><td>情報システム・DX部</td><td>ラインの検査ルール・権限・標準を管理する（変更は承認制）</td><td><span class="src">S1</span><span class="src">S4</span></td></tr>
+      <tr><td class="nw"><b>内部監査</b></td><td>内部監査・コンプライアンス室</td><td>ルールが守られているか、証跡がそろっているかを確かめる</td><td><span class="src">S1</span><span class="src">S4</span></td></tr>
+      <tr><td class="nw"><b>協力会社・発注者</b></td><td>社外の関係者</td><td>道具の利用者になることがある。見せてよい範囲だけを見る</td><td><span class="src">S3</span><span class="src">S5</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>5-2. 登場人物（機械）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>主体</th><th>やってよいこと</th><th>原則として与えない権限</th><th>出典</th></tr></thead>
+    <tbody>
+      <tr><td class="nw"><span class="who ai">実装エージェント</span></td><td>作業ブランチの編集、テスト、PR作成</td><td>完成版（main）への直接書込み、本番アクセス</td><td><span class="src">S1</span></td></tr>
+      <tr><td class="nw"><span class="who ci">検証ジョブ（CI）</span></td><td>テスト用環境での検査</td><td>本番更新、リポジトリの管理</td><td><span class="src">S1</span></td></tr>
+      <tr><td class="nw"><span class="who ai">レビュー担当（AI）</span></td><td>差分確認、指摘、検証結果の評価</td><td>自分の判断だけでの公開</td><td><span class="src">S1</span></td></tr>
+      <tr><td class="nw"><span class="who ci">デプロイジョブ</span></td><td>承認済み成果物の配備</td><td>任意コードの実装</td><td><span class="src">S1</span></td></tr>
+      <tr><td class="nw"><span class="who hu">人間の承認者</span></td><td>マージ・公開・例外判断</td><td>必要以上の常設管理権限</td><td><span class="src">S1</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>5-3. 工程ごとの分担（だれが決めるか）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>工程</th><th>AI</th><th>検査機</th><th>人</th></tr></thead>
+    <tbody>
+      <tr><td>要望の整理・不足情報の抽出</td><td>整理・質問を返す</td><td>－</td><td><b>目的・対象・受入条件を確定</b></td></tr>
+      <tr><td>画面・API・DBの設計案</td><td>既存標準どおりなら作成</td><td>－</td><td><b>認証・権限・データ境界を確認</b></td></tr>
+      <tr><td>実装・単体テスト</td><td>小さく明確な単位で実行</td><td>－</td><td>－</td></tr>
+      <tr><td>結合テスト・E2Eテスト</td><td>テスト作成</td><td>実行・合否</td><td>検証環境・テストデータ・期待結果を事前に整備</td></tr>
+      <tr><td>テスト失敗の修正</td><td>上限内で修正</td><td>再検証</td><td>上限に達したら対応を判断</td></tr>
+      <tr><td>コードレビュー</td><td>支援（唯一の判定にしない）</td><td>－</td><td><b>差分・証跡を確認</b></td></tr>
+      <tr><td>業務として正しいか</td><td>－</td><td>－</td><td><b>利用部門が確認</b></td></tr>
+      <tr><td>本番公開・破壊的変更</td><td>－</td><td>デプロイ作業は自動</td><td><b>実行許可を出す</b></td></tr>
+    </tbody>
+  </table></div>
+  <p style="font-size:13px;color:var(--muted)">出典：S1「実現性の評価」、S2「得意・苦手」</p>
+</section>
+
+<!-- ============ 6 ============ -->
+<section class="sec" id="s6">
+  <h2><span class="no">6</span>業務要件</h2>
+  <p class="sub">ラインを使って仕事を進めるときの「流れ」と「守るルール」です。</p>
+
+  <h3>6-1. 信号の3色ルール</h3>
+  <p>作る道具は、まず「どの色か」で仕分けます。色によって、任せ方と最後に決める人が変わります。 <span class="src">S3</span><span class="src">S4</span></p>
+  <div class="cards">
+    <div class="card g"><h4><span class="sig g">青</span>どんどん任せる</h4><p>記録・整理・検索・連絡・お知らせ。まちがえてもすぐ直せて、人命・品質・お金に直接ひびかないもの。<br><b>例：</b>工事写真の整理、日報、資機材の予約、書類の検索<br><b>決める人：</b>現場の担当者＋IT・DX部門</p></div>
+    <div class="card y"><h4><span class="sig y">黄</span>担当者のチェック付き</h4><p>計画や判断の「たたき台」、比べっこ、見落としチェック。結果は必ず担当者・技術者が見て、採用するか決めます。<br><b>例：</b>工程表のたたき台、出来形の帳票、KY記録の書きもれ確認<br><b>決める人：</b>担当の技術者（現場所長など）</p></div>
+    <div class="card r"><h4><span class="sig r">赤</span>AIに決めさせない</h4><p>人命・構造・品質・お金・契約・人の処遇・対外発表の最終判断。AIは材料集め・表示まで。<br><b>例：</b>構造計算の合否、仮設計画の決定、見積金額の決定<br><b>決める人：</b>資格と責任を持つ技術者・責任者</p></div>
+  </div>
+  <div class="note"><b>迷ったら1つ上の色</b>（青か黄か迷ったら黄）として扱います。色の<b>最終決定は、注文書を承認する人</b>が行います。どの部署にも必ず赤の仕事があります。</div>
+
+  <h3>6-2. 1つの依頼が道具になるまで（実装ループ）</h3>
+  <ol class="steps">
+    <li><div><b>受付</b>「こんな機能がほしい」を受付ステーション、または desknet's NEO・AppSuite から登録する <span class="src">S1</span><span class="src">S5</span></div></li>
+    <li><div><b>注文書の下書き</b>AIが仕様案・合格の条件・不明点を整理する。信号の色の案と、わからない点の質問をつける <span class="src">S1</span><span class="src">S3</span></div></li>
+    <li><div><b>承認</b>人（承認者）が中身と信号の色を決めて「これで作って」とOKを出す <span class="src">S1</span><span class="src">S3</span></div></li>
+    <li><div><b>段取り</b>AIが実装計画と変更範囲を作る。大きな案件は小さな変更に分ける <span class="src">S1</span></div></li>
+    <li><div><b>実装</b>隔離された作業場（囲い）で、作業ブランチだけを編集する。本物の図面・名簿は入れない <span class="src">S1</span><span class="src">S3</span></div></li>
+    <li><div><b>自動検査</b>CIが独立に検証。不合格なら上限内で修正→再検証。上限に達したら人へ <span class="src">S1</span></div></li>
+    <li><div><b>提出書類</b>AIレビュー・PR・試し見画面をそろえる <span class="src">S1</span></div></li>
+    <li><div><b>人の確認</b>人が差分・証跡・業務の動きを確認する（建設土木はモデル現場での試用結果も） <span class="src">S1</span><span class="src">S3</span></div></li>
+    <li><div><b>マージ→試験運用→公開承認</b>完成版に取り込み、ステージングで確認し、公開の許可を得て本番へ。建設土木はほかの現場へ広げる <span class="src">S1</span><span class="src">S3</span></div></li>
+  </ol>
+  <div class="easy">AIは「途中で止まっても大丈夫」なように、作業日報のように「どこまでできたか」「テストの結果」「次にやること」を毎回記録します。別の日に別のAIが続きから再開できます。 <span class="src">S1</span><span class="src">S2</span></div>
+
+  <h3>6-3. 案件全体の業務検証ループ（8工程）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>#</th><th>工程</th><th>主な活動</th><th>人が判断する内容</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>目的・制約の整理</td><td>対象業務、利用者、データ、予算、禁止事項を整理</td><td>何を解決するか、着手するか</td></tr>
+      <tr><td>2</td><td>サンプルWebUI</td><td>モックデータで画面・操作を確認</td><td>業務の流れが正しいか</td></tr>
+      <tr><td>3</td><td>本番実装方針の確定</td><td>再利用部分と作り直す部分、認証・DB・運用を設計</td><td>本番用の設計を認めるか</td></tr>
+      <tr><td>4</td><td>主要業務1本の実装</td><td>画面からDB・権限・監査まで縦に実装</td><td>限定利用できるか</td></tr>
+      <tr><td>5</td><td>MVPの限定利用</td><td>実務で価値と不足を確認</td><td>継続・変更・中止</td></tr>
+      <tr><td>6</td><td>本番相当の検証</td><td>権限、性能、復旧、外部連携等を確認</td><td>公開条件を満たしたか</td></tr>
+      <tr><td>7</td><td>段階的な公開</td><td>対象者や機能を絞って公開</td><td>本番公開・拡大の可否</td></tr>
+      <tr><td>8</td><td>運用改善</td><td>障害・利用状況・要望を次の変更へ</td><td>優先順位と投資判断</td></tr>
+    </tbody>
+  </table></div>
+  <div class="warn"><b>試作画面が動くことと、本番運用に耐えることは別の完了条件</b>です。モック認証・仮データ・仮の権限制御が本番へ残らないよう、工程3で引継ぎの可否を明示します。 <span class="src">S1</span><br>※ 今回の受付ステーション（S5・S6）も、この「工程2：サンプルWebUI」に当たる試作です。</div>
+
+  <h3>6-4. 業務ルール</h3>
+  <div class="tw"><table>
+    <thead><tr><th class="id">ID</th><th>ルール</th><th>出典</th></tr></thead>
+    <tbody>
+      <tr><td class="id">BR-01</td><td><b>作業はAI、合否は検査機、最後の決定は人。</b>AIの自己申告ではなく、検査機の結果と人の目で確かめる</td><td><span class="src">S1</span><span class="src">S2</span></td></tr>
+      <tr><td class="id">BR-02</td><td>すべての依頼に信号の色（青・黄・赤）を付ける。迷ったら1つ上の色。最終決定は承認者</td><td><span class="src">S3</span><span class="src">S4</span><span class="src">S5</span></td></tr>
+      <tr><td class="id">BR-03</td><td>赤信号の依頼は、道具の範囲を「材料集め・表示」に変えてから承認する。決定は人が行う</td><td><span class="src">S3</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">BR-04</td><td>合格の条件は「検査で確かめられる書き方」（数字や「〜できる／〜できない」）で書く</td><td><span class="src">S1</span><span class="src">S5</span></td></tr>
+      <tr><td class="id">BR-05</td><td>合格の条件の1つ1つに、確かめるテストをひもづける。どの条件をどのテストで確かめたか後から追えるようにする</td><td><span class="src">S1</span><span class="src">S2</span></td></tr>
+      <tr><td class="id">BR-06</td><td>1つのタスクは1つの目的・1つのPR。大きな案件は小さな変更に分ける</td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">BR-07</td><td>AIのOKと人のOKは別もの。すべてのPRに無条件で承認を付ける運用はしない。承認は対象コミット・成果物に紐付ける</td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">BR-08</td><td>マージ（完成版への取り込み）と本番公開は、別のリスク判断として扱う</td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">BR-09</td><td>承認後に中身（コミット）が変わったら、検証と承認を取り直す</td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">BR-10</td><td>差戻し・見送りには必ず理由を書く</td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">BR-11</td><td>desknet's NEO・AppSuite は「入口」（お知らせ・相談・承認依頼）。正式な判断は対象のPR等に記録する</td><td><span class="src">S1</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">BR-12</td><td>承認済みになった依頼は、注文書（YAML）を開発ラインへ渡す</td><td><span class="src">S6</span></td></tr>
+      <tr><td class="id">BR-13</td><td>建設土木の道具は、モデル現場で試してから、ほかの現場へ広げる</td><td><span class="src">S3</span></td></tr>
+      <tr><td class="id">BR-14</td><td>最初は青信号から。黄は担当者のチェック体制ができてから。赤は対象外のまま</td><td><span class="src">S3</span><span class="src">S4</span></td></tr>
+      <tr><td class="id">BR-15</td><td>着手順は「5つのものさし」を参考に別途決める。カタログの並び順や★は着手順ではない</td><td><span class="src">S4</span></td></tr>
+      <tr><td class="id">BR-16</td><td>段階（Phase／STEP）は期間ではなく「終了条件」を満たしたら次へ進む</td><td><span class="src">S1</span><span class="src">S3</span></td></tr>
+      <tr><td class="id">BR-17</td><td>部署ごとに作る道具も、工事番号などの「データのバトン」でつながるように作る</td><td><span class="src">S4</span></td></tr>
+      <tr><td class="id">BR-18</td><td>工場自体の権限・CI・標準の変更も管理の対象とし、承認を通して変える</td><td><span class="src">S1</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>6-5. 着手順を決めるときの5つのものさし</h3>
+  <p>順番はこの文書では決めません。決めるときに使う見方です。 <span class="src">S4</span></p>
+  <div class="tw"><table>
+    <thead><tr><th>ものさし</th><th>見るポイント</th></tr></thead>
+    <tbody>
+      <tr><td>困っている人の多さ</td><td>何人・何現場が毎日その手間に困っているか</td></tr>
+      <tr><td>青信号か</td><td>最初は青から。黄は担当者のチェック体制ができてから</td></tr>
+      <tr><td>手間の減り方</td><td>1回あたり・1か月あたりで何時間へるか</td></tr>
+      <tr><td>データがそろっているか</td><td>元になる台帳や記録が、すでに電子化されているか</td></tr>
+      <tr><td>ほかに広げられるか</td><td>他の部署・他の現場でも同じ仕組みが使えるか</td></tr>
+    </tbody>
+  </table></div>
+  <p>受付画面では、この5つを依頼ごとに1〜5点の<b>参考値</b>として自動表示します（計算方法は詳細仕様書）。点数だけで着手順は決めません。</p>
+</section>
+
+<!-- ============ 7 ============ -->
+<section class="sec" id="s7">
+  <h2><span class="no">7</span>機能要件</h2>
+  <p class="sub">「このラインで何ができるようになるか」の一覧です。具体的な動き方は詳細仕様書の同じIDの項目に書きます。</p>
+  <div class="filter" data-for="frTable">
+    <input type="search" placeholder="キーワードで絞り込み（例：承認、YAML、圏外）" aria-label="機能要件の絞り込み">
+    <button type="button" data-p="" class="on">すべて</button><button type="button" data-p="必須">必須</button><button type="button" data-p="推奨">推奨</button><button type="button" data-p="任意">任意</button>
+  </div>
+  <div class="tw"><table id="frTable">
+    <thead><tr><th class="id">ID</th><th>できること</th><th>優先度</th><th>出典</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="4"><b>A. 依頼の受付（入口）</b></td></tr>
+      <tr><td class="id">FR-01</td><td>依頼を登録できる。<b>7ステップの案内つき入力（受付ステーション）</b>と、<b>1枚のフォーム入力（AppSuite版）</b>の2種類の画面を用意する</td><td><span class="b must">必須</span></td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-02</td><td>部署別道具カタログから近い道具を選ぶと、件名・部署・信号の候補が自動で入る（カタログにない依頼も登録できる）</td><td><span class="b should">推奨</span></td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-03</td><td>入力中に、できあがる注文書の見た目（カード表示／YAML表示）を横で確認できる</td><td><span class="b should">推奨</span></td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-04</td><td>必須の項目が空のときは登録できず、足りない項目を示す</td><td><span class="b must">必須</span></td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-05</td><td>合格の条件を入力すると、その場で書き方をチェックする（「使いやすい」などのあいまいな言葉、「〇〇」のままの仮置き、短すぎる文）</td><td><span class="b must">必須</span></td><td><span class="src">S1</span><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-06</td><td>合格の条件のよく使う書き方（例文）を押して追加できる</td><td><span class="b could">任意</span></td><td><span class="src">S5</span></td></tr>
+      <tr><td class="id">FR-07</td><td>依頼に添付ファイルを付けられる</td><td><span class="b should">推奨</span></td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-08</td><td>登録時に受付番号（例：REQ-2026-0001）を自動で付ける</td><td><span class="b must">必須</span></td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-09</td><td>登録済みの依頼を、役割と状態に応じて編集できる</td><td><span class="b must">必須</span></td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr class="grp"><td colspan="4"><b>B. 判定と判断の手助け</b></td></tr>
+      <tr><td class="id">FR-10</td><td>入力内容から<b>信号の色の候補</b>を自動で判定し、その理由を一緒に表示する</td><td><span class="b must">必須</span></td><td><span class="src">S3</span><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-11</td><td>ものさし（月あたりの削減見込み時間と、5つの観点の点数）を参考値として表示する</td><td><span class="b should">推奨</span></td><td><span class="src">S4</span><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr class="grp"><td colspan="4"><b>C. 状態の管理と承認</b></td></tr>
+      <tr><td class="id">FR-12</td><td>依頼の状態（受付〜完了、差戻し・見送り）を管理し、次の工程を案内する</td><td><span class="b must">必須</span></td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-13</td><td>役割（依頼者・受付担当・承認者）に応じて、状態変更・編集・削除をできる人を制限する</td><td><span class="b must">必須</span></td><td><span class="src">S1</span><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-14</td><td>承認のときに、承認者が<b>信号の色を最終決定</b>する</td><td><span class="b must">必須</span></td><td><span class="src">S3</span><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-15</td><td>赤信号で承認するときは「AIに決めさせない（材料集め・表示まで）」の確認チェックがないと承認できない</td><td><span class="b must">必須</span></td><td><span class="src">S3</span><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-16</td><td>差戻し・見送りにするときは理由の入力を求める</td><td><span class="b must">必須</span></td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-17</td><td>依頼ごとにコメントを書き込め、変更履歴（だれが・いつ・何を）が自動で残る</td><td><span class="b must">必須</span></td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr class="grp"><td colspan="4"><b>D. 見る・探す・まとめる</b></td></tr>
+      <tr><td class="id">FR-18</td><td>ホーム画面で、件数のまとめ、役割ごとの「やること」、最近の動きを見られる</td><td><span class="b should">推奨</span></td><td><span class="src">S5</span></td></tr>
+      <tr><td class="id">FR-19</td><td>ボード（状態ごとの列）で依頼を見渡し、カードを動かして状態を変えられる</td><td><span class="b should">推奨</span></td><td><span class="src">S5</span></td></tr>
+      <tr><td class="id">FR-20</td><td>一覧画面でキーワード検索、部署・状態・色での絞り込み、並べ替えができる</td><td><span class="b must">必須</span></td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-21</td><td>集計画面で、部署×信号の色、状態別の件数、承認待ちの一覧を見られる</td><td><span class="b should">推奨</span></td><td><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-22</td><td>依頼の詳細を印刷できる</td><td><span class="b could">任意</span></td><td><span class="src">S6</span></td></tr>
+      <tr class="grp"><td colspan="4"><b>E. 出力とデータのやりとり</b></td></tr>
+      <tr><td class="id">FR-23</td><td>依頼を<b>注文書（作業指示書）YAML</b>として表示・コピー・ダウンロードできる</td><td><span class="b must">必須</span></td><td><span class="src">S1</span><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-24</td><td>一覧をCSV（Excelで開ける形）で書き出せる</td><td><span class="b should">推奨</span></td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-25</td><td>全データをJSONで書き出し・取り込みできる。受付ステーションとAppSuite版で同じ形式を使う</td><td><span class="b should">推奨</span></td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr class="grp"><td colspan="4"><b>F. 道具カタログ</b></td></tr>
+      <tr><td class="id">FR-26</td><td>部署別道具カタログを、部署・色・キーワードで絞り込み、カード／一覧表で見られる</td><td><span class="b should">推奨</span></td><td><span class="src">S4</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-27</td><td>カタログを受付と共通の基本情報（マスタ）として一か所で管理する</td><td><span class="b should">推奨</span></td><td><span class="src">S4</span><span class="src">S6</span></td></tr>
+      <tr class="grp"><td colspan="4"><b>G. 開発ライン（作る・調べる）</b></td></tr>
+      <tr><td class="id">FR-28</td><td>承認済みの注文書から、開発ラインの作業（GitHub Issue）を作る</td><td><span class="b must">必須</span></td><td><span class="src">S1</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-29</td><td>AIが要望を整理し、仕様案・合格の条件案・不明点を出す</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">FR-30</td><td>AIが実装計画と変更範囲を作り、大きな案件を小さな変更に分ける</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">FR-31</td><td>AIが隔離された作業場で、作業ブランチだけを編集して実装・テストを作る</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">FR-32</td><td>CIが変更のたびに独立して検証する（ビルド、型、単体、結合、E2E、セキュリティ検査。建設土木は圏外テストも）</td><td><span class="b must">必須</span></td><td><span class="src">S1</span><span class="src">S3</span></td></tr>
+      <tr><td class="id">FR-33</td><td>不合格のときは、回数・時間・予算の上限内でAIが修正→再検証し、上限に達したら人へ知らせる</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">FR-34</td><td>「必ず人に聞くこと」に当たる変更が必要になったら、作業を止めて承認者に確認する</td><td><span class="b must">必須</span></td><td><span class="src">S1</span><span class="src">S5</span></td></tr>
+      <tr><td class="id">FR-35</td><td>AIレビューを行い、指摘と「見落とし得る範囲」を示す（唯一の判定にはしない）</td><td><span class="b should">推奨</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">FR-36</td><td>PR（提出書類）に、人が判断するための材料（証跡）をそろえる</td><td><span class="b must">必須</span></td><td><span class="src">S1</span><span class="src">S2</span><span class="src">S3</span></td></tr>
+      <tr><td class="id">FR-37</td><td>試し見画面（プレビュー）で、業務担当が実際に操作して確かめられる</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">FR-38</td><td>作業状態（機能一覧、実装状態、テスト結果、次の作業）を記録し、途中で止まっても別の実行から再開できる</td><td><span class="b must">必須</span></td><td><span class="src">S1</span><span class="src">S2</span></td></tr>
+      <tr class="grp"><td colspan="4"><b>H. 判断・公開・運用（出口）</b></td></tr>
+      <tr><td class="id">FR-39</td><td>人がPRを確認してマージを判断し、その承認を対象コミットに紐付けて記録する</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">FR-40</td><td>ステージング検証→公開承認→本番デプロイの順で公開する。デプロイは承認済みの成果物だけ</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">FR-41</td><td>うまくいかなかったときに元に戻せる（復旧手順を用意し、実行できる）</td><td><span class="b must">必須</span></td><td><span class="src">S1</span><span class="src">S3</span></td></tr>
+      <tr><td class="id">FR-42</td><td>建設土木の道具は、モデル現場での試用結果（屋外・手袋・電波の弱い所）を記録してから展開する</td><td><span class="b must">必須</span></td><td><span class="src">S3</span></td></tr>
+      <tr><td class="id">FR-43</td><td>監視・障害・利用者の声を、次の依頼としてラインの先頭へ戻す</td><td><span class="b should">推奨</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">FR-44</td><td>承認依頼や状態の変化を desknet's NEO・AppSuite で知らせる</td><td><span class="b should">推奨</span></td><td><span class="src">S1</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">FR-45</td><td>成果の指標（13章）を測り、見える化する</td><td><span class="b should">推奨</span></td><td><span class="src">S1</span><span class="src">S3</span></td></tr>
+      <tr><td class="id">FR-46</td><td>工場自体のルール（CI定義、保護ルール、権限、標準）の変更を、承認つきで管理する</td><td><span class="b must">必須</span></td><td><span class="src">S1</span><span class="src">S4</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>7-1. 提出書類（PR）にそろえる判断材料</h3>
+  <p>人がプログラムを一から読まなくても判断できるように、次の材料をそろえます。S1の8項目に、建設土木版（S3）で加わった2項目を足した<b>10項目</b>を要件とします。</p>
+  <div class="tw"><table>
+    <thead><tr><th>#</th><th>項目</th><th>中身</th><th>出典</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>要望との対応（なんの注文か）</td><td>対象Issue、承認済み仕様、変更の目的、信号の色</td><td><span class="src">S1</span><span class="src">S3</span></td></tr>
+      <tr><td>2</td><td>変更範囲（どこを変えたか）</td><td>画面、API、DB、権限、外部連携、見せる範囲への影響</td><td><span class="src">S1</span><span class="src">S3</span></td></tr>
+      <tr><td>3</td><td>受入条件の検証</td><td>条件ごとの○×と、まだ確かめていない所</td><td><span class="src">S1</span></td></tr>
+      <tr><td>4</td><td>自動検査の結果</td><td>ビルド、型、単体、結合、E2E、セキュリティ検査、圏外テスト</td><td><span class="src">S1</span><span class="src">S3</span></td></tr>
+      <tr><td>5</td><td>業務確認</td><td>試し見画面のURL、操作手順、必要に応じて画面キャプチャ</td><td><span class="src">S1</span></td></tr>
+      <tr><td>6</td><td>モデル現場での結果（建設土木）</td><td>屋外・手袋・電波の弱い所での使い心地</td><td><span class="src">S3</span></td></tr>
+      <tr><td>7</td><td>記録の原本が守られているか（建設土木）</td><td>写真・検査記録が書きかわらないこと</td><td><span class="src">S3</span></td></tr>
+      <tr><td>8</td><td>運用への影響</td><td>設定変更、データ移行、監視、手順書の更新</td><td><span class="src">S1</span></td></tr>
+      <tr><td>9</td><td>復旧方法</td><td>アプリの戻し方、DB変更時の制約</td><td><span class="src">S1</span></td></tr>
+      <tr><td>10</td><td>残存リスク</td><td>わかっている不具合、対象外、追加で判断が必要な点</td><td><span class="src">S1</span></td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">「検査が通った」ことは「不具合や脆弱性がない」ことの証明ではありません。だから最後に人の目で確かめます。 <span class="src">S1</span><span class="src">S2</span></div>
+</section>
+
+<!-- ============ 8 ============ -->
+<section class="sec" id="s8">
+  <h2><span class="no">8</span>非機能要件</h2>
+  <p class="sub">「何ができるか」ではなく、「どれだけ安全に・確実に・使いやすく」動くべきかの要件です。家でいえば、間取りではなく耐震性・断熱性・防犯性にあたります。</p>
+
+  <div class="filter" data-for="nfrTable">
+    <input type="search" placeholder="キーワードで絞り込み（例：権限、圏外、費用）" aria-label="非機能要件の絞り込み">
+    <button type="button" data-p="" class="on">すべて</button><button type="button" data-p="必須">必須</button><button type="button" data-p="推奨">推奨</button><button type="button" data-p="任意">任意</button>
+  </div>
+  <div class="tw"><table id="nfrTable">
+    <thead><tr><th class="id">ID</th><th>分類</th><th>要件</th><th>優先度</th><th>出典</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="5"><b>セキュリティ・権限（だれに何を許すか）</b></td></tr>
+      <tr><td class="id">NFR-01</td><td class="nw">権限分離</td><td>実装AIには、完成版（main）への直接書込みと本番へのアクセスを与えない</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">NFR-02</td><td class="nw">権限分離</td><td>「作るカギ」と「公開するカギ」を分ける。5つの主体（実装・検証・レビュー・デプロイ・人）の権限境界を守る（5-2の表）</td><td><span class="b must">必須</span></td><td><span class="src">S1</span><span class="src">S2</span></td></tr>
+      <tr><td class="id">NFR-03</td><td class="nw">隔離</td><td>タスクごとに使い捨ての作業場を作り、ソース・テスト用データ・最小限の資格情報だけを渡す。外向き通信は必要な宛先に限る。成果物とログを保存してから作業場を消す</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">NFR-04</td><td class="nw">データ保護</td><td>本番DB、管理者のカギ、他案件の秘密情報、発注者から預かった図面、作業員名簿、現場の位置情報、写真の原本を作業場へ持ち込まない。テストには作り物のデータを使う</td><td><span class="b must">必須</span></td><td><span class="src">S1</span><span class="src">S3</span></td></tr>
+      <tr><td class="id">NFR-05</td><td class="nw">なりすまし命令対策</td><td>Issue・README・外部ページなどの文章に書かれた「権限を変えて」等の命令に従わない</td><td><span class="b must">必須</span></td><td><span class="src">S1</span><span class="src">S2</span></td></tr>
+      <tr><td class="id">NFR-06</td><td class="nw">品質ゲート保護</td><td>実装AIは、CIの定義・保護ルール・セキュリティ検査を無効化できない。既存の合格の条件を削る・弱めるのは別途承認。重要な受入テストは実装担当と別の管理境界で守る</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">NFR-07</td><td class="nw">検査</td><td>セキュリティ検査を一つのツールに頼らず、脆弱性・依存関係・シークレット（秘密情報の混入）などに分けて組み合わせる</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">NFR-08</td><td class="nw">認証</td><td>利用者のログインは既存の社内の方式を使い、変えない（試作の「役割の切替」は動作確認用で、本番はログインで判別）</td><td><span class="b must">必須</span></td><td><span class="src">S1</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">NFR-09</td><td class="nw">見せる範囲</td><td>社内・協力会社・発注者で見られる情報を分ける。ほかの現場や他社の情報が見えないことをテストで確かめる。範囲を変えるときは人の承認</td><td><span class="b must">必須</span></td><td><span class="src">S3</span></td></tr>
+      <tr><td class="id">NFR-10</td><td class="nw">個人情報</td><td>作業員名簿・資格・健康などは、必要な人が必要な項目だけ見られるようにする</td><td><span class="b must">必須</span></td><td><span class="src">S4</span><span class="src">S5</span></td></tr>
+      <tr><td class="id">NFR-11</td><td class="nw">通報者保護</td><td>ヒヤリハット・内部通報をした人が不利にならないようにし、通報者の情報は担当者以外に見せない</td><td><span class="b must">必須</span></td><td><span class="src">S4</span></td></tr>
+      <tr class="grp"><td colspan="5"><b>記録・監査（あとから説明できるか）</b></td></tr>
+      <tr><td class="id">NFR-12</td><td class="nw">証跡</td><td>依頼・承認・状態変更・マージ・公開について、だれが・いつ・何を・どの対象（コミット・成果物）に対して行ったかを残す</td><td><span class="b must">必須</span></td><td><span class="src">S1</span><span class="src">S5</span></td></tr>
+      <tr><td class="id">NFR-13</td><td class="nw">原本保護</td><td>工事写真や検査記録の原本は加工・書換しない。撮影日時・撮影場所の記録をあとから書きかえられない</td><td><span class="b must">必須</span></td><td><span class="src">S3</span></td></tr>
+      <tr><td class="id">NFR-14</td><td class="nw">記録の保持</td><td>依頼・履歴は消さずに残す（削除が必要な場合も「取消」として理由と一緒に記録する）</td><td><span class="b must">必須</span></td><td><span class="src">S3</span><span class="src p">提案</span></td></tr>
+      <tr><td class="id">NFR-15</td><td class="nw">統制対応</td><td>NIST SSDF（PO・PS・PW・RV）を工場の統制チェックリストにし、ISO/IEC 27001附属書A・J-SOX IT全般統制との対応表を維持する</td><td><span class="b should">推奨</span></td><td><span class="src">S1</span></td></tr>
+      <tr class="grp"><td colspan="5"><b>現場で使えること（可用性・使いやすさ）</b></td></tr>
+      <tr><td class="id">NFR-16</td><td class="nw">圏外対応</td><td>山間部・河川・トンネルなど電波が弱くても、入力した内容が消えない。つながったら自動で送り、二重に登録しない</td><td><span class="b must">必須</span></td><td><span class="src">S3</span></td></tr>
+      <tr><td class="id">NFR-17</td><td class="nw">現場操作性</td><td>屋外の明るさで画面が読める。手袋のままでも操作できる</td><td><span class="b must">必須</span></td><td><span class="src">S3</span></td></tr>
+      <tr><td class="id">NFR-18</td><td class="nw">やさしさ</td><td>非エンジニアでも使えるよう、やさしい言葉・入力例・ヒントを画面に出す</td><td><span class="b must">必須</span></td><td><span class="src">S2</span><span class="src">S5</span></td></tr>
+      <tr><td class="id">NFR-19</td><td class="nw">アクセシビリティ</td><td>動きを減らす設定（端末の「動きを減らす」等）に従う。キーボードで操作でき、Escキーで小窓を閉じられる。色だけで意味を伝えない</td><td><span class="b should">推奨</span></td><td><span class="src">S4</span><span class="src">S5</span></td></tr>
+      <tr><td class="id">NFR-20</td><td class="nw">多言語</td><td>外国籍の仲間向けの多言語資料は、AIの翻訳をそのまま使わず、必ず人が確認する</td><td><span class="b must">必須</span></td><td><span class="src">S4</span></td></tr>
+      <tr><td class="id">NFR-21</td><td class="nw">再開性</td><td>長い作業でも一度の会話に依存せず、作業状態を成果物として残し、別の実行から引き継げる。途中停止した作業の再開成功率を測る</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">NFR-22</td><td class="nw">オフライン試作</td><td>受付の試作（S5・S6）は、インターネットに接続せず、外部のサービスやライブラリを読み込まずに動く。データはブラウザ内だけに保存する</td><td><span class="b should">推奨</span></td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">NFR-23</td><td class="nw">応答性</td><td>受付画面の主な操作（画面切替・保存・検索）は、ふつうの社内PC・スマホで待たされたと感じない速さで応答する（目標値は詳細仕様書で提案）</td><td><span class="b should">推奨</span></td><td><span class="src p">提案</span></td></tr>
+      <tr class="grp"><td colspan="5"><b>費用・規模の管理</b></td></tr>
+      <tr><td class="id">NFR-24</td><td class="nw">上限管理</td><td>AIの修正の再試行に、回数・時間・予算の上限を設ける。上限に達したら人へエスカレーション</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">NFR-25</td><td class="nw">作業単位</td><td>AIの1回の作業は、原則として1リポジトリ・1ブランチ・1PR。セッション時間にも上限がある前提で分割する</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">NFR-26</td><td class="nw">費用測定</td><td>完了タスクあたりのAI・CI・環境の費用を測る</td><td><span class="b should">推奨</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">NFR-27</td><td class="nw">並列制御</td><td>AIの台数より「変更の衝突」を管理する。DBスキーマ・認証・共通部品の同時変更を制御し、API・DBの約束事（契約）を依存タスクより先に確定する</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr class="grp"><td colspan="5"><b>保守・拡張</b></td></tr>
+      <tr><td class="id">NFR-28</td><td class="nw">段階拡張</td><td>最小構成（実装エージェント・CI・レビュー担当の3つ）から始め、設計・セキュリティ等の役割は必要に応じて足せる構成にする</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">NFR-29</td><td class="nw">既製品優先</td><td>既存製品を組み合わせ、自作は不足する制御部分だけにする。製品の機能・制約は変わるため、採用時に最新の公式情報を確認する</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">NFR-30</td><td class="nw">DB変更</td><td>DBの変更は旧版アプリとの共存を考えて段階的に行う。マージ前に最新の統合状態で検証する</td><td><span class="b must">必須</span></td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">NFR-31</td><td class="nw">データ互換</td><td>受付データは2つの画面で共通の形式（JSON）とし、相互に取り込める</td><td><span class="b should">推奨</span></td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">NFR-32</td><td class="nw">バックアップ</td><td>本番の受付データは、サーバ側で保存・定期バックアップし、復元手順を用意する（試作のブラウザ保存は本番では使わない）</td><td><span class="b must">必須</span></td><td><span class="src p">提案</span></td></tr>
+      <tr><td class="id">NFR-33</td><td class="nw">対応環境</td><td>社内PCの主要ブラウザ（Edge・Chrome）と、現場のスマートフォン・タブレットで使える</td><td><span class="b should">推奨</span></td><td><span class="src">S3</span><span class="src p">提案</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>8-1. 既存の社内統制との対応（参考）</h3>
+  <p>出典S1が示す対応関係の例です。適用範囲・管理策の採否は、自社の適用宣言書・内部統制文書に基づいて確定します。</p>
+  <div class="tw"><table>
+    <thead><tr><th>工場の仕組み</th><th>ISO/IEC 27001:2022 附属書A（例）</th><th>J-SOX IT全般統制（例）</th></tr></thead>
+    <tbody>
+      <tr><td>作業指示書・受入条件</td><td>8.25 セキュア開発ライフサイクル／8.26 アプリケーションセキュリティ要求事項</td><td>開発・変更の要件定義と承認</td></tr>
+      <tr><td>CIによる独立検証</td><td>8.29 開発及び受入れにおけるセキュリティテスト</td><td>テストの実施と結果の記録</td></tr>
+      <tr><td>PRと承認の紐付け</td><td>8.32 変更管理</td><td>変更管理（承認・記録・移送）</td></tr>
+      <tr><td>権限境界・mainへの直接書込み禁止</td><td>8.4 ソースコードへのアクセス／8.2 特権的アクセス権</td><td>アクセス管理・職務分離</td></tr>
+      <tr><td>隔離環境・本番データ非持込み</td><td>8.31 開発・テスト・本番環境の分離／8.33 テスト用情報</td><td>本番環境へのアクセス制限</td></tr>
+    </tbody>
+  </table></div>
+  <div class="tw"><table>
+    <thead><tr><th>NIST SSDF</th><th>工場での対応</th></tr></thead>
+    <tbody>
+      <tr><td><b>PO</b> 組織の準備</td><td>開発標準・役割・作業指示書テンプレート・権限境界の定義（Phase 0）</td></tr>
+      <tr><td><b>PS</b> ソフトウェアの保護</td><td>ブランチ保護、品質ゲートの改ざん防止、CI定義変更の承認制</td></tr>
+      <tr><td><b>PW</b> 安全なソフトウェアの作成</td><td>隔離環境での実装、独立テスト、多層のセキュリティ検査</td></tr>
+      <tr><td><b>RV</b> 脆弱性への対応</td><td>監視・障害・依存関係の更新を次のIssueとしてラインへ戻す</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============ 9 ============ -->
+<section class="sec" id="s9">
+  <h2><span class="no">9</span>データ要件</h2>
+  <p class="sub">ラインで扱う主な情報と、気をつけるべき情報です。項目の詳しい定義は詳細仕様書の「データ仕様」にあります。</p>
+
+  <h3>9-1. 主な情報（データ）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>情報</th><th>中身</th><th>正本（どこを正とするか）</th><th>出典</th></tr></thead>
+    <tbody>
+      <tr><td><b>依頼</b></td><td>受付番号、件名、部署、起票者、困りごと、目的、使う人・場所、作るもの／作らないもの、合格の条件、扱う情報、関わる相手、守ること、必ず人に聞くこと、ものさし、承認者、状態、信号の色（候補・決定）、添付</td><td>受付システム</td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td><b>変更履歴・コメント</b></td><td>だれが・いつ・どの役割で・何をしたか、メモ、コメント</td><td>受付システム</td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+      <tr><td><b>注文書（作業指示書）</b></td><td>依頼からつくるYAML。目的・利用者・対象・対象外・受入条件・制約・要承認事項など</td><td>Gitリポジトリ（承認後）</td><td><span class="src">S1</span><span class="src">S5</span></td></tr>
+      <tr><td><b>コード・仕様・設計判断・テスト・運用手順</b></td><td>完成品と、その根拠</td><td>Gitリポジトリ</td><td><span class="src">S1</span></td></tr>
+      <tr><td><b>作業状態</b></td><td>機能一覧、実装状態、テスト結果、次の作業</td><td>Gitリポジトリ／ワークフロー制御</td><td><span class="src">S1</span></td></tr>
+      <tr><td><b>PRと証跡</b></td><td>判断材料10項目、検査結果、承認記録（対象コミット）</td><td>GitHub</td><td><span class="src">S1</span></td></tr>
+      <tr><td><b>道具カタログ</b></td><td>17部署、105件の道具（名前・説明・信号の色・はじめやすい候補）</td><td>マスタ</td><td><span class="src">S4</span></td></tr>
+      <tr><td><b>基本情報（マスタ）</b></td><td>部署、役割、利用者、承認者、選択肢（使う人・場所・扱う情報など）</td><td>マスタ／社内の認証基盤</td><td><span class="src">S5</span><span class="src">S6</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>9-2. 特に気をつける情報（5区分）</h3>
+  <p>依頼にこれらが含まれると、信号の色の候補が少なくとも<span class="sig y">黄</span>になります。 <span class="src">S5</span><span class="src">S6</span></p>
+  <div class="tw"><table>
+    <thead><tr><th>区分</th><th>例</th><th>守り方</th></tr></thead>
+    <tbody>
+      <tr><td>個人情報</td><td>作業員名簿、資格、健康</td><td>必要な人だけ・必要な項目だけ。開発環境に持ち込まない</td></tr>
+      <tr><td>発注者から預かった図面・データ</td><td>設計データ、図面</td><td>開発環境に持ち込まない。見せる範囲を守る</td></tr>
+      <tr><td>現場の位置情報</td><td>現場の住所・座標</td><td>開発環境に持ち込まない</td></tr>
+      <tr><td>工事写真・検査記録の原本</td><td>写真、試験成績</td><td>加工・書換しない。撮影日時・場所を改ざんできない</td></tr>
+      <tr><td>お金の情報</td><td>金額、原価、支払い</td><td>確定は人。見られる人をしぼる</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>9-3. 部署をまたぐ「データのバトン」</h3>
+  <p>道具を部署ごとにバラバラに作ると、同じ情報を何度も入力することになります。次の情報は、作った部署から使う部署へ正しく受け渡せるように作ります。 <span class="src">S4</span></p>
+  <div class="tw"><table>
+    <thead><tr><th>受け渡す情報</th><th>作る部署</th><th>使う部署</th><th>受け渡しのポイント</th></tr></thead>
+    <tbody>
+      <tr><td>工事番号・工事の基本情報</td><td>営業・経理</td><td>全部署</td><td>すべての道具を同じ工事番号でつなぐ。ここがバラバラだと集計できない</td></tr>
+      <tr><td>協力会社の情報</td><td>購買・外注</td><td>工事・安全・経理</td><td>許可・保険・実績を1か所で管理し、各部署は見るだけにする</td></tr>
+      <tr><td>作業員・資格の情報</td><td>人事・安全</td><td>工事・機材</td><td>個人情報。見られる人をしぼり、必要な項目だけ渡す</td></tr>
+      <tr><td>工事写真</td><td>工事</td><td>品質・維持管理・広報</td><td>原本は書きかえない。広報で使うときは写っている人の了解を確認</td></tr>
+      <tr><td>図面・3Dデータ</td><td>設計・技術</td><td>積算・工事・維持管理</td><td>どれが最新版かが一目でわかる保管場所（共通データ環境）で管理</td></tr>
+      <tr><td>原価・出来高</td><td>工事・購買</td><td>経理・経営企画</td><td>現場の入力が、そのまま会社の数字になる。二重入力をなくす</td></tr>
+      <tr><td>機械の点検記録</td><td>機材</td><td>工事・安全</td><td>点検切れの機械は予約できないようにする（使ってよいかの判断は人）</td></tr>
+      <tr><td>ヒヤリハット・不具合</td><td>工事・品質</td><td>安全・技術開発・全現場</td><td>報告した人を責めない。学びとして全現場へ共有</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============ 10 ============ -->
+<section class="sec" id="s10">
+  <h2><span class="no">10</span>外部連携要件</h2>
+  <p class="sub">ラインがつながる外部の仕組みです。製品の機能・制約は変わるため、採用時に最新の公式情報を確認します。 <span class="src">S1</span></p>
+  <div class="tw"><table>
+    <thead><tr><th>連携先</th><th>何のために</th><th>求めること</th><th>状況</th></tr></thead>
+    <tbody>
+      <tr><td><b>desknet's NEO／AppSuite</b></td><td>受付・相談・通知・承認依頼の入口</td><td>依頼の登録、状態変化と承認依頼の通知。正式な判断は対象PR等へ記録</td><td><span class="src">S1</span><span class="src">S6</span> 連携方式は<b>未決</b></td></tr>
+      <tr><td><b>GitHub（Issues・Projects・リポジトリ・PR）</b></td><td>作業・コード・仕様・変更履歴の中心</td><td>承認済み注文書からのIssue作成、ブランチ保護、PRへの証跡、承認と対象コミットの紐付け</td><td><span class="src">S1</span></td></tr>
+      <tr><td><b>CI（GitHub Actions等）</b></td><td>独立した品質ゲート</td><td>ビルド・型・単体・結合・E2E・セキュリティ検査を毎回同じ手順で実行。定義の変更は承認制</td><td><span class="src">S1</span></td></tr>
+      <tr><td><b>クラウドのコーディングエージェント</b></td><td>計画・実装・テスト・修正・PR作成</td><td>隔離環境、1リポジトリ・1ブランチ・1PR、最小権限、セッション記録</td><td><span class="src">S1</span> 製品は<b>未決</b></td></tr>
+      <tr><td><b>プレビュー／ステージング環境</b></td><td>業務確認・試験運用</td><td>PRごとの試し見URL、本番相当の検証環境</td><td><span class="src">S1</span></td></tr>
+      <tr><td><b>デプロイ基盤・アプリの実行先</b></td><td>完成したアプリを動かす</td><td>承認済み成果物だけを配備。候補：Cloudflare、Neon、Supabase等（データ基盤を含め別途選定）</td><td><span class="src">S1</span> <b>未決</b></td></tr>
+      <tr><td><b>社内の認証基盤</b></td><td>利用者のログイン・役割の判別</td><td>既存のログイン方式を変えずに利用</td><td><span class="src">S1</span><span class="src">S6</span></td></tr>
+      <tr><td><b>監視・障害管理</b></td><td>運用で見つかったことの回収</td><td>障害・利用状況・要望を次のIssueとしてラインへ戻す</td><td><span class="src">S1</span></td></tr>
+    </tbody>
+  </table></div>
+  <p>なお、作られる個々の道具が連携する外部（発注機関の公告、建設キャリアアップシステム（CCUS）、会計システム、気象データなど）は、それぞれの依頼の注文書で「新しい外部サービスとの接続」として扱い、<b>人の承認が必要</b>です。 <span class="src">S4</span><span class="src">S5</span></p>
+</section>
+
+<!-- ============ 11 ============ -->
+<section class="sec" id="s11">
+  <h2><span class="no">11</span>前提・制約</h2>
+  <div class="tw"><table>
+    <thead><tr><th class="id">ID</th><th>前提・制約</th><th>出典</th></tr></thead>
+    <tbody>
+      <tr><td class="id">C-01</td><td>生成コードの正しさや安全性は保証されない。独立したテストとレビューを必ず工程に入れる</td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">C-02</td><td>役割名や別モデルを分けても、誤りの独立性は保証されない。まず仕様・自動テスト・権限制御を整える</td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">C-03</td><td>構成・工程・判定基準は推奨案であり、特定製品だけで一式が完成するわけではない</td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">C-04</td><td>既存の認証方式は変更しない</td><td><span class="src">S1</span><span class="src">S5</span></td></tr>
+      <tr><td class="id">C-05</td><td>本番データを開発環境へ取り込まない</td><td><span class="src">S1</span><span class="src">S3</span></td></tr>
+      <tr><td class="id">C-06</td><td>信号の色分けや例示した道具は検討用の案。関係法令・発注者の基準・社内規程に照らして確定する</td><td><span class="src">S3</span><span class="src">S4</span></td></tr>
+      <tr><td class="id">C-07</td><td>部署名・道具・信号の色は検討用の例。実際の組織・業務に合わせて見直す</td><td><span class="src">S4</span></td></tr>
+      <tr><td class="id">C-08</td><td>統制枠組みとの対応は検討の起点。採否は自社の適用宣言書・内部統制文書に基づいて確定する</td><td><span class="src">S1</span></td></tr>
+      <tr><td class="id">C-09</td><td>受付の試作（S5・S6）は「サンプルWebUI」。AppSuite版は実製品の画面ではなく画面イメージ。本番実装では工程3で引継ぎ可否を判断する</td><td><span class="src">S1</span><span class="src">S6</span></td></tr>
+      <tr><td class="id">C-10</td><td>期間は先に固定しない。各段階の終了条件で進める</td><td><span class="src">S1</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============ 12 ============ -->
+<section class="sec" id="s12">
+  <h2><span class="no">12</span>導入計画・移行</h2>
+  <p class="sub">いきなり大きな工場は作りません。「1つの要望が、注文書から証拠付きの提出書類になるまで」を安定して回せる小さなラインから始め、段を一つずつ上ります。</p>
+
+  <h3>12-1. 全社のライン導入（Phase 0〜4）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>段階</th><th>構築するもの</th><th>終了条件（次へ進む合図）</th></tr></thead>
+    <tbody>
+      <tr><td class="nw"><b>Phase 0</b> 標準化</td><td>ひな形、開発手順、CI、仕様テンプレート（＋信号ルール、権限境界）</td><td>人間が同じ手順で再現できる</td></tr>
+      <tr><td class="nw"><b>Phase 1</b> 単一案件</td><td>Issue → 実装 → テスト → PR</td><td>小さな機能を証跡付きで完了できる</td></tr>
+      <tr><td class="nw"><b>Phase 2</b> チーム利用</td><td>権限、並列実行、競合制御、通知、費用上限</td><td>複数人の依頼を安全に処理できる</td></tr>
+      <tr><td class="nw"><b>Phase 3</b> 公開まで接続</td><td>ステージング、公開承認、復旧手順</td><td>承認済み成果物を追跡・配備・復旧できる</td></tr>
+      <tr><td class="nw"><b>Phase 4</b> 継続改善</td><td>障害・要望から修正案を作成</td><td>品質と費用を測りながら改善できる</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>12-2. 建設土木への適用（STEP 0〜4）</h3>
+  <div class="tw"><table>
+    <thead><tr><th>段</th><th>内容</th><th>「できた！」の合図</th></tr></thead>
+    <tbody>
+      <tr><td class="nw"><b>STEP 0</b> 決まりを作る</td><td>ひな形・手順・信号ルール</td><td>注文書のひな形と信号ルールがあり、人がやっても同じ手順で進められる</td></tr>
+      <tr><td class="nw"><b>STEP 1</b> 事務所で1つ</td><td>資機材予約など青信号の小さな道具</td><td>青信号の小さな道具1つを、証拠付きで完成させられる</td></tr>
+      <tr><td class="nw"><b>STEP 2</b> モデル現場で試す</td><td>1つの現場で実際に使う</td><td>モデル現場で使ってもらい、「現場で使える」と言ってもらえる</td></tr>
+      <tr><td class="nw"><b>STEP 3</b> ほかの現場へ</td><td>複数の現場・協力会社へ広げる</td><td>複数の現場・協力会社が、見せる範囲を守って安全に使える</td></tr>
+      <tr><td class="nw"><b>STEP 4</b> 黄信号へ挑戦</td><td>技術者のチェック付きで支援機能を</td><td>黄信号の機能を、技術者のチェック付きで回せる（赤信号は対象外のまま）</td></tr>
+    </tbody>
+  </table></div>
+  <div class="prop"><b>2つの段階表の関係（読みかえ）</b>：Phase は「ラインそのもの」の成熟度、STEP は「建設土木の道具の広げ方」の段階です。目安として、<b>Phase 0 ≒ STEP 0</b>、<b>Phase 1 ≒ STEP 1</b>、<b>Phase 2〜3 の途中で STEP 2（モデル現場）</b>、<b>Phase 3 完了後に STEP 3</b>、<b>STEP 4 は Phase 3 以降</b>とします。最終的な対応づけは Phase 0 で決めます（<a href="#s15">15章</a> Q-04）。</div>
+
+  <h3>12-3. 最初の題材</h3>
+  <div class="cards">
+    <div class="card ac"><h4>PC貸出申請</h4><p>画面・API・権限・履歴を一通り含む、ちょうどいい練習台。作業指示書の見本 FEAT-001 がある <span class="src">S1</span></p></div>
+    <div class="card ac"><h4>社内改善提案の受付</h4><p>利用者を限定して検証しやすい <span class="src">S1</span></p></div>
+    <div class="card ac"><h4>工事写真の圏外保存</h4><p>建設土木版の見本 SITE-001（青信号）。モデル現場で試す題材 <span class="src">S3</span></p></div>
+    <div class="card ac"><h4>カタログの★（はじめやすい候補）</h4><p>17部署から各1件、計17件。ただし★は着手順ではない <span class="src">S4</span></p></div>
+  </div>
+  <div class="warn">建設・土木向けの構造計算・安全判断は担わせず、<b>情報の登録・検索・承認から</b>始めます。 <span class="src">S1</span></div>
+
+  <h3>12-4. 受付の試作から本番への移行</h3>
+  <div class="prop">
+    <ul style="margin:6px 0 0">
+      <li>試作（S5・S6）の画面とルールは「工程2：サンプルWebUI」として業務の流れの確認に使い、工程3で<b>本番へ引き継ぐ部分と作り直す部分</b>を決める</li>
+      <li>試作で作ったデータは JSON で書き出せるため、本番の受付システムへの初期データ取り込みに使える形にしておく</li>
+      <li>本番では、役割の切替をやめてログインで判別し、データはサーバ側に保存する（NFR-08、NFR-32）</li>
+      <li>AppSuite で作る場合の部品の対応表（S6「部品設定」）を、詳細仕様書の画面項目表の原案とする</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============ 13 ============ -->
+<section class="sec" id="s13">
+  <h2><span class="no">13</span>成果の測り方（指標）</h2>
+  <p class="sub">「うまくいっているか」を数字で確かめます。目標値は Phase 1 の実績を見て決めます。</p>
+  <div class="tw"><table>
+    <thead><tr><th>#</th><th>全社の指標 <span class="src">S1</span></th><th>見るポイント</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>要望確定からPR提出までの時間</td><td>どれだけ早くできたか</td></tr>
+      <tr><td>2</td><td>人間のレビュー・手直し時間</td><td>人の手間</td></tr>
+      <tr><td>3</td><td>受入条件を満たした割合</td><td>一発合格の割合</td></tr>
+      <tr><td>4</td><td>差し戻し・再試行の回数</td><td>やり直しの多さ</td></tr>
+      <tr><td>5</td><td>マージ後の不具合と本番影響</td><td>公開後の問題</td></tr>
+      <tr><td>6</td><td>完了タスクあたりのAI・CI・環境費用</td><td>1件あたりの費用</td></tr>
+      <tr><td>7</td><td>承認待ち時間</td><td>ハンコ待ちで止まっていた時間</td></tr>
+      <tr><td>8</td><td>途中停止した作業の再開成功率</td><td>続きから再開できたか</td></tr>
+    </tbody>
+  </table></div>
+  <div class="tw"><table>
+    <thead><tr><th>#</th><th>建設土木の指標 <span class="src">S3</span></th><th>見るポイント</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>現場の事務時間</td><td>写真整理・日報などにかかる時間がどれだけ減ったか</td></tr>
+      <tr><td>2</td><td>困りごと → 使えるまで</td><td>依頼から現場で使えるまでの日数</td></tr>
+      <tr><td>3</td><td>現場での利用率</td><td>作った道具が実際に使われているか</td></tr>
+      <tr><td>4</td><td>書類の手戻り</td><td>提出書類の差し戻しや再作成の回数</td></tr>
+      <tr><td>5</td><td>使い始めてからの不具合</td><td>現場で起きた問題とその影響</td></tr>
+      <tr><td>6</td><td>信号ルールの守られ方</td><td>赤信号の判断にAIが入りこんでいないか</td></tr>
+      <tr><td>7</td><td>1件あたりの費用</td><td>AI・検査機・作業場にかかったお金</td></tr>
+      <tr><td>8</td><td>現場の声</td><td>「助かった」「ここが困る」の数と中身</td></tr>
+    </tbody>
+  </table></div>
+  <p>受付画面の「月あたり削減見込み」は、<b>「人数×頻度×1回の手間」で出した上限の目安</b>です（手間がすべてなくなった場合の値）。実際の削減時間は、公開後に建設土木の指標1などで測ります。</p>
+</section>
+
+<!-- ============ 14 ============ -->
+<section class="sec" id="s14">
+  <h2><span class="no">14</span>リスクと対策</h2>
+  <div class="tw"><table>
+    <thead><tr><th>リスク</th><th>起きると何が困るか</th><th>対策（要件ID）</th></tr></thead>
+    <tbody>
+      <tr><td>AIがまちがったプログラムを作る</td><td>不具合・業務の混乱</td><td>CIによる独立検証、人のレビューと業務確認、合格条件とテストのひもづけ（FR-32、FR-36、BR-05）</td></tr>
+      <tr><td>AIが検査を弱めて「合格」にしてしまう</td><td>品質ゲートが形だけになる</td><td>品質ゲートの保護、合格条件の削除・弱体化は別途承認（NFR-06）</td></tr>
+      <tr><td>AIが本番やデータを壊す</td><td>業務停止・情報漏えい</td><td>権限分離、隔離環境、本番データ非持込み（NFR-01〜04）</td></tr>
+      <tr><td>文書に紛れた悪意ある指示にAIが従う</td><td>権限の乗っ取り</td><td>文書中の命令に従わない、最小権限、外向き通信の制限（NFR-03、NFR-05）</td></tr>
+      <tr><td>赤信号の判断にAIが入りこむ</td><td>人命・品質・お金・人の処遇への重大な影響</td><td>信号ルール、赤の承認時の確認チェック、指標で監視（BR-02〜03、FR-15、13章）</td></tr>
+      <tr><td>「使いやすい」など検査できない依頼が通る</td><td>手戻り・期待外れ</td><td>合格の条件の書き方チェック、承認時の書き直し確認（FR-05）</td></tr>
+      <tr><td>AIの修正が終わらず費用がふくらむ</td><td>コスト超過</td><td>回数・時間・予算の上限とエスカレーション、費用測定（NFR-24、NFR-26）</td></tr>
+      <tr><td>同時に複数の変更がぶつかる</td><td>壊れた統合・やり直し</td><td>1タスク1目的、共通部品の同時変更制御、最新状態での検証（BR-06、NFR-27、NFR-30）</td></tr>
+      <tr><td>試作の仮の仕組みが本番に残る</td><td>認証・権限の穴</td><td>工程3での引継ぎ判断、本番はログインで判別（C-09、NFR-08）</td></tr>
+      <tr><td>現場で使えない（電波・手袋・屋外）</td><td>道具が使われない</td><td>圏外対応・現場操作性、モデル現場で試してから展開（NFR-16〜17、FR-42）</td></tr>
+      <tr><td>道具が部署ごとにバラバラになる</td><td>二重入力・集計不能</td><td>データのバトン、工事番号でつなぐ（BR-17、9-3）</td></tr>
+      <tr><td>承認待ちでラインが止まる</td><td>スピードが出ない</td><td>承認待ちの見える化と通知、承認待ち時間の測定（FR-21、FR-44、13章）</td></tr>
+      <tr><td>製品の仕様変更・提供終了</td><td>ラインの一部が使えなくなる</td><td>既製品の組合せ、採用時の最新情報確認、作業状態をリポジトリに残す（NFR-29、FR-38）</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============ 15 ============ -->
+<section class="sec" id="s15">
+  <h2><span class="no">15</span>精査結果・未決事項</h2>
+  <p class="sub">6つの資料を突き合わせて見つかった「食い違い」「足りない所」と、関係者で決める必要があることです。</p>
+
+  <h3>15-1. 精査で見つかった主な論点</h3>
+  <p>受付の試作（S5・S6）の中のルールを構想（S1・S3）と照らし合わせた結果です。<b>試作として作られたものなので不具合ではありません</b>が、本番の仕様では次のように扱うことを提案します。詳しくは<a href="mirai-sf-詳細仕様書.html#d10">詳細仕様書「精査結果と仕様での扱い」</a>を参照してください。</p>
+  <div class="tw"><table>
+    <thead><tr><th class="id">ID</th><th>見つかったこと</th><th>なぜ問題か</th><th>本番での扱い（提案）</th></tr></thead>
+    <tbody>
+      <tr><td class="id">F-01</td><td>受付担当が、承認を通らずに「実装中」「検証中」などへ進められる</td><td>「人が仕様を承認してから作る」（S1）が守られない</td><td>「承認済み」より先へは、承認済みを経由しないと進めない</td></tr>
+      <tr><td class="id">F-02</td><td>承認済みの依頼を編集しても、承認が取り消されない</td><td>承認した内容と作る内容がずれる（BR-09の考え方）</td><td>承認後に中身を変えたら「承認待ち」へ戻す</td></tr>
+      <tr><td class="id">F-03</td><td>依頼の削除が「完全な削除」で、記録が残らない</td><td>「記録は消さない」（S3）、監査で説明できない</td><td>削除ではなく「取消」とし、理由と履歴を残す</td></tr>
+      <tr><td class="id">F-04</td><td>承認者はどの状態からどの状態へも動かせる（完了→受付など）</td><td>工程を飛ばせてしまう</td><td>動かせる組み合わせを表で決める（差戻しは理由必須）</td></tr>
+      <tr><td class="id">F-05</td><td>依頼の状態に「マージ判断」「公開承認」がない</td><td>マージと公開を別判断にする（S1）が表せない</td><td>開発ライン側の状態と対応づけ、「公開承認待ち」を追加</td></tr>
+      <tr><td class="id">F-06</td><td>「現場試用」がすべての依頼の通り道になっている</td><td>事務所だけで使う道具では不要な工程</td><td>建設土木の現場向け道具だけ必須、それ以外は省略可</td></tr>
+      <tr><td class="id">F-07</td><td>PRの判断材料が、S1（8項目）とS3（8項目）で一部ちがう</td><td>どちらに合わせるか不明</td><td>両方を合わせた10項目にする（7-1）</td></tr>
+      <tr><td class="id">F-08</td><td>合格の条件の数の上限が画面で違う（案内つき8件／フォーム5件）</td><td>画面によって入れられる量が変わる</td><td>上限をそろえる（提案：8件）</td></tr>
+      <tr><td class="id">F-09</td><td>あいまい語のチェックは助言だけで、そのまま登録・承認できる</td><td>検査できない条件のまま承認される可能性</td><td>登録は可、ただし承認時に警告を表示し、承認者が確認</td></tr>
+      <tr><td class="id">F-10</td><td>受付番号が「REQ-2026-」で年が固定</td><td>2027年以降もそのまま</td><td>受付した年で番号を付ける</td></tr>
+      <tr><td class="id">F-11</td><td>承認者の候補が3名の固定</td><td>組織変更に追従できない</td><td>部署ごとの承認者をマスタで管理</td></tr>
+      <tr><td class="id">F-12</td><td>2つの試作が別々の保存場所を使う</td><td>画面を行き来するとデータが分かれる</td><td>本番は1つのデータを2つの画面で共有</td></tr>
+      <tr><td class="id">F-13</td><td>受付担当が代わりに登録すると、履歴の「だれが」が依頼者名になる</td><td>実際に操作した人がわからない</td><td>「依頼者」と「操作した人」を分けて記録</td></tr>
+      <tr><td class="id">F-14</td><td>添付はファイル名と大きさだけを記録（中身は保存しない）</td><td>本番では添付の中身が必要</td><td>文書管理等へ保存し、受付からリンク</td></tr>
+      <tr><td class="id">F-15</td><td>カタログの道具を「部署＋並び番号」で指している</td><td>カタログを並べ替えると、指す道具が変わる</td><td>道具ごとに変わらないIDを持たせる</td></tr>
+      <tr><td class="id">F-16</td><td>全社の段階（Phase：S1）と建設土木の段階（STEP：S3）の定義が別々</td><td>段階の判定がずれる</td><td>12-2 の読みかえを Q-04 で確定</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>15-2. 関係者で決めること（未決事項）</h3>
+  <div class="tw"><table>
+    <thead><tr><th class="id">ID</th><th>決めること</th><th>決める人（案）</th><th>期限（案）</th></tr></thead>
+    <tbody>
+      <tr><td class="id">Q-01</td><td>desknet's NEO／AppSuite と受付・GitHub の連携方式（AppSuiteで受付するか、受付ステーションを本番化するか、両方か）</td><td>IT・DX部門＋総務</td><td>Phase 0</td></tr>
+      <tr><td class="id">Q-02</td><td>クラウドのコーディングエージェント、ワークフロー制御の製品選定</td><td>IT・DX部門</td><td>Phase 0</td></tr>
+      <tr><td class="id">Q-03</td><td>完成アプリの実行先・データ基盤（Cloudflare、Neon、Supabase等）の選定</td><td>IT・DX部門</td><td>Phase 1〜3</td></tr>
+      <tr><td class="id">Q-04</td><td>Phase と STEP の対応づけ、各段階の判定者</td><td>経営層＋IT・DX部門</td><td>Phase 0</td></tr>
+      <tr><td class="id">Q-05</td><td>AIの再試行の上限（回数・時間・予算）と、月の費用上限</td><td>IT・DX部門＋経理</td><td>Phase 1</td></tr>
+      <tr><td class="id">Q-06</td><td>着手順の決め方（5つのものさしの重み、決定会議）</td><td>経営企画＋IT・DX部門</td><td>Phase 1</td></tr>
+      <tr><td class="id">Q-07</td><td>部署ごとの承認者、技術者（黄・赤の確認者）の指名</td><td>各部署長</td><td>Phase 1</td></tr>
+      <tr><td class="id">Q-08</td><td>モデル現場の選定と、現場の試し係の指名</td><td>工事部</td><td>STEP 1 完了まで</td></tr>
+      <tr><td class="id">Q-09</td><td>受付データ・履歴の保存期間と廃棄ルール</td><td>総務・法務＋内部監査</td><td>Phase 2</td></tr>
+      <tr><td class="id">Q-10</td><td>統制枠組み（ISO/IEC 27001、J-SOX）の適用範囲と管理策の採否</td><td>内部監査＋情報システム</td><td>Phase 0〜1</td></tr>
+      <tr><td class="id">Q-11</td><td>F-01〜F-16 の「本番での扱い（提案）」の採否</td><td>IT・DX部門＋業務責任者</td><td>工程3（本番実装方針）</td></tr>
+      <tr><td class="id">Q-12</td><td>各指標（13章）の目標値</td><td>IT・DX部門＋経営層</td><td>Phase 1 の結果を見て</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============ 16 ============ -->
+<section class="sec" id="s16">
+  <h2><span class="no">16</span>用語集</h2>
+  <dl class="gl">
+    <dt>みらいSF</dt><dd>みらいソフトウェアファクトリーの略。社内のシステムの組み立てライン</dd>
+    <dt>注文書（作業指示書）</dt><dd>AIへの作業指示を、人がレビューできる形に書いたもの。目的・対象・対象外・合格の条件・守ること・必ず人に聞くことなどを書く。形式はYAML</dd>
+    <dt>合格の条件（受入条件）</dt><dd>「これができたら合格」という条件。検査機で確かめられるように書く</dd>
+    <dt>信号の色</dt><dd>青＝任せる、黄＝担当者・技術者のチェック付き、赤＝AIに決めさせない</dd>
+    <dt>ものさし</dt><dd>着手順を考えるための参考値。困っている人の多さ・青信号か・手間の減り方・データがそろっているか・ほかに広げられるか</dd>
+    <dt>エージェント</dt><dd>自分で考えて作業を進めるAI（AIロボット）</dd>
+    <dt>Issue</dt><dd>「これを作って・直して」という依頼の札（GitHubの機能）</dd>
+    <dt>リポジトリ</dt><dd>プログラムや設計書をしまう、正式な保管庫</dd>
+    <dt>ブランチ／作業ブランチ</dt><dd>完成版をよごさないための下書き用コピー</dd>
+    <dt>main</dt><dd>完成版。ここへの直接の書込みはAIに許さない</dd>
+    <dt>PR（プルリクエスト）</dt><dd>「こう変えました」という提出書類。ここに証拠（証跡）と判断を記録する</dd>
+    <dt>マージ</dt><dd>下書きを完成版に取り込むこと（人がOKしてから）</dd>
+    <dt>CI</dt><dd>変更のたびに自動で動く検査機。ビルドやテストを毎回同じ手順で行う</dd>
+    <dt>品質ゲート</dt><dd>合格しないと先へ進めない関所。CIの検査や保護ルール</dd>
+    <dt>E2Eテスト</dt><dd>画面の操作からデータの保存まで、端から端まで通して確かめるテスト</dd>
+    <dt>プレビュー</dt><dd>PRごとに用意する、実際にさわれる試し見の画面</dd>
+    <dt>ステージング</dt><dd>本番そっくりの試験運用の場所</dd>
+    <dt>デプロイ</dt><dd>完成品を本番の環境に反映すること</dd>
+    <dt>隔離環境（囲い）</dt><dd>AIが作業する使い捨ての練習場所。本番や本物のデータとは切り離す</dd>
+    <dt>証跡</dt><dd>「何を・だれが・いつ・どう確かめたか」の記録</dd>
+    <dt>エスカレーション</dt><dd>自分で解決できないときに、上の人（人間）へ判断をあげること</dd>
+    <dt>モデル現場</dt><dd>新しい道具を最初に試してもらう現場</dd>
+    <dt>圏外対応</dt><dd>電波がなくても入力が消えず、つながったら送る作り</dd>
+    <dt>MVP</dt><dd>価値を確かめられる最小限の製品</dd>
+    <dt>YAML／JSON／CSV</dt><dd>データの書き方の形式。YAMLは人が読みやすい設定・指示書向け、JSONはシステム間のやりとり向け、CSVはExcelで開ける表</dd>
+    <dt>desknet's NEO／AppSuite</dt><dd>社内のグループウェアと、その業務アプリ作成機能。このラインでは受付・通知・承認依頼の入口</dd>
+    <dt>NIST SSDF</dt><dd>米国NISTの「安全なソフトウェア開発の枠組み」。工場の統制チェックリストに使う</dd>
+    <dt>J-SOX／IT全般統制</dt><dd>財務報告に関わる内部統制の制度と、そのITに関する統制</dd>
+    <dt>KY</dt><dd>危険予知活動</dd>
+    <dt>点群</dt><dd>レーザーや写真から作る、現場の形を点の集まりで表した3Dデータ</dd>
+  </dl>
+</section>
+
+<!-- ============ 17 ============ -->
+<section class="sec" id="s17">
+  <h2><span class="no">17</span>承認欄</h2>
+  <p class="sub">本書の内容で次の工程（詳細仕様の確定・Phase 0）へ進めてよいかを判断し、記名します。</p>
+  <div class="sign">
+    <div><small>作成</small><br>IT・DX部門<br><br><small>日付：　　年　　月　　日</small></div>
+    <div><small>確認</small><br>業務責任者（代表）<br><br><small>日付：　　年　　月　　日</small></div>
+    <div><small>承認</small><br>経営層<br><br><small>日付：　　年　　月　　日</small></div>
+  </div>
+</section>
+</main>
+</div>
+
+<footer class="ft">
+  みらいソフトウェアファクトリー 要件定義書 v0.1（ドラフト）｜IT・DX部門｜2026年10月17日<br>
+  本書はプロジェクトフォルダ直下の資料（S1〜S6）を精査・統合して作成しました。「提案」と記した事項は出典にない補足であり、採否は関係者の合意で確定します。製品の機能・制約は変更される場合があるため、採用時に最新の公式情報を確認してください。
+</footer>
+<button class="totop" id="totop" type="button" aria-label="ページの先頭へ">↑</button>
+
+<script>
+(function(){
+  var root=document.documentElement, KEY='mirai-sf-doc-theme';
+  try{ var t=localStorage.getItem(KEY); if(t==='light'||t==='dark') root.setAttribute('data-theme',t); }catch(e){}
+  document.getElementById('themeBtn').addEventListener('click',function(){
+    var cur=root.getAttribute('data-theme') || (window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+    var nx=cur==='dark'?'light':'dark'; root.setAttribute('data-theme',nx);
+    try{ localStorage.setItem(KEY,nx); }catch(e){}
+  });
+  var links=[].slice.call(document.querySelectorAll('#tocList a'));
+  var map={}; links.forEach(function(a){ map[a.getAttribute('href').slice(1)]=a; });
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(es){ es.forEach(function(e){ if(e.isIntersecting){ links.forEach(function(a){a.classList.remove('on');}); var a=map[e.target.id]; if(a) a.classList.add('on'); } }); },{rootMargin:'-20% 0px -70% 0px'});
+    document.querySelectorAll('section.sec').forEach(function(s){ io.observe(s); });
+  }
+  var tt=document.getElementById('totop');
+  window.addEventListener('scroll',function(){ tt.classList.toggle('show', window.scrollY>600); },{passive:true});
+  tt.addEventListener('click',function(){ window.scrollTo({top:0}); });
+  document.querySelectorAll('.filter').forEach(function(f){
+    var tb=document.getElementById(f.getAttribute('data-for')); if(!tb) return;
+    var inp=f.querySelector('input'), pr='';
+    function run(){
+      var q=inp.value.trim().toLowerCase();
+      var rows=[].slice.call(tb.querySelectorAll('tbody tr')), lastGrp=null, grpHas=false;
+      function closeGrp(){ if(lastGrp) lastGrp.style.display=grpHas?'':'none'; }
+      rows.forEach(function(r){
+        if(r.classList.contains('grp')){ closeGrp(); lastGrp=r; grpHas=false; return; }
+        var bd=r.querySelector('.b,.sig');
+        var ok=(!q||r.textContent.toLowerCase().indexOf(q)>=0)&&(!pr||(bd&&bd.textContent===pr));
+        r.style.display=ok?'':'none'; if(ok) grpHas=true;
+      });
+      closeGrp();
+    }
+    inp.addEventListener('input',run);
+    f.querySelectorAll('button').forEach(function(b){ b.addEventListener('click',function(){ pr=b.getAttribute('data-p'); f.querySelectorAll('button').forEach(function(x){x.classList.toggle('on',x===b);}); run(); }); });
+  });
+})();
+</script>
+</body>
+</html>

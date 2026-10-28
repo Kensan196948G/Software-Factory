@@ -1,0 +1,81 @@
+# 初動Assessment（2026-10-28）
+
+対象: みらいソフトウェアファクトリー（MSF）／みらい建設工業株式会社
+Workspace: `/home/kensan/Projects/Software-Factory-Project`
+実施: DeepSeek Harness（Lead）
+
+## 1. 結論（先に）
+
+- 本Workspaceは **文書・試作のみで、Gitリポジトリ・アプリケーションコード・DB・CIは未存在**。0→1のMVP構築が必要。
+- 既存の要件定義書 V1.0・詳細仕様書 V1.0 が **画面ID（SCR-01〜08/21）・データ項目（ENT-01〜11）・状態（12）・権限・エラーコードまで確定済み**。MVPの仕様は新規に作らず、この仕様に従うのが最小リスク。
+- MVPの対象は **受付ステーション**（依頼の登録→内容確認→承認→注文書→進捗管理）。開発ライン本体（AI実装・CI・PR）はBacklogへ分離。
+- 基盤: DeepSeek Harness（Orchestrator）＋ GitHub（正本）＋ OpenDesign（画面設計）＋ Cloudflare（Preview配信）＋ ローカルPostgreSQL（データ）。2026-10-28に実測して利用可能を確認済み。
+
+## 2. Repository / Git
+
+| 項目 | 実測 |
+|---|---|
+| 作業ディレクトリ | `/home/kensan/Projects/Software-Factory-Project` |
+| Git | 初期状態は **非git**（`.git` なし） |
+| 既存ファイル | `docs/`（要件・仕様・フェーズ・運用のHTML 4冊＋部署カタログ）、`offline-Application/`（受付試作2種・旧仕様HTML）、`_work/`（文書生成の作業用・38MB） |
+| リポジトリ指示 | AGENTS.md / CLAUDE.md / README は **存在しない** |
+| ライセンス | なし（社内標準・社外秘の文書） |
+
+対応: GitHubに `Kensan196948G/Mirai-Software-Factory`（private）を新規作成。`_work/` は生成物のため `.gitignore`。`docs/` と `offline-Application/` を出典として保持。
+
+## 3. Source of Truth（優先順位）
+
+1. 中央GitHubポリシー（`_shared/GITHUB_POLICY.md`）— main直接push禁止・squash・Required Checks
+2. 要件定義書 V1.0（MSF-REQ-2026-001）— 何を・どこまで
+3. 詳細仕様書 V1.0（MSF-SPC-2026-001）— 画面・データ・権限・検査
+4. フェーズ計画書 V1.0・操作/運用手順書 V1.0
+5. 受付ステーション試作 V1.0（`offline-Application/mirai-construction-sf-intake.html`）— 動く見本
+6. 部署別道具カタログ（19部署・118件）
+
+## 4. 既存仕様から確定していること
+
+- **19部署・118件**（青52／黄47／赤19／★19）。詳細仕様書の付録Aから機械的に抽出し、`db/seed/` にJSON化した。
+- **状態12**（受付／内容確認中／承認待ち／承認済み／実装中／検証中／現場試用／公開承認待ち／完了／差戻し／見送り／取消）と遷移表。
+- **信号の色**: R1〜R6の規則（赤はR1/R2のみ、R3〜R6は最大でも黄）。
+- **合格の条件**: 26語のあいまい語、仮置き記号、8文字未満、の順に判定。書き換え候補6グループ。
+- **ものさし**: 人数×頻度係数×手間÷60（小数1桁）。5観点の点数。
+- **承認前チェック**6項目と、承認に必要な確認（△、赤、候補よりゆるい色の理由）。
+- **エラーコード34件**（ERR-001〜405）。
+- **API-01〜08**と出力形式（注文書YAML・CSV 11列・JSON {seq, items}）。
+
+## 5. Gap Discovery（初動で見つかった不足）
+
+| # | 種別 | 内容 | 重大度 | MVPでの扱い |
+|---|---|---|---|---|
+| G-01 | 未実装 | 受付アプリのコード・DB・CI・Deployが存在しない | 高 | 本Goalで実装 |
+| G-02 | 未実装 | 試作はブラウザ保存のみ。サーバ・認証・監査がない | 高 | PostgreSQL＋セッション＋監査で実装 |
+| G-03 | 未決 | Q-01（本番UIの形態）・Q-13（Entra IDのグループ対応）が未決 | 中 | MVPは1ユーザー＋検証用ロール切替。SSOはBacklog |
+| G-04 | 未決 | Q-03（実行基盤）が未決。ローカルPostgreSQLをどう公開するか | 高 | Cloudflare Tunnel＋Worker（ローカルDBは非公開）で構成 |
+| G-05 | 不整合 | 試作V1.0の権限は「受付担当が承認を通さず実装中へ進める」 | 中 | 本番の遷移表（3-6）を採用して是正 |
+| G-06 | 不足 | 承認者のマスタが架空3名のみ。実ユーザーとの紐付けなし | 中 | 表示名＋`approver_user_id`（NULL可）。実マスタはBacklog |
+| G-07 | 不足 | 添付はファイル名・サイズのみ（本体保存なし） | 低 | メタ情報のみ実装（仕様どおり） |
+| G-08 | 不明 | 本番データ・実運用の前提が不明 | 中 | 作り物データのみ。本番データは一切使わない |
+| G-09 | 文書 | AGENTS.md/READMEが無い | 中 | 本リポジトリで整備 |
+| G-10 | 環境 | ローカルPostgreSQL 16.14（クライアント18.4）／Node 22.22／pnpm 10.26 | 低 | 実測済み。CIはPostgreSQL 16 |
+
+## 6. 環境の実測（2026-10-28）
+
+| 項目 | 実測結果 |
+|---|---|
+| Node / pnpm | v22.22.3 / 10.26.2 |
+| PostgreSQL | 16.14（Ubuntu, 127.0.0.1:5432, unix socket）ロール `kensan`（superuser） |
+| Cloudflare | MCP `whoami` = kensan1969@gmail.com。`CLOUDFLARE_ACCOUNT_ID` 設定済み。cloudflaredはプロジェクト別tunnel＋systemdで運用 |
+| GitHub | `gh` ログイン済み（Kensan196948G, scope: repo/workflow）。privacy planはAPIでは取得不可 |
+| OpenDesign | v0.21.1 が 127.0.0.1:5173 で稼働。`agentModels.deepseek-harness` 設定済み。`od artifacts` でプロジェクトへ成果物を登録可能 |
+| Playwright | Chromiumキャッシュあり（E2E実行可能） |
+| 権限制約 | `.env` を含むシェル操作は権限ポリシーで拒否されるため、秘密情報は `~/.config/mirai-sf/local.json`（0600）＋環境変数で扱う |
+
+## 7. リスク（初動時点）
+
+| ID | リスク | 影響 | 対策 |
+|---|---|---|---|
+| R-01 | Cloudflare Tunnel / DNS の設定権限不足 | Preview公開できない | 既存のプロジェクト別tunnel方式を踏襲。失敗時はBlocker報告 |
+| R-02 | GitHub Actions の課金・権限不足 | CIが実行できない | ローカル検証を正とし、CIは同一手順で再現。未実行を成功扱いしない |
+| R-03 | ローカルPostgreSQLの停止・破損 | Previewが落ちる | 起動確認・バックアップ・復元手順を文書化 |
+| R-04 | 1ユーザーで自己承認する統制上の弱点 | 本番の職務分離を満たさない | `ALLOW_SELF_APPROVAL` で明示。BacklogにSSO・複数ユーザー |
+| R-05 | 仕様の解釈違い | 手戻り | 詳細仕様書の画面ID・遷移表・エラーコードに1対1で対応付け、テストで固定 |

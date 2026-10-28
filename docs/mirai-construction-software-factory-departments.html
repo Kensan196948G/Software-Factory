@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>みらい建設工業 部署別道具カタログ</title>
+<style>
+:root{
+  --bg:#f6f5f0; --surface:#ffffff; --surface2:#efede5; --ink:#1c232d; --muted:#5d6672; --line:#e0dccf;
+  --navy:#1d3550; --steel:#3b4a5c; --sea:#1f6fa8; --sea-soft:#e2eff8;
+  --safety:#f5b800; --safety-soft:#fff6d6; --accent:#ee7d1c; --accent-soft:#ffeedd;
+  --ai:#0f9d9a; --ai-soft:#ddf4f2; --ci:#4f5bd5; --ci-soft:#e8eafb; --human:#d4553a; --human-soft:#fbe6e0;
+  --go:#1f9d55; --go-soft:#e1f4e8; --caution:#c98d00; --caution-soft:#fdf2d2; --stop:#c9302c; --stop-soft:#fbe2e1;
+  --shadow:0 1px 2px rgba(30,40,50,.05),0 10px 26px rgba(30,40,50,.08);
+  --font:"Hiragino Maru Gothic ProN","Hiragino Sans","BIZ UDPGothic","Noto Sans JP","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#111519; --surface:#181f27; --surface2:#212a34; --ink:#e9edf1; --muted:#a1abb7; --line:#2c3743;
+    --sea:#5fa8dc; --sea-soft:#12293a;
+    --safety-soft:#352c0d; --accent-soft:#3a2614; --ai-soft:#0f2f2d; --ci-soft:#1f2348; --human-soft:#3a1d17;
+    --go-soft:#11301f; --caution-soft:#352a0b; --stop-soft:#3a1616;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 26px rgba(0,0,0,.28);
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:64px}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);line-height:1.8;font-size:16px;-webkit-font-smoothing:antialiased}
+a{color:var(--ci)}
+.ico{width:1.2em;height:1.2em;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vertical-align:-.22em;flex:none}
+.wrap{max-width:1140px;margin:0 auto;padding:0 20px}
+#progress{position:fixed;top:0;left:0;height:4px;width:0;background:repeating-linear-gradient(45deg,var(--safety) 0 10px,#222 10px 20px);z-index:60}
+
+nav.top{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--surface) 90%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+nav.top .wrap{display:flex;align-items:center;gap:14px;height:56px}
+nav.top .brand{display:flex;align-items:center;gap:8px;font-weight:800;white-space:nowrap;color:var(--ink);text-decoration:none}
+nav.top .brand .ico{color:var(--sea);width:1.5em;height:1.5em}
+nav.top ul{display:flex;gap:2px;list-style:none;margin:0;padding:0;overflow-x:auto;scrollbar-width:none}
+nav.top ul::-webkit-scrollbar{display:none}
+nav.top li a{display:block;padding:6px 11px;border-radius:999px;font-size:13px;color:var(--muted);text-decoration:none;white-space:nowrap}
+nav.top li a.active,nav.top li a:hover{background:var(--safety-soft);color:var(--ink)}
+
+/* hero */
+.hero{position:relative;overflow:hidden;background:linear-gradient(175deg,#fff7df 0%,#f3efe4 55%,#dcebf6 100%)}
+@media (prefers-color-scheme:dark){.hero{background:linear-gradient(175deg,#2a230f 0%,#1a1d21 55%,#10263a 100%)}}
+.hazard{height:14px;background:repeating-linear-gradient(-45deg,var(--safety) 0 18px,#20262e 18px 36px);background-size:51px 14px;animation:haz 2s linear infinite}
+@keyframes haz{to{background-position:51px 0}}
+.waves{position:absolute;left:0;right:0;bottom:14px;height:46px;opacity:.5;pointer-events:none}
+.waves svg{width:200%;height:100%;animation:wv 12s linear infinite}
+.waves path{fill:none;stroke:var(--sea);stroke-width:2}
+@keyframes wv{to{transform:translateX(-50%)}}
+.hero .wrap{position:relative;padding-top:42px;padding-bottom:52px}
+.pills{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;padding:4px 12px;border-radius:999px;background:var(--surface);border:1px solid var(--line)}
+.pill.e{background:var(--safety);color:#20262e;border-color:var(--safety);font-weight:800}
+.pill.c{background:var(--sea);color:#fff;border-color:var(--sea);font-weight:700}
+.hero h1{font-size:clamp(26px,4.6vw,44px);line-height:1.3;margin:0}
+.hero h1 small{display:block;font-size:.42em;color:var(--sea);letter-spacing:.08em;margin-bottom:6px}
+.hero .lead{font-size:clamp(15.5px,2.1vw,18.5px);margin:14px 0 0;max-width:800px}
+.hero .lead mark{background:linear-gradient(transparent 60%,color-mix(in srgb,var(--safety) 60%,transparent) 60%);color:inherit;font-weight:700}
+.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:26px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:14px 16px;box-shadow:var(--shadow)}
+.kpi .n{font-size:30px;font-weight:900;line-height:1}
+.kpi .n small{font-size:13px;margin-left:3px;color:var(--muted);font-weight:700}
+.kpi .t{font-size:12.5px;color:var(--muted);margin-top:6px;display:flex;align-items:center;gap:6px}
+.kpi.g .n{color:var(--go)}.kpi.y .n{color:var(--caution)}.kpi.r .n{color:var(--stop)}
+.ratio{display:flex;height:16px;border-radius:999px;overflow:hidden;margin-top:16px;background:var(--surface2);box-shadow:inset 0 0 0 1px var(--line)}
+.ratio i{display:block;height:100%;width:0;transition:width 1.4s cubic-bezier(.2,.8,.2,1)}
+.ratio .g{background:var(--go)}.ratio .y{background:var(--safety)}.ratio .r{background:var(--stop)}
+.ratio-l{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:4px}
+
+/* org tiles in hero */
+.org{display:grid;grid-template-columns:repeat(10,1fr);gap:8px;margin-top:22px}
+.tile{aspect-ratio:1/1;border-radius:14px;background:var(--surface);border:1px solid var(--line);display:grid;place-items:center;color:var(--steel);animation:glow 10s ease-in-out infinite;box-shadow:var(--shadow)}
+@media (prefers-color-scheme:dark){.tile{color:#a9b8c9}}
+.tile .ico{width:44%;height:44%}
+@keyframes glow{0%,5%{background:var(--surface);color:inherit}2.5%{background:var(--safety);color:#20262e;transform:translateY(-4px)}7%,100%{background:var(--surface)}}
+
+/* section */
+section.sec{padding:58px 0 6px}
+.sh{display:flex;align-items:center;gap:14px;margin-bottom:20px}
+.sh .n{flex:none;width:50px;height:50px;border-radius:14px;display:grid;place-items:center;background:var(--safety);color:#20262e;font-weight:900;font-size:19px;border:3px solid #20262e}
+.sh h2{margin:0;font-size:clamp(21px,3vw,27px);line-height:1.4}
+.sh p{margin:2px 0 0;color:var(--muted);font-size:14.5px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);padding:20px}
+.reveal{opacity:0;transform:translateY(18px);transition:opacity .7s ease,transform .7s ease}
+.reveal.in{opacity:1;transform:none}
+.note{display:flex;gap:12px;align-items:flex-start;padding:15px 18px;border-radius:18px;font-size:15px;margin:16px 0}
+.note .ico{width:24px;height:24px;margin-top:2px}
+.note.tip{background:var(--safety-soft)}.note.tip .ico{color:var(--caution)}
+.note.warn{background:var(--stop-soft)}.note.warn .ico{color:var(--stop)}
+.note.info{background:var(--ci-soft)}.note.info .ico{color:var(--ci)}
+.note.sea{background:var(--sea-soft)}.note.sea .ico{color:var(--sea)}
+
+/* tables */
+.tbl{overflow-x:auto;border-radius:20px;border:1px solid var(--line);background:var(--surface);box-shadow:var(--shadow)}
+table{width:100%;border-collapse:collapse;font-size:14.5px;min-width:640px}
+th,td{padding:12px 14px;text-align:left;vertical-align:middle;border-bottom:1px solid var(--line)}
+thead th{background:var(--surface2);font-size:13px;color:var(--muted);white-space:nowrap;position:sticky;top:0}
+tbody tr:last-child td{border-bottom:0}
+tbody tr{transition:background .2s}
+tbody tr:hover{background:var(--safety-soft)}
+td.k{font-weight:700;white-space:nowrap}
+td.k .ico{margin-right:6px;color:var(--accent)}
+.dot{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:50%;font-size:12px;font-weight:900;color:#fff;flex:none}
+.dot.g{background:var(--go)}.dot.y{background:var(--safety);color:#20262e}.dot.r{background:var(--stop)}
+
+/* signal rules */
+.rules{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.rule{border-radius:20px;padding:20px;background:var(--surface);border:2px solid var(--line);box-shadow:var(--shadow);position:relative;overflow:hidden}
+.rule::before{content:"";position:absolute;right:-30px;top:-30px;width:110px;height:110px;border-radius:50%;opacity:.14}
+.rule.g::before{background:var(--go)}.rule.y::before{background:var(--safety)}.rule.r::before{background:var(--stop)}
+.rule.g{border-color:color-mix(in srgb,var(--go) 55%,var(--line))}.rule.y{border-color:color-mix(in srgb,var(--safety) 70%,var(--line))}.rule.r{border-color:color-mix(in srgb,var(--stop) 55%,var(--line))}
+.rule .lamp{width:46px;height:46px;border-radius:50%;margin-bottom:10px;animation:lampb 4.5s infinite}
+.rule.g .lamp{background:var(--go)}.rule.y .lamp{background:var(--safety);animation-delay:1.5s}.rule.r .lamp{background:var(--stop);animation-delay:3s}
+@keyframes lampb{0%,30%{box-shadow:0 0 0 0 transparent;opacity:1}10%{box-shadow:0 0 24px 6px currentColor}35%,100%{opacity:.45}}
+.rule.g .lamp{color:var(--go)}.rule.y .lamp{color:var(--safety)}.rule.r .lamp{color:var(--stop)}
+.rule h4{margin:0 0 6px;font-size:17px}
+.rule.g h4{color:var(--go)}.rule.y h4{color:var(--caution)}.rule.r h4{color:var(--stop)}
+.rule p{margin:0 0 8px;font-size:14.5px}
+.rule ul{margin:0;padding-left:18px;font-size:13.5px;color:var(--muted)}
+
+/* lifecycle */
+.life{position:relative;display:grid;grid-template-columns:repeat(7,1fr);gap:10px}
+.life .rail{position:absolute;left:7%;right:7%;top:34px;height:6px;border-radius:3px;background:repeating-linear-gradient(90deg,var(--safety) 0 14px,#20262e 14px 28px);background-size:28px 6px;animation:rail 1.2s linear infinite;opacity:.75}
+@keyframes rail{to{background-position:28px 0}}
+.life .baton{position:absolute;top:24px;width:26px;height:26px;margin-left:-13px;border-radius:8px;background:var(--accent);box-shadow:0 0 16px var(--accent);animation:baton 14s ease-in-out infinite;z-index:2}
+@keyframes baton{
+  0%,6%{left:7.1%}14%,20%{left:21.4%}28%,34%{left:35.7%}42%,48%{left:50%}56%,62%{left:64.3%}70%,76%{left:78.6%}84%,96%{left:92.9%}100%{left:92.9%;opacity:0}
+}
+.stage{position:relative;z-index:1;text-align:center}
+.stage .c{width:68px;height:68px;margin:0 auto;border-radius:20px;background:var(--navy);color:#fff;display:grid;place-items:center;border:3px solid var(--surface);box-shadow:var(--shadow)}
+.stage .c.sea{background:var(--sea)}
+.stage .c .ico{width:30px;height:30px}
+.stage b{display:block;font-size:14px;margin-top:8px}
+.stage .ds{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;margin-top:6px}
+.stage .ds span{font-size:11px;padding:1px 7px;border-radius:999px;background:var(--surface2);border:1px solid var(--line);white-space:nowrap}
+.support{margin-top:22px;padding:16px;border-radius:18px;background:var(--surface);border:2px dashed var(--line);display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.support b{font-size:14px;margin-right:6px;display:flex;align-items:center;gap:6px}
+.support span{font-size:13px;padding:4px 12px;border-radius:999px;background:var(--safety-soft);font-weight:700}
+.support.map span{background:var(--sea-soft)}
+.support.map small{width:100%;font-size:12.5px;color:var(--muted)}
+
+/* catalog controls */
+.controls{position:relative;z-index:30;background:var(--bg);backdrop-filter:blur(8px);padding:12px 0;border-bottom:1px solid var(--line);margin-bottom:16px}
+.tabs{display:grid;grid-template-columns:repeat(auto-fill,minmax(178px,1fr));gap:6px}
+.tab{min-width:0;font:inherit;font-size:13px;display:flex;align-items:center;gap:6px;padding:7px 10px;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;transition:all .2s}
+.tab .ico{color:var(--accent)}
+.tab:hover{border-color:var(--accent)}
+.tab.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+.tab.on .ico{color:var(--safety)}
+.tab span{flex:1;min-width:0;text-align:left;line-height:1.35}
+.tab em{font-style:normal;font-size:11px;padding:0 6px;border-radius:999px;background:var(--surface2);color:var(--muted)}
+.tab.on em{background:rgba(255,255,255,.18);color:#fff}
+.row2{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:8px}
+.chipf{font:inherit;font-size:13px;display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;border:2px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;opacity:.5;transition:all .2s}
+.chipf.on{opacity:1}
+.chipf.g.on{border-color:var(--go)}.chipf.y.on{border-color:var(--safety)}.chipf.r.on{border-color:var(--stop)}
+.chipf .dot{width:18px;height:18px;font-size:10px}
+.search{flex:1;min-width:180px;display:flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface)}
+.search input{font:inherit;font-size:14px;border:0;outline:0;background:transparent;color:var(--ink);width:100%}
+.view{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+.view button{font:inherit;font-size:13px;display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border:0;background:var(--surface);color:var(--muted);cursor:pointer}
+.view button.on{background:var(--safety);color:#20262e;font-weight:700}
+.result{font-size:13px;color:var(--muted);margin-top:8px}
+
+.dept-h{display:flex;align-items:center;gap:14px;margin:26px 0 12px;padding:14px 18px;border-radius:18px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);border-left:8px solid var(--safety)}
+.dept-h.sea{border-left-color:var(--sea)}
+.dept-h:first-child{margin-top:0}
+.dept-h .ib{flex:none;width:48px;height:48px;border-radius:14px;display:grid;place-items:center;background:var(--navy);color:var(--safety)}
+.dept-h.sea .ib{background:var(--sea);color:#fff}
+.dept-h .ib .ico{width:24px;height:24px}
+.dept-h h3{margin:0;font-size:18px}
+.dept-h p{margin:0;font-size:13.5px;color:var(--muted)}
+.dept-h .cnt{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.dept-h .cnt span{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:700}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.tool{position:relative;padding:16px 16px 14px;border-radius:18px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);animation:pop .45s both;transition:transform .25s}
+.tool:hover{transform:translateY(-4px)}
+.tool.r{border-color:color-mix(in srgb,var(--stop) 45%,var(--line));background:linear-gradient(180deg,var(--stop-soft),var(--surface) 55%)}
+@keyframes pop{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:none}}
+.tool .top{display:flex;align-items:flex-start;gap:10px}
+.tool h4{margin:0;font-size:15.5px;line-height:1.5;flex:1}
+.tool p{margin:6px 0 0;font-size:13.5px;color:var(--muted);line-height:1.65}
+.tool .tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.tag{font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:999px;display:inline-flex;align-items:center;gap:4px}
+.tag.g{background:var(--go-soft);color:var(--go)}.tag.y{background:var(--caution-soft);color:var(--caution)}.tag.r{background:var(--stop-soft);color:var(--stop)}
+.tag.star{background:var(--safety);color:#20262e}
+.tag.sea{background:var(--sea-soft);color:var(--sea)}
+.tool .dot.r{animation:blink 1.4s ease-in-out infinite}
+@keyframes blink{50%{opacity:.4}}
+.empty{padding:40px;text-align:center;color:var(--muted);border:2px dashed var(--line);border-radius:20px}
+
+/* summary bars */
+.sbar{display:flex;height:14px;border-radius:999px;overflow:hidden;background:var(--surface2);min-width:140px}
+.sbar i{display:block;height:100%;width:0;transition:width 1.2s cubic-bezier(.2,.8,.2,1)}
+.in .sbar i{width:var(--w)}
+.sbar .g{background:var(--go)}.sbar .y{background:var(--safety)}.sbar .r{background:var(--stop)}
+td.num{text-align:center;font-weight:800}
+td.num.g{color:var(--go)}td.num.y{color:var(--caution)}td.num.r{color:var(--stop)}
+tr.total td{background:var(--surface2);font-weight:900}
+
+/* baton table */
+.flowcell{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.flowcell span{font-size:12.5px;padding:2px 9px;border-radius:999px;background:var(--surface2);border:1px solid var(--line);white-space:nowrap}
+
+/* criteria */
+.crit{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+.cr{padding:18px 14px;border-radius:18px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);text-align:center}
+.cr .ib{width:52px;height:52px;margin:0 auto 8px;border-radius:16px;display:grid;place-items:center;background:var(--safety-soft);color:var(--caution)}
+.cr .ib .ico{width:26px;height:26px}
+.cr b{display:block;font-size:15px;line-height:1.5}
+.cr small{display:block;font-size:12.5px;color:var(--muted);margin-top:4px;line-height:1.55}
+.in .cr{animation:pop .5s both}
+.in .cr:nth-child(2){animation-delay:.08s}.in .cr:nth-child(3){animation-delay:.16s}.in .cr:nth-child(4){animation-delay:.24s}.in .cr:nth-child(5){animation-delay:.32s}
+
+/* never list */
+.never{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.nv{display:flex;gap:12px;align-items:flex-start;padding:16px;border-radius:18px;background:var(--surface);border:2px solid color-mix(in srgb,var(--stop) 40%,var(--line));box-shadow:var(--shadow)}
+.nv .ib{flex:none;width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:var(--stop-soft);color:var(--stop)}
+.nv b{display:block;font-size:15px}
+.nv small{display:block;font-size:13px;color:var(--muted);line-height:1.6}
+.care{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:14px}
+.care div{padding:14px 16px;border-radius:16px;background:var(--ci-soft);font-size:14px}
+.care b{display:flex;align-items:center;gap:6px;margin-bottom:4px;color:var(--ci)}
+
+footer{margin-top:56px;padding:26px 0 40px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px}
+
+@media (min-width:900px){.controls{position:sticky;top:56px}}
+@media (max-width:980px){
+  .grid{grid-template-columns:1fr 1fr}
+  .kpis{grid-template-columns:repeat(3,1fr)}
+  .crit{grid-template-columns:repeat(3,1fr)}
+  .never{grid-template-columns:1fr 1fr}
+  .org{grid-template-columns:repeat(5,1fr)}
+  .life{grid-template-columns:repeat(4,1fr);row-gap:22px}
+  .life .rail,.life .baton{display:none}
+}
+@media (max-width:640px){
+  body{font-size:15.5px}
+  .wrap{padding:0 16px}
+  .grid,.rules,.never,.care{grid-template-columns:1fr}
+  .kpis{grid-template-columns:1fr 1fr}
+  .crit{grid-template-columns:1fr 1fr}
+  .life{grid-template-columns:1fr 1fr}
+  .dept-h{flex-wrap:wrap}
+  .dept-h .cnt{margin-left:0;justify-content:flex-start;width:100%}
+  .tabs{grid-template-columns:repeat(2,1fr)}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .reveal{opacity:1!important;transform:none!important}
+  .sbar i,.ratio i{width:var(--w)!important}
+}
+@media print{
+  nav.top,#progress,.controls,.waves{display:none}
+  .reveal{opacity:1;transform:none}
+  .sbar i{width:var(--w)}
+  .tool{break-inside:avoid;animation:none}
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4 18a9 9 0 1 1 16 0"/><path d="M12 13l4-5"/><circle cx="12" cy="13" r="1.5"/></symbol>
+    <symbol id="i-handshake" viewBox="0 0 24 24"><path d="M2 12l4-4 4 2 3-2 4 1 5 3"/><path d="M6 8l-4 4 6 6 2-1 2 2 2-1 2 1 4-5"/><path d="M10 13l2 2M12 11l3 3"/></symbol>
+    <symbol id="i-yen" viewBox="0 0 24 24"><path d="M6 3l6 8 6-8M12 11v10M7 13h10M7 17h10"/></symbol>
+    <symbol id="i-calc" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 11h2M12 11h0M15 11h1M8 15h2M12 15h0M15 15h1M8 18h2M15 18h1"/></symbol>
+    <symbol id="i-blueprint" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11M13 13h5M13 16h3"/></symbol>
+    <symbol id="i-helmet" viewBox="0 0 24 24"><path d="M3 17h18"/><path d="M5 17a7 7 0 0 1 14 0"/><path d="M10 10V6h4v4"/><path d="M4 20h16"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+    <symbol id="i-ruler" viewBox="0 0 24 24"><path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z"/></symbol>
+    <symbol id="i-loop" viewBox="0 0 24 24"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 16h6"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2 20c.8-3.5 3.5-5.5 7-5.5s6.2 2 7 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .8 3.4 2.6 4 5.2"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-mega" viewBox="0 0 24 24"><path d="M3 10v4h3l7 5V5L6 10z"/><path d="M17 9a4 4 0 0 1 0 6M19.5 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-5-5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4h12l-2 4 2 4H5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.5"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+    <symbol id="i-stamp" viewBox="0 0 24 24"><path d="M9 3h6v5l-1 3h4a2 2 0 0 1 2 2v3H4v-3a2 2 0 0 1 2-2h4L9 8z"/><path d="M4 20h16"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7L12 6.3"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+    <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+    <symbol id="i-cube" viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/></symbol>
+    <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></symbol>
+    <symbol id="i-beam" viewBox="0 0 24 24"><path d="M3 6h18M3 18h18M8 6v12M16 6v12"/><path d="M8 12l8-6M8 18l8-6"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-hand" viewBox="0 0 24 24"><path d="M7 21v-6L4 11a1.5 1.5 0 0 1 2.3-2l1.7 2V4.5a1.5 1.5 0 0 1 3 0V10V3.5a1.5 1.5 0 0 1 3 0V10V5a1.5 1.5 0 0 1 3 0v8c0 4-2 8-6 8z"/></symbol>
+    <symbol id="i-house" viewBox="0 0 24 24"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></symbol>
+    <symbol id="i-ship" viewBox="0 0 24 24"><path d="M3 15h18l-2.5 5h-13z"/><path d="M6 15v-4h7v4"/><path d="M15 15V4l5 6"/><path d="M8 11V8h3v3"/></symbol>
+    <symbol id="i-wave" viewBox="0 0 24 24"><path d="M2 8c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M2 13c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M2 18c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></symbol>
+    <symbol id="i-anchor" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><path d="M12 7v14M8 11h8"/><path d="M4 14c0 4 3.6 7 8 7s8-3 8-7"/></symbol>
+    <symbol id="i-wind" viewBox="0 0 24 24"><path d="M3 9h11a3 3 0 1 0-3-3"/><path d="M3 14h15a3 3 0 1 1-3 3"/><path d="M3 19h6"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></symbol>
+    <symbol id="i-leaf" viewBox="0 0 24 24"><path d="M5 19c0-9 6-14 15-14 0 9-5 15-14 15"/><path d="M5 19c3-4 6-7 10-9"/></symbol>
+  </defs>
+</svg>
+
+<div id="progress"></div>
+
+<nav class="top">
+  <div class="wrap">
+    <a class="brand" href="#top"><svg class="ico"><use href="#i-anchor"/></svg>みらい建設工業 部署別カタログ</a>
+    <ul id="navlist">
+      <li><a href="#d1">信号ルール</a></li>
+      <li><a href="#d2">工事の一生</a></li>
+      <li><a href="#d3">道具カタログ</a></li>
+      <li><a href="#d4">部署×色の一覧</a></li>
+      <li><a href="#d5">データのバトン</a></li>
+      <li><a href="#d6">選び方</a></li>
+      <li><a href="#d7">決めさせないこと</a></li>
+      <li><a href="#d8">まとめ</a></li>
+    </ul>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="hazard"></div>
+  <div class="wrap">
+    <div class="pills">
+      <span class="pill c"><svg class="ico"><use href="#i-anchor"/></svg>みらい建設工業版</span>
+      <span class="pill e"><svg class="ico"><use href="#i-wave"/></svg>海の工事 ＋ 陸の工事</span>
+      <span class="pill"><svg class="ico"><use href="#i-grid"/></svg>部署別 道具カタログ</span>
+      <span class="pill"><svg class="ico"><use href="#i-clock"/></svg>2026年10月19日</span>
+    </div>
+    <h1><small>MIRAI CONSTRUCTION ─ Software Factory Tool Catalog</small>みらい建設工業<br>部署ごとに「どんな道具を作れそう？」</h1>
+    <p class="lead">みらい建設工業は、港・空港・護岸など<mark>海の工事が得意な建設会社</mark>です。陸の工事や風力発電所の工事も行っています。本社の本部から、全国の支店・現場、作業船まで、すべての部署について、ソフトウェアファクトリーで作れそうな道具を集めました。どの道具にも<mark>信号の色（青・黄・赤）</mark>を付けています。並び順や★は<b>着手順ではありません</b>。着手順は別に決めます。</p>
+
+    <div class="org" id="org" aria-hidden="true"></div>
+
+    <div class="kpis">
+      <div class="kpi"><div class="n"><span data-k="dept">0</span><small>部署</small></div><div class="t"><svg class="ico"><use href="#i-users"/></svg>考えた部署</div></div>
+      <div class="kpi"><div class="n"><span data-k="tool">0</span><small>道具</small></div><div class="t"><svg class="ico"><use href="#i-box"/></svg>道具の候補</div></div>
+      <div class="kpi g"><div class="n"><span data-k="g">0</span><small>件</small></div><div class="t"><span class="dot g" style="width:16px;height:16px"></span>青：任せる</div></div>
+      <div class="kpi y"><div class="n"><span data-k="y">0</span><small>件</small></div><div class="t"><span class="dot y" style="width:16px;height:16px"></span>黄：チェック付き</div></div>
+      <div class="kpi r"><div class="n"><span data-k="r">0</span><small>件</small></div><div class="t"><span class="dot r" style="width:16px;height:16px"></span>赤：決めさせない</div></div>
+    </div>
+    <div class="ratio" id="ratio"><i class="g"></i><i class="y"></i><i class="r"></i></div>
+    <div class="ratio-l"><span>青</span><span>黄</span><span>赤</span></div>
+  </div>
+  <div class="waves" aria-hidden="true"><svg viewBox="0 0 1200 46" preserveAspectRatio="none"><path d="M0 23 Q 75 3 150 23 T 300 23 T 450 23 T 600 23 T 750 23 T 900 23 T 1050 23 T 1200 23"/><path d="M0 35 Q 75 18 150 35 T 300 35 T 450 35 T 600 35 T 750 35 T 900 35 T 1050 35 T 1200 35" style="opacity:.5"/></svg></div>
+  <div class="hazard"></div>
+</header>
+
+<main class="wrap">
+
+<section class="sec" id="d1">
+  <div class="sh"><div class="n">1</div><div><h2>信号の3色ルール（全社版）</h2><p>海の上の現場でも、陸の現場でも、事務の仕事でも、同じ信号を使います</p></div></div>
+  <div class="rules">
+    <div class="rule g reveal"><div class="lamp"></div><h4>青：どんどん任せる</h4><p>記録・整理・検索・お知らせ。まちがえてもすぐ直せて、人やお金に直接ひびかないもの。</p><ul><li>台帳・一覧づくり</li><li>期限のお知らせ</li><li>書類や過去の実績さがし</li></ul></div>
+    <div class="rule y reveal"><div class="lamp"></div><h4>黄：担当者のチェック付き</h4><p>たたき台・比べっこ・見落としチェック。AIの結果は、必ず担当者や技術者が見てから使います。</p><ul><li>資料や計画の下書き</li><li>見積や数字のズレの指摘</li><li>波・風の予報から「作業できそうな時間」の目安</li></ul></div>
+    <div class="rule r reveal"><div class="lamp"></div><h4>赤：AIに決めさせない</h4><p>人の命・構造・品質、お金、契約、人の処遇、会社としての発表に関わる最後の判断。AIは材料集めまで。</p><ul><li>出航・海の作業を止めるかの判断</li><li>合否・金額・契約の決定</li><li>採用・評価・処分の決定</li></ul></div>
+  </div>
+  <div class="note tip reveal"><svg class="ico"><use href="#i-flag"/></svg><div>迷ったら<b>1つ上の色</b>として扱います（青か黄か迷ったら黄）。<b>どの部署にも、必ず赤の仕事があります。</b>カタログでは各部署の最後に、赤の仕事を1つずつ載せています。</div></div>
+  <div class="note sea reveal"><svg class="ico"><use href="#i-wave"/></svg><div><b>海の工事は、天気と波がいちばんの相手です。</b>予報を集めてわかりやすく見せるのはAIの得意なこと（黄）ですが、「今日は船を出すか」「作業を止めるか」は、船長や現場の責任者が決めます（赤）。</div></div>
+</section>
+
+<section class="sec" id="d2">
+  <div class="sh"><div class="n">2</div><div><h2>工事の一生と、部署のバトンリレー</h2><p>1つの工事は、たくさんの部署がバトンをつないで完成します</p></div></div>
+  <div class="card reveal">
+    <div class="life">
+      <div class="rail"></div><div class="baton"></div>
+      <div class="stage"><div class="c"><svg class="ico"><use href="#i-handshake"/></svg></div><b>①仕事をとる</b><div class="ds"><span>営業本部</span><span>ソリューション営業本部</span><span>経営企画室</span></div></div>
+      <div class="stage"><div class="c"><svg class="ico"><use href="#i-calc"/></svg></div><b>②値段を出す</b><div class="ds"><span>技術本部</span><span>営業本部</span></div></div>
+      <div class="stage"><div class="c"><svg class="ico"><use href="#i-stamp"/></svg></div><b>③契約する</b><div class="ds"><span>管理本部</span><span>購買部</span></div></div>
+      <div class="stage"><div class="c"><svg class="ico"><use href="#i-blueprint"/></svg></div><b>④計画を立てる</b><div class="ds"><span>技術本部</span><span>施工本部</span><span>安全品質環境本部</span></div></div>
+      <div class="stage"><div class="c sea"><svg class="ico"><use href="#i-ship"/></svg></div><b>⑤つくる（海・陸）</b><div class="ds"><span>支店の現場</span><span>船舶事業部</span><span>購買部</span><span>安全</span></div></div>
+      <div class="stage"><div class="c"><svg class="ico"><use href="#i-ruler"/></svg></div><b>⑥検査・引き渡し</b><div class="ds"><span>品質・環境</span><span>支店の現場</span><span>経理部</span></div></div>
+      <div class="stage"><div class="c"><svg class="ico"><use href="#i-loop"/></svg></div><b>⑦見守る</b><div class="ds"><span>維持・補修</span><span>支店</span></div></div>
+    </div>
+    <div class="support"><b><svg class="ico" style="color:var(--accent)"><use href="#i-users"/></svg>全体を支える部署</b><span>管理本部（総務・人事・経理）</span><span>DX推進部</span><span>内部監査</span><span>広報・サステナビリティ</span></div>
+    <div class="support map"><b><svg class="ico" style="color:var(--sea)"><use href="#i-pin"/></svg>全国の支店・営業支店</b><span>北海道</span><span>東北</span><span>東京</span><span>千葉</span><span>横浜</span><span>北陸</span><span>中部</span><span>大阪</span><span>四国</span><span>中国</span><span>九州</span><small>このほかに、青森・茨城・能登・静岡・神戸・北九州・有明・沖縄などの営業所があります。道具は、どの支店でも同じように使えるように作ります。</small></div>
+  </div>
+  <div class="note info reveal"><svg class="ico"><use href="#i-link"/></svg><div>道具を部署ごとにバラバラに作ると、同じ情報を何度も入力することになります。だから、部署をまたいで受け渡す情報（データのバトン）を<a href="#d5">5章</a>で整理しています。</div></div>
+</section>
+
+<section class="sec" id="d3">
+  <div class="sh"><div class="n">3</div><div><h2>部署別 道具カタログ</h2><p>部署のボタン、色、キーワードでしぼりこめます。★は「はじめやすい候補」で、着手順ではありません</p></div></div>
+  <div class="controls">
+    <div class="tabs" id="tabs"></div>
+    <div class="row2">
+      <button class="chipf g on" data-c="g" type="button"><span class="dot g">青</span>任せる</button>
+      <button class="chipf y on" data-c="y" type="button"><span class="dot y">黄</span>チェック付き</button>
+      <button class="chipf r on" data-c="r" type="button"><span class="dot r">赤</span>決めさせない</button>
+      <label class="search"><svg class="ico" style="color:var(--muted)"><use href="#i-search"/></svg><input id="q" type="search" placeholder="キーワード（例：作業船、潜水、写真、期限）"></label>
+      <div class="view"><button id="vCard" class="on" type="button"><svg class="ico"><use href="#i-grid"/></svg>カード</button><button id="vTable" type="button"><svg class="ico"><use href="#i-list"/></svg>一覧表</button></div>
+    </div>
+    <div class="result" id="result"></div>
+  </div>
+  <div id="catalog"></div>
+</section>
+
+<section class="sec" id="d4">
+  <div class="sh"><div class="n">4</div><div><h2>部署 × 信号の色　ひと目でわかる一覧</h2><p>部署ごとの色の割合と、はじめやすい候補</p></div></div>
+  <div class="tbl reveal" id="sumwrap"><table id="sum"></table></div>
+  <div class="note tip reveal"><svg class="ico"><use href="#i-spark"/></svg><div>青が多い部署は、すぐに効果が出やすい部署です。黄が多い部署は、担当者のチェックの仕組みを先に決めると進めやすくなります。</div></div>
+</section>
+
+<section class="sec" id="d5">
+  <div class="sh"><div class="n">5</div><div><h2>部署をまたぐ「データのバトン」</h2><p>同じ情報を、作った部署から使う部署へ正しく受け渡します</p></div></div>
+  <div class="tbl reveal">
+    <table>
+      <thead><tr><th>受け渡す情報</th><th>作る部署</th><th>使う部署</th><th>受け渡しのポイント</th></tr></thead>
+      <tbody>
+        <tr><td class="k"><svg class="ico"><use href="#i-flag"/></svg>工事番号・工事の基本情報</td><td>営業本部・経理部</td><td><div class="flowcell"><span>全部署</span><span>全支店</span></div></td><td>すべての道具を<b>同じ工事番号</b>でつなぐ。ここがバラバラだと集計できない</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-handshake"/></svg>協力会社の情報</td><td>購買部</td><td><div class="flowcell"><span>支店の現場</span><span>安全</span><span>経理部</span></div></td><td>許可・保険・実績を1か所で管理し、各部署は見るだけにする</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-person"/></svg>作業員・船員・潜水士の資格</td><td>人事・安全・船舶事業部</td><td><div class="flowcell"><span>支店の現場</span><span>船舶事業部</span></div></td><td><b>個人情報</b>。見られる人をしぼり、必要な項目だけ渡す</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-ship"/></svg>作業船の予定・検査の記録</td><td>船舶事業部</td><td><div class="flowcell"><span>支店の現場</span><span>安全</span><span>技術本部</span></div></td><td>検査切れの船は予定に入れられないようにする（船を出すかの判断は人）</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-wind"/></svg>天気・波・潮の予報</td><td>外部の予報サービス</td><td><div class="flowcell"><span>海の現場</span><span>船舶事業部</span><span>安全</span></div></td><td>みんなが<b>同じ予報</b>を見る。作業するかどうかは現場の責任者が決める</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-camera"/></svg>工事写真</td><td>支店の現場</td><td><div class="flowcell"><span>品質・環境</span><span>維持・補修</span><span>広報</span></div></td><td>原本は書きかえない。広報で使うときは写っている人の了解を確認</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-cube"/></svg>図面・3D・海底の測量データ</td><td>技術本部・支店の現場</td><td><div class="flowcell"><span>技術本部</span><span>支店の現場</span><span>維持・補修</span></div></td><td>どれが最新版かが一目でわかる保管場所（共通データ環境）で管理</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-yen"/></svg>原価・出来高</td><td>支店の現場・購買部</td><td><div class="flowcell"><span>経理部</span><span>経営企画室</span></div></td><td>現場の入力が、そのまま会社の数字になる。二重入力をなくす</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-leaf"/></svg>燃料・廃棄物・CO2の量</td><td>支店の現場・船舶事業部</td><td><div class="flowcell"><span>品質・環境</span><span>広報・サステナビリティ</span><span>経営企画室</span></div></td><td>作業船の燃料も含めて集める。報告書のための手集計をなくす</td></tr>
+        <tr><td class="k"><svg class="ico"><use href="#i-alert"/></svg>ヒヤリハット・不具合</td><td>支店の現場・品質</td><td><div class="flowcell"><span>安全</span><span>技術本部</span><span>全現場</span></div></td><td>報告した人を責めない。学びとして全国の現場へ共有</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="sec" id="d6">
+  <div class="sh"><div class="n">6</div><div><h2>着手順を決めるときの「ものさし」</h2><p>順番はここでは決めません。決めるときに使う5つの見方です</p></div></div>
+  <div class="crit reveal">
+    <div class="cr"><div class="ib"><svg class="ico"><use href="#i-users"/></svg></div><b>困っている人の多さ</b><small>何人・何現場・何支店が、毎日その手間に困っているか</small></div>
+    <div class="cr"><div class="ib"><svg class="ico"><use href="#i-check"/></svg></div><b>青信号か</b><small>最初は青から。黄は担当者のチェックの仕組みができてから</small></div>
+    <div class="cr"><div class="ib"><svg class="ico"><use href="#i-clock"/></svg></div><b>手間の減り方</b><small>1回あたり・1か月あたりで何時間へるか</small></div>
+    <div class="cr"><div class="ib"><svg class="ico"><use href="#i-db"/></svg></div><b>データがそろっているか</b><small>元になる台帳や記録が、すでに電子化されているか</small></div>
+    <div class="cr"><div class="ib"><svg class="ico"><use href="#i-link"/></svg></div><b>ほかに広げられるか</b><small>ほかの支店・ほかの現場、海と陸の両方で使えるか</small></div>
+  </div>
+</section>
+
+<section class="sec" id="d7">
+  <div class="sh"><div class="n">7</div><div><h2>全社で「AIに決めさせないこと」</h2><p>カタログの赤信号をまとめると、この6種類になります</p></div></div>
+  <div class="never">
+    <div class="nv reveal"><div class="ib"><svg class="ico"><use href="#i-shield"/></svg></div><div><b>人の命・安全の判断</b><small>出航・作業中止、立入禁止、潜水作業、起重機船の吊り計画</small></div></div>
+    <div class="nv reveal"><div class="ib"><svg class="ico"><use href="#i-beam"/></svg></div><div><b>構造・品質の合否</b><small>構造計算、検査、健全度、作業船や機械を使ってよいか</small></div></div>
+    <div class="nv reveal"><div class="ib"><svg class="ico"><use href="#i-yen"/></svg></div><div><b>お金の最後の決定</b><small>入札・見積の金額、支払いの承認、決算の確定、作業船などへの投資</small></div></div>
+    <div class="nv reveal"><div class="ib"><svg class="ico"><use href="#i-stamp"/></svg></div><div><b>契約・法律の判断</b><small>契約の締結、発注先の決定、法令の読み方</small></div></div>
+    <div class="nv reveal"><div class="ib"><svg class="ico"><use href="#i-person"/></svg></div><div><b>人の処遇</b><small>採用・評価・配置・転勤・処分。AIの判断で人の人生を左右しない</small></div></div>
+    <div class="nv reveal"><div class="ib"><svg class="ico"><use href="#i-mega"/></svg></div><div><b>会社としての発表</b><small>対外発表、おわび、不正の認定、災害時の出動の判断</small></div></div>
+  </div>
+  <h3 style="margin:28px 0 10px;font-size:17px;display:flex;align-items:center;gap:8px"><svg class="ico" style="color:var(--ci)"><use href="#i-lock"/></svg>人を大切にするための4つの配慮</h3>
+  <div class="care">
+    <div class="reveal"><b><svg class="ico"><use href="#i-person"/></svg>働く人の情報を守る</b>作業員名簿、船員や潜水士の資格・健康の情報は、必要な人だけが、必要な項目だけ見られるようにします。</div>
+    <div class="reveal"><b><svg class="ico"><use href="#i-globe"/></svg>だれも取り残さない</b>外国籍の仲間向けの多言語資料は、AIの翻訳をそのまま使わず、必ず人が確認します。</div>
+    <div class="reveal"><b><svg class="ico"><use href="#i-hand"/></svg>声を上げた人を守る</b>ヒヤリハットや内部通報をした人が不利にならない仕組みにし、通報者の情報は担当者以外に見せません。</div>
+    <div class="reveal"><b><svg class="ico"><use href="#i-handshake"/></svg>協力会社と公正につきあう</b>会社の人権方針やパートナーシップ構築宣言にそって、AIの点数だけで取引先を外したり、条件を決めたりしません。</div>
+  </div>
+</section>
+
+<section class="sec" id="d8">
+  <div class="sh"><div class="n">8</div><div><h2>まとめ</h2><p>これだけ覚えておけば大丈夫</p></div></div>
+  <div class="card reveal">
+    <ul style="margin:0;padding-left:20px;font-size:16px">
+      <li>本社の本部から全国の支店・現場、作業船まで、<b>すべての部署</b>に、ソフトウェアファクトリーで作れる道具の候補があります。</li>
+      <li>道具ごとに<b>信号の色</b>を付け、青から始めて、黄は担当者のチェック付きで進めます。</li>
+      <li><b>どの部署にも赤（AIに決めさせない仕事）</b>があり、そこは人が判断します。海の工事では、船を出すか・作業を止めるかが代表です。</li>
+      <li>部署ごとに作っても、<b>工事番号などのデータのバトン</b>でつながるように作ります。</li>
+      <li>着手順は、6章の<b>5つのものさし</b>を使って別に決めます。</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <div>みらい建設工業株式会社 ソフトウェアファクトリー 部署別道具カタログ（ドラフト）｜DX推進部｜2026年10月19日</div>
+  <div>部署名は公開されている会社概要・役員一覧・事業所一覧をもとにした例で、実際の組織の区切りとは異なる場合があります。道具・信号の色は検討用の例です。実際の組織・業務・関係法令・発注者の基準・社内規程に合わせて見直してください。並び順と★は着手順を表すものではありません。</div>
+</footer>
+</main>
+
+<script>
+(function(){
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ===== data: [name, desc, color, star] / sea:true = 海の工事に関わる部署 ===== */
+  var D = [
+    {id:'keiei',short:'経営企画室',name:'経営企画室',icon:'i-gauge',role:'会社のかじ取り役。数字を見て、進む方向を決める',tools:[
+      ['経営ダッシュボード','受注・売上・利益を、支店ごと・海の工事／陸の工事ごとに1つの画面で見られる','g',1],
+      ['会議の議事録まとめ','会議の録音から、決まったことと宿題を整理する','g'],
+      ['公共事業の予算・発注見通しの情報あつめ','港湾・空港・河川などの国の予算や発注の見通しを集めて、短くまとめる','g'],
+      ['グループ向け報告資料のたたき台','髙松コンストラクショングループへ出す報告資料の下書きを、過去の数字から作る','y'],
+      ['経審の点数の試算','経営事項審査の点数が、何で上がり下がりするかを試算する（申請内容は人が決める）','y'],
+      ['投資・撤退の決定','作業船の新しい建造などの投資は、AIは材料集めまで。決めるのは経営陣','r']
+    ]},
+    {id:'eigyo',short:'営業本部',name:'営業本部',icon:'i-handshake',role:'国や自治体の工事（港・空港・護岸など）をとってくる係',tools:[
+      ['入札・発注情報のお知らせ','国や港の管理者などの公告を集めて、海の工事など自社に合いそうな案件を知らせる','g',1],
+      ['営業台帳（お客様・案件の管理）','だれと、どの案件を、どこまで話したかを記録する','g'],
+      ['過去の実績さがし','似た港・空港・護岸の工事の実績・写真・工事成績をすぐに探せる','g'],
+      ['入札参加資格・提出期限の管理','資格の更新日や書類の締切を知らせる','g'],
+      ['技術提案書のたたき台','総合評価の技術提案で、自社技術をどこで使えるかの下書きを作る','y'],
+      ['入札に参加するか・入札価格の決定','参加するかどうかと入札価格は、責任者が決める','r']
+    ]},
+    {id:'solution',short:'ソリューション営業本部',name:'ソリューション営業本部',icon:'i-wind',role:'民間のお客様（不動産会社・発電事業者など）と一緒に計画をつくる係',tools:[
+      ['民間案件の台帳と進み具合','お客様ごとの案件と、どこまで進んだかがひと目でわかる','g',1],
+      ['プロジェクトの宿題一覧','打合せで出た宿題と期限を、関係者みんなで見られる','g'],
+      ['再生可能エネルギーの情報あつめ','風力発電など、エネルギー関連工事のニュースや制度を集めて短くまとめる','g'],
+      ['提案資料のたたき台','お客様の要望から、提案資料の下書きを作る','y'],
+      ['複数の案の比べっこ表','工期・費用・環境への影響などを、同じ形の表に並べる（数字は担当者が確認）','y'],
+      ['受注条件・契約条件の決定','どんな条件で引き受けるかは、責任者が決める','r']
+    ]},
+    {id:'sekkei',short:'技術本部（設計・積算）',name:'技術本部（設計・積算・照査）',icon:'i-blueprint',role:'図面を考え、工事の値段を計算する係',tools:[
+      ['社内単価・作業船の費用データの検索','過去に使った単価や、作業船を使うときの費用をすぐに引ける','g',1],
+      ['図面・設計書の版の管理','どれが最新版か一目でわかる保管場所（共通データ環境）','g'],
+      ['図面からの数量拾いの補助','図面から数量を拾う作業を手伝う（数量は技術者が確認）','y'],
+      ['過去工事との見積比べ','似た工事と比べて、大きなズレがある項目を知らせる','y'],
+      ['照査チェックリストの書きもれ確認','照査の記入もれや、まだ確認していない項目を知らせる','y'],
+      ['構造計算・設計の合否判断','安全かどうかの判断は、資格を持つ技術者が行う','r']
+    ]},
+    {id:'ict',short:'技術本部（ICT・技術開発）',name:'技術本部（ICT・技術開発）',icon:'i-spark',role:'新しい技術を作って試し、全国の現場に広める係',tools:[
+      ['自社技術の使い方さがし','MC-Navi・MC-Caisson・AR施工支援システムなど、社内技術の説明と使った現場の例をすぐに探せる','g',1],
+      ['NETISなど新技術の情報あつめ','新しい技術の情報を集めて、短くまとめる','g'],
+      ['現場での試しの記録と効果','試した技術の結果と、効果の数字を記録する','g'],
+      ['海底の3Dデータの変換と共有','深さを測ったデータや点群を、みんなが見やすい形に変換する','y'],
+      ['技術論文・発表資料のたたき台','現場の成果から、発表資料の下書きを作る','y'],
+      ['新しい工法を現場で使うかの決定','現場で使うかどうかは、技術者と責任者が決める','r']
+    ]},
+    {id:'kaijo',sea:true,short:'現場（海の工事）',name:'支店工事部の現場（海の工事）',icon:'i-wave',role:'海の上で、港・護岸・埋立・空港などの工事を進める係',tools:[
+      ['工事写真の整理・写真台帳','撮った写真を工種・場所ごとに並べ、台帳づくりを楽にする（海の上の圏外でも消えない）','g',1],
+      ['作業日報','作業船・潜水士・天気・潮の記録を、スマホから入力。前の日の内容を引き継ぐ','g'],
+      ['天気・波・潮のお知らせ','予報を集めて、作業できそうな時間帯を色で見せる（作業するかは人が決める）','y'],
+      ['浚渫・埋立の進み具合の見える化','測った海の深さから、どこまで掘れたか・埋まったかを色で見る（数量の確定は技術者）','y'],
+      ['打合せ簿・協議記録のたたき台','打合せのメモから、決まった様式の記録を作る','y'],
+      ['工程表のたたき台・遅れのお知らせ','天気待ちの日数も見込んで下書きを作り、遅れそうな所を早めに知らせる','y'],
+      ['起重機船の吊り計画・ケーソンを置く計画の決定','重い物を海の上で吊る計画は、責任を持つ技術者が決める','r']
+    ]},
+    {id:'rikujo',short:'現場（陸・エネルギー）',name:'支店工事部の現場（陸の工事・エネルギー関連工事）',icon:'i-helmet',role:'陸の上で、造成・解体・災害復旧・風力発電所などの工事を進める係',tools:[
+      ['作業日報・工事日報','スマホで現場から入力。天気・人数・機械を前の日から引き継ぐ','g',1],
+      ['近隣の方からの問い合わせ記録','解体や造成の工事で受けた問い合わせと、対応の進み具合を残す','g'],
+      ['実行予算と原価の見える化','予算と実際にかかったお金の差を、工種ごとに見る','y'],
+      ['3D点群・ドローン写真の閲覧','現場の形を3Dで見る（数量・寸法の確定は技術者）','y'],
+      ['解体前の調査記録の整理','解体前に必要な調査の記録をまとめ、届出の期限を知らせる（調査の判断は資格者）','y'],
+      ['施工計画書のたたき台','過去の計画書から下書きを作り、所長が手直しして決める','y'],
+      ['仮設・揚重計画の決定','足場やクレーンの計画を決めるのは、責任を持つ技術者','r']
+    ]},
+    {id:'senpaku',sea:true,short:'船舶事業部',name:'船舶事業部（作業船）',icon:'i-ship',role:'浚渫船などの作業船と、船で働く人を守る係',tools:[
+      ['作業船の予定表','どの船が、いつ、どの港の現場にいるかがひと目でわかる','g',1],
+      ['船の検査・点検の期限管理','船の検査や機械の点検の期限を知らせ、期限切れの船は予定に入れられなくする','g'],
+      ['船員の資格・乗船の記録','だれが何の資格を持ち、どの船に乗ったかの記録（見られる人はしぼる）','g'],
+      ['燃料とCO2の記録','使った燃料の量から、CO2の量を計算して残す','g'],
+      ['修理の記録と故障の傾向','修理の記録から、故障しやすい部品や時期を見える化する','y'],
+      ['船を出してよいか・作業船を使ってよいかの判断','船長と責任者が決める。AIは天気や点検の材料をそろえるまで','r']
+    ]},
+    {id:'kobai',short:'購買部',name:'施工本部 購買部',icon:'i-box',role:'協力会社と、材料・船・機械を手配する係',tools:[
+      ['協力会社データベース','建設業許可・保険・実績を1か所で管理する','g',1],
+      ['協力会社からの書類回収','安全書類（グリーンファイル）などの、出た・出ていないを見える化','g'],
+      ['見積の比較表づくり','複数社の見積を、同じ形の表に並べる','y'],
+      ['注文書・契約書類の作成補助','決まった内容から、注文書の下書きを作る','y'],
+      ['出来高・支払いの確認補助','出来高と請求の金額が合っているかを照らし合わせる','y'],
+      ['発注先の決定・契約の締結','どこに頼むかと契約は、責任者が決める','r']
+    ]},
+    {id:'anzen',short:'安全',name:'安全品質環境本部（安全）',icon:'i-shield',role:'海でも陸でも、みんなをけがから守る係',tools:[
+      ['安全パトロール記録','支店の安全パトロールでの指摘と、直したかどうかを記録する','g'],
+      ['KY・安全書類の書きもれ確認','空欄や記入もれを知らせるだけ。危険の見積もりは人','y',1],
+      ['暑さ指数（WBGT）のお知らせ','気象データから暑さ指数を現場に知らせる（休憩・中止の判断は人）','y'],
+      ['潜水作業の記録の整理','潜った時間や深さの記録をまとめ、決まりを外れそうなときに知らせる（潜水の計画は人）','y'],
+      ['ヒヤリハットの集計・傾向','報告を集めて、多い場所・時間・作業を見える化する','y'],
+      ['多言語の安全教育資料','外国籍の仲間向けに資料を訳す（訳は必ず人が確認）','y'],
+      ['作業中止・立入禁止などの安全判断','現場の安全に関わる決定は、責任者が行う','r']
+    ]},
+    {id:'hinshitsu',short:'品質・環境',name:'安全品質環境本部（品質・環境）',icon:'i-ruler',role:'出来ばえと、海や地球への影響を確かめる係',tools:[
+      ['検査記録・試験成績の管理','コンクリート試験などの結果を、工事ごとに整理する','g',1],
+      ['不具合・是正の追跡','見つかった不具合が、直ったかどうかを最後まで追う','g'],
+      ['ISOの記録あつめ','ISO 9001・14001・45001で必要な記録が、そろっているかを示す','y'],
+      ['海の濁りなどの測定記録','工事中の海の濁りなどの測定値を集め、基準に近づいたら知らせる（工事を止めるかは人）','y'],
+      ['電子納品の形式チェック','提出データの形式やファイル名のまちがいを知らせる','y'],
+      ['検査の合否判定','合格か不合格かを決めるのは検査員','r']
+    ]},
+    {id:'iji',sea:true,short:'維持・補修',name:'維持・補修（支店・技術本部）',icon:'i-loop',role:'できあがった港や空港を、長く使えるように見守る係',tools:[
+      ['点検記録・傷んだ所の写真の管理','点検の結果と写真を、施設・場所ごとに整理する','g',1],
+      ['補修の記録の台帳','いつ、どこを、どう直したかを残す','g'],
+      ['保証期間・定期点検のお知らせ','保証の期限や点検の時期が近いことを知らせる','g'],
+      ['写真からの「要確認」候補','ひび割れなどがありそうな写真に印を付ける（判断は技術者）','y'],
+      ['補修方法の比べっこ資料','いくつかの補修方法を、費用・工期で並べた下書きを作る','y'],
+      ['健全度・補修が必要かの判定','施設の状態の評価は、資格を持つ技術者が行う','r']
+    ]},
+    {id:'shiten',short:'支店・営業所',name:'全国の支店・営業所（事務・地域の窓口）',icon:'i-pin',role:'北海道から沖縄まで、地域の窓口として現場を支える係',tools:[
+      ['支店ごとの現場一覧と連絡先','どこで、どんな工事を、だれが担当しているかがわかる','g',1],
+      ['地域の協力会社・役所の連絡先台帳','地域の連絡先を、支店の中で同じものを使う','g'],
+      ['災害のあとの安否確認・現場の被害報告','地震や台風のあと、社員と現場の様子を集める','g'],
+      ['事務所の申請（備品・車など）','紙やメールの申請を、電子の申請にまとめる','g'],
+      ['地域の発注予定のまとめ','その地域の発注予定を集めて、短くまとめる（どれをねらうかは人）','y'],
+      ['災害復旧に出動するか・人を送るかの判断','地域を助けに行くかどうかは、支店長と責任者が決める','r']
+    ]},
+    {id:'somu',short:'総務・法務',name:'管理本部（総務・法務）',icon:'i-doc',role:'会社の書類とルールの係',tools:[
+      ['規程・マニュアルの検索','「この場合どうする？」を社内規程からすぐに探す','g',1],
+      ['許可・登録の更新期限の管理','建設業許可・建設コンサルタント登録・測量業者登録など、たくさんの許可・登録の更新日を知らせる','g'],
+      ['社内申請・稟議の電子化','紙の申請を desknet\'s NEO / AppSuite の電子申請にする','g'],
+      ['文書の保存期間と廃棄の管理','いつまで保存し、いつ廃棄するかを管理する','g'],
+      ['契約書の条文チェック補助','ひな形とちがう条文に印を付ける（読み方は法務担当）','y'],
+      ['契約の締結・法律の判断','契約してよいか、法律上どうかは人が判断する','r']
+    ]},
+    {id:'jinji',short:'人事・労務',name:'管理本部（人事・労務）',icon:'i-users',role:'人を育て、働き方を守る係',tools:[
+      ['勤怠と時間外労働のお知らせ','残業の上限に近づいた人と上司に、早めに知らせる','g',1],
+      ['資格・免許の取得と期限の管理','だれが何の資格を持ち、いつ更新かがわかる','g'],
+      ['転勤・単身赴任の手続きの案内','転勤や帰省のときに必要な手続きを、順番に案内する','g'],
+      ['教育・研修の受講記録','受けた研修と、まだ受けていない研修がわかる','g'],
+      ['建設キャリアアップシステム（CCUS）の記録整理','就業の記録を集計して、確認しやすくする','g'],
+      ['求人票・研修資料のたたき台','求人や研修の資料の下書きを作る（公平な表現か人が確認）','y'],
+      ['採用・評価・配置・処分の決定','人に関わる判断はAIに決めさせない。人が責任を持って決める','r']
+    ]},
+    {id:'keiri',short:'経理部',name:'管理本部 経理部',icon:'i-yen',role:'お金の出入りと、会社の財布を守る係',tools:[
+      ['工事ごとの原価集計','現場の入力から、工事ごとのお金を自動で集計する','g'],
+      ['入金・支払いの予定の見える化','いつ、いくら入って、いくら出るかがわかる','g'],
+      ['請求書の受け取りと仕訳の候補','届いた請求書を読み取り、仕訳の候補を出す（確定は経理担当）','y',1],
+      ['経費精算の書きもれチェック','領収書の不足や、ルールとちがう申請を知らせる','y'],
+      ['内部統制（J-SOX）の証跡あつめ','グループの決まりに合わせて、確認に必要な記録を集め、そろっているか示す','y'],
+      ['支払いの承認・決算の確定','お金を払うことと、決算の数字は人が確定する','r']
+    ]},
+    {id:'dx',short:'DX推進部',name:'DX推進部（情報システム）',icon:'i-monitor',role:'ITの道具をそろえ、会社の情報を守る係',tools:[
+      ['PC・アカウントの台帳','入社・退社・転勤と連動して、PCとアカウントを管理する','g',1],
+      ['全国の支店・現場の通信機器の状態','支店や現場事務所の通信機器が動いているかを一覧で見る','g'],
+      ['ヘルプデスクの受付と一次回答','desknet\'s NEO / AppSuite で受け付け、よくある質問に答える（回答内容は担当が見守る）','y'],
+      ['セキュリティ通知の整理','たくさんの警告をまとめ、急ぐものを上に出す','y'],
+      ['ソフトウェアファクトリー自体の運用','このラインの検査ルールや権限を管理する','y'],
+      ['権限の付与・セキュリティ例外の承認','だれに何の権限を渡すかは、人が承認する','r']
+    ]},
+    {id:'kansa',short:'内部監査',name:'内部監査・コンプライアンス',icon:'i-eye',role:'ルールが守られているかを確かめる係',tools:[
+      ['法令改正のお知らせ','建設業法や港の工事に関係する法令の改正を集めて知らせる','g',1],
+      ['監査の指摘のフォロー','指摘された点が、直ったかどうかを追う','g'],
+      ['監査の証跡あつめ・チェックリスト','監査に必要な記録を集め、チェックリストを準備する','y'],
+      ['規程と実際のずれの候補','規程と実際の記録がちがいそうな所に印を付ける','y'],
+      ['内部通報の受付台帳','通報の受付と対応の記録（見られるのは担当者だけ、通報者を守る）','y'],
+      ['不正の認定・処分の判断','不正かどうか、どう対応するかは人が判断する','r']
+    ]},
+    {id:'koho',short:'広報・サステナ',name:'広報・サステナビリティ',icon:'i-mega',role:'会社のことを社会に知ってもらい、地球にやさしい会社にする係',tools:[
+      ['見学会・イベントの申込受付','現場見学会や、港のイベントへの出展の申込と連絡をまとめる','g',1],
+      ['写真素材の管理（了解つき）','広報用の写真を、写っている人の了解の有無と一緒に管理する','g'],
+      ['サステナビリティ報告書のデータあつめ','CO2・廃棄物・リサイクル材の量などを、報告書用に集める（数字は担当者が確認）','y'],
+      ['広報記事・SNS投稿のたたき台','現場の話題から、記事の下書きを作る','y'],
+      ['近隣・漁業関係者へのお知らせ文','工事のお知らせの下書きを作る（内容は現場と確認）','y'],
+      ['対外発表・おわびの最終決定','会社として何を発表するかは、責任者が決める','r']
+    ]}
+  ];
+
+  var C = {g:'青',y:'黄',r:'赤'};
+  var total={g:0,y:0,r:0,all:0};
+  D.forEach(function(d){ d.cnt={g:0,y:0,r:0}; d.tools.forEach(function(t){ d.cnt[t[2]]++; total[t[2]]++; total.all++; }); });
+
+  function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+  function ico(id){ return '<svg class="ico"><use href="#'+id+'"/></svg>'; }
+
+  /* hero tiles */
+  var org = document.getElementById('org');
+  org.innerHTML = D.map(function(d,i){ return '<div class="tile" title="'+esc(d.name)+'" style="animation-delay:'+(i*0.5)+'s">'+ico(d.icon)+'</div>'; }).join('')
+    + '<div class="tile" title="みらい建設工業" style="animation-delay:9.5s;background:var(--sea);color:#fff">'+ico('i-anchor')+'</div>';
+
+  /* counters */
+  var kv = {dept:D.length, tool:total.all, g:total.g, y:total.y, r:total.r};
+  document.querySelectorAll('[data-k]').forEach(function(el){
+    var target = kv[el.getAttribute('data-k')];
+    if (reduce) { el.textContent = target; return; }
+    var st=null; function tick(t){ if(!st) st=t; var p=Math.min((t-st)/1300,1); el.textContent=Math.round(target*(1-Math.pow(1-p,3))); if(p<1) requestAnimationFrame(tick); }
+    setTimeout(function(){ requestAnimationFrame(tick); }, 250);
+  });
+  var rb = document.querySelectorAll('#ratio i');
+  setTimeout(function(){
+    rb[0].style.width = (total.g/total.all*100)+'%';
+    rb[1].style.width = (total.y/total.all*100)+'%';
+    rb[2].style.width = (total.r/total.all*100)+'%';
+  }, reduce?0:400);
+
+  /* catalog */
+  var state = {dept:'all', colors:{g:true,y:true,r:true}, q:'', view:'card'};
+  var tabs = document.getElementById('tabs');
+  tabs.innerHTML = '<button class="tab on" data-d="all" type="button">'+ico('i-grid')+'<span>すべて</span><em>'+total.all+'</em></button>' +
+    D.map(function(d){ return '<button class="tab" data-d="'+d.id+'" type="button">'+ico(d.icon)+'<span>'+esc(d.short)+'</span><em>'+d.tools.length+'</em></button>'; }).join('');
+  tabs.addEventListener('click', function(e){
+    var b = e.target.closest('.tab'); if(!b) return;
+    state.dept = b.getAttribute('data-d');
+    tabs.querySelectorAll('.tab').forEach(function(x){ x.classList.toggle('on', x===b); });
+    render();
+  });
+  document.querySelectorAll('.chipf').forEach(function(b){
+    b.addEventListener('click', function(){
+      var c=b.getAttribute('data-c'); state.colors[c]=!state.colors[c];
+      if(!state.colors.g && !state.colors.y && !state.colors.r){ state.colors[c]=true; }
+      b.classList.toggle('on', state.colors[c]); render();
+    });
+  });
+  document.getElementById('q').addEventListener('input', function(){ state.q=this.value.trim(); render(); });
+  var vC=document.getElementById('vCard'), vT=document.getElementById('vTable');
+  vC.addEventListener('click',function(){ state.view='card'; vC.classList.add('on'); vT.classList.remove('on'); render(); });
+  vT.addEventListener('click',function(){ state.view='table'; vT.classList.add('on'); vC.classList.remove('on'); render(); });
+
+  function match(t,d){
+    if(!state.colors[t[2]]) return false;
+    if(state.q){ var q=state.q.toLowerCase(); return (t[0]+t[1]+d.name).toLowerCase().indexOf(q)>=0; }
+    return true;
+  }
+  function tagsOf(t,d){
+    return '<span class="tag '+t[2]+'">'+C[t[2]]+(t[2]==='g'?'：任せる':t[2]==='y'?'：チェック付き':'：決めさせない')+'</span>'
+      + (t[3]?'<span class="tag star">'+ico('i-star')+'はじめやすい</span>':'')
+      + (d.sea?'<span class="tag sea">'+ico('i-wave')+'海の工事</span>':'');
+  }
+  function render(){
+    var out='', n=0, idx=0;
+    var depts = state.dept==='all' ? D : D.filter(function(d){return d.id===state.dept;});
+    if(state.view==='card'){
+      depts.forEach(function(d){
+        var ts = d.tools.filter(function(t){return match(t,d);}); if(!ts.length) return;
+        out += '<div class="dept-h'+(d.sea?' sea':'')+'"><div class="ib">'+ico(d.icon)+'</div><div><h3>'+esc(d.name)+'</h3><p>'+esc(d.role)+'</p></div><div class="cnt">'+
+          '<span><i class="dot g" style="width:18px;height:18px;font-size:10px">青</i>'+d.cnt.g+'</span>'+
+          '<span><i class="dot y" style="width:18px;height:18px;font-size:10px">黄</i>'+d.cnt.y+'</span>'+
+          '<span><i class="dot r" style="width:18px;height:18px;font-size:10px">赤</i>'+d.cnt.r+'</span></div></div><div class="grid">';
+        ts.forEach(function(t){
+          n++;
+          out += '<div class="tool '+t[2]+'" style="animation-delay:'+Math.min(idx++*0.025,0.6)+'s"><div class="top"><span class="dot '+t[2]+'">'+C[t[2]]+'</span><h4>'+esc(t[0])+'</h4></div><p>'+esc(t[1])+'</p><div class="tags">'+tagsOf(t,d)+'</div></div>';
+        });
+        out += '</div>';
+      });
+    } else {
+      var rows='';
+      depts.forEach(function(d){
+        d.tools.filter(function(t){return match(t,d);}).forEach(function(t){
+          n++;
+          rows += '<tr><td class="k">'+ico(d.icon)+esc(d.name)+'</td><td><span class="dot '+t[2]+'">'+C[t[2]]+'</span></td><td style="font-weight:700">'+esc(t[0])+(t[3]?' <span class="tag star">'+ico('i-star')+'はじめやすい</span>':'')+'</td><td style="color:var(--muted)">'+esc(t[1])+'</td></tr>';
+        });
+      });
+      if(rows) out = '<div class="tbl"><table><thead><tr><th>部署</th><th>色</th><th>道具</th><th>説明</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    }
+    if(!n) out = '<div class="empty">'+ico('i-search')+' 条件に合う道具が見つかりません。色やキーワードを変えてみてください。</div>';
+    document.getElementById('catalog').innerHTML = out;
+    document.getElementById('result').textContent = n + ' 件を表示中（全 ' + total.all + ' 件）';
+  }
+  render();
+
+  /* summary table */
+  var srows = D.map(function(d){
+    var tot=d.tools.length, star=d.tools.filter(function(t){return t[3];}).map(function(t){return t[0];}).join('、');
+    return '<tr><td class="k">'+ico(d.icon)+esc(d.name)+'</td><td class="num g">'+d.cnt.g+'</td><td class="num y">'+d.cnt.y+'</td><td class="num r">'+d.cnt.r+'</td><td class="num">'+tot+'</td>'+
+      '<td><div class="sbar"><i class="g" style="--w:'+(d.cnt.g/tot*100)+'%"></i><i class="y" style="--w:'+(d.cnt.y/tot*100)+'%"></i><i class="r" style="--w:'+(d.cnt.r/tot*100)+'%"></i></div></td><td>'+esc(star)+'</td></tr>';
+  }).join('');
+  document.getElementById('sum').innerHTML = '<thead><tr><th>部署</th><th>青</th><th>黄</th><th>赤</th><th>計</th><th>色の割合</th><th>★ はじめやすい候補</th></tr></thead><tbody>'+srows+
+    '<tr class="total"><td>合計</td><td class="num g">'+total.g+'</td><td class="num y">'+total.y+'</td><td class="num r">'+total.r+'</td><td class="num">'+total.all+'</td>'+
+    '<td><div class="sbar"><i class="g" style="--w:'+(total.g/total.all*100)+'%"></i><i class="y" style="--w:'+(total.y/total.all*100)+'%"></i><i class="r" style="--w:'+(total.r/total.all*100)+'%"></i></div></td><td>'+D.length+' 部署</td></tr></tbody>';
+
+  /* reveal */
+  var reveals = document.querySelectorAll('.reveal');
+  if ('IntersectionObserver' in window && !reduce) {
+    var io = new IntersectionObserver(function(es){
+      es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, {threshold:.1});
+    reveals.forEach(function(el){ io.observe(el); });
+  } else { reveals.forEach(function(el){ el.classList.add('in'); }); }
+
+  /* nav + progress */
+  var bar=document.getElementById('progress');
+  var links=Array.prototype.slice.call(document.querySelectorAll('#navlist a'));
+  var secs=links.map(function(a){return document.querySelector(a.getAttribute('href'));});
+  function onScroll(){
+    var h=document.documentElement, max=h.scrollHeight-h.clientHeight;
+    bar.style.width=(max>0?h.scrollTop/max*100:0)+'%';
+    var cur=-1; secs.forEach(function(s,i){ if(s && s.getBoundingClientRect().top<140) cur=i; });
+    links.forEach(function(a,i){ a.classList.toggle('active', i===cur); });
+  }
+  window.addEventListener('scroll', onScroll, {passive:true}); onScroll();
+})();
+</script>
+</body>
+</html>

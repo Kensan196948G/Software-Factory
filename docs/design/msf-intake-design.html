@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>みらいSF 受付ステーション — WebUI 設計仕様 v1.0</title>
+<style>
+  :root{
+    /* OpenDesign direction: human-approachable + tech-utility density */
+    --bg:#f7f8f9; --surface:#fff; --surface-2:#f1f4f6;
+    --fg:#1b2430; --muted:#5b6675; --border:#e2e7ec; --border-strong:#cbd3dc;
+    --brand:#0f766e; --brand-ink:#0b5c56; --brand-weak:#e6f4f1;
+    --info:#1d4ed8; --info-weak:#e8efff;
+    --warn:#a16207; --warn-weak:#fdf3dc;
+    --danger:#b91c1c; --danger-weak:#fdeaea;
+    --ok:#15803d; --ok-weak:#e7f6ec;
+    --radius:12px; --radius-sm:8px; --pill:999px;
+    --shadow-1:0 1px 2px rgba(16,24,40,.05);
+    --shadow-2:0 8px 24px rgba(16,24,40,.10);
+    --sp:4px;
+    --font:"Hiragino Kaku Gothic ProN","Yu Gothic UI","Noto Sans JP",system-ui,-apple-system,"Segoe UI",sans-serif;
+    --mono:"JetBrains Mono","IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+    /* mock chrome（設計図の枠。実装では使わない） */
+    --chrome-bar:#dfe5ea; --chrome-dot:#b9c3cc; --ink:#10221f; --ink-fg:#d7e5e2;
+    --ink-2:#1b3a35; --ink-line:#24443e; --ink-line-2:#2c554e; --ink-muted:#8fb3ac; --ink-nav:#c3d6d2;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);font-size:14px;line-height:1.7}
+  h1,h2,h3,h4{margin:0;line-height:1.35;letter-spacing:.01em}
+  h1{font-size:30px;font-weight:800}
+  h2{font-size:22px;font-weight:800;margin-top:8px}
+  h3{font-size:16px;font-weight:700}
+  h4{font-size:14px;font-weight:700}
+  p{margin:8px 0}
+  code,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  a{color:var(--brand-ink)}
+
+  /* ── 文書レイアウト ── */
+  .doc{max-width:1240px;margin:0 auto;padding:40px 28px 120px}
+  .doc-head{display:flex;gap:20px;align-items:flex-start;justify-content:space-between;padding-bottom:24px;border-bottom:2px solid var(--fg)}
+  .kicker{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+  .meta{font-size:12px;color:var(--muted);text-align:right;line-height:1.8}
+  .toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin:24px 0 40px}
+  .toc a{display:block;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);text-decoration:none;color:var(--fg);font-size:13px}
+  .toc a:hover{border-color:var(--brand);background:var(--brand-weak)}
+  section{margin:56px 0 0}
+  .sec-head{display:flex;align-items:baseline;gap:12px;border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:20px}
+  .sec-no{font-family:var(--mono);color:var(--brand);font-weight:700;font-size:13px}
+  .lede{color:var(--muted);max-width:78ch}
+  .note{background:var(--brand-weak);border-left:3px solid var(--brand);padding:12px 16px;border-radius:0 8px 8px 0;font-size:13px}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  @media(max-width:900px){.grid-2,.grid-3{grid-template-columns:1fr}}
+
+  /* ── 画面モック共通 ── */
+  .mock{border:1px solid var(--border-strong);border-radius:16px;overflow:hidden;background:var(--bg);box-shadow:var(--shadow-1)}
+  .mock-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--chrome-bar);border-bottom:1px solid var(--border-strong)}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--chrome-dot)}
+  .mock-url{flex:1;background:#fff;border:1px solid var(--border);border-radius:6px;padding:2px 10px;font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+  .cap{font-size:12px;color:var(--muted);margin-top:8px}
+  .cap b{color:var(--fg)}
+
+  /* アプリシェル */
+  .app{display:grid;grid-template-columns:212px 1fr;min-height:520px;background:var(--bg);font-size:12.5px}
+  .side{background:var(--ink);color:var(--ink-fg);padding:16px 12px;display:flex;flex-direction:column;gap:4px}
+  .brand{display:flex;align-items:center;gap:9px;padding:4px 8px 16px;color:#fff}
+  .brand-mark{width:30px;height:30px;border-radius:9px;background:linear-gradient(145deg,#1aa38f,#0b5c56);display:grid;place-items:center;font-weight:800;font-size:13px}
+  .brand b{font-size:14px;letter-spacing:.02em}
+  .brand span{display:block;font-size:9.5px;color:var(--ink-muted);letter-spacing:.12em}
+  .nav-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;color:var(--ink-nav);text-decoration:none;font-size:12.5px}
+  .nav-item .ico{width:16px;text-align:center;opacity:.8}
+  .nav-item.on{background:var(--ink-2);color:#fff;font-weight:700}
+  .nav-item .badge{margin-left:auto;background:#f5b83d;color:#3a2600;border-radius:999px;font-size:10px;font-weight:800;padding:1px 7px}
+  .side-foot{margin-top:auto;border-top:1px solid var(--ink-line);padding-top:12px;font-size:10.5px;color:var(--ink-muted)}
+  .role-chip{display:inline-flex;align-items:center;gap:6px;background:var(--ink-2);border:1px solid var(--ink-line-2);border-radius:999px;padding:3px 10px;color:var(--ink-fg);font-size:10.5px}
+  .main{display:flex;flex-direction:column;min-width:0}
+  .topbar{display:flex;align-items:center;gap:12px;padding:12px 18px;background:var(--surface);border-bottom:1px solid var(--border)}
+  .topbar h3{font-size:15px}
+  .crumb{font-size:11px;color:var(--muted)}
+  .search{margin-left:auto;display:flex;align-items:center;gap:6px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:5px 10px;color:var(--muted);min-width:180px}
+  .avatar{width:28px;height:28px;border-radius:50%;background:var(--brand-weak);color:var(--brand-ink);display:grid;place-items:center;font-weight:800;font-size:11px}
+  .content{padding:16px 18px 28px;display:flex;flex-direction:column;gap:14px;overflow:hidden}
+
+  /* 部品 */
+  .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-strong);background:var(--surface);color:var(--fg);border-radius:var(--radius-sm);padding:6px 12px;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer}
+  .btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+  .btn.ghost{border-color:transparent;background:transparent}
+  .btn.sm{padding:4px 9px;font-size:11px}
+  .btn:focus-visible,.nav-item:focus-visible,.card:focus-visible{outline:3px solid #7dd3c7;outline-offset:2px}
+  .pill{display:inline-flex;align-items:center;gap:5px;border-radius:var(--pill);padding:2px 9px;font-size:10.5px;font-weight:800;white-space:nowrap}
+  .pill.g{background:var(--info-weak);color:var(--info)}
+  .pill.y{background:var(--warn-weak);color:var(--warn)}
+  .pill.r{background:var(--danger-weak);color:var(--danger)}
+  .pill.n{background:var(--surface-2);color:var(--muted)}
+  .pill.ok{background:var(--ok-weak);color:var(--ok)}
+  .pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+  .pill.plain::before{display:none}
+  .stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
+  .stat .k{font-size:10.5px;color:var(--muted)}
+  .stat .v{font-size:26px;font-weight:800;font-family:var(--mono);line-height:1.2}
+  .stat .v small{font-size:11px;font-weight:600;color:var(--muted);margin-left:4px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
+  .card h4{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);font-weight:700;margin-bottom:8px}
+  .card h4 .n{margin-left:auto;font-family:var(--mono);color:var(--fg)}
+  .row{display:flex;align-items:center;gap:10px;padding:9px 2px;border-top:1px solid var(--border)}
+  .row:first-of-type{border-top:0}
+  .row .id{font-family:var(--mono);font-size:10.5px;color:var(--muted);width:96px}
+  .row .t{font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row .stale{font-size:10px;color:var(--warn);font-weight:800}
+  .row .stale.danger{color:var(--danger)}
+  .row .sp{margin-left:auto;display:flex;gap:6px;align-items:center}
+  .row.danger{border-left:3px solid var(--danger);padding-left:8px}
+  .row.warn{border-left:3px solid #f0b429;padding-left:8px}
+  table{width:100%;border-collapse:collapse;font-size:11.5px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--border);white-space:nowrap}
+  th{font-size:10.5px;color:var(--muted);font-weight:700;background:var(--surface-2)}
+  td.num{font-family:var(--mono);text-align:right}
+  tr.mine{background:#fffbeb}
+  .field{display:flex;flex-direction:column;gap:4px}
+  .field label{font-size:11px;font-weight:700;color:var(--muted)}
+  .input,.select,.textarea{border:1px solid var(--border-strong);border-radius:var(--radius-sm);padding:7px 10px;font-family:inherit;font-size:12px;background:var(--surface);color:var(--fg)}
+  .textarea{min-height:64px;resize:vertical}
+  .input:focus,.select:focus,.textarea:focus{outline:2px solid #7dd3c7;outline-offset:1px;border-color:var(--brand)}
+  .hint{font-size:10.5px;color:var(--muted)}
+  .err{font-size:10.5px;color:var(--danger);font-weight:700}
+  .stepper{display:flex;flex-direction:column;gap:2px}
+  .step{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px;font-size:11.5px;color:var(--muted)}
+  .step .no{width:20px;height:20px;border-radius:50%;border:1px solid var(--border-strong);display:grid;place-items:center;font-size:10px;font-weight:800;background:var(--surface)}
+  .step.on{background:var(--brand-weak);color:var(--brand-ink);font-weight:800}
+  .step.on .no{background:var(--brand);border-color:var(--brand);color:#fff}
+  .step.done .no{background:var(--ok-weak);border-color:#9fd6b0;color:var(--ok)}
+  .cols{display:flex;gap:8px;overflow:hidden}
+  .col{flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:8px}
+  .col .ch{font-size:10.5px;font-weight:800;color:var(--muted);display:flex;gap:6px;margin-bottom:6px}
+  .col .ch .n{margin-left:auto;font-family:var(--mono)}
+  .mini{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 8px;margin-bottom:6px;font-size:10.5px;line-height:1.5}
+  .mini b{display:block;font-size:11.5px;margin:2px 0}
+  .mini .f{display:flex;gap:4px;align-items:center;color:var(--muted)}
+  .drawer{position:relative;background:rgba(16,34,31,.28);border-radius:0 0 12px 12px;min-height:420px}
+  .drawer-panel{position:absolute;inset:0 0 0 auto;width:78%;background:var(--surface);border-left:1px solid var(--border-strong);padding:16px;display:flex;flex-direction:column;gap:10px;box-shadow:var(--shadow-2)}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--border)}
+  .tab{padding:6px 10px;font-size:11.5px;font-weight:700;color:var(--muted);border-bottom:2px solid transparent}
+  .tab.on{color:var(--brand-ink);border-color:var(--brand)}
+  .progress{display:flex;gap:3px}
+  .progress i{height:5px;flex:1;background:var(--surface-2);border-radius:2px}
+  .progress i.on{background:var(--brand)}
+  .modal{position:relative;background:rgba(16,34,31,.28);border-radius:0 0 12px 12px;min-height:420px;padding:24px;display:grid;place-items:center}
+  .modal-panel{width:88%;background:var(--surface);border-radius:14px;box-shadow:var(--shadow-2);padding:16px;display:flex;flex-direction:column;gap:10px}
+  .radio{display:flex;gap:8px;align-items:flex-start;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:11.5px}
+  .radio.on{border-color:var(--brand);background:var(--brand-weak)}
+  .check{display:flex;gap:8px;align-items:flex-start;font-size:11.5px;background:var(--warn-weak);border:1px solid #f0d79a;border-radius:8px;padding:8px 10px}
+  .skeleton{background:linear-gradient(90deg,#eef2f5 25%,#e3e9ee 37%,#eef2f5 63%);background-size:400% 100%;animation:sk 1.4s ease infinite;border-radius:6px;height:12px}
+  @keyframes sk{0%{background-position:100% 50%}100%{background-position:0 50%}}
+  .toast{display:flex;gap:10px;align-items:center;background:var(--ink);color:#fff;border-radius:10px;padding:10px 14px;font-size:11.5px;box-shadow:var(--shadow-2)}
+  .toast .undo{margin-left:auto;color:#7dd3c7;font-weight:800;font-size:11px}
+  .empty{display:grid;place-items:center;gap:8px;padding:28px;text-align:center;color:var(--muted);font-size:12px}
+  .empty .ic{width:44px;height:44px;border-radius:14px;background:var(--surface-2);display:grid;place-items:center;font-size:20px}
+  .banner{display:flex;gap:10px;align-items:flex-start;border-radius:10px;padding:10px 12px;font-size:11.5px}
+  .banner.err{background:var(--danger-weak);color:#7f1d1d;border:1px solid #f3c2c2}
+  .banner.warn{background:var(--warn-weak);color:#713f12;border:1px solid #f0d79a}
+  .banner.info{background:var(--info-weak);color:#1e3a8a;border:1px solid #c7d7fe}
+  .swatches{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
+  .sw{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--surface)}
+  .sw .c{height:44px}
+  .sw .l{padding:5px 8px;font-size:10px;font-family:var(--mono);color:var(--muted)}
+  .type-row{display:flex;align-items:baseline;gap:14px;border-bottom:1px dashed var(--border);padding:6px 0}
+  .type-row .sample{flex:1}
+  .type-row .spec{font-family:var(--mono);font-size:10px;color:var(--muted);width:140px;text-align:right}
+  ul.tight{margin:6px 0;padding-left:18px}
+  ul.tight li{margin:3px 0}
+  .kbd{display:inline-block;border:1px solid var(--border-strong);border-bottom-width:2px;border-radius:5px;padding:0 5px;font-family:var(--mono);font-size:10px;background:var(--surface)}
+  footer{margin-top:64px;border-top:1px solid var(--border);padding-top:16px;font-size:11px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <header class="doc-head">
+    <div>
+      <div class="kicker">MIRAI SOFTWARE FACTORY / INTAKE STATION</div>
+      <h1>受付ステーション WebUI 設計仕様</h1>
+      <p class="lede">要件定義書 V1.0（MSF-REQ-2026-001）と詳細仕様書 V1.0（MSF-SPC-2026-001）の画面仕様 SCR-01〜SCR-08／SCR-21 を、個人利用のMVPとして実装するための画面構成・状態・部品・デザイン方針です。</p>
+    </div>
+    <div class="meta">
+      版: v1.0（承認待ち）<br>
+      作成: 2026-10-28<br>
+      設計基盤: OpenDesign<br>
+      Direction: human-approachable<br>
+      + tech-utility density
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="目次">
+    <a href="#concept">1. コンセプトと利用者</a>
+    <a href="#tokens">2. デザイントークン</a>
+    <a href="#shell">3. アプリシェル / ナビゲーション</a>
+    <a href="#s01">4. SCR-01 ホーム</a>
+    <a href="#s02">5. SCR-02 新しい依頼</a>
+    <a href="#s03">6. SCR-03 ボード</a>
+    <a href="#s04">7. SCR-04 一覧</a>
+    <a href="#s05">8. SCR-05 詳細</a>
+    <a href="#s06">9. SCR-06 状態変更・承認</a>
+    <a href="#s07">10. SCR-07 データ / SCR-08 下書き</a>
+    <a href="#s21">11. SCR-21 カタログ</a>
+    <a href="#states">12. 状態（Normal/Empty/Loading/Error/Success）</a>
+    <a href="#responsive">13. レスポンシブ / アクセシビリティ</a>
+    <a href="#mapping">14. API・DB との対応</a>
+    <a href="#scope">15. 実装範囲と受入条件</a>
+  </nav>
+
+  <section id="concept" data-od-id="concept">
+    <div class="sec-head"><span class="sec-no">01</span><h2>コンセプトと利用者</h2></div>
+    <div class="grid-2">
+      <div>
+        <p><b>だれが使うか。</b> 依頼者（現場・支店・本部）、受付担当（DX推進部）、承認者（業務責任者）の3役。個人利用MVPでは1名が3役を兼ね、画面右上のロール切替で動作を確認します。</p>
+        <p><b>何を達成するか。</b> 「困りごと」を7ステップで登録し、信号の色の候補と根拠を確認し、承認者が色を決めて承認し、注文書YAMLとして開発ラインへ渡せる状態にするまで。</p>
+        <p><b>設計の軸。</b> 完了を機械的に判定できる形にする。あいまいな合格の条件はその場で書き換え候補を出し、承認前に必ず点検する。</p>
+      </div>
+      <div>
+        <div class="note">
+          <b>デザインの狙い</b><br>
+          非エンジニアが現場で使うため、文字は大きめ・余白は広め・専門用語は言い換える。一方で受付担当と承認者は件数をさばくため、一覧とボードは情報密度を確保する。色だけで意味を伝えず、必ずラベル（青/黄/赤）と形を併用する。
+        </div>
+        <ul class="tight">
+          <li>PCブラウザ中心（1280×800以上）。タブレット768pxまで対応。</li>
+          <li>主要操作はキーボードのみで完結。Escで小窓を閉じる。</li>
+          <li>1件の登録は10分以内、初期表示2秒以内を目標（NFR-18/23）。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="tokens" data-od-id="tokens">
+    <div class="sec-head"><span class="sec-no">02</span><h2>デザイントークン</h2></div>
+    <p class="lede">OpenDesign の <code>human-approachable</code> を基調に、業務システム向けのコントラストと密度へ調整。アクセント（ブランド）は深い青緑、信号色は青・黄・赤でブランド色と混同しない。</p>
+    <div class="swatches" style="margin:14px 0">
+      <div class="sw"><div class="c" style="background:#f7f8f9"></div><div class="l">bg #f7f8f9</div></div>
+      <div class="sw"><div class="c" style="background:#ffffff;border-bottom:1px solid #e2e7ec"></div><div class="l">surface #ffffff</div></div>
+      <div class="sw"><div class="c" style="background:#1b2430"></div><div class="l">fg #1b2430</div></div>
+      <div class="sw"><div class="c" style="background:#0f766e"></div><div class="l">brand #0f766e</div></div>
+      <div class="sw"><div class="c" style="background:#1d4ed8"></div><div class="l">signal 青 #1d4ed8</div></div>
+      <div class="sw"><div class="c" style="background:#b45309"></div><div class="l">signal 黄 #b45309</div></div>
+      <div class="sw"><div class="c" style="background:#b91c1c"></div><div class="l">signal 赤 #b91c1c</div></div>
+      <div class="sw"><div class="c" style="background:#15803d"></div><div class="l">success #15803d</div></div>
+    </div>
+    <div class="grid-2">
+      <div>
+        <h3>タイポグラフィ</h3>
+        <div class="type-row"><span class="sample" style="font-size:30px;font-weight:800">見出し 30/800</span><span class="spec">h1 · 30px · 1.35</span></div>
+        <div class="type-row"><span class="sample" style="font-size:22px;font-weight:800">画面見出し 22/800</span><span class="spec">h2 · 22px</span></div>
+        <div class="type-row"><span class="sample" style="font-size:16px;font-weight:700">節見出し 16/700</span><span class="spec">h3 · 16px</span></div>
+        <div class="type-row"><span class="sample" style="font-size:14px">本文 14px / 行間1.7。日本語は詰めすぎない。</span><span class="spec">body · 14px · 1.7</span></div>
+        <div class="type-row"><span class="sample" style="font-size:12px;color:#5b6675">補助 12px。日付・滞留・注記。</span><span class="spec">small · 12px</span></div>
+        <div class="type-row"><span class="sample mono" style="font-size:12px">REQ-2026-0001 · 200.0 h/月</span><span class="spec">mono · tabular-nums</span></div>
+        <p class="hint">フォント: Hiragino Kaku Gothic ProN / Yu Gothic UI / Noto Sans JP / system-ui。外部フォントは読み込まない（CSP・オフライン要件）。</p>
+      </div>
+      <div>
+        <h3>余白・角丸・影・フォーカス</h3>
+        <ul class="tight">
+          <li>余白スケール: 4 / 8 / 12 / 16 / 24 / 32 / 48</li>
+          <li>角丸: カード12px、入力8px、ピル999px、モーダル14px</li>
+          <li>影: 通常カードは影なし＋1pxボーダー。モーダル/ドロワーのみ <code>0 8px 24px rgba(16,24,40,.10)</code></li>
+          <li>フォーカス: 3px の <code>#7dd3c7</code> リング + offset 2px。マウス操作でも消さない</li>
+          <li>タップ領域: 最小 40×40px（現場の手袋操作を想定し、主要ボタンは44px）</li>
+          <li>動き: 120〜180ms。prefers-reduced-motion で無効化</li>
+        </ul>
+        <h3 style="margin-top:16px">状態色の使い方</h3>
+        <p style="font-size:12px">信号は「ピル＋ラベル文字」で表示し、色だけに依存しない。滞留3日以上は黄の左線、7日以上は赤の左線＋「7日以上」ラベル。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="shell" data-od-id="shell">
+    <div class="sec-head"><span class="sec-no">03</span><h2>アプリシェル / ナビゲーション</h2></div>
+    <p class="lede">左ナビ（212px）＋上部バー＋本文。左ナビは「ホーム／新しい依頼／ボード／一覧／カタログ／データ／監査ログ」。ホームには「あなたの番」の件数バッジ。上部バーにロール切替（検証用）とユーザーメニュー。</p>
+    <div class="mock">
+      <div class="mock-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="mock-url">http://127.0.0.1:5178/</span></div>
+      <div class="app">
+        <aside class="side">
+          <div class="brand"><div class="brand-mark">SF</div><div><b>みらいSF</b><span>受付ステーション</span></div></div>
+          <a class="nav-item on" href="#s01"><span class="ico">◧</span>ホーム<span class="badge">6</span></a>
+          <a class="nav-item" href="#s02"><span class="ico">＋</span>新しい依頼</a>
+          <a class="nav-item" href="#s03"><span class="ico">▤</span>ボード</a>
+          <a class="nav-item" href="#s04"><span class="ico">☰</span>一覧</a>
+          <a class="nav-item" href="#s21"><span class="ico">◫</span>カタログ</a>
+          <a class="nav-item" href="#s07"><span class="ico">⇩</span>データ</a>
+          <div class="side-foot">
+            <div class="role-chip">● 受付担当として操作中</div>
+            <div style="margin-top:8px">v0.1.0 · local<br>DB: 接続中</div>
+          </div>
+        </aside>
+        <div class="main">
+          <div class="topbar">
+            <div><div class="crumb">ホーム</div><h3>おはようございます、管理者さん</h3></div>
+            <div class="search">⌕ 受付番号・件名で検索</div>
+            <button class="btn sm">依頼者</button><button class="btn sm primary">受付担当</button><button class="btn sm">承認者</button>
+            <div class="avatar">管</div>
+          </div>
+          <div class="content">
+            <div class="banner info"><b>今日の状況</b>あなたの番が 6 件、3日以上止まっている依頼が 5 件あります。</div>
+            <div class="grid-3">
+              <div class="stat"><div class="k">あなたの番</div><div class="v">6<small>件</small></div></div>
+              <div class="stat"><div class="k">承認待ち（自分）</div><div class="v">1<small>件</small></div></div>
+              <div class="stat"><div class="k">3日以上止まっている</div><div class="v">5<small>件</small></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="cap"><b>ナビゲーション:</b> 左ナビは現在地を <code>aria-current="page"</code> で示す。バッジはホームのみ。モバイル（&lt;720px）では左ナビを下部タブ（ホーム／ボード／一覧／新規）に置き換え、カタログ・データ・監査は「その他」メニューへ格納する。</p>
+  </section>
+
+  <section id="s01" data-od-id="s01">
+    <div class="sec-head"><span class="sec-no">04</span><h2>SCR-01 ホーム（あなたの番）</h2></div>
+    <p class="lede">役割ごとに「次に自分が動かす依頼」を滞留の長い順に表示。押すと詳細（SCR-05）を開き、その場で「→ 次へ」を実行できる。2段目に「止まっている依頼」と「あなたの依頼」、右に最近の動き。</p>
+    <div class="mock">
+      <div class="mock-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="mock-url">/</span></div>
+      <div class="app">
+        <aside class="side">
+          <div class="brand"><div class="brand-mark">SF</div><div><b>みらいSF</b><span>受付ステーション</span></div></div>
+          <a class="nav-item on" href="#s01"><span class="ico">◧</span>ホーム<span class="badge">6</span></a>
+          <a class="nav-item"><span class="ico">＋</span>新しい依頼</a><a class="nav-item"><span class="ico">▤</span>ボード</a>
+          <a class="nav-item"><span class="ico">☰</span>一覧</a><a class="nav-item"><span class="ico">◫</span>カタログ</a>
+          <div class="side-foot"><div class="role-chip">● 受付担当として操作中</div></div>
+        </aside>
+        <div class="main">
+          <div class="topbar"><div><div class="crumb">ホーム</div><h3>あなたの番</h3></div><div class="search">⌕ 検索</div><div class="avatar">管</div></div>
+          <div class="content">
+            <div class="card">
+              <h4>あなたの番 <span class="n">6 件</span><span style="font-weight:400;color:#5b6675">（受付担当として、次に動かす依頼です・止まっている日数の長い順）</span></h4>
+              <div class="row danger"><span class="id mono">REQ-2026-0008</span><span class="pill y">黄</span><span class="pill n plain">検証中</span><span class="stale danger">8日目</span><span class="t">協力会社書類の回収状況</span><span class="sp"><button class="btn sm">→ 現場試用へ</button></span></div>
+              <div class="row warn"><span class="id mono">REQ-2026-0004</span><span class="pill y">黄</span><span class="pill n plain">内容確認中</span><span class="stale">6日目</span><span class="t">請求書の仕訳候補</span><span class="sp"><button class="btn sm">→ 承認待ちへ</button></span></div>
+              <div class="row"><span class="id mono">REQ-2026-0002</span><span class="pill g">青</span><span class="pill n plain">実装中</span><span class="stale">4日目</span><span class="t">作業船の予定をひと目で見たい</span><span class="sp"><button class="btn sm">→ 検証中へ</button></span></div>
+              <div class="row"><span class="id mono">REQ-2026-0001</span><span class="pill y">黄</span><span class="pill n plain">現場試用</span><span class="stale">2日目</span><span class="t">工事写真の圏外保存</span><span class="sp"><button class="btn sm">→ 公開承認待ちへ</button></span></div>
+            </div>
+            <div class="grid-2">
+              <div class="card">
+                <h4>止まっている依頼（3日以上・ほかの人の番）<span class="n">5</span></h4>
+                <div class="row"><span class="id mono">REQ-2026-0003</span><span class="pill y">黄</span><span class="pill n plain">承認待ち</span><span class="stale">3日目</span><span class="t">KY記録の書きもれ確認</span><span class="sp" style="font-size:10px;color:#5b6675">次は承認者</span></div>
+                <div class="row"><span class="id mono">REQ-2026-0005</span><span class="pill n plain">完了</span><span class="stale">5日目</span><span class="t">残業上限の早めのお知らせ</span><span class="sp" style="font-size:10px;color:#5b6675">－</span></div>
+              </div>
+              <div class="card">
+                <h4>最近の動き<span class="n">8</span></h4>
+                <div class="row" style="font-size:11px"><span class="mono" style="color:#5b6675;width:78px">10/28 10:12</span><span>佐藤 花子 が REQ-2026-0008 を「検証中」に変更</span></div>
+                <div class="row" style="font-size:11px"><span class="mono" style="color:#5b6675;width:78px">10/27 17:40</span><span>鈴木 一郎 が REQ-2026-0003 を承認待ちに</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="cap"><b>空のとき:</b>「いまはありません。ほかの人の番の依頼は、ボードと一覧で見られます。」＋ボードへの導線。<b>操作:</b> 行クリックで詳細、右端のボタンは1回で次へ進め「元に戻す」トーストを7秒表示。</p>
+  </section>
+
+  <section id="s02" data-od-id="s02">
+    <div class="sec-head"><span class="sec-no">05</span><h2>SCR-02 新しい依頼（7ステップ）</h2></div>
+    <p class="lede">左にステップ、中央にフォーム、右に注文書プレビュー（カード/YAML）。入力は約0.4秒後に自動保存し、保存時刻を表示。合格の条件は入力のたびに書き方チェックと書き換え候補を出す。</p>
+    <div class="mock">
+      <div class="mock-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="mock-url">/new</span></div>
+      <div class="app">
+        <aside class="side">
+          <div class="brand"><div class="brand-mark">SF</div><div><b>みらいSF</b><span>受付ステーション</span></div></div>
+          <a class="nav-item"><span class="ico">◧</span>ホーム</a><a class="nav-item on"><span class="ico">＋</span>新しい依頼</a>
+          <a class="nav-item"><span class="ico">▤</span>ボード</a><a class="nav-item"><span class="ico">☰</span>一覧</a>
+        </aside>
+        <div class="main">
+          <div class="topbar"><div><div class="crumb">新しい依頼 / STEP 5</div><h3>合格の条件を書く</h3></div><div class="avatar">管</div></div>
+          <div class="content" style="display:grid;grid-template-columns:180px 1fr 290px;gap:14px;align-items:start">
+            <div class="stepper">
+              <div class="step done"><span class="no">✓</span>1. だれの、どんな困りごと</div>
+              <div class="step done"><span class="no">✓</span>2. 何を作るか</div>
+              <div class="step done"><span class="no">✓</span>3. だれが・どこで使う</div>
+              <div class="step done"><span class="no">✓</span>4. この道具がすること</div>
+              <div class="step on"><span class="no">5</span>5. 合格の条件</div>
+              <div class="step"><span class="no">6</span>6. 扱う情報・守ること</div>
+              <div class="step"><span class="no">7</span>7. 確認して登録</div>
+            </div>
+            <div class="card" style="display:flex;flex-direction:column;gap:10px">
+              <div class="field">
+                <label>合格の条件 1 <span class="pill y plain" style="margin-left:6px">あいまい</span></label>
+                <input class="input" value="使いやすい画面で空欄が一覧できる" style="border-color:#e0b44a">
+                <div class="hint" style="color:#a16207">「使いやすい」は人によって受け取り方がちがうため、検査機で合否を決められません。数字や「〜できる／〜できない」で書いてみましょう。</div>
+                <div style="border:1px solid #e2e7ec;border-radius:8px;padding:8px;background:#f7f8f9">
+                  <div style="font-size:10.5px;font-weight:800;color:#0b5c56">「使いやすい」の書きかえ候補</div>
+                  <div style="font-size:10.5px;color:#5b6675">操作の回数・かかる時間・説明なしでできるかで書くと検査できます</div>
+                  <button class="btn sm" style="margin-top:6px">〇〇まで3回以内の操作でたどり着ける</button>
+                  <button class="btn sm" style="margin-top:6px">初めての人が説明なしで〇〇を5分以内に終えられる</button>
+                </div>
+              </div>
+              <div class="field"><label>合格の条件 2 <span class="pill ok plain" style="margin-left:6px">OK</span></label><input class="input" value="空欄が1件でもあれば提出できない" style="border-color:#7cc79a"></div>
+              <div class="field"><label>合格の条件 3</label><input class="input" placeholder="例：同じ記録を二重に登録できない"></div>
+              <button class="btn sm" style="align-self:flex-start">＋ よく使う書き方を追加</button>
+              <div class="hint">1件以上・最大8件。空の欄は保存しません。チェックは助言で、登録は止めません（承認前に必ず確認します）。</div>
+            </div>
+            <div class="card" style="background:#f1f4f6">
+              <h4>注文書プレビュー <span class="n">YAML</span></h4>
+              <pre class="mono" style="font-size:9px;line-height:1.45;white-space:pre-wrap;margin:0;color:#334155">id: "REQ-2026-0003"
+title: "KY記録の書きもれ確認"
+department: "安全品質環境本部（安全）"
+signal:
+  suggested: "黄"
+  decided: "未決定（承認者が決める）"
+acceptance_criteria:
+ - "使いやすい画面で空欄が一覧できる"
+ - "空欄が1件でもあれば提出できない"</pre>
+              <div class="hint" style="margin-top:8px">入力に合わせて更新。コピー／ダウンロード可。</div>
+            </div>
+          </div>
+          <div style="padding:0 18px 14px;display:flex;justify-content:space-between;align-items:center">
+            <span class="hint">✓ 下書きを自動保存しました 11:26</span>
+            <div style="display:flex;gap:8px"><button class="btn">戻る</button><button class="btn">下書きを破棄</button><button class="btn primary">次へ（STEP 6）</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="cap"><b>STEP構成:</b> 1 困りごと／2 作るもの／3 使う人・場所／4 道具の性質（信号候補）／5 合格の条件／6 扱う情報・守ること／7 確認して登録。<b>エラー:</b> 必須不足は該当欄の直下に赤字＋上部サマリ、入力内容は消さない。<b>下書き:</b> 離脱時に SCR-08 で再開/破棄を選ぶ。</p>
+  </section>
+
+  <section id="s03" data-od-id="s03">
+    <div class="sec-head"><span class="sec-no">06</span><h2>SCR-03 ボード</h2></div>
+    <p class="lede">状態ごとの列。カードの「→」で次へ、ドラッグで状態変更（小窓）。「あなたの番だけ」で絞り込み。横スクロールで9列（受付〜完了）、差戻し・見送り・取消は右端の別レーン。</p>
+    <div class="mock">
+      <div class="mock-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="mock-url">/board</span></div>
+      <div class="app">
+        <aside class="side"><div class="brand"><div class="brand-mark">SF</div><div><b>みらいSF</b><span>受付ステーション</span></div></div>
+          <a class="nav-item"><span class="ico">◧</span>ホーム</a><a class="nav-item"><span class="ico">＋</span>新しい依頼</a>
+          <a class="nav-item on"><span class="ico">▤</span>ボード</a><a class="nav-item"><span class="ico">☰</span>一覧</a></div>
+        <div class="main">
+          <div class="topbar"><div><div class="crumb">ボード</div><h3>依頼の進み具合</h3></div>
+            <label class="btn sm" style="margin-left:auto">☑ あなたの番だけ</label><select class="select"><option>全部署</option></select></div>
+          <div class="content">
+            <div class="cols">
+              <div class="col"><div class="ch">受付<span class="n">1</span></div>
+                <div class="mini"><div class="f"><span class="pill g">青</span><span class="mono">01</span></div><b>入札・発注情報のお知らせ</b><div class="f">営業本部 · 1日目</div><button class="btn sm" style="width:100%;margin-top:4px">→ 内容確認中へ</button></div></div>
+              <div class="col"><div class="ch">内容確認中<span class="n">1</span></div>
+                <div class="mini"><div class="f"><span class="pill y">黄</span><span class="mono">04</span></div><b>請求書の仕訳候補</b><div class="f">経理部 · <span class="stale">6日目</span></div></div></div>
+              <div class="col"><div class="ch">承認待ち<span class="n">1</span></div>
+                <div class="mini" style="border-left:3px solid #f0b429"><div class="f"><span class="pill y">黄</span><span class="mono">03</span></div><b>KY記録の書きもれ確認</b><div class="f">安全 · 3日目</div><div class="f" style="color:#a16207">次は承認者</div></div></div>
+              <div class="col"><div class="ch">承認済み<span class="n">1</span></div>
+                <div class="mini"><div class="f"><span class="pill y">黄</span><span class="mono">09</span></div><b>天気・波・潮の予報</b><div class="f">現場（海） · 1日目</div></div></div>
+              <div class="col"><div class="ch">実装中<span class="n">1</span></div>
+                <div class="mini"><div class="f"><span class="pill g">青</span><span class="mono">02</span></div><b>作業船の予定</b><div class="f">船舶 · 4日目</div></div></div>
+              <div class="col"><div class="ch">検証中<span class="n">1</span></div>
+                <div class="mini" style="border-left:3px solid #b91c1c"><div class="f"><span class="pill y">黄</span><span class="mono">08</span></div><b>協力会社書類の回収</b><div class="f">購買 · 8日目</div></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="cap"><b>カード:</b> 受付番号・件名・部署・滞留・信号・次は（だれ）。<b>ドラッグ:</b> 動かせない移動は理由をトースト表示して中止。<b>空:</b> 列ごとに「ここには今はありません」。<b>キーボード:</b> カードにフォーカス→Enterで詳細、→ボタンは独立フォーカス。</p>
+  </section>
+
+  <section id="s04" data-od-id="s04">
+    <div class="sec-head"><span class="sec-no">07</span><h2>SCR-04 一覧</h2></div>
+    <p class="lede">検索・絞り込み（部署19／状態12／色3）・10列の表。CSV/JSON出力。自分の番の行は薄い黄。ページ送り50件。</p>
+    <div class="mock">
+      <div class="mock-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="mock-url">/requests</span></div>
+      <div class="app">
+        <aside class="side"><div class="brand"><div class="brand-mark">SF</div><div><b>みらいSF</b><span>受付ステーション</span></div></div>
+          <a class="nav-item"><span class="ico">◧</span>ホーム</a><a class="nav-item"><span class="ico">＋</span>新しい依頼</a>
+          <a class="nav-item"><span class="ico">▤</span>ボード</a><a class="nav-item on"><span class="ico">☰</span>一覧</a></div>
+        <div class="main">
+          <div class="topbar"><div><div class="crumb">一覧</div><h3>依頼一覧</h3></div><div class="avatar">管</div></div>
+          <div class="content">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <input class="input" placeholder="⌕ 受付番号・件名・困りごとで検索" style="flex:1;min-width:200px">
+              <select class="select"><option>全部署（19）</option></select>
+              <select class="select"><option>すべての状態</option></select>
+              <select class="select"><option>色：すべて</option></select>
+              <button class="btn">CSV</button><button class="btn">JSON</button>
+            </div>
+            <div class="card" style="padding:0;overflow:hidden">
+              <table>
+                <thead><tr><th>受付番号</th><th>件名</th><th>部署</th><th>起票者</th><th>信号</th><th>状態</th><th>滞留</th><th>次は</th><th style="text-align:right">削減見込み</th><th>更新</th></tr></thead>
+                <tbody>
+                  <tr class="mine"><td class="mono">REQ-2026-0001</td><td>工事写真の圏外保存</td><td>現場（海）</td><td>山田 太郎</td><td><span class="pill y">黄</span></td><td>現場試用</td><td class="num">2</td><td><span class="pill n plain">あなたの番</span></td><td class="num">200.0</td><td class="mono">10/28 09:10</td></tr>
+                  <tr><td class="mono">REQ-2026-0002</td><td>作業船の予定をひと目で見たい</td><td>船舶</td><td>中村 健</td><td><span class="pill g">青</span></td><td>実装中</td><td class="num">4</td><td>受付担当</td><td class="num">200.0</td><td class="mono">10/27 14:02</td></tr>
+                  <tr><td class="mono">REQ-2026-0003</td><td>KY記録の書きもれ確認</td><td>安全</td><td>高橋 由紀</td><td><span class="pill y">黄</span></td><td>承認待ち</td><td class="num">3</td><td>承認者</td><td class="num">200.0</td><td class="mono">10/25 11:20</td></tr>
+                  <tr><td class="mono">REQ-2026-0007</td><td>見積金額を自動で決めたい</td><td>設計・積算</td><td>山本 修</td><td><span class="pill r">赤</span></td><td>差戻し</td><td class="num">5</td><td>依頼者</td><td class="num">160.0</td><td class="mono">10/23 16:45</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:#5b6675"><span>9 件中 1–9 件</span><span>前へ ・ 1 / 1 ・ 次へ</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="cap"><b>0件:</b>「条件に合う依頼がありません。絞り込みを解除してください」。<b>通信エラー:</b> 表の上に再試行バナー。<b>並び:</b> 受付番号の新しい順（固定）。</p>
+  </section>
+
+  <section id="s05" data-od-id="s05">
+    <div class="sec-head"><span class="sec-no">08</span><h2>SCR-05 依頼の詳細（ドロワー）</h2></div>
+    <p class="lede">右から開く720pxのドロワー。見出し・進み具合の帯・あなたの番ボックス・3タブ（概要／注文書／コメント・履歴）。Escで閉じる。背景クリックでも閉じる。</p>
+    <div class="mock">
+      <div class="mock-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="mock-url">/requests/REQ-2026-0001（一覧の上にドロワー）</span></div>
+      <div class="drawer" style="min-height:440px">
+        <div class="drawer-panel">
+          <div style="display:flex;align-items:flex-start;gap:10px">
+            <div><div class="mono" style="font-size:10.5px;color:#5b6675">REQ-2026-0001 · 現場（海）</div><h3 style="font-size:16px">工事写真の圏外保存</h3></div>
+            <div style="margin-left:auto;display:flex;gap:6px"><span class="pill y">黄（決定）</span><span class="pill n plain">現場試用</span><button class="btn ghost sm">✕</button></div>
+          </div>
+          <div class="progress"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div>
+          <div class="banner info" style="margin-top:2px"><div><b>あなたの番です</b><div>試用結果を確認して「公開承認待ち」へ。いまの状態になってから 2 日。</div></div><button class="btn sm primary" style="margin-left:auto">→ 公開承認待ちへ</button></div>
+          <div class="tabs"><span class="tab on">概要</span><span class="tab">注文書（YAML）</span><span class="tab">コメント・履歴 3</span></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11.5px">
+            <div><b>起票者</b><br>山田 太郎</div><div><b>承認者</b><br>鈴木 一郎</div>
+            <div><b>依頼区分</b><br>いまある道具を良くしたい</div><div><b>信号の候補</b><br>黄（工事写真・検査記録の原本を扱います）</div>
+            <div><b>だれが使う</b><br>現場の担当者・現場事務・現場所長</div><div><b>どこで使う</b><br>海の上・電波の弱い現場</div>
+            <div><b>月あたり削減見込み</b><br><span class="mono">200.0 h/月</span>（上限の目安）</div><div><b>扱う情報</b><br><span class="pill y">工事写真・検査記録の原本</span></div>
+          </div>
+          <div><b style="font-size:11.5px">合格の条件</b>
+            <div class="row" style="font-size:11px"><span class="pill ok plain">OK</span>圏外で撮った写真がアプリを閉じても消えない</div>
+            <div class="row" style="font-size:11px"><span class="pill ok plain">OK</span>電波が戻ると自動で送られ、二重に登録されない</div>
+            <div class="row" style="font-size:11px"><span class="pill ok plain">OK</span>撮影日時・撮影場所の記録をあとから書きかえられない</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="cap"><b>操作:</b> 主ボタン「→『次の状態』へ進める」（動かせない人には理由の吹き出し）。「状態を変更」「編集」。<b>注文書タブ:</b> YAML表示・コピー・ダウンロード（未承認は生成不可の注記）。<b>履歴タブ:</b> 追記のみ・時刻/人/役割/操作/メモ、コメント入力。</p>
+  </section>
+
+  <section id="s06" data-od-id="s06">
+    <div class="sec-head"><span class="sec-no">09</span><h2>SCR-06 状態変更・承認</h2></div>
+    <p class="lede">選べる状態だけをラジオで表示。選べない状態は理由と「できる人」を折りたたみ。承認を選ぶと承認前チェックが自動で並び、△があれば確認チェック、赤は「AIに決めさせません」の確認、候補よりゆるい色は理由必須。</p>
+    <div class="mock">
+      <div class="mock-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="mock-url">SCR-06 状態変更（モーダル）</span></div>
+      <div class="modal">
+        <div class="modal-panel">
+          <div style="display:flex;align-items:center"><div><div class="crumb">REQ-2026-0003</div><h3 style="font-size:15px">状態を変更する</h3></div><div class="mono" style="margin-left:auto;font-size:10.5px;color:#5b6675">いま：承認待ち（3日目）</div></div>
+          <div class="radio on"><span>◉</span><div><b>承認済み</b><span class="pill ok plain" style="margin-left:6px">次の段階</span><div class="hint">信号の色を決めて、開発ラインへ渡します</div></div></div>
+          <div style="border:1px solid #cbd3dc;border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;background:#f7f8f9">
+            <div style="font-size:11px;font-weight:800">承認前チェック <span class="pill y">△ 3件</span></div>
+            <div class="check">△ 合格の条件 3 件のうち 1 件が検査しにくい書き方です（例：「使いやすい画面で…」）</div>
+            <div class="check">△ 扱う情報：個人情報（名簿・資格・健康など）。見られる人の範囲を確認</div>
+            <div class="check">△ 安全・品質／作業船の運航にかかわります。判定を道具に決めさせない作りか確認</div>
+            <label style="font-size:11px;display:flex;gap:6px;align-items:center"><input type="checkbox" checked> 上の △ 3 件を確認しました</label>
+            <div style="display:flex;gap:6px;align-items:center"><span style="font-size:11px;font-weight:700">信号の色</span>
+              <button class="btn sm">青</button><button class="btn sm primary">黄（候補）</button><button class="btn sm">赤</button></div>
+            <div class="field"><label>メモ（候補よりゆるい色のとき必須）</label><textarea class="textarea" placeholder="理由を書いてください"></textarea></div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm">合格の条件を書き直してください</button><button class="btn sm">「今回は作らない」を足してください</button></div>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn">閉じる</button><button class="btn primary">変更する</button></div>
+        </div>
+      </div>
+    </div>
+    <p class="cap"><b>選べない状態:</b>「選べない状態（8）とその理由 ▸」を開くと、状態名・理由・できる人。<b>1つも選べない:</b>メモ欄を出さず「閉じる」だけ。<b>成功:</b> トースト「REQ-… を『承認済み』に変更しました」。</p>
+  </section>
+
+  <section id="s07" data-od-id="s07">
+    <div class="sec-head"><span class="sec-no">10</span><h2>SCR-07 データ / SCR-08 下書き再開</h2></div>
+    <div class="grid-2">
+      <div class="mock">
+        <div class="mock-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="mock-url">/data</span></div>
+        <div class="app" style="grid-template-columns:1fr;min-height:250px">
+          <div class="main"><div class="topbar"><div><div class="crumb">データ</div><h3>書き出し・取り込み</h3></div></div>
+            <div class="content">
+              <div class="card"><h4>CSV（一覧）</h4><p style="font-size:11.5px;margin:0">Excelで開ける形（UTF-8 BOM・11列）。<button class="btn sm" style="margin-left:8px">ダウンロード</button></p></div>
+              <div class="card"><h4>JSON（全データ）</h4><p style="font-size:11.5px;margin:0">バックアップと移行用（{seq, items}）。<button class="btn sm" style="margin-left:8px">書き出す</button></p></div>
+              <div class="card"><h4>取り込み</h4><p style="font-size:11.5px;margin:0">検証してから全件を置き換えます。不正なファイルは取り込みません。<button class="btn sm" style="margin-left:8px">ファイルを選ぶ</button></p></div>
+            </div></div>
+        </div>
+      </div>
+      <div class="mock">
+        <div class="mock-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="mock-url">SCR-08 下書き再開</span></div>
+        <div class="modal" style="min-height:250px">
+          <div class="modal-panel" style="width:92%">
+            <h3 style="font-size:15px">書きかけの依頼があります</h3>
+            <p style="font-size:11.5px;margin:0">「KY記録の書きもれ確認」の入力が 10/28 11:20 に保存されています（STEP 5）。</p>
+            <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn">破棄して新しく始める</button><button class="btn primary">続きから再開</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="cap"><b>SCR-07:</b> 出力は監査ログに記録。取り込みは承認者/管理者のみ、確認ダイアログの後に実行。<b>SCR-08:</b> 「破棄」は元に戻せない旨を明記。共用端末では受け付けずに離れるとき破棄する運用を注記。</p>
+  </section>
+
+  <section id="s21" data-od-id="s21">
+    <div class="sec-head"><span class="sec-no">11</span><h2>SCR-21 カタログ</h2></div>
+    <p class="lede">19部署・118件。上部に集計（部署19／道具118／青52／黄47／赤19）、部署チップ・色フィルタ・キーワード、カード／表の切替。各部署の★は「はじめやすい候補」で着手順ではないと明記。</p>
+    <div class="mock">
+      <div class="mock-bar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span class="mock-url">/catalog</span></div>
+      <div class="app">
+        <aside class="side"><div class="brand"><div class="brand-mark">SF</div><div><b>みらいSF</b><span>受付ステーション</span></div></div>
+          <a class="nav-item"><span class="ico">◧</span>ホーム</a><a class="nav-item"><span class="ico">＋</span>新しい依頼</a>
+          <a class="nav-item on"><span class="ico">◫</span>カタログ</a></div>
+        <div class="main">
+          <div class="topbar"><div><div class="crumb">カタログ</div><h3>部署別 道具カタログ</h3></div><div class="search">⌕ 道具を検索</div></div>
+          <div class="content">
+            <div class="grid-3">
+              <div class="stat"><div class="k">考えた部署</div><div class="v">19</div></div>
+              <div class="stat"><div class="k">道具の候補</div><div class="v">118</div></div>
+              <div class="stat"><div class="k">青 / 黄 / 赤</div><div class="v" style="font-size:20px">52<span style="color:#b45309"> / 47 </span><span style="color:#b91c1c">/ 19</span></div></div>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button class="btn sm primary">すべて</button><button class="btn sm">経営企画</button><button class="btn sm">営業</button><button class="btn sm">現場（海）</button><button class="btn sm">安全</button><button class="btn sm">DX推進</button>
+            </div>
+            <div class="grid-2">
+              <div class="card"><div class="f" style="display:flex;gap:6px"><span class="pill g">青</span><span class="pill n plain">★ はじめやすい</span></div><h4 style="margin:6px 0 0;color:#1b2430;font-size:13px">工事写真の整理・写真台帳</h4><p style="font-size:11px;margin:4px 0">現場ごとの写真を、日付・工種で整理して台帳にする</p><button class="btn sm">この道具で依頼を作る</button></div>
+              <div class="card"><div class="f" style="display:flex;gap:6px"><span class="pill y">黄</span></div><h4 style="margin:6px 0 0;color:#1b2430;font-size:13px">KY・安全書類の書きもれ確認</h4><p style="font-size:11px;margin:4px 0">提出前に空欄と記入もれを見つける（判定は人が行う）</p><button class="btn sm">この道具で依頼を作る</button></div>
+              <div class="card"><div class="f" style="display:flex;gap:6px"><span class="pill r">赤</span></div><h4 style="margin:6px 0 0;color:#1b2430;font-size:13px">投資・撤退の決定</h4><p style="font-size:11px;margin:4px 0">AIは材料集めまで。決めるのは経営陣</p><button class="btn sm" disabled style="opacity:.5">依頼は範囲を変えて</button></div>
+              <div class="card"><div class="f" style="display:flex;gap:6px"><span class="pill g">青</span><span class="pill n plain">★</span></div><h4 style="margin:6px 0 0;color:#1b2430;font-size:13px">作業船の予定表</h4><p style="font-size:11px;margin:4px 0">どの船がいつどこにいるかを1つの表で見る</p><button class="btn sm">この道具で依頼を作る</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="cap"><b>赤字の道具:</b> 依頼作成ボタンは無効化し、「決める仕事は対象外です。範囲を材料集め・表示に変えて依頼してください」と案内。<b>0件:</b> 「条件に合う道具がありません」。</p>
+  </section>
+
+  <section id="states" data-od-id="states">
+    <div class="sec-head"><span class="sec-no">12</span><h2>状態の設計（Normal / Empty / Loading / Error / Success）</h2></div>
+    <div class="grid-2">
+      <div class="card">
+        <h4>Loading</h4>
+        <div class="skeleton" style="width:60%;margin-bottom:8px"></div>
+        <div class="skeleton" style="width:92%;margin-bottom:8px"></div>
+        <div class="skeleton" style="width:80%"></div>
+        <p class="hint" style="margin-top:8px">初回はスケルトン。再取得は上部に細い進行バー（レイアウトを動かさない）。読み上げは <code>aria-busy</code>。</p>
+      </div>
+      <div class="card">
+        <h4>Empty</h4>
+        <div class="empty"><div class="ic">◫</div><div><b>まだ依頼がありません</b><br>最初の「困りごと」を登録しましょう。</div><button class="btn sm primary">新しい依頼</button></div>
+      </div>
+      <div class="card">
+        <h4>Error（通信・権限・競合）</h4>
+        <div class="banner err"><div><b>保存できませんでした</b><br>ほかの人が先に更新しました（ERR-301）。最新を表示して、もう一度操作してください。</div><button class="btn sm" style="margin-left:auto">再読み込み</button></div>
+        <p class="hint">入力内容は消さない。エラーコードは問い合わせ用に小さく表示。500系は「問い合わせID」を併記。</p>
+      </div>
+      <div class="card">
+        <h4>Success</h4>
+        <div class="toast"><span>✓</span><span>REQ-2026-0008 を「現場試用」に進めました</span><span class="undo">元に戻す</span></div>
+        <p class="hint">7秒表示。承認・完了は確認の小窓を経てから。取り消し可能な操作だけ「元に戻す」を出す。</p>
+      </div>
+    </div>
+    <table style="margin-top:16px">
+      <thead><tr><th>画面</th><th>Normal</th><th>Empty</th><th>Loading</th><th>Validation Error</th><th>Communication Error</th></tr></thead>
+      <tbody>
+        <tr><td>ホーム</td><td>件数・一覧</td><td>「いまはありません」</td><td>スケルトン</td><td>—</td><td>再試行バナー</td></tr>
+        <tr><td>新規依頼</td><td>7ステップ</td><td>初期値</td><td>保存中インジケータ</td><td>項目別＋上部サマリ</td><td>下書きは保持・再送</td></tr>
+        <tr><td>ボード</td><td>9列</td><td>列ごと</td><td>列スケルトン</td><td>移動不可理由</td><td>再試行バナー</td></tr>
+        <tr><td>一覧</td><td>10列</td><td>条件解除の案内</td><td>行スケルトン</td><td>—</td><td>再試行バナー</td></tr>
+        <tr><td>詳細</td><td>3タブ</td><td>—</td><td>ドロワー内スケルトン</td><td>—</td><td>タブ内エラー</td></tr>
+        <tr><td>状態変更</td><td>ラジオ</td><td>選べる状態なし</td><td>ボタン無効＋進行</td><td>理由・チェック必須</td><td>赤枠＋エラー文</td></tr>
+        <tr><td>カタログ</td><td>118件</td><td>0件案内</td><td>カードスケルトン</td><td>—</td><td>再試行</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="responsive" data-od-id="responsive">
+    <div class="sec-head"><span class="sec-no">13</span><h2>レスポンシブ / アクセシビリティ</h2></div>
+    <div class="grid-2">
+      <div>
+        <h3>ブレークポイント</h3>
+        <ul class="tight">
+          <li><b>≥1200px</b> 左ナビ212px＋本文。一覧は10列。</li>
+          <li><b>900–1199px</b> 左ナビをアイコンのみ64pxへ。一覧は横スクロール。</li>
+          <li><b>720–899px</b> 詳細ドロワーは全幅。ボードは横スクロール。</li>
+          <li><b>&lt;720px</b> 下部タブ（ホーム／ボード／一覧／新規）。入力は1列、ボタンは44px。表はカード表示に切替。</li>
+        </ul>
+        <p class="hint">PCブラウザ中心（要件 NFR-33: 320〜1920px、Chrome/Edge/Safari最新2版）。</p>
+      </div>
+      <div>
+        <h3>アクセシビリティ（WCAG 2.1 AA 目標）</h3>
+        <ul class="tight">
+          <li>色だけで信号を伝えない（文字ラベル＋形）。コントラスト比 4.5:1 以上。</li>
+          <li>キーボード: Tab順はナビ→本文。詳細ドロワーはフォーカストラップ、<span class="kbd">Esc</span>で閉じる。モーダルも同様。</li>
+          <li>フォーカス可視（3pxリング）。スキップリンク「本文へ」。</li>
+          <li>読み上げ: 状態変更・保存結果は <code>aria-live="polite"</code>。エラーは <code>role="alert"</code>。</li>
+          <li><code>prefers-reduced-motion</code> でアニメーション停止。</li>
+          <li>入力には必ずラベル。エラーは <code>aria-describedby</code> で紐づける。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="mapping" data-od-id="mapping">
+    <div class="sec-head"><span class="sec-no">14</span><h2>API・DB との対応</h2></div>
+    <table>
+      <thead><tr><th>画面</th><th>主なAPI</th><th>テーブル</th></tr></thead>
+      <tbody>
+        <tr><td>SCR-01 ホーム</td><td><code>GET /api/home</code></td><td>request / request_history / draft</td></tr>
+        <tr><td>SCR-02 新規・編集</td><td><code>POST /api/requests</code>, <code>PATCH /api/requests/:id</code>, <code>PUT /api/draft</code></td><td>request / request_history / draft / request_counter</td></tr>
+        <tr><td>SCR-03 ボード</td><td><code>GET /api/requests</code>, <code>POST /api/requests/:id/transitions</code></td><td>request / approval</td></tr>
+        <tr><td>SCR-04 一覧</td><td><code>GET /api/requests</code>, <code>GET /api/export.csv</code></td><td>request / department / catalog_tool</td></tr>
+        <tr><td>SCR-05 詳細</td><td><code>GET /api/requests/:id</code>, <code>GET /api/requests/:id/order</code></td><td>request / request_history / comment / approval</td></tr>
+        <tr><td>SCR-06 状態変更</td><td><code>POST /api/requests/:id/transitions</code></td><td>request / approval / audit_log</td></tr>
+        <tr><td>SCR-07 データ</td><td><code>GET /api/export.json|csv</code>, <code>POST /api/import</code></td><td>request 全件 / audit_log</td></tr>
+        <tr><td>SCR-08 下書き</td><td><code>GET/PUT/DELETE /api/draft</code></td><td>draft</td></tr>
+        <tr><td>SCR-21 カタログ</td><td><code>GET /api/catalog/departments|tools|summary</code></td><td>department / catalog_tool</td></tr>
+        <tr><td>認証・役割</td><td><code>POST /api/auth/login|logout</code>, <code>POST /api/auth/role</code></td><td>app_user / user_role / session / audit_log</td></tr>
+      </tbody>
+    </table>
+    <p class="hint">状態遷移・権限・信号判定はサーバ側（API）で再計算し、画面の表示はその結果を反映するだけにする（クライアントの役割を信用しない）。</p>
+  </section>
+
+  <section id="scope" data-od-id="scope">
+    <div class="sec-head"><span class="sec-no">15</span><h2>実装範囲と受入条件</h2></div>
+    <div class="grid-2">
+      <div>
+        <h3>今回作る（MVP）</h3>
+        <ul class="tight">
+          <li>SCR-01/02/03/04/05/06/07/08/21 の9画面</li>
+          <li>ログイン（1ユーザー・3役の切替）とサーバ側の権限判定</li>
+          <li>受付登録・採番・信号候補と理由・ものさし</li>
+          <li>状態遷移（12状態）・承認前チェック・差戻し/見送り理由</li>
+          <li>注文書YAML生成・CSV/JSON出力・JSON取込</li>
+          <li>監査ログ（追記・ハッシュ連鎖）</li>
+          <li>空/読込/入力エラー/通信エラー/成功の各状態</li>
+        </ul>
+      </div>
+      <div>
+        <h3>今回作らない（Backlog）</h3>
+        <ul class="tight">
+          <li>Entra ID SSO・複数ユーザー・承認者マスタ管理</li>
+          <li>AIによる実装・CI連携・PR自動作成（開発ライン本体）</li>
+          <li>添付ファイル本体の保存（メタ情報のみ）</li>
+          <li>desknet's NEO／メール通知</li>
+          <li>A4印刷・AppSuite風UI（S6）</li>
+          <li>本番データ移行・7年保持・MFA</li>
+        </ul>
+        <div class="note" style="margin-top:10px"><b>受入条件（画面）</b>: 主要3フロー（登録→承認→進捗）を実操作で完了できる／空・読込・入力エラー・通信エラーを再現できる／キーボードだけで主要操作ができる／信号と滞留が色以外でも判別できる。</div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    みらいソフトウェアファクトリー 受付ステーション — WebUI 設計仕様 v1.0（承認待ち）／設計基盤 OpenDesign（human-approachable + tech-utility）／
+    画面IDは詳細仕様書 V1.0 2章に準拠。数値目標は（案）であり、MVPの実測後に確定する。
+  </footer>
+</div>
+</body>
+</html>
