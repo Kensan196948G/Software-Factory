@@ -316,7 +316,30 @@ export async function createRequest(
       }
     }
 
-    const { id, seq, year } = await allocateId(client);
+    let allocated: { id: string; seq: number; year: number };
+    if (input.clientId) {
+      const m = /^REQ-(\d{4})-(\d{4})$/.exec(input.clientId);
+      if (m) {
+        const year = Number(m[1]);
+        const seq = Number(m[2]);
+        const exists = await client.query('select 1 from request where id = $1', [input.clientId]);
+        if (exists.rowCount === 0) {
+          await client.query(
+            `insert into request_counter (year, last_seq) values ($1,$2)
+             on conflict (year) do update set last_seq = greatest(request_counter.last_seq, $2)`,
+            [year, seq],
+          );
+          allocated = { id: input.clientId, seq, year };
+        } else {
+          allocated = await allocateId(client);
+        }
+      } else {
+        allocated = await allocateId(client);
+      }
+    } else {
+      allocated = await allocateId(client);
+    }
+    const { id, seq, year } = allocated;
     await client.query(
       `insert into request (
         id, seq, year, applicant, applicant_user_id, dept_code, contact, title, kind, tool_id,
@@ -705,6 +728,22 @@ export async function deleteDraft(userId: string) {
 }
 
 /* ─────────────────────────── 入出力 ─────────────────────────── */
+
+/** 画面起動用のデータ（履歴・コメントを含む）。監査ログには記録しない。 */
+export async function getBootData(): Promise<{ seq: number; items: unknown[] }> {
+  const { rows } = await listRequests({ limit: 5000 });
+  const items = [];
+  for (const row of rows) {
+    items.push({
+      ...mapRequest(row),
+      suggested: suggestedOf(row, await catalogSignalFor(row)).color,
+      history: await listHistory(row.id),
+      comments: await listComments(row.id),
+    });
+  }
+  const seq = rows.reduce((max, r) => Math.max(max, r.seq), 0);
+  return { seq, items };
+}
 
 export async function exportAll(actor: Actor) {
   const { rows } = await listRequests({ limit: 5000 });

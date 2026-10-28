@@ -17,6 +17,7 @@ const nonEmpty = (max = 2000) => z.string().trim().min(1).max(max);
 const lineList = (max = 2000) => z.array(z.string().trim().min(1).max(max)).max(50);
 
 export const requestInputSchema = z.object({
+  clientId: z.string().regex(/^REQ-\d{4}-\d{4}$/).optional(),
   title: z.string().trim().min(1, '件名を入れてください').max(60, '件名は60文字までです'),
   kind: z.enum(KINDS),
   deptCode: z.string().trim().min(1),

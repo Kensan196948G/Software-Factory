@@ -3,7 +3,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '.wrangler/**', '_work/**', 'playwright-report/**', 'test-results/**'],
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '.wrangler/**', '_work/**', 'playwright-report/**', 'test-results/**', 'src/web/public/console.js'],
   },
   ...tseslint.configs.recommended,
   {
