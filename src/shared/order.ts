@@ -1,4 +1,4 @@
-import { DECIDES_LABEL, FREQUENCY_LABEL, KIND_LABEL, PARTY_LABEL, SIGNAL_LABEL, STATUS_LABEL } from './domain.js';
+import { DATA_HANDLING, DECIDES_LABEL, FREQUENCY_LABEL, KIND_LABEL, PARTY_LABEL, SIGNAL_LABEL, STATUS_LABEL } from './domain.js';
 import type { FrequencyKey, Kind, Party, Signal, Status } from './domain.js';
 import type { RequestRecord } from './types.js';
 
@@ -51,7 +51,7 @@ export function buildOrderYaml(ctx: OrderContext): string {
   lines.push(...list('out_of_scope', r.outOfScope));
   lines.push(...list('acceptance_criteria', r.criteria));
   lines.push(...list('constraints', [...r.constraints, ...r.constraintsOther]));
-  lines.push(...list('data_handling', r.dataHandling.length ? r.dataHandling : ['特別な情報は扱いません']));
+  lines.push(...list('data_handling', dataHandlingLabels(r.dataHandling)));
   lines.push(`parties: ${q(PARTY_LABEL[r.parties as Party] ?? r.parties)}`);
   lines.push(...list('requires_human_approval', r.approvals));
   lines.push('measure:');
@@ -62,6 +62,16 @@ export function buildOrderYaml(ctx: OrderContext): string {
   lines.push(`requested_at: ${q(formatOrderDate(r.createdAt))}`);
   lines.push(`wish_date: ${q(r.wishDate ? formatWishDate(r.wishDate) : '')}`);
   return `${lines.join('\n')}\n`;
+}
+
+function dataHandlingLabels(keys: readonly string[]): string[] {
+  if (keys.length === 0) return ['特別な情報は扱いません'];
+  const labels: string[] = [];
+  for (const key of keys) {
+    const found = DATA_HANDLING.find((d) => d.key === key);
+    if (found) labels.push(found.label);
+  }
+  return labels.length > 0 ? labels : [...keys];
 }
 
 function estimateHours(r: RequestRecord): number {

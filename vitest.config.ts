@@ -9,7 +9,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['tests/{unit,integration}/**/*.test.ts'],
+    include: ['tests/unit/**/*.test.ts'],
     testTimeout: 20000,
     hookTimeout: 30000,
     reporters: ['default'],

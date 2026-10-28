@@ -219,6 +219,8 @@ export function clearSessionCookies(reply: FastifyReply): void {
 const attempts = new Map<string, { count: number; resetAt: number }>();
 
 export function checkLoginRate(ip: string): void {
+  // テストでは同一IPから繰り返しログインするため制限しない（本番・開発では有効）
+  if (config.nodeEnv === 'test') return;
   const now = Date.now();
   const entry = attempts.get(ip);
   if (!entry || entry.resetAt < now) {

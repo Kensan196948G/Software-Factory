@@ -357,6 +357,7 @@ export async function createRequest(
         input.wishDate ?? null,
         input.approver,
         null,
+        actor.userId,
       ],
     );
     await client.query(

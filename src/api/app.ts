@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config } from './config.js';
 import { ApiError, Errors, applySecurityHeaders, correlationId, sendError } from './http.js';
+import { ZodError } from 'zod';
 import { healthCheck } from './db.js';
 import {
   CSRF_COOKIE,
@@ -57,7 +58,10 @@ declare module 'fastify' {
 
 export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: config.nodeEnv === 'test' ? false : { level: process.env.LOG_LEVEL ?? 'info', redact: ['req.headers.cookie', 'req.headers.authorization', 'req.headers["x-csrf-token"]'] },
+    logger:
+      config.nodeEnv === 'test' && process.env.DEBUG_TEST !== '1'
+        ? false
+        : { level: process.env.LOG_LEVEL ?? 'info', redact: ['req.headers.cookie', 'req.headers.authorization', 'req.headers["x-csrf-token"]'] },
     trustProxy: config.trustProxy,
     bodyLimit: 2 * 1024 * 1024,
     disableRequestLogging: config.nodeEnv === 'test',
@@ -91,6 +95,13 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
     const cid = correlationId(req);
     if (err instanceof ApiError) {
       sendError(reply, err, cid);
+      return;
+    }
+    if (err instanceof ZodError) {
+      const issue = err.issues[0];
+      const message = issue?.message ?? '入力の形が正しくありません';
+      const code = message.includes('8件') ? 'ERR-006' : message.includes('文字数') || message.includes('60文字') ? 'ERR-002' : 'ERR-001';
+      sendError(reply, new ApiError(code, message, 400, { path: issue?.path, issues: err.issues }), cid);
       return;
     }
     if ((err as { statusCode?: number }).statusCode === 400) {
