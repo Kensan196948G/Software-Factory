@@ -71,11 +71,13 @@ cloudflared tunnel route dns --overwrite-dns mirai-sf sf.mirai-dx-platform.com
 | 1 | `/healthz` が ok / db ok | ✅（tunnel 経由） |
 | 2 | 未認証で Access のログインへ302 | ✅ |
 | 3 | トップページ表示（CSPエラー0） | ローカル本番ビルドで確認済み。**Access ログイン後の実画面は人間の確認が必要** |
-| 4 | 登録→承認→注文書 | ✅（E2E 9/9、本番ビルド＋Preview DB） |
+| 4 | 登録→承認→注文書 | ✅（E2E 10/10、本番ビルド＋dev DB）。Preview DB `mirai_sf` は認証情報不足で未実行 |
 | 5 | API（home/catalog/export） | ✅（ローカル本番ビルド・E2E） |
 | 6 | DB Read/Write | ✅（E2E と Issue 作成で実測） |
 | 7 | Runtime（5xx/ERROR） | `journalctl --user -u mirai-sf-api` で確認 |
 | 8 | GitHub Issue 自動作成 | ✅（Issue #2） |
+
+2026-10-28 の再デプロイ: `pnpm build` → `systemctl --user restart mirai-sf-api.service` → `/healthz` 200・`/console.js` が新版（メール送信BOXを含む）・公開URLは Access のログインへ302 を確認。
 
 Access のワンタイムパスワードは受信メールが必要なため、自動E2Eでは実施していない。**人間の最終確認**: ブラウザで `https://sf.mirai-dx-platform.com` を開き、`@mirai-const.co.jp` のメールアドレスでコードを受け取り、ログイン → ホーム → 依頼詳細 → 承認 → 注文書 を確認する。
 
