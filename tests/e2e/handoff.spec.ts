@@ -547,6 +547,8 @@ test.describe('開発ラインへ投入', () => {
     await expect(handoffBtn(page)).toContainText(`版 ${after.orderVersion}`);
     await expect(handoffBtn(page)).toContainText(`#${first.issueNo}`);
     await handoffBtn(page).click();
+    // 更新前の行にも「いまの版 N は未反映」と版の番号が出るので、その表示が消えるまで待つ
+    await expect(panel(page).locator('[data-dl-row="issue"]')).not.toContainText('未反映');
     await expect(panel(page).locator('[data-dl-row="issue"]')).toContainText(`版 ${after.orderVersion}`);
     await expect(panel(page).locator('[data-dl-row="issue"]')).toContainText(`Issue #${first.issueNo}`);
     expect(creates(), '作成は増えない').toBe(1);
