@@ -15,7 +15,14 @@ async function main(): Promise<void> {
 
   await app.listen({ port: config.port, host: config.host });
   app.log.info(
-    { port: config.port, host: config.host, env: config.nodeEnv, version: config.appVersion, commit: config.commitSha },
+    {
+      port: config.port,
+      host: config.host,
+      env: config.appEnv,
+      nodeEnv: config.nodeEnv,
+      version: config.appVersion,
+      commit: config.commitSha,
+    },
     'mirai-sf intake api started',
   );
 }

@@ -35,6 +35,7 @@ const local = existsSync(resolve(dir, 'local.json')) ? JSON.parse(readFileSync(r
 const lines = [
   '# みらいSF 受付ステーション Preview 環境（0600・commit しない）',
   'NODE_ENV=production',
+  'APP_ENV=staging',
   'PORT=8782',
   'HOST=127.0.0.1',
   'APP_BASE_URL=https://sf.mirai-dx-platform.com',
@@ -49,7 +50,7 @@ const lines = [
   'REQUIRE_ORIGIN_SECRET=0',
   'ALLOW_SELF_APPROVAL=1',
   'ALLOW_IMPORT=1',
-  `SEED_ADMIN_EMAIL=${local.SEED_ADMIN_EMAIL ?? 'kensan1969@gmail.com'}`,
+  `SEED_ADMIN_EMAIL=${local.SEED_ADMIN_EMAIL ?? 'admin@example.com'}`,
   'SEED_ADMIN_NAME=管理者',
   'SEED_ADMIN_DEPT=dx',
   'SEED_ADMIN_PASSWORD=',

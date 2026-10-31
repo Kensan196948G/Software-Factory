@@ -10,6 +10,7 @@
 - エラー: `{ "error": { "code": "ERR-xxx", "message": "...", "details"?, "correlationId"? } }`
 - 相関ID: レスポンスヘッダ `X-Correlation-Id`。監査ログに記録。
 - 楽観ロック: 更新系は `version` を要求。不一致は 409 `ERR-301`。
+- 環境名: `GET /healthz` と `GET /api/meta` の `environment` は `APP_ENV`（`development` / `test` / `staging` / `production`）の値。未指定・空なら `NODE_ENV` と同じ。不正な値は起動エラー。表示専用で、Cookie の Secure などセキュリティ挙動は `NODE_ENV` で決まる。
 - 冪等: `POST /api/requests` は `Idempotency-Key` ヘッダ。同じキー・同じ内容なら同じ依頼を返す。内容が違えば 409 `ERR-008`。
 
 ## 2. エンドポイント
@@ -42,7 +43,7 @@
 | —      | `GET /api/audit-logs.csv`                            | 監査ログのCSV（最大5000件・BOM付き）                                                                         | 管理者                                              |
 | —      | `GET /api/ops` / `PUT /api/ops`                      | 運用・DevOps・SecOps の画面状態（id=1 の単一ドキュメント）。PUT は `version` 必須で、古い版は409             | GET: 要ログイン / PUT: 受付担当・承認者・管理者     |
 | —      | `GET /api/mail/status`                               | 承認依頼メールの設定と件数（Secrets・サーバ内パスは含めない）                                                | 要ログイン                                          |
-| —      | `GET /api/mail/outbox`                               | 送信BOX（`status=pending                                                                                     | sending                                             | sent | failed`、`limit`） | 受付担当・承認者・管理者 |
+| —      | `GET /api/mail/outbox`                               | 送信BOX（`status=pending \| sending \| sent \| failed`、`limit`）                                            | 受付担当・承認者・管理者                            |
 | —      | `POST /api/mail/outbox/{id}/retry`                   | 送信に失敗した1通を再送（送信済み・不正IDは404）                                                             | 受付担当・管理者                                    |
 | —      | `POST /api/mail/flush`                               | 未送信ぶんをまとめて送る（最大20件。10分以上stuckした送信中も拾う）                                          | 管理者                                              |
 | —      | `POST /api/mail/reminders`                           | 滞留通知を積む（`days` 既定3・同じ依頼は1日1回）。日次ジョブ `pnpm reminders` と同じ処理                     | 管理者                                              |
