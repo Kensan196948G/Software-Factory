@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'kensan1969@gmail.com';
+const EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'admin@example.com';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? '';
 
 async function login(page: Page): Promise<void> {

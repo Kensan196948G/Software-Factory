@@ -136,6 +136,11 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
       sendError(reply, new ApiError(code, message, 400, { path: issue?.path, issues: err.issues }), cid);
       return;
     }
+    // @fastify/static は正規形でないパス（// や /./ など）を 403 で拒否する。存在しないパスと同じ扱いにする。
+    if ((err as { statusCode?: number }).statusCode === 403 && req.routeOptions.url === '/*') {
+      void reply.callNotFound();
+      return;
+    }
     if ((err as { statusCode?: number }).statusCode === 400) {
       sendError(reply, Errors.shape(), cid);
       return;
