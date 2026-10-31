@@ -1574,6 +1574,8 @@ test.describe('UI 保存の結果待ち', () => {
   test('サンプルに戻す: POST だけ失敗しても既存の依頼を取り消さない（実サーバの遷移）', async ({ page }) => {
     await login(page);
     const existing = await createViaUi(page, `取消しない サンプル ${Date.now()}`);
+    await page.waitForTimeout(600); // 受付の監査の PUT を済ませる
+    const opsPuts = countRequests(page, 'PUT', /\/api\/ops$/);
     // 受付担当は取消できる（依頼者は取消の遷移を拒否されるので、回帰を検出できない）
     await setApiRole(page, 'desk');
     await setUiRole(page, 'desk');
@@ -1587,6 +1589,8 @@ test.describe('UI 保存の結果待ち', () => {
     expect(cancels()).toBe(0);
     await expectNoToast(page, 'サンプルデータに戻しました');
     await expectExistingKept(page, existing);
+    await page.waitForTimeout(600);
+    expect(opsPuts()).toBe(0);
   });
 
   test('JSON の取り込み: POST だけ全件失敗しても既存の依頼を取り消さない（実サーバの遷移）', async ({ page }) => {
@@ -1596,7 +1600,9 @@ test.describe('UI 保存の結果待ち', () => {
     await setApiRole(page, 'desk');
     await setUiRole(page, 'desk');
     const row = await localItem(page, existing.id);
+    await page.waitForTimeout(600); // 受付の監査の PUT を済ませる
     const appsBefore = (await callApi<{ data: { apps: unknown[] } }>(page, 'GET', '/api/ops')).data.apps.length;
+    const opsPuts = countRequests(page, 'PUT', /\/api\/ops$/);
     const cancels = countCancels(page);
     await failRoute(page, 'POST', REQUESTS);
     await page.click('button[data-v="data"]');
@@ -1613,7 +1619,9 @@ test.describe('UI 保存の結果待ち', () => {
     expect(cancels()).toBe(0);
     await expectNoToast(page, '件を取り込みました');
     await expectExistingKept(page, existing);
-    // 置き換えをやめたので、運用データもサーバで元のまま
+    // 置き換えをやめたので、運用データは送らない。サーバでも元のまま
+    await page.waitForTimeout(600);
+    expect(opsPuts()).toBe(0);
     await expect
       .poll(async () => (await callApi<{ data: { apps: unknown[] } }>(page, 'GET', '/api/ops')).data.apps.length)
       .toBe(appsBefore);
@@ -1788,5 +1796,236 @@ test.describe('UI 保存の結果待ち', () => {
     expect(keys).toHaveLength(2);
     expect(keys[1]).not.toBe(keys[0]);
     expect((await listRequests(page)).filter((r) => r.title === fixed)).toHaveLength(1);
+  });
+
+  test('部署と道具の不整合（実サーバ）→ 部署を直す → 成功して 1 件', async ({ page }) => {
+    await login(page);
+    const title = `不整合 ${Date.now()}`;
+    await fillWizard(page, title);
+    await page.locator('.stp').nth(0).click();
+    await clickText(page, 'いまある道具を良くしたい', false);
+    await page.locator('[data-pick]').first().click();
+    await page.locator('[data-tool]:not([data-tool=""])').first().click();
+    await page.locator('.stp').nth(1).click();
+    const dept = page.locator('main [data-bind="dept"]');
+    const right = await dept.inputValue();
+    const wrong = await dept.evaluate(
+      (el, cur) => Array.from((el as HTMLSelectElement).options).find((o) => o.value && o.value !== cur)!.value,
+      right,
+    );
+    await dept.selectOption(wrong);
+    await gotoLastStep(page);
+
+    const posts = countRequests(page, 'POST', REQUESTS);
+    await page.locator('#submit').click();
+    await expect(page.locator('#err')).toContainText('組み合わせ');
+    expect((await listRequests(page)).filter((r) => r.title === title)).toHaveLength(0);
+
+    await page.locator('.stp').nth(1).click();
+    await page.locator('main [data-bind="dept"]').selectOption(right);
+    await gotoLastStep(page);
+    await page.locator('#submit').click();
+    await expect(page.locator('#stamp')).toHaveClass(/show/);
+    expect(posts()).toBe(2);
+    expect((await listRequests(page)).filter((r) => r.title === title)).toHaveLength(1);
+  });
+
+  test('アプリの 500 → 入力を直す → 新しい本文で成功して 1 件（札を解放する）', async ({ page }) => {
+    await login(page);
+    const title = `500 で解放 ${Date.now()}`;
+    const fixed = `${title} 直した`;
+    await fillWizard(page, title);
+    const keys: (string | undefined)[] = [];
+    // 元の本文だけサーバが必ず 500 を返す状況
+    await page.route(REQUESTS, async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      keys.push(route.request().headers()['idempotency-key']);
+      const body = route.request().postDataJSON() as { title: string };
+      if (body.title !== title) return route.fallback();
+      return route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'ERR-401', message: '処理を完了できませんでした' } }),
+      });
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#err')).toContainText('処理を完了できませんでした');
+    await page.locator('.stp').nth(2).click();
+    await setValue(page, 'main input[type=text]', 0, fixed);
+    await gotoLastStep(page);
+    await page.locator('#submit').click();
+    await expect(page.locator('#stamp')).toHaveClass(/show/, { timeout: 5000 });
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).not.toBe(keys[0]);
+    const all = await listRequests(page);
+    expect(all.filter((r) => r.title === fixed)).toHaveLength(1);
+    expect(all.filter((r) => r.title === title)).toHaveLength(0);
+  });
+
+  test('通信断の後の照合が 400 → 件名を直す → 成功して 1 件', async ({ page }) => {
+    await login(page);
+    const title = `照合 400 ${Date.now()}`;
+    const fixed = `${title} 直した`;
+    await fillWizard(page, title);
+    const keys: (string | undefined)[] = [];
+    let call = 0;
+    await page.route(REQUESTS, async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      keys.push(route.request().headers()['idempotency-key']);
+      call += 1;
+      const body = route.request().postDataJSON() as { title: string };
+      if (call === 1) return route.abort('connectionreset'); // サーバへ届かない
+      if (body.title !== title) return route.fallback();
+      return route.fulfill({
+        status: 400,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'ERR-003', message: '入力の形が正しくありません' } }),
+      });
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#err')).toContainText('通信できませんでした');
+    // 照合は同じキーと同じ本文で送る
+    await page.locator('#submit').click();
+    await expect(page.locator('#err')).toContainText('入力の形が正しくありません');
+    expect(keys[1]).toBe(keys[0]);
+
+    await page.locator('.stp').nth(2).click();
+    await setValue(page, 'main input[type=text]', 0, fixed);
+    await gotoLastStep(page);
+    await page.locator('#submit').click();
+    await expect(page.locator('#stamp')).toHaveClass(/show/, { timeout: 5000 });
+    const all = await listRequests(page);
+    expect(all.filter((r) => r.title === fixed)).toHaveLength(1);
+    expect(all.filter((r) => r.title === title)).toHaveLength(0);
+  });
+
+  test('入力を直してから送った照合が 400 でも、続けて直した本文で送り 1 件になる', async ({ page }) => {
+    await login(page);
+    const title = `直してから照合 ${Date.now()}`;
+    const fixed = `${title} 直した`;
+    await fillWizard(page, title);
+    let call = 0;
+    await page.route(REQUESTS, async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      call += 1;
+      const body = route.request().postDataJSON() as { title: string };
+      if (call === 1) return route.abort('connectionreset');
+      if (body.title !== title) return route.fallback();
+      return route.fulfill({
+        status: 400,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'ERR-003', message: '入力の形が正しくありません' } }),
+      });
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#err')).toContainText('通信できませんでした');
+    await page.locator('.stp').nth(2).click();
+    await setValue(page, 'main input[type=text]', 0, fixed);
+    await gotoLastStep(page);
+    await page.locator('#submit').click();
+    await expect(page.locator('#stamp')).toHaveClass(/show/, { timeout: 5000 });
+    expect(call).toBe(3);
+    expect((await listRequests(page)).filter((r) => r.title === fixed)).toHaveLength(1);
+  });
+
+  test('502（確定した応答なし）は結果不明として扱い、直して送っても 1 件', async ({ page }) => {
+    await login(page);
+    const title = `502 ${Date.now()}`;
+    const fixed = `${title} 直した`;
+    await fillWizard(page, title);
+    const keys: (string | undefined)[] = [];
+    let call = 0;
+    await page.route(REQUESTS, async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      keys.push(route.request().headers()['idempotency-key']);
+      call += 1;
+      if (call > 1) return route.fallback();
+      // サーバには保存され、途中の中継が 502 を返した状況
+      await route.fetch();
+      return route.fulfill({ status: 502, contentType: 'text/html', body: '<html>Bad Gateway</html>' });
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#err')).toBeVisible();
+    await page.locator('.stp').nth(2).click();
+    await setValue(page, 'main input[type=text]', 0, fixed);
+    await gotoLastStep(page);
+    await page.locator('#submit').click();
+    await expect(page.locator('#stamp')).toHaveClass(/show/, { timeout: 5000 });
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+    const all = await listRequests(page);
+    expect(all.filter((r) => r.title === fixed)).toHaveLength(1);
+    expect(all.filter((r) => r.title === title)).toHaveLength(0);
+  });
+
+  test('JSON の取り込み: 既存 ID の行が更新済みなら、その件数を伝える', async ({ page }) => {
+    await login(page);
+    const existing = await createViaUi(page, `更新済み ${Date.now()}`);
+    await setApiRole(page, 'desk');
+    await setUiRole(page, 'desk');
+    const row = await localItem(page, existing.id);
+    const stamp = Date.now();
+    const changed = `${existing.title} 取り込みで変更`;
+    const ngTitle = `更新済み 失敗 ${stamp}`;
+    await page.route(REQUESTS, async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      return route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'ERR-401', message: '処理を完了できませんでした' } }),
+      });
+    });
+    await page.click('button[data-v="data"]');
+    await page.locator('#importFile').setInputFiles({
+      name: 'import.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from(
+        JSON.stringify({
+          items: [
+            { ...row, title: changed },
+            { ...row, id: `E2E-${stamp}-1`, title: ngTitle, comments: [] },
+          ],
+        }),
+      ),
+    });
+    await page.locator('#mmask button:has-text("取り込む")').last().click();
+    await waitForFailureToast(page);
+    await expect(page.locator('#toast')).toContainText('1 件は更新済み');
+    await expect(page.locator('#toast')).toContainText('取り消していません');
+    expect((await getDetail(page, existing.id)).title).toBe(changed);
+    expect((await getDetail(page, existing.id)).status).toBe(existing.status);
+  });
+
+  test('JSON の取り込み（全件成功）: 運用データの PUT は依頼の同期の成功後', async ({ page }) => {
+    await login(page);
+    const existing = await createViaUi(page, `全件成功 ${Date.now()}`);
+    await setApiRole(page, 'approver');
+    await setUiRole(page, 'approver');
+    const row = await localItem(page, existing.id);
+    await page.waitForTimeout(600);
+    const order: string[] = [];
+    page.on('requestfinished', (r) => {
+      const path = new URL(r.url()).pathname;
+      if (r.method() === 'POST' && REQUESTS.test(path)) order.push('post');
+      if (r.method() === 'POST' && TRANSITIONS.test(path)) order.push('cancel');
+    });
+    page.on('request', (r) => {
+      if (r.method() === 'PUT' && /\/api\/ops$/.test(new URL(r.url()).pathname)) order.push('ops');
+    });
+    const title = `全件成功の行 ${Date.now()}`;
+    await page.click('button[data-v="data"]');
+    await page.locator('#importFile').setInputFiles({
+      name: 'import.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify({ items: [{ ...row, id: `E2E-${Date.now()}-1`, title, comments: [] }] })),
+    });
+    await page.locator('#mmask button:has-text("取り込む")').last().click();
+    await expect(page.locator('#toast')).toContainText('1 件を取り込みました', { timeout: 45_000 });
+    await expect.poll(() => order.includes('ops')).toBe(true);
+    const firstOps = order.indexOf('ops');
+    expect(order.lastIndexOf('post')).toBeLessThan(firstOps);
+    expect(order.lastIndexOf('cancel')).toBeLessThan(firstOps);
+    expect((await listRequests(page)).filter((r) => r.title === title)).toHaveLength(1);
+    await resetOpsData(page);
   });
 });

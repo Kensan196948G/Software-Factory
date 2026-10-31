@@ -60,6 +60,22 @@ async function moveToWait(auth: Awaited<ReturnType<typeof loginAs>>, id: string,
   return (wait.json() as { detail: { version: number } }).detail.version;
 }
 
+describe('道具と部署の組み合わせ', () => {
+  it('部署と合わない道具は ERR-013（400）を返し、依頼を作らない', async () => {
+    const auth = await loginAs(app, 'desk');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/requests',
+      headers: authHeaders(auth),
+      payload: sampleRequest({ title: '組み合わせの確認（作り物）', toolId: 'keiei-01', deptCode: 'eigyo' }),
+    });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { error: { code: string } }).error.code).toBe('ERR-013');
+    const rows = await query('select 1 from request where title = $1', ['組み合わせの確認（作り物）']);
+    expect(rows.rows).toHaveLength(0);
+  });
+});
+
 describe('環境名', () => {
   it('APP_ENV 未指定なら environment は NODE_ENV と同じ', async () => {
     const res = await app.inject({ method: 'GET', url: '/healthz' });

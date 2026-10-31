@@ -2386,13 +2386,13 @@ const SF = (function () {
   const me = () => SF.roleOf(S.role);
   const find = (id) => S.data.items.find((x) => x.id === id);
   const colorOf = (r) => r.signalFinal || SF.judge(r).c;
-  function persist() {
+  function persist(opts) {
     if (!SF.save(KEY, S.data) && S.persistent) {
       S.persistent = false;
       notice();
     }
     if (!window.__MSF__) return Promise.resolve({ ok: true, ids: {}, notices: [] });
-    return window.__MSF__.persist(S.data).then((res) => {
+    return window.__MSF__.persist(S.data, opts).then((res) => {
       reportSync(res);
       return res;
     });
@@ -4156,10 +4156,20 @@ const SF = (function () {
   }
   /*
    * 新規登録の送信札（下書きと一緒に保存し、再読込しても残す）。
-   * - 応答が不明な間（通信断・5xx）は、同じキーと前回と同じ本文で照合する。入力が直されていれば、そのあと PATCH で直す
+   * - 結果不明（unknown）: サーバの確定した応答がない場合だけ。同じキーと同じ本文で照合し、成功したら更新の経路へ進む
    * - サーバで作られたと分かったら（serverId）、以後は作らずに更新する
-   * - 確定した拒否（4xx）のあとで入力が直されたら、新しいキーで送る
+   * - 札の解放（unknown を外す）の規則は submitFailureKind を参照。解放後に入力が変わっていれば、新しいキーで送る
+   * サーバは本文の検証を Idempotency-Key の照合より先に行うので、同じ本文の照合が 400 なら最初の POST も確定していない。
    */
+  function submitFailureKind(f) {
+    const status = f.status || 0;
+    // 通信断・タイムアウト・中継の応答、JSON でない 5xx: サーバの確定した応答がない
+    if (!status || status === 408 || [502, 503, 504].includes(status) || (status >= 500 && !f.code)) return 'unknown';
+    // セッション・権限・混雑: 本文を検証していない。結果不明の札は解放しない
+    if ([401, 403, 429].includes(status)) return 'unverified';
+    // アプリが JSON で答えた 4xx / 500: 確定した失敗
+    return 'rejected';
+  }
   function draftJson(d) {
     const c = Object.assign({}, d);
     delete c.__ticket;
@@ -4216,9 +4226,10 @@ const SF = (function () {
         t.unknown = false;
         return submitFailed(d, res, ['依頼は ' + t.serverId + ' として登録済みです。もう一度送ると、この依頼を更新します']);
       }
-      // 確定した拒否として扱えるのは初回の送信だけ。照合の再送が 4xx（セッション切れなど）でも、
-      // 最初の POST が届いた可能性は残るので、確定するまで同じキーのままにする
-      if (!verifying && failure.status >= 400 && failure.status < 500) t.unknown = false;
+      const kind = submitFailureKind(failure);
+      if (kind === 'rejected' || (kind === 'unverified' && !verifying)) t.unknown = false;
+      // 照合で解放され、入力がすでに直されているなら、直した本文で続けて送る（どの経路でも止まらない）
+      if (verifying && !t.unknown && S.draft === d && draftJson(d) !== t.json) return submitNew(d);
       return submitFailed(d, res);
     }
     // 受付番号はサーバの値を正とする（別の端末と番号が重なると、サーバが別の番号を振る）
@@ -4638,11 +4649,15 @@ const SF = (function () {
         () => {
           const prevOps = S.data.ops;
           S.data = SF.seed();
-          persist().then((res) => {
-            if (res.ok) toast('サンプルデータに戻しました');
-            else {
+          const rowIds = S.data.items.map((x) => x.id);
+          persist({ deferOps: true }).then((res) => {
+            if (res.ok) {
+              persist(); // 依頼の同期が成功したので、運用データを送る
+              toast('サンプルデータに戻しました');
+            } else {
               S.data.ops = prevOps; // 依頼を戻せなかったので、運用データも元のまま
               persist();
+              toast('サンプルに戻せませんでした。' + importedNote(res, rowIds), true);
             }
             if (S.view === 'data') renderData();
           });
@@ -4651,6 +4666,15 @@ const SF = (function () {
     );
     $('#view').insertAdjacentHTML('beforeend', '<div id="auditbox" class="card pad" style="margin-top:16px">読み込み中…</div>');
     loadAuditBox();
+  }
+  /* 全件置換の失敗時の説明。取消はしないが、既存 ID の行は先に更新されていることがある */
+  function importedNote(res, rowIds) {
+    const stages = res.stages || {};
+    const updated = rowIds.filter((id) => {
+      const s = stages[id];
+      return s && s.create === 'none' && (s.content === 'ok' || s.transition === 'ok');
+    }).length;
+    return updated ? '既存の依頼は取り消していませんが、' + updated + ' 件は更新済みです。' : '既存の依頼は取り消していません。';
   }
   $('#importFile').addEventListener('change', (e) => {
     const f = e.target.files[0];
@@ -4672,7 +4696,7 @@ const SF = (function () {
               total = o.items.length,
               rowIds = o.items.map((x) => x.id);
             S.data = o;
-            persist().then((res) => {
+            persist({ deferOps: true }).then((res) => {
               // 結果の件数で伝える。保存できなかった行は bridge が取り除いている
               const failed = (res.failures || []).filter((f) => f.stage !== 'comment');
               const rows = failed.filter((f) => rowIds.includes(f.id)).length,
@@ -4695,7 +4719,7 @@ const SF = (function () {
                   ' 件を保存しました。' +
                   (rows ? rows + ' 件は保存できませんでした。' : '') +
                   (others ? 'ほかに ' + others + ' 件の保存に失敗しました。' : '') +
-                  '既存の依頼は取り消していません。',
+                  importedNote(res, rowIds),
                 true,
               );
               if (saved) go('board');

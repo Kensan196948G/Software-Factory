@@ -549,9 +549,11 @@
    * stages[依頼ID] は工程（create / content / transition / comment）ごとの none / ok / failed。
    * failures[].stage は失敗した工程。
    * 同期中に呼ばれたら次の 1 回にまとめ、呼び出し元全員が同じ結果を受け取る。
+   * opts.deferOps を付けると、この呼び出しでは運用データを送らない。
    */
-  function persist(data) {
-    scheduleOpsSync(data);
+  function persist(data, opts) {
+    // 全件置換（取り込み・サンプルに戻す）は、依頼の同期が成功してから運用データを送る
+    if (!(opts && opts.deferOps)) scheduleOpsSync(data);
     if (!running) return startRun(data);
     if (!queued) {
       let resolve;
