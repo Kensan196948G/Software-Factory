@@ -5,6 +5,7 @@
 ## 1. 共通
 
 - 認証: `msf_session` Cookie（HttpOnly / SameSite=Lax / Secure は本番）。セッションはDB。
+- `AUTH_MODE=access`: `ACCESS_TEAM_DOMAIN` と `ACCESS_AUD` を設定すると、毎回 `Cf-Access-Jwt-Assertion` の JWT を検証する（`docs/deployment.md` §3-1）。未設定なら `Cf-Access-Authenticated-User-Email` ヘッダを信頼する。
 - CSRF: 更新系は `X-CSRF-Token` ヘッダが必要（`msf_csrf` Cookie と一致）。`Origin` も検証。
 - 役割: サーバ側で毎回判定。クライアントの「いまの役割」は信用しない。
 - エラー: `{ "error": { "code": "ERR-xxx", "message": "...", "details"?, "correlationId"? } }`

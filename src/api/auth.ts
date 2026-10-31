@@ -2,7 +2,8 @@ import { randomBytes, createHash } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { PoolClient } from 'pg';
 import { query, withTransaction } from './db.js';
-import { config } from './config.js';
+import { config, isAccessJwtEnabled } from './config.js';
+import { createAccessJwtVerifier, type AccessJwtVerifier } from './access-jwt.js';
 import { hashPassword, verifyPassword } from './password.js';
 import { Errors } from './http.js';
 import { appendAudit } from './audit.js';
@@ -164,18 +165,68 @@ export async function resolveSession(req: FastifyRequest): Promise<AuthContext |
   };
 }
 
-/** Cloudflare Access のヘッダから利用者を決める（メール or サービストークン）。 */
-export function resolveAccessIdentity(headers: Record<string, string | string[] | undefined>): string | null {
+/** サービストークンは「管理者の代理」として扱う（自動検証用）。 */
+function serviceTokenIdentity(): string {
+  return (config.accessAllowedEmails[0] ?? config.seedAdminEmail).toLowerCase();
+}
+
+/** 従来動作: Cloudflare Access のヘッダをそのまま信頼する（ACCESS_TEAM_DOMAIN / ACCESS_AUD が未設定のとき）。 */
+function identityFromAccessHeaders(headers: Record<string, string | string[] | undefined>): string | null {
   const emailHeader = headers['cf-access-authenticated-user-email'];
   if (typeof emailHeader === 'string' && emailHeader && isAccessEmailAllowed(emailHeader)) {
     return emailHeader.toLowerCase();
   }
   const clientId = headers['cf-access-client-id'];
   if (typeof clientId === 'string' && config.accessServiceTokenIds.includes(clientId)) {
-    // サービストークンは「管理者の代理」として扱う（自動検証用）
-    return (config.accessAllowedEmails[0] ?? config.seedAdminEmail).toLowerCase();
+    return serviceTokenIdentity();
   }
   return null;
+}
+
+/** 検証済み JWT の claim から利用者を決める。email があれば email だけで判定する。 */
+function identityFromAccessClaims(claims: Record<string, unknown>): string | null {
+  if (typeof claims.email === 'string' && claims.email.trim()) {
+    return isAccessEmailAllowed(claims.email) ? claims.email.trim().toLowerCase() : null;
+  }
+  const commonName = claims.common_name;
+  if (typeof commonName === 'string' && config.accessServiceTokenIds.includes(commonName)) {
+    return serviceTokenIdentity();
+  }
+  return null;
+}
+
+let accessVerifier: { settings: string; verifier: AccessJwtVerifier } | null = null;
+
+function accessJwtVerifier(): AccessJwtVerifier {
+  const settings = `${config.accessTeamDomain}|${config.accessAud}`;
+  if (accessVerifier?.settings !== settings) {
+    const verifier = createAccessJwtVerifier({
+      teamDomain: config.accessTeamDomain,
+      aud: config.accessAud,
+      onJwksError: (message) => console.warn(`Access の公開鍵を取得できません: ${message}`),
+    });
+    accessVerifier = { settings, verifier };
+  }
+  return accessVerifier.verifier;
+}
+
+/**
+ * Cloudflare Access の情報から利用者を決める（メール or サービストークン）。
+ * JWT 検証が有効なら Cf-Access-Jwt-Assertion だけを見て、ヘッダのメール・クライアントIDは使わない。
+ */
+export async function resolveAccessIdentity(
+  headers: Record<string, string | string[] | undefined>,
+  log?: { warn: (obj: { reason: string }, msg: string) => void },
+): Promise<string | null> {
+  if (!isAccessJwtEnabled(config)) return identityFromAccessHeaders(headers);
+  const token = headers['cf-access-jwt-assertion'];
+  if (typeof token !== 'string' || !token) return null;
+  const result = await accessJwtVerifier().verify(token);
+  if (!result.ok) {
+    log?.warn({ reason: result.reason }, 'Access の JWT を拒否しました');
+    return null;
+  }
+  return identityFromAccessClaims(result.claims);
 }
 
 export function isAccessEmailAllowed(email: string): boolean {
