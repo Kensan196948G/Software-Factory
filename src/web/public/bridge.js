@@ -170,6 +170,7 @@
       }
       const byId = new Map();
       for (const d of local) if (d && d.id) byId.set(d.id, d);
+      const unsaved = local.filter((d) => d && !d.id); // サーバへ保存できていない端末の下書き
       for (const d of boot.drafts) {
         if (!d || !d.id) continue;
         const mine = byId.get(d.id);
@@ -178,7 +179,7 @@
         if (!mine || !(Number.isFinite(mineAt) && mineAt > serverAt)) byId.set(d.id, d);
       }
       // 端末にしか無い下書き（未送信）は残す
-      const merged = [...byId.values()];
+      const merged = [...byId.values(), ...unsaved];
       localStorage.setItem(KEY + '-drafts', JSON.stringify(merged));
     }
   } catch {
@@ -283,6 +284,7 @@
     const next = toConsole(server);
     delete next.attachments; // 添付はサーバに無い（画面だけのメタ情報）
     delete live.__idem;
+    delete live.__postAs;
     Object.assign(live, next);
   }
 
@@ -292,6 +294,7 @@
     const next = toConsole(server);
     delete next.attachments;
     delete live.__idem;
+    delete live.__postAs;
     for (const key of Object.keys(next)) {
       if (key === 'history' || key === 'comments') {
         const tail = (live[key] || []).slice((sent[key] || []).length);
@@ -306,6 +309,7 @@
    * 依頼 1 件の同期。順序は 新規 → 内容（PATCH）→ 状態（返却された最新 version で）→ コメント。
    * 遷移するかどうかは PATCH 前の状態で決める（承認後の編集でサーバが承認待ちへ戻したとき、
    * 自動で承認へ遷移し直さないため）。途中で失敗しても、進んだ分は base に残る。
+   * ctx.stages に工程ごとの結果（none / ok / failed）を残す。
    */
   async function syncItem(it, ctx) {
     const setBase = (detail) => {
@@ -314,41 +318,57 @@
       return detail;
     };
     const path = (id) => `/api/requests/${encodeURIComponent(id)}`;
+    const step = async (name, fn) => {
+      ctx.current = name;
+      await fn();
+      ctx.stages[name] = 'ok';
+    };
     let s = base.get(it.id);
     if (!s) {
-      const res = await api('POST', '/api/requests', toServer(it), it.__idem ? { 'idempotency-key': it.__idem } : undefined);
-      s = setBase(res.request);
+      await step('create', async () => {
+        // 応答が不明なまま入力が直されたときは、前回と同じ本文で照合してから PATCH で直す
+        const body = toServer(it.__postAs || it);
+        const res = await api('POST', '/api/requests', body, it.__idem ? { 'idempotency-key': it.__idem } : undefined);
+        s = setBase(res.request);
+      });
     }
     const wantsTransition = Boolean(it.status && it.status !== s.status);
     const serverComments = (s.comments || []).length;
     let warning = '';
     if (contentSignature(it) !== contentSignature(toConsole(s))) {
-      const res = await api('PATCH', path(s.id), { ...toServer(it), version: s.version });
-      s = setBase(res.detail);
-      const w = (res.warnings || []).find((x) => x.code === 'ERR-202');
-      if (w) warning = w.message;
+      await step('content', async () => {
+        const res = await api('PATCH', path(s.id), { ...toServer(it), version: s.version });
+        s = setBase(res.detail);
+        const w = (res.warnings || []).find((x) => x.code === 'ERR-202');
+        if (w) warning = w.message;
+      });
     }
-    let reason = '';
+    let sentReason = false;
     if (wantsTransition && it.status !== s.status) {
-      reason = lastNote(it);
-      const payload = {
-        to: it.status,
-        version: s.version,
-        reason,
-        checklistAcknowledged: true,
-        redAcknowledged: true,
-      };
-      if (it.signalFinal) payload.signal = it.signalFinal;
-      const res = await api('POST', `${path(s.id)}/transitions`, payload);
-      s = setBase(res.detail);
+      await step('transition', async () => {
+        const reason = lastNote(it);
+        const payload = {
+          to: it.status,
+          version: s.version,
+          reason,
+          checklistAcknowledged: true,
+          redAcknowledged: true,
+        };
+        if (it.signalFinal) payload.signal = it.signalFinal;
+        const res = await api('POST', `${path(s.id)}/transitions`, payload);
+        s = setBase(res.detail);
+        sentReason = Boolean(reason);
+      });
     }
-    // コメント（増えた分だけ）。遷移の理由はサーバがコメントにするので、同じものを二重に送らない。
-    const added = (it.comments || []).slice(serverComments).filter((c) => c && c.text);
-    const inReason = reason ? added.findIndex((c) => reason.includes(c.text)) : -1;
-    if (inReason >= 0) added.splice(inReason, 1);
-    for (const c of added) {
-      const res = await api('POST', `${path(s.id)}/comments`, { text: c.text });
-      s = setBase(res.detail);
+    // コメント（増えた分だけ）。遷移の理由はサーバがコメントにするので、理由として送った印の付いたものは送らない。
+    const added = (it.comments || []).slice(serverComments).filter((c) => c && c.text && !(sentReason && c.__reason));
+    if (added.length) {
+      await step('comment', async () => {
+        for (const c of added) {
+          const res = await api('POST', `${path(s.id)}/comments`, { text: c.text });
+          s = setBase(res.detail);
+        }
+      });
     }
     if (it.status && s.status !== it.status) {
       ctx.notice = { id: s.id, requested: it.status, actual: s.status, message: warning };
@@ -371,7 +391,13 @@
         /* 取り直せないときは手元の base のまま */
       }
     }
-    return { id: ctx.localId, serverId: ctx.id, error, code, status };
+    const stage = ctx.current || null;
+    if (stage && ctx.stages) ctx.stages[stage] = 'failed';
+    if (stage === 'comment') {
+      const prefix = ctx.stages.transition === 'ok' ? '状態の変更は保存しました。' : '';
+      error = `${prefix}コメントを保存できませんでした（${error}）`;
+    }
+    return { id: ctx.localId, serverId: ctx.id, error, code, status, stage, stages: ctx.stages || null };
   }
 
   /** 1 回分の同期。送るのは呼び出し時点の写し。依頼ごとに独立して処理し、失敗した依頼だけ戻す。 */
@@ -381,8 +407,15 @@
     const ids = {};
     const notices = [];
     const results = [];
+    const stages = {};
     for (const it of sent) {
-      const ctx = { localId: it.id, id: it.id };
+      const ctx = {
+        localId: it.id,
+        id: it.id,
+        current: null,
+        stages: { create: 'none', content: 'none', transition: 'none', comment: 'none' },
+      };
+      stages[it.id] = ctx.stages;
       let failure = null;
       try {
         await syncItem(it, ctx);
@@ -400,7 +433,12 @@
     const restore = [];
     for (const [id, s] of [...base.entries()]) {
       if (present.has(id) || ['done', 'hold', 'cancel'].includes(s.status)) continue;
-      const ctx = { localId: id, id };
+      const ctx = {
+        localId: id,
+        id,
+        current: 'transition',
+        stages: { create: 'none', content: 'none', transition: 'none', comment: 'none' },
+      };
       try {
         const res = await api('POST', `/api/requests/${encodeURIComponent(id)}/transitions`, {
           to: 'cancel',
@@ -434,6 +472,13 @@
       }
       if (server) mergeServer(live, it, server);
       if (visibleSignature(live) !== before) changed = true;
+      // 照合の結果、すでに一覧にある依頼だった場合は 1 行にまとめる
+      for (let i = items.length - 1; i >= 0; i--) {
+        if (items[i] !== live && items[i].id === live.id) {
+          items.splice(i, 1);
+          changed = true;
+        }
+      }
     }
     for (const id of restore) {
       const server = base.get(id);
@@ -446,12 +491,12 @@
       const n = Number(String(id).slice(-4));
       if (Number.isFinite(n) && n > (Number(data.seq) || 0)) data.seq = n;
     }
-    return { failures, ids, notices, changed, carried };
+    return { failures, ids, notices, changed, carried, stages };
   }
 
   function toResult(outcome, carriedIn) {
     const failures = [...carriedIn, ...outcome.failures];
-    const common = { ids: outcome.ids, notices: outcome.notices };
+    const common = { ids: outcome.ids, notices: outcome.notices, stages: outcome.stages };
     if (!failures.length) return { ok: true, ...common };
     const first = failures[0];
     return { ok: false, error: first.error, code: first.code, status: first.status, failures, ...common };
@@ -479,7 +524,7 @@
       result = toResult(outcome, carriedIn);
     } catch (err) {
       const error = (err && err.message) || '保存できませんでした';
-      result = { ok: false, error, code: null, status: 0, failures: carriedIn, ids: {}, notices: [] };
+      result = { ok: false, error, code: null, status: 0, failures: carriedIn, ids: {}, notices: [], stages: {} };
     }
     running = false;
     if (queued) {
@@ -494,7 +539,9 @@
 
   /**
    * 差分をサーバへ同期する。呼び出し時点の data を含む同期が終わると解決する。
-   * { ok:true, ids, notices } または { ok:false, error, code, status, failures, ids, notices }。
+   * { ok:true, ids, notices, stages } または { ok:false, error, code, status, failures, ids, notices, stages }。
+   * stages[依頼ID] は工程（create / content / transition / comment）ごとの none / ok / failed。
+   * failures[].stage は失敗した工程。
    * 同期中に呼ばれたら次の 1 回にまとめ、呼び出し元全員が同じ結果を受け取る。
    */
   function persist(data) {
@@ -516,7 +563,7 @@
   const draftCreating = new WeakMap(); // 下書きオブジェクト → 作成（POST）の Promise
   function saveDraft(o) {
     if (!o || !o.draft) return Promise.resolve(null);
-    const key = o.id || 'new';
+    const key = o.id || o.lk || 'new';
     clearTimeout(draftTimers.get(key));
     return new Promise((resolve) => {
       draftTimers.set(
