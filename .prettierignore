@@ -12,3 +12,6 @@ docs/patches/
 docs/assets/
 offline-Application/
 db/seed/
+
+# Claude Code のローカル状態
+.claude/
