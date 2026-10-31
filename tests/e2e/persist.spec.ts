@@ -1162,9 +1162,9 @@ test.describe('UI 保存の結果待ち', () => {
     await page.locator('#dr').click();
     await page.locator('#mmask button:has-text("サンプルに戻す")').last().click();
     await expect(page.locator('#toast .toast.ng').first()).toBeVisible();
-    await page.waitForTimeout(500);
+    // 件数が多いと失敗の確定まで時間がかかる。依頼が戻るのを待ってから表示履歴を見る
+    await expect.poll(async () => (await localItem(page, created.id))?.id, { timeout: 30_000 }).toBe(created.id);
     await expectNoToast(page, 'サンプルデータに戻しました');
-    expect((await localItem(page, created.id))?.id).toBe(created.id);
   });
 
   test('JSON の取り込み: 保存に失敗したら成功表示を出さない', async ({ page }) => {
@@ -1181,9 +1181,9 @@ test.describe('UI 保存の結果待ち', () => {
     });
     await page.locator('#mmask button:has-text("取り込む")').last().click();
     await expect(page.locator('#toast .toast.ng').first()).toBeVisible();
-    await page.waitForTimeout(500);
+    // 件数が多いと失敗の確定まで時間がかかる。依頼が戻るのを待ってから表示履歴を見る
+    await expect.poll(async () => (await localItem(page, created.id))?.id, { timeout: 30_000 }).toBe(created.id);
     await expectNoToast(page, '件を取り込みました');
-    expect((await localItem(page, created.id))?.id).toBe(created.id);
   });
 
   test('エスカレーション: 遷移に失敗したら成功表示を出さず、ダイアログを残す', async ({ page }) => {
