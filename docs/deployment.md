@@ -103,6 +103,8 @@ DNS伝播後は不要。ブラウザで名前解決できない場合は削除�
 
 **破壊的DB操作は行わない。** 復元は「別DBへ復元 → 検証 → 切替」を基本とする。
 
+§9 の固定リリースへ移行した後の Node API は、`scripts/ops/rollback.sh <SHA>` で切り替える。
+
 ## 7. 監視
 
 - `/healthz` の定期確認（Access 配下のため、外形監視には Access の bypass か サービストークンが必要）
@@ -156,3 +158,89 @@ DBの監査行は追記のみで消さない（アーカイブは外部コピー
 - Access のサービストークン発行は、現在のAPIトークンに `access-service-token.write` が無いため未実施。外形監視を自動化する場合はトークン権限の追加が必要。
 - CI は `.github/workflows/` のポリシーゲートにより未適用（`docs/patches/README.md`）。
 - ローカルホスト停止時は Preview も停止する（仕様）。
+
+## 9. Staging の運用（バックアップ・固定リリース）
+
+`scripts/ops/` と `deploy/systemd/` の雛形で、Preview を commit に固定して運用する。
+
+| 操作           | コマンド                              | 内容                                                                                    |
+| -------------- | ------------------------------------- | --------------------------------------------------------------------------------------- |
+| バックアップ   | `pnpm ops:backup`                     | `pg_dump -Fc` を `~/.local/state/mirai-sf/backups/` へ（0700/0600）。既定14日で世代管理 |
+| 復元ドリル     | `pnpm ops:restore-drill`              | 最新を一時DB `mirai_sf_drill_<ts>` へ復元し、件数とハッシュ連鎖を検証して一時DBを消す   |
+| リリース       | `pnpm ops:release [--dry-run] <SHA>`  | main に含まれる commit だけを展開し、切替と `/healthz` の commit 確認まで行う           |
+| ロールバック   | `pnpm ops:rollback [--dry-run] <SHA>` | 展開済みのリリースへ切替（DB は戻さない）                                               |
+| 日次保守       | `pnpm ops:reminders`                  | preview.conf の DB に対して滞留通知・再送・下書きTTLを実行                              |
+| 監査アーカイブ | `pnpm ops:audit:archive`              | 同じDBに対して §7-2 を実行                                                              |
+| DB 検証        | `pnpm ops:db:verify`                  | 同じDBに対して `db:verify` を実行                                                       |
+
+### 9-1. 設計上の決まり
+
+- `scripts/ops/with-env.mjs` が `preview.conf` を環境変数にして実行する。値は表示しない。開発用の `MIRAI_SF_CONFIG_FILE` や別DBを指す `MIGRATION_DATABASE_URL` / `TEST_*` は子プロセスへ渡さない。
+- `COMMIT_SHA` は `preview.conf` ではなく各リリースの `release.env` に置く。unit が `preview.conf` の後に読むので、`current` を切り替えるだけで `/healthz` の commit も切り替わる。
+- バックアップには同じスナップショットで取った件数と監査ログ末尾のハッシュ（`*.manifest.tsv`）を添える。稼働中のDBと比べると必ずずれるので、ドリルはこの manifest と照合する。
+- 世代管理とドリルの対象は `<DB>-<YYYYMMDD>T<HHMMSS>Z.dump` の名前だけ。手動で取った dump には触らない。
+- PostgreSQL クライアントは `/usr/lib/postgresql/16/bin` を優先する（`MIRAI_SF_PG_BIN_DIR` で変更可）。17 以上の `pg_dump` は restore 時に `transaction_timeout` の警告を出す。
+- Node は unit の `PATH` と `MIRAI_SF_NODE_BIN_DIR` で 22 を指定する。systemd user の既定 `PATH` では `/usr/bin/node`（v20）になり、`engines` を満たさない。
+- `MAIL_OUTBOX_DIR` は `current` の外に置く（作業ディレクトリ基準のままだとリリースごとに分かれる）。
+- 移行後の `dist/` と `node_modules` はリリースごとに持つ。古いリリースの自動削除はしない。
+
+### 9-2. migration の扱い
+
+`release.sh` は未適用の migration を調べ、破壊的な可能性がある文（`DROP TABLE` / `DROP COLUMN` / `TRUNCATE` / `DELETE FROM` / 型変更 / 名前変更 など）があれば、DB にも `current` にも触らず終了コード 3 で止まる。文字列照合による補助であり、レビューの代わりにはならない。既存の作法である `drop constraint` / `drop trigger` の作り直しは対象外。
+
+事前バックアップは空のDBでは失敗する（`audit_log` が必要）。新規構築は §3 の手順で migrate と seed を済ませてから行う。
+
+### 9-3. 固定リリースへの初回切替
+
+稼働中の unit は git の作業ディレクトリを見ている。`current` がない状態で unit を入れ替えないよう、この順で行う。PR がマージされた後の main の commit を使う。
+
+```bash
+# 0. 本体のチェックアウトを main の最新にする（release.sh をここから実行するため）
+cd /mnt/storage/Software-Factory/Software-Factory
+git switch main && git pull --ff-only
+SHA=$(git rev-parse HEAD)
+
+# 1. 計画の確認（何も変更しない）
+pnpm ops:release --dry-run "$SHA"
+
+# 2. 展開・ビルド・事前バックアップ・migration・current 作成（再起動はしない）
+pnpm ops:release --no-restart "$SHA"
+
+# 3. 現在の unit を退避して雛形を入れる
+mkdir -p ~/.config/mirai-sf/unit-backup
+cp -p ~/.config/systemd/user/mirai-sf-api.service ~/.config/systemd/user/mirai-sf-reminders.service ~/.config/mirai-sf/unit-backup/
+cp deploy/systemd/mirai-sf-* ~/.config/systemd/user/
+systemctl --user daemon-reload
+
+# 4. API を切り替えて確認（commit が $SHA になること）
+systemctl --user restart mirai-sf-api.service
+curl -fsS http://127.0.0.1:8782/healthz
+
+# 5. タイマーを有効化し、1回ずつ手動で流す
+systemctl --user enable --now mirai-sf-backup.timer mirai-sf-restore-drill.timer
+systemctl --user start mirai-sf-backup.service
+systemctl --user start mirai-sf-restore-drill.service
+systemctl --user start mirai-sf-reminders.service
+journalctl --user -u mirai-sf-backup -u mirai-sf-restore-drill -u mirai-sf-reminders -n 50 --no-pager
+```
+
+切替に失敗したら、退避した unit を戻して `daemon-reload` し、API を再起動する（従来の `dist/` で動く）。
+
+2回目以降は `pnpm ops:release <SHA>` だけでよい。`/healthz` が失敗すると前のリリースへ自動で戻す（DB は戻さない）。
+
+### 9-4. メール（滞留通知・再送）
+
+`preview.conf` に `MAIL_MODE` がなければ、本番の既定どおり `off` になる。この場合の日次保守は下書きTTLだけを実行する。滞留通知と再送を Staging で動かすには、`preview.conf` に `MAIL_MODE`（と `MAIL_APPROVAL_TO` など）を設定する。API も同じ設定を読むので、承認依頼メールも同時に動き出す。
+
+### 9-5. 検証用の差し替え
+
+| 環境変数                         | 既定                               | 用途                                |
+| -------------------------------- | ---------------------------------- | ----------------------------------- |
+| `MIRAI_SF_ENV_FILE`              | `~/.config/mirai-sf/preview.conf`  | 接続先などの設定ファイル            |
+| `MIRAI_SF_HOME`                  | `~/.local/share/mirai-sf`          | `releases/` と `current` の置き場所 |
+| `MIRAI_SF_BACKUP_DIR`            | `~/.local/state/mirai-sf/backups`  | バックアップの保存先                |
+| `MIRAI_SF_BACKUP_RETENTION_DAYS` | `14`                               | 世代（日）                          |
+| `MIRAI_SF_HEALTH_URL`            | `http://127.0.0.1:8782/healthz`    | 切替後に確認するURL                 |
+| `MIRAI_SF_RESTART_HOOK`          | なし（`systemctl --user restart`） | 再起動の代わりに実行するファイル    |
+
+`MIRAI_SF_HOME` を差し替えると、`MIRAI_SF_ENV_FILE` と（`--no-restart` でなければ）`MIRAI_SF_RESTART_HOOK` も必須になる。実DB・実サービスを誤って触らないための確認。

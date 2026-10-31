@@ -1,0 +1,10 @@
+# 雛形: preview.conf の DATABASE_URL を ~/.local/state/mirai-sf/backups へバックアップする。
+[Unit]
+Description=Mirai SF database backup
+After=network.target
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.nvm/versions/node/v22.22.3/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/.local/share/mirai-sf/current
+ExecStart=/usr/bin/env node scripts/ops/with-env.mjs scripts/ops/backup.sh
