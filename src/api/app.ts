@@ -147,6 +147,11 @@ export async function buildApp(opts: { serveStatic?: boolean; devlineDeps?: Devl
       sendError(reply, new ApiError(code, message, 400, { path: issue?.path, issues: err.issues }), cid);
       return;
     }
+    // @fastify/static は正規形でないパス（// や /./ など）を 403 で拒否する。存在しないパスと同じ扱いにする。
+    if ((err as { statusCode?: number }).statusCode === 403 && req.routeOptions.url === '/*') {
+      void reply.callNotFound();
+      return;
+    }
     if ((err as { statusCode?: number }).statusCode === 400) {
       sendError(reply, Errors.shape(), cid);
       return;
@@ -173,7 +178,7 @@ export async function buildApp(opts: { serveStatic?: boolean; devlineDeps?: Devl
       app: 'mirai-sf-intake',
       version: config.appVersion,
       commit: config.commitSha,
-      environment: config.nodeEnv,
+      environment: config.appEnv,
       db: db.ok ? { ok: true, latencyMs: db.latencyMs } : { ok: false, error: db.error },
       now: new Date().toISOString(),
     };
@@ -227,7 +232,7 @@ export async function buildApp(opts: { serveStatic?: boolean; devlineDeps?: Devl
     appName: 'みらいSF 受付ステーション',
     version: config.appVersion,
     commit: config.commitSha,
-    environment: config.nodeEnv,
+    environment: config.appEnv,
     now: new Date().toISOString(),
     staleWarnDays: 3,
     staleDangerDays: 7,

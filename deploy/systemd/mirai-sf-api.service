@@ -1,0 +1,22 @@
+# 雛形: ~/.config/systemd/user/ へコピーして使う（手順は docs/deployment.md）。
+# release.env（COMMIT_SHA）は preview.conf より後に読むので、こちらが優先される。
+[Unit]
+Description=Mirai Software Factory Intake API (preview: sf.mirai-dx-platform.com)
+After=network.target
+
+[Service]
+Type=simple
+# Node 22 を明示する（systemd user の既定 PATH では /usr/bin/node = v20 になる）
+Environment=PATH=%h/.nvm/versions/node/v22.22.3/bin:/usr/local/bin:/usr/bin:/bin
+Environment=MAIL_OUTBOX_DIR=%h/.local/state/mirai-sf/mail-outbox
+WorkingDirectory=%h/.local/share/mirai-sf/current
+EnvironmentFile=%h/.config/mirai-sf/preview.conf
+EnvironmentFile=%h/.local/share/mirai-sf/current/release.env
+ExecStart=/usr/bin/env node dist/api/server.js
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
