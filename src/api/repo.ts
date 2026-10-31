@@ -58,6 +58,13 @@ const SELECT_BASE = `
     join department d on d.code = r.dept_code
     left join catalog_tool t on t.id = r.tool_id`;
 
+/** pg の date はローカル時刻の深夜の Date で返る。UTC へ変換すると JST で 1 日ずれるので、ローカルの年月日を使う。 */
+export function dateOnly(value: Date): string {
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${value.getFullYear()}-${month}-${day}`;
+}
+
 export function mapRequest(row: RequestRow): RequestRecord {
   return {
     id: row.id,
@@ -92,7 +99,7 @@ export function mapRequest(row: RequestRow): RequestRecord {
     minutesPerTime: row.minutes_per_time,
     dataReady: row.data_ready,
     spread: row.spread,
-    wishDate: row.wish_date ? row.wish_date.toISOString().slice(0, 10) : null,
+    wishDate: row.wish_date ? dateOnly(row.wish_date) : null,
     approver: row.approver,
     approverUserId: row.approver_user_id,
     status: row.status,
