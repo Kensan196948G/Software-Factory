@@ -265,6 +265,24 @@ function cancelledAudits(page: Page): Promise<number> {
   );
 }
 
+/** 運用データを見本の状態に戻す（未対応の声・未完了の障害を使う試験を、DB の残りに左右されないようにする） */
+async function resetOpsData(page: Page): Promise<void> {
+  await expect.poll(async () => Boolean((await callApi<{ data: unknown }>(page, 'GET', '/api/ops')).data)).toBe(true);
+  await page.evaluate(async () => {
+    const w = window as unknown as {
+      __MSF_UI__: { data: () => { items: unknown[] } };
+      __MSF__: { api: (m: string, p: string, b?: unknown) => Promise<{ version: number }> };
+    };
+    const cur = await w.__MSF__.api('GET', '/api/ops');
+    // SF はコンソールのトップレベル定数（window のプロパティではない）
+    // @ts-expect-error 画面のグローバルスコープにある
+    const data = SF.seedOps(w.__MSF_UI__.data().items) as unknown;
+    await w.__MSF__.api('PUT', '/api/ops', { data, version: cur.version });
+  });
+  await page.reload();
+  await page.waitForSelector('button[data-v="home"]');
+}
+
 /** 端末に残っている下書きの件名 */
 async function localDraftTitles(page: Page): Promise<string[]> {
   return page.evaluate(() => {
@@ -809,6 +827,7 @@ test.describe('UI 保存の結果待ち', () => {
 
   test('利用者の声→依頼: 入力画面へ渡し、受付の成功後だけ運用データへ結び付ける', async ({ page }) => {
     await login(page);
+    await resetOpsData(page);
     await setUiRole(page, 'desk');
     const fb = () =>
       page.evaluate(() => {
@@ -846,6 +865,7 @@ test.describe('UI 保存の結果待ち', () => {
 
   test('利用者の声→依頼: 書きかけの下書きがあれば消さずに案内する', async ({ page }) => {
     await login(page);
+    await resetOpsData(page);
     await setUiRole(page, 'desk');
     await clickText(page, '新しい依頼');
     await page.waitForTimeout(150);
@@ -1262,6 +1282,7 @@ test.describe('UI 保存の結果待ち', () => {
 
   test('再発防止→依頼: 入力画面へ渡し、受付の成功後だけ結び付く。失敗では結び付かない', async ({ page }) => {
     await login(page);
+    await resetOpsData(page);
     await setUiRole(page, 'ops');
     const target = await openableIncident(page);
     await page.locator('#ireq').click();
@@ -1292,6 +1313,7 @@ test.describe('UI 保存の結果待ち', () => {
 
   test('再発防止→依頼: サーバが別の番号を振ったら実 ID で結び付く', async ({ page }) => {
     await login(page);
+    await resetOpsData(page);
     await setUiRole(page, 'ops');
     const target = await openableIncident(page);
     await page.locator('#ireq').click();
@@ -1309,6 +1331,7 @@ test.describe('UI 保存の結果待ち', () => {
 
   test('利用者の声→依頼: サーバが別の番号を振ったら実 ID で結び付く', async ({ page }) => {
     await login(page);
+    await resetOpsData(page);
     await setUiRole(page, 'desk');
     await page.locator('button[data-v="ops"]').click();
     await page.locator('[data-vt="otab|fb"]').click();
@@ -1335,6 +1358,7 @@ test.describe('UI 保存の結果待ち', () => {
 
   test('サーバへ保存できなかった端末の下書きは、新規・運用データ・編集の開始で消えない', async ({ page }) => {
     await login(page);
+    await resetOpsData(page);
     const existing = await createViaUi(page, `編集対象 ${Date.now()}`);
     const title = `端末だけの下書き ${Date.now()}`;
     await page.route(/\/api\/drafts(\/.*)?$/, (route) =>
@@ -1485,7 +1509,8 @@ test.describe('UI 保存の結果待ち', () => {
     const stamp = Date.now();
     const okTitle = `取り込み成功 ${stamp}`;
     const ngTitle = `取り込み失敗 ${stamp}`;
-    const rows = [okTitle, ngTitle].map((t, i) => ({ ...row, id: `REQ-2026-${9100 + i}`, title: t, comments: [] }));
+    // 受付番号の形にしない（サーバが採番する。DB に残る依頼の番号と重なると更新になるため）
+    const rows = [okTitle, ngTitle].map((t, i) => ({ ...row, id: `E2E-${stamp}-${i + 1}`, title: t, comments: [] }));
     await page.route(REQUESTS, async (route) => {
       if (route.request().method() !== 'POST') return route.fallback();
       const body = route.request().postDataJSON() as { title: string };
