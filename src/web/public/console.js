@@ -3082,6 +3082,34 @@ const SF = (function () {
     { t: 'データと安全', h: 'この道具は何をしますか？', d: '信号の色を決める大事な質問です。「決める」仕事はAIに任せません。' },
     { t: '確認', h: 'ものさしと最終確認', d: '手間の大きさは参考値です。着手順は別途決めます。' },
   ];
+  /* 運用データから依頼を作る。サーバは必須項目を求めるので、入力画面へ渡して、受付できてから運用データへ結び付ける。 */
+  function startRequestFrom(r, origin) {
+    clearDraft();
+    r.criteria = r.criteria && r.criteria.length ? r.criteria : [''];
+    r.__origin = origin;
+    S.draft = r;
+    S.editId = null;
+    S.step = 0;
+    S.pickDept = '';
+    closeModal();
+    go('new');
+    toast('作るもの・合格の条件を書き足して受け付けてください');
+  }
+  function linkRequestOrigin(origin, id) {
+    const o = O();
+    if (origin.kind === 'feedback') {
+      const f = o.feedback.find((x) => x.id === origin.id);
+      if (!f) return;
+      f.status = '依頼にした';
+      f.ref = id;
+      addAudit('利用者の声を依頼にした', id, f.id);
+    } else if (origin.kind === 'incident') {
+      const i = o.incidents.find((x) => x.id === origin.id);
+      if (!i) return;
+      i.prevention = (i.prevention ? i.prevention + '／' : '') + id + ' で対応';
+      addAudit('再発防止を依頼にした', id, i.id);
+    }
+  }
   function freshDraft() {
     clearDraft();
     S.draft = SF.blank(S.role);
@@ -3978,6 +4006,7 @@ const SF = (function () {
     // 受付番号はサーバの値を正とする（別の端末と番号が重なると、サーバが別の番号を振る）
     const id = (res.ids && res.ids[t.id]) || rec.id;
     addAudit('受付', id, '依頼を登録しました');
+    if (d.__origin) linkRequestOrigin(d.__origin, id);
     persist();
     S.fresh = id;
     const stayed = S.draft === d;
@@ -7116,6 +7145,7 @@ const SF = (function () {
         criteria: [''],
         decides: 'g',
       });
+      if (window.__MSF__) return startRequestFrom(r, { kind: 'feedback', id: f.id });
       r.id = SF.nextId(S.data);
       r.createdAt = now;
       r.updatedAt = now;
@@ -7686,6 +7716,7 @@ const SF = (function () {
           criteria: [''],
           decides: 'g',
         });
+        if (window.__MSF__) return startRequestFrom(r, { kind: 'incident', id: i.id });
         r.id = SF.nextId(S.data);
         r.createdAt = now;
         r.updatedAt = now;

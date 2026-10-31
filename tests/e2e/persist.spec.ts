@@ -596,6 +596,43 @@ test.describe('UI 保存の結果待ち', () => {
     expect((await localItem(page, created.id))?.status).toBe('review');
   });
 
+  test('利用者の声→依頼: 入力画面へ渡し、受付の成功後だけ運用データへ結び付ける', async ({ page }) => {
+    await login(page);
+    await setUiRole(page, 'desk');
+    const fb = () =>
+      page.evaluate(() => {
+        const ui = (
+          window as unknown as {
+            __MSF_UI__: {
+              data: () => { ops: { feedback: { id: string; status: string; ref?: string }[] }; items: { id: string }[] };
+            };
+          }
+        ).__MSF_UI__;
+        const d = ui.data();
+        const f = d.ops.feedback.find((x) => x.status === '未対応');
+        return { first: f ? f.id : null, list: d.ops.feedback, count: d.items.length };
+      });
+    await page.locator('button[data-v="ops"]').click();
+    const before = await fb();
+    expect(before.first).toBeTruthy();
+    const target = before.first as string;
+    const act = page.locator(`[data-act="fbreq|${target}"]`);
+    await page.locator('[data-vt="otab|fb"]').click();
+    await act.click();
+    // 依頼は作らず入力画面へ。運用データも変えない
+    await expect(page.getByText('新しい道具がほしい').first()).toBeVisible();
+    const during = await fb();
+    expect(during.count).toBe(before.count);
+    expect(during.list.find((x) => x.id === target)?.status).toBe('未対応');
+    expect(during.list.find((x) => x.id === target)?.ref).toBeUndefined();
+
+    // 必須項目を書いて受け付けると、はじめて結び付く
+    const title = `利用者の声から ${Date.now()}`;
+    const created = await createViaUi(page, title);
+    await expect.poll(async () => (await fb()).list.find((x) => x.id === target)?.ref ?? null).toBe(created.id);
+    expect((await fb()).list.find((x) => x.id === target)?.status).toBe('依頼にした');
+  });
+
   test('状態変更ダイアログ: 失敗したら成功表示を出さず状態を戻す。再送で成功する', async ({ page }) => {
     await login(page);
     const title = `ダイアログ ${Date.now()}`;
