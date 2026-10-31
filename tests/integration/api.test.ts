@@ -61,6 +61,21 @@ async function moveToWait(auth: Awaited<ReturnType<typeof loginAs>>, id: string,
 }
 
 describe('道具と部署の組み合わせ', () => {
+  it('接続プールを超える同時の作成でも詰まらない', async () => {
+    const auth = await loginAs(app, 'desk');
+    const results = await Promise.all(
+      Array.from({ length: 25 }, (_, i) =>
+        app.inject({
+          method: 'POST',
+          url: '/api/requests',
+          headers: authHeaders(auth),
+          payload: sampleRequest({ title: `同時の作成 ${i}（作り物）` }),
+        }),
+      ),
+    );
+    expect(results.map((r) => r.statusCode)).toEqual(results.map(() => 201));
+  }, 30_000);
+
   it('作成後にマスタが変わっても、同じキーの再送は作成済みの依頼を返す', async () => {
     const auth = await loginAs(app, 'desk');
     const tool = (await query<{ id: string; dept_code: string }>('select id, dept_code from catalog_tool limit 1')).rows[0]!;
