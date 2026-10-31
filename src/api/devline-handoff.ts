@@ -338,6 +338,17 @@ async function reconcile(intent: IntentRow, deps: DevlineDeps): Promise<Reconcil
   return { found: match.found, scanComplete: complete, duplicates: match.duplicates };
 }
 
+/**
+ * 古い版の job を、監査の advisory lock より先に握る。cancel や worker は job → advisory の順なので、
+ * 逆順にするとデッドロックする（appendAuditTx の前に呼ぶ）。
+ */
+async function lockOlderJobs(client: PoolClient, intent: IntentRow): Promise<void> {
+  await client.query(
+    'select id from job where request_id=$1 and target_repo_id=$2 and order_version<$3 order by order_version for update',
+    [intent.request_id, intent.target_repo_id, intent.order_version],
+  );
+}
+
 /** 外部の Issue が存在する事実を記録する。job は依頼がまだ有効なときだけ作る。 */
 async function finalizeIntent(
   intent: IntentRow,
@@ -347,6 +358,7 @@ async function finalizeIntent(
   return withTransaction(async (client) => {
     const row = await getRequestRowForUpdate(client, intent.request_id);
     if (!row) throw Errors.notFound('依頼');
+    await lockOlderJobs(client, intent);
     const updated = await client.query(
       `update handoff_intent set state='succeeded', issue_no=$2, issue_url=$3, last_outcome=$4, last_error=null,
               reconciled_at=case when $5::boolean then $6::timestamptz else reconciled_at end, updated_at=$6::timestamptz
@@ -975,6 +987,7 @@ export async function handoffOrder(
       const job = await withTransaction(async (client) => {
         const locked = await getRequestRowForUpdate(client, intent.request_id);
         if (!locked) throw Errors.notFound('依頼');
+        await lockOlderJobs(client, intent);
         return ensureJobInTx(client, intent, locked, ctx.base());
       });
       return resultAfterFinalize(intent.id, job, false);
