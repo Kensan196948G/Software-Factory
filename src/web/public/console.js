@@ -4181,6 +4181,7 @@ const SF = (function () {
     rec.criteria = rec.criteria.map((x) => x.trim()).filter(Boolean);
     rec.updatedAt = now;
     const existing = t.serverId ? find(t.serverId) : null;
+    let verifying = false; // 結果が不明な送信を照合している最中か
     if (existing) {
       // 前回の送信で依頼はできている。作り直さず、同じ依頼を更新する
       rec.id = existing.id;
@@ -4195,6 +4196,7 @@ const SF = (function () {
       rec.createdAt = now;
       rec.status = 'received';
       rec.history = [{ at: now, by: d.applicant, role: me().l, action: '受付', note: '依頼を登録しました' }];
+      verifying = t.unknown;
       if (t.first) rec.__postAs = t.first;
       else t.first = JSON.parse(JSON.stringify(rec));
       // 再読込で同じ番号が一覧に現れていても、照合が済むまでは仮の番号で扱う（行を重ねない）
@@ -4214,7 +4216,9 @@ const SF = (function () {
         t.unknown = false;
         return submitFailed(d, res, ['依頼は ' + t.serverId + ' として登録済みです。もう一度送ると、この依頼を更新します']);
       }
-      if (failure.status >= 400 && failure.status < 500) t.unknown = false;
+      // 確定した拒否として扱えるのは初回の送信だけ。照合の再送が 4xx（セッション切れなど）でも、
+      // 最初の POST が届いた可能性は残るので、確定するまで同じキーのままにする
+      if (!verifying && failure.status >= 400 && failure.status < 500) t.unknown = false;
       return submitFailed(d, res);
     }
     // 受付番号はサーバの値を正とする（別の端末と番号が重なると、サーバが別の番号を振る）
@@ -4680,8 +4684,9 @@ const SF = (function () {
                 toast(total + ' 件を取り込みました');
                 return go('board');
               }
+              // 置き換えは成立していないので、運用データは元のまま。既存の依頼も取り消していない
+              S.data.ops = prevOps;
               if (saved) addAudit('JSONを取り込み', 'データ', total + '件中' + saved + '件');
-              else S.data.ops = prevOps;
               persist();
               toast(
                 total +
@@ -4689,7 +4694,8 @@ const SF = (function () {
                   saved +
                   ' 件を保存しました。' +
                   (rows ? rows + ' 件は保存できませんでした。' : '') +
-                  (others ? '既存の依頼 ' + others + ' 件は取り消せませんでした。' : ''),
+                  (others ? 'ほかに ' + others + ' 件の保存に失敗しました。' : '') +
+                  '既存の依頼は取り消していません。',
                 true,
               );
               if (saved) go('board');

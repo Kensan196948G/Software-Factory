@@ -428,11 +428,17 @@
       results.push({ it, ctx, failure });
     }
 
-    // コンソールから消えた依頼は取消にする
+    // コンソールから消えた依頼は取消にする。取消はサーバで戻せないので、同じ同期に 1 件でも失敗があれば行わず、
+    // 消えた依頼を画面へ戻す（取り込みなどの全件置換は、全部の保存が成功したときだけ成立する）。
     const present = new Set(results.map((r) => r.ctx.id));
     const restore = [];
     for (const [id, s] of [...base.entries()]) {
-      if (present.has(id) || ['done', 'hold', 'cancel'].includes(s.status)) continue;
+      if (present.has(id)) continue;
+      if (failures.length) {
+        if (s.status !== 'cancel') restore.push(id);
+        continue;
+      }
+      if (['done', 'hold', 'cancel'].includes(s.status)) continue;
       const ctx = {
         localId: id,
         id,
@@ -487,7 +493,7 @@
         changed = true;
       }
     }
-    for (const id of Object.values(ids)) {
+    for (const id of [...Object.values(ids), ...restore]) {
       const n = Number(String(id).slice(-4));
       if (Number.isFinite(n) && n > (Number(data.seq) || 0)) data.seq = n;
     }
