@@ -31,6 +31,13 @@
     "smoke": "node scripts/local-run.mjs tsx scripts/smoke.ts",
     "reminders": "node scripts/local-run.mjs tsx scripts/reminders.ts",
     "audit:archive": "node scripts/local-run.mjs tsx scripts/audit-archive.ts",
+    "ops:backup": "node scripts/ops/with-env.mjs scripts/ops/backup.sh",
+    "ops:restore-drill": "node scripts/ops/with-env.mjs scripts/ops/restore-drill.sh",
+    "ops:release": "bash scripts/ops/release.sh",
+    "ops:rollback": "bash scripts/ops/rollback.sh",
+    "ops:reminders": "node scripts/ops/with-env.mjs tsx scripts/reminders.ts",
+    "ops:audit:archive": "node scripts/ops/with-env.mjs tsx scripts/audit-archive.ts",
+    "ops:db:verify": "node scripts/ops/with-env.mjs tsx scripts/db.ts verify",
     "verify:all": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run build",
     "bootstrap:local": "node scripts/bootstrap-local.mjs"
   },

@@ -35,6 +35,7 @@ const local = existsSync(resolve(dir, 'local.json')) ? JSON.parse(readFileSync(r
 const lines = [
   '# みらいSF 受付ステーション Preview 環境（0600・commit しない）',
   'NODE_ENV=production',
+  'APP_ENV=staging',
   'PORT=8782',
   'HOST=127.0.0.1',
   'APP_BASE_URL=https://sf.mirai-dx-platform.com',
