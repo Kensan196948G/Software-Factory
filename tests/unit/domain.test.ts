@@ -194,7 +194,14 @@ describe('承認前チェックと承認の検証', () => {
   });
 
   it('△があるときは確認チェックが必要', () => {
-    const r = validateApproval({ ...base, criteria: ['使いやすい'], decided: 'g', checklistAcknowledged: false, redAcknowledged: false, reason: '' });
+    const r = validateApproval({
+      ...base,
+      criteria: ['使いやすい'],
+      decided: 'g',
+      checklistAcknowledged: false,
+      redAcknowledged: false,
+      reason: '',
+    });
     expect(r.ok).toBe(false);
     expect(r.errors.join()).toContain('承認前チェック');
   });
@@ -225,7 +232,14 @@ describe('承認前チェックと承認の検証', () => {
     });
     expect(r.ok).toBe(false);
     expect(r.errors.join()).toContain('ゆるい色');
-    const ok = validateApproval({ ...base, suggested: 'y', decided: 'g', checklistAcknowledged: true, redAcknowledged: false, reason: '表示だけのため' });
+    const ok = validateApproval({
+      ...base,
+      suggested: 'y',
+      decided: 'g',
+      checklistAcknowledged: true,
+      redAcknowledged: false,
+      reason: '表示だけのため',
+    });
     expect(ok.ok).toBe(true);
   });
 });

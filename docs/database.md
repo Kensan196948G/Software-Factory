@@ -4,36 +4,36 @@
 
 ## 1. 接続
 
-| 用途 | 接続 | 備考 |
-|---|---|---|
-| アプリ | `postgresql:///mirai_sf_dev?host=/var/run/postgresql` | ローカルunix socket（peer認証）。**インターネットへ公開しない** |
-| migration | 同上（`MIGRATION_DATABASE_URL`） | 破壊的変更は行わない・additiveのみ |
-| 結合テスト | `mirai_sf_test` | テスト開始時に `public` スキーマを作り直す（`_test` のみ） |
-| Preview | `mirai_sf`（任意） | 必要なら `DATABASE_URL` を切替。既定は開発DB |
+| 用途       | 接続                                                  | 備考                                                            |
+| ---------- | ----------------------------------------------------- | --------------------------------------------------------------- |
+| アプリ     | `postgresql:///mirai_sf_dev?host=/var/run/postgresql` | ローカルunix socket（peer認証）。**インターネットへ公開しない** |
+| migration  | 同上（`MIGRATION_DATABASE_URL`）                      | 破壊的変更は行わない・additiveのみ                              |
+| 結合テスト | `mirai_sf_test`                                       | テスト開始時に `public` スキーマを作り直す（`_test` のみ）      |
+| Preview    | `mirai_sf`（任意）                                    | 必要なら `DATABASE_URL` を切替。既定は開発DB                    |
 
 ロール: ローカルは OS ユーザー `kensan`（開発用）。CIは `postgres`。本番移行時は専用の最小権限ロールを作る（Backlog）。
 
 ## 2. テーブル
 
-| テーブル | 仕様ID | 内容 |
-|---|---|---|
-| `department` | ENT-05 | 19部署（code, name, short_name, role_desc, sort_order） |
-| `catalog_tool` | ENT-06 | 118道具（id: keiei-01, dept_code, signal g/y/r, seed_candidate） |
-| `app_user` / `user_role` | — | 利用者と役割（requester/desk/approver） |
-| `session` | — | セッション（トークンはSHA-256で保存、acting_role, csrf_token, expires_at） |
-| `request` | ENT-01 | 依頼。受付番号（REQ-YYYY-NNNN）・状態12・信号・注文書版・論理削除 |
-| `request_counter` | — | 年ごとの採番（トランザクション内で原子的に増加） |
-| `request_history` | ENT-02 | 追記型の変更履歴（受付・内容を編集・状態を「〜」に変更） |
-| `comment` | ENT-03 | コメント（差戻し理由も残す） |
-| `approval` | ENT-07 | 承認・差戻し・見送りの記録（決定色・候補色・チェック結果・版） |
-| `attachment` | ENT-04 | 添付のメタ情報のみ（name, size, sha256） |
-| `draft` | 5-6 | 旧・下書き（利用者ごとに1件。0006 で `draft_item` へ引き継ぎ済み） |
-| `draft_item` | 5-6 | 下書き（利用者ごとに複数件。本人のみ・新しい順） |
-| `ops_state` | — | 運用・DevOps・SecOps の画面状態（id=1 の単一JSONB・版番号） |
-| `mail_outbox` | — | 承認依頼メールの送信キュー（依頼の状態遷移と同じトランザクションで積む。`sending` で確保して二重送信を防ぎ、失敗しても業務は止めない） |
-| `audit_log` | ENT-11 | 監査ログ（追記のみ・ハッシュ連鎖・UPDATE/DELETEをトリガで拒否） |
-| `idempotency` | — | 操作キー（二重登録の防止） |
-| `schema_migrations` | — | 適用済みmigration |
+| テーブル                 | 仕様ID | 内容                                                                                                                                   |
+| ------------------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `department`             | ENT-05 | 19部署（code, name, short_name, role_desc, sort_order）                                                                                |
+| `catalog_tool`           | ENT-06 | 118道具（id: keiei-01, dept_code, signal g/y/r, seed_candidate）                                                                       |
+| `app_user` / `user_role` | —      | 利用者と役割（requester/desk/approver）                                                                                                |
+| `session`                | —      | セッション（トークンはSHA-256で保存、acting_role, csrf_token, expires_at）                                                             |
+| `request`                | ENT-01 | 依頼。受付番号（REQ-YYYY-NNNN）・状態12・信号・注文書版・論理削除                                                                      |
+| `request_counter`        | —      | 年ごとの採番（トランザクション内で原子的に増加）                                                                                       |
+| `request_history`        | ENT-02 | 追記型の変更履歴（受付・内容を編集・状態を「〜」に変更）                                                                               |
+| `comment`                | ENT-03 | コメント（差戻し理由も残す）                                                                                                           |
+| `approval`               | ENT-07 | 承認・差戻し・見送りの記録（決定色・候補色・チェック結果・版）                                                                         |
+| `attachment`             | ENT-04 | 添付のメタ情報のみ（name, size, sha256）                                                                                               |
+| `draft`                  | 5-6    | 旧・下書き（利用者ごとに1件。0006 で `draft_item` へ引き継ぎ済み）                                                                     |
+| `draft_item`             | 5-6    | 下書き（利用者ごとに複数件。本人のみ・新しい順）                                                                                       |
+| `ops_state`              | —      | 運用・DevOps・SecOps の画面状態（id=1 の単一JSONB・版番号）                                                                            |
+| `mail_outbox`            | —      | 承認依頼メールの送信キュー（依頼の状態遷移と同じトランザクションで積む。`sending` で確保して二重送信を防ぎ、失敗しても業務は止めない） |
+| `audit_log`              | ENT-11 | 監査ログ（追記のみ・ハッシュ連鎖・UPDATE/DELETEをトリガで拒否）                                                                        |
+| `idempotency`            | —      | 操作キー（二重登録の防止）                                                                                                             |
+| `schema_migrations`      | —      | 適用済みmigration                                                                                                                      |
 
 ## 3. 制約（主なもの）
 
@@ -73,14 +73,14 @@ migrationはadditiveのみ。破壊的変更は行わない。障害時はバッ
 
 ### 追加migration（2026-10-28）
 
-| ファイル | 内容 |
-|---|---|
-| `0002_ops_state.sql` | `ops_state`（id=1 の単一JSONB・版番号） |
-| `0003_mail_outbox.sql` | `mail_outbox` と索引（承認依頼メールの送信キュー） |
+| ファイル                     | 内容                                                                                  |
+| ---------------------------- | ------------------------------------------------------------------------------------- |
+| `0002_ops_state.sql`         | `ops_state`（id=1 の単一JSONB・版番号）                                               |
+| `0003_mail_outbox.sql`       | `mail_outbox` と索引（承認依頼メールの送信キュー）                                    |
 | `0004_mail_outbox_claim.sql` | `sending` 状態・`claimed_at`・「送信済みなら `sent_at` 必須」の制約（二重送信の防止） |
-| `0005_mail_reminder.sql` | `kind='reminder'`・`reminder_date`・1日1回の unique 索引（滞留通知） |
-| `0006_drafts_multi.sql` | `draft_item`（複数下書き）と旧 `draft` からの引き継ぎ |
-| `0007_mail_retry.sql` | `next_attempt_at`（失敗時の指数バックオフ再送）と索引 |
+| `0005_mail_reminder.sql`     | `kind='reminder'`・`reminder_date`・1日1回の unique 索引（滞留通知）                  |
+| `0006_drafts_multi.sql`      | `draft_item`（複数下書き）と旧 `draft` からの引き継ぎ                                 |
+| `0007_mail_retry.sql`        | `next_attempt_at`（失敗時の指数バックオフ再送）と索引                                 |
 
 ## 5. インデックス
 

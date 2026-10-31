@@ -101,7 +101,9 @@ export function formatOrderDate(iso: string): string {
 function formatWishDate(value: string): string {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
-  return new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+  return new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(
+    d,
+  );
 }
 
 /** 注文書で使う「この道具がすること」の説明（参考）。 */

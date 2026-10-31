@@ -92,10 +92,13 @@ export async function login(
   const csrf = randomBytes(24).toString('base64url');
   const expiresAt = new Date(Date.now() + config.sessionTtlHours * 3600_000);
 
-  await query(
-    `insert into session (id, user_id, acting_role, csrf_token, expires_at) values ($1,$2,$3,$4,$5)`,
-    [hashToken(token), row.id, actingRole, csrf, expiresAt],
-  );
+  await query(`insert into session (id, user_id, acting_role, csrf_token, expires_at) values ($1,$2,$3,$4,$5)`, [
+    hashToken(token),
+    row.id,
+    actingRole,
+    csrf,
+    expiresAt,
+  ]);
   await appendAudit({
     action: 'login',
     targetType: 'session',
@@ -217,10 +220,13 @@ export async function accessLogin(
   const csrf = randomBytes(24).toString('base64url');
   const expiresAt = new Date(Date.now() + config.sessionTtlHours * 3600_000);
   const sessionId = hashToken(token);
-  await query(
-    `insert into session (id, user_id, acting_role, csrf_token, expires_at) values ($1,$2,$3,$4,$5)`,
-    [sessionId, user.id, actingRole, csrf, expiresAt],
-  );
+  await query(`insert into session (id, user_id, acting_role, csrf_token, expires_at) values ($1,$2,$3,$4,$5)`, [
+    sessionId,
+    user.id,
+    actingRole,
+    csrf,
+    expiresAt,
+  ]);
   await appendAudit({
     action: 'login_access',
     targetType: 'session',

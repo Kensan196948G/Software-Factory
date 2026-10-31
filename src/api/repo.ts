@@ -1,11 +1,6 @@
 import type { PoolClient } from 'pg';
 import { many, one, query } from './db.js';
-import type {
-  CommentEntry,
-  DepartmentRow,
-  HistoryEntry,
-  RequestRecord,
-} from '../shared/types.js';
+import type { CommentEntry, DepartmentRow, HistoryEntry, RequestRecord } from '../shared/types.js';
 import type { FrequencyKey, Kind, Party, Role, Signal, Status, Tailoring } from '../shared/domain.js';
 
 export interface RequestRow {
@@ -170,10 +165,7 @@ export async function listRequests(filters: ListFilters): Promise<{ rows: Reques
 }
 
 export async function getRequestRow(id: string, includeDeleted = true): Promise<RequestRow | null> {
-  const result = await query<RequestRow>(
-    `${SELECT_BASE} where r.id = $1 ${includeDeleted ? '' : 'and r.deleted = false'}`,
-    [id],
-  );
+  const result = await query<RequestRow>(`${SELECT_BASE} where r.id = $1 ${includeDeleted ? '' : 'and r.deleted = false'}`, [id]);
   return result.rows[0] ?? null;
 }
 

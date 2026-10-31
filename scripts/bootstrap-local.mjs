@@ -48,7 +48,8 @@ const config = {
   REQUIRE_ORIGIN_SECRET: '0',
   TRUST_PROXY: '1',
   SEED_ADMIN_EMAIL: 'kensan1969@gmail.com',
-  SEED_ADMIN_PASSWORD: process.argv.includes('--new-password') || !current.SEED_ADMIN_PASSWORD ? `MiraiSF-${token(9)}` : current.SEED_ADMIN_PASSWORD,
+  SEED_ADMIN_PASSWORD:
+    process.argv.includes('--new-password') || !current.SEED_ADMIN_PASSWORD ? `MiraiSF-${token(9)}` : current.SEED_ADMIN_PASSWORD,
   SEED_ADMIN_NAME: '管理者',
   SEED_ADMIN_DEPT: 'dx',
   ALLOW_SELF_APPROVAL: '1',

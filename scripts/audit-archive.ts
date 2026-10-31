@@ -8,7 +8,16 @@
  * - アーカイブは世代（AUDIT_RETENTION_DAYS、既定365日）を過ぎたら消す。
  * - 実行の前後でハッシュ連鎖を検証し、壊れていれば終了コード2で止まる。
  */
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { createGzip } from 'node:zlib';
 import { homedir } from 'node:os';
@@ -29,10 +38,9 @@ if (!before.ok) {
 
 const state = existsSync(statePath) ? (JSON.parse(readFileSync(statePath, 'utf8')) as { lastId?: number }) : {};
 const lastId = Number(state.lastId ?? 0);
-const rows = await many<{ id: number; at: Date; hash: string }>(
-  'select id, at, hash from audit_log where id > $1 order by id',
-  [lastId],
-);
+const rows = await many<{ id: number; at: Date; hash: string }>('select id, at, hash from audit_log where id > $1 order by id', [
+  lastId,
+]);
 
 if (rows.length) {
   const day = new Date().toISOString().slice(0, 10);

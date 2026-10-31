@@ -107,12 +107,13 @@ describe('注文書 YAML', () => {
 
 describe('CSV / JSON 出力', () => {
   it('CSVはBOM・CRLF・全セル引用・11列', () => {
-    const csv = buildCsv([
-      { request: record, suggested: 'y', deptName: '現場（海）', measure: measureOf(record) },
-    ]);
+    const csv = buildCsv([{ request: record, suggested: 'y', deptName: '現場（海）', measure: measureOf(record) }]);
     expect(csv.startsWith('\uFEFF')).toBe(true);
     expect(csv).toContain('\r\n');
-    const lines = csv.replace(/^\uFEFF/, '').trimEnd().split('\r\n');
+    const lines = csv
+      .replace(/^\uFEFF/, '')
+      .trimEnd()
+      .split('\r\n');
     expect(lines).toHaveLength(2);
     expect(lines[0]).toBe(CSV_HEADERS.map((h) => `"${h}"`).join(','));
     expect(lines[1]).toContain('"REQ-2026-0001"');
@@ -120,9 +121,7 @@ describe('CSV / JSON 出力', () => {
   });
 
   it('CSVのセル内の二重引用符は2つ重ねる', () => {
-    const csv = buildCsv([
-      { request: { ...record, title: 'A "B" C' }, suggested: 'g', deptName: 'd', measure: 0 },
-    ]);
+    const csv = buildCsv([{ request: { ...record, title: 'A "B" C' }, suggested: 'g', deptName: 'd', measure: 0 }]);
     expect(csv).toContain('"A ""B"" C"');
   });
 

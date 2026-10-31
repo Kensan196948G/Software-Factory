@@ -86,7 +86,10 @@ async function main(): Promise<void> {
       });
       assert(r.status === 200, `status=${r.status} ${JSON.stringify(r.body?.error ?? '')}`);
       const setCookie = r.headers.get('set-cookie') ?? '';
-      cookie = setCookie.split(',').map((c) => c.split(';')[0]).join('; ');
+      cookie = setCookie
+        .split(',')
+        .map((c) => c.split(';')[0])
+        .join('; ');
       csrf = r.body.csrf;
       return `user=${r.body.user.displayName} roles=${r.body.user.roles.join(',')}`;
     });

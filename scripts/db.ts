@@ -48,8 +48,12 @@ async function migrate(): Promise<void> {
     .filter((f) => f.endsWith('.sql'))
     .sort();
   await withClient('migration', async (client) => {
-    await client.query(`create table if not exists schema_migrations (version text primary key, applied_at timestamptz not null default now())`);
-    const applied = new Set((await client.query<{ version: string }>('select version from schema_migrations')).rows.map((r) => r.version));
+    await client.query(
+      `create table if not exists schema_migrations (version text primary key, applied_at timestamptz not null default now())`,
+    );
+    const applied = new Set(
+      (await client.query<{ version: string }>('select version from schema_migrations')).rows.map((r) => r.version),
+    );
     for (const file of files) {
       if (applied.has(file)) {
         console.log(`skip  ${file}`);
@@ -134,10 +138,16 @@ async function verify(): Promise<void> {
     const dept = await client.query<{ count: number }>('select count(*)::int as count from department');
     add('部署 19', dept.rows[0]?.count === 19, `${dept.rows[0]?.count} 件`);
 
-    const tools = await client.query<{ signal: string; count: number }>('select signal, count(*)::int as count from catalog_tool group by signal');
+    const tools = await client.query<{ signal: string; count: number }>(
+      'select signal, count(*)::int as count from catalog_tool group by signal',
+    );
     const by = Object.fromEntries(tools.rows.map((r) => [r.signal, r.count]));
     const total = (by.g ?? 0) + (by.y ?? 0) + (by.r ?? 0);
-    add('道具 118（青52/黄47/赤19）', total === 118 && by.g === 52 && by.y === 47 && by.r === 19, `計${total} 青${by.g} 黄${by.y} 赤${by.r}`);
+    add(
+      '道具 118（青52/黄47/赤19）',
+      total === 118 && by.g === 52 && by.y === 47 && by.r === 19,
+      `計${total} 青${by.g} 黄${by.y} 赤${by.r}`,
+    );
 
     const users = await client.query<{ count: number }>('select count(*)::int as count from app_user');
     add('利用者 1 以上', (users.rows[0]?.count ?? 0) >= 1, `${users.rows[0]?.count} 件`);
@@ -150,14 +160,16 @@ async function verify(): Promise<void> {
     );
     add('部署外部キー整合', (orphan.rows[0]?.count ?? 0) === 0, `不整合 ${orphan.rows[0]?.count} 件`);
 
-    const seq = await client.query<{ year: number; last_seq: number }>('select year, last_seq from request_counter order by year');
-    const maxByYear = await client.query<{ year: number; max_seq: number }>('select year, max(seq)::int as max_seq from request group by year');
+    const seq = await client.query<{ year: number; last_seq: number }>(
+      'select year, last_seq from request_counter order by year',
+    );
+    const maxByYear = await client.query<{ year: number; max_seq: number }>(
+      'select year, max(seq)::int as max_seq from request group by year',
+    );
     const counterOk = maxByYear.rows.every((row) => (seq.rows.find((s) => s.year === row.year)?.last_seq ?? 0) >= row.max_seq);
     add('採番カウンタ', counterOk, JSON.stringify(seq.rows));
 
-    const gap = await client.query<{ count: number }>(
-      `select count(*)::int as count from request where seq > 9999 or seq < 1`,
-    );
+    const gap = await client.query<{ count: number }>(`select count(*)::int as count from request where seq > 9999 or seq < 1`);
     add('採番の範囲', (gap.rows[0]?.count ?? 0) === 0, `範囲外 ${gap.rows[0]?.count} 件`);
 
     const chain = await verifyAuditChain();
@@ -203,7 +215,9 @@ async function main(): Promise<void> {
       });
       break;
     case 'rollback':
-      console.log('マイグレーションは additive のみです。ロールバックはバックアップからの復元、または forward fix で行います（docs/07-deployment.md 参照）。');
+      console.log(
+        'マイグレーションは additive のみです。ロールバックはバックアップからの復元、または forward fix で行います（docs/07-deployment.md 参照）。',
+      );
       break;
     default:
       console.log('使い方: migrate | seed | reset --yes | verify | rollback');

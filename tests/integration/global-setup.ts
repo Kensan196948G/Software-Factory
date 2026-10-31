@@ -25,7 +25,9 @@ export default async function setup(): Promise<void> {
     await client.query('create schema public');
     await client.query('grant usage on schema public to public');
     const dir = resolve(process.cwd(), 'db/migrations');
-    for (const file of readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()) {
+    for (const file of readdirSync(dir)
+      .filter((f) => f.endsWith('.sql'))
+      .sort()) {
       await client.query(readFileSync(resolve(dir, file), 'utf8'));
     }
   } finally {

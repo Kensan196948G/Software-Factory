@@ -134,7 +134,10 @@ describe('送信経路（外部サービスを呼ばない）', () => {
     const okScript = join(dir, 'sendmail-ok.sh');
     writeFileSync(okScript, '#!/bin/sh\ncat > /dev/null\nexit 0\n');
     chmodSync(okScript, 0o755);
-    const ok = await deliverMail({ to: 'approver@example.com', subject: 's', body: 'b' }, { mode: 'sendmail', sendmailPath: okScript });
+    const ok = await deliverMail(
+      { to: 'approver@example.com', subject: 's', body: 'b' },
+      { mode: 'sendmail', sendmailPath: okScript },
+    );
     expect(ok.ok).toBe(true);
 
     const failScript = join(dir, 'sendmail-fail.sh');
@@ -155,7 +158,6 @@ describe('送信経路（外部サービスを呼ばない）', () => {
   });
 });
 
-
 describe('滞留通知メール', () => {
   it('滞留日数・状態・リンクを載せる', () => {
     const mail = renderStallReminder({
@@ -174,7 +176,6 @@ describe('滞留通知メール', () => {
     expect(mail.body).toContain('1日1回');
   });
 });
-
 
 /** テスト用の最小SMTPサーバ（DATA をそのまま集める）。 */
 async function startFakeSmtp(): Promise<{ port: number; lines: string[]; close: () => Promise<void> }> {

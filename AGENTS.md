@@ -48,14 +48,14 @@ pnpm db:verify
 
 ## 6. 環境
 
-| 項目 | 値 |
-|---|---|
-| Node | 22 以上 |
-| PostgreSQL | 16（`mirai_sf_dev` / `mirai_sf_test`） |
-| API | `127.0.0.1:8781`（`pnpm dev:api`） |
-| Web | `127.0.0.1:5178`（`pnpm dev:web`、`/api` を 8781 へプロキシ） |
-| Preview | `https://sf.mirai-dx-platform.com`（Cloudflare Tunnel + Access）→ `127.0.0.1:8782` |
-| 設定 | `~/.config/mirai-sf/local.json`（`node scripts/bootstrap-local.mjs` で生成） |
+| 項目       | 値                                                                                 |
+| ---------- | ---------------------------------------------------------------------------------- |
+| Node       | 22 以上                                                                            |
+| PostgreSQL | 16（`mirai_sf_dev` / `mirai_sf_test`）                                             |
+| API        | `127.0.0.1:8781`（`pnpm dev:api`）                                                 |
+| Web        | `127.0.0.1:5178`（`pnpm dev:web`、`/api` を 8781 へプロキシ）                      |
+| Preview    | `https://sf.mirai-dx-platform.com`（Cloudflare Tunnel + Access）→ `127.0.0.1:8782` |
+| 設定       | `~/.config/mirai-sf/local.json`（`node scripts/bootstrap-local.mjs` で生成）       |
 
 ## 7. リポジトリ
 

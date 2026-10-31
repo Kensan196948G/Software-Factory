@@ -51,17 +51,7 @@ export const STATUS_LABEL: Record<Status, string> = {
 };
 
 /** 正常系の並び（ボードの列）。差戻し・見送り・取消は別レーンに出す。 */
-export const MAIN_FLOW: Status[] = [
-  'received',
-  'review',
-  'wait',
-  'approved',
-  'dev',
-  'verify',
-  'field',
-  'release_wait',
-  'done',
-];
+export const MAIN_FLOW: Status[] = ['received', 'review', 'wait', 'approved', 'dev', 'verify', 'field', 'release_wait', 'done'];
 
 /** 次の状態（「→ 次へ」の行き先）。無ければ null。 */
 export const NEXT_STATUS: Partial<Record<Status, Status>> = {
@@ -332,9 +322,7 @@ export function checkCriteria(raw: string): CriteriaCheck {
     };
   }
 
-  const found = [...VAGUE_WORDS]
-    .filter((w) => text.includes(w))
-    .sort((a, b) => b.length - a.length);
+  const found = [...VAGUE_WORDS].filter((w) => text.includes(w)).sort((a, b) => b.length - a.length);
 
   if (found.length > 0) {
     return {
@@ -561,14 +549,26 @@ export function roleCanTransition(
     if (to === 'received' && from === 'back') return { allowed: true };
     if (to === 'hold' && (from === 'received' || from === 'back')) return { allowed: true };
     if (to === 'approved' || to === 'done') {
-      return { allowed: false, reason: `「${STATUS_LABEL[to]}」にできるのは承認者だけです（最後は人が決めます）`, who: 'approver' };
+      return {
+        allowed: false,
+        reason: `「${STATUS_LABEL[to]}」にできるのは承認者だけです（最後は人が決めます）`,
+        who: 'approver',
+      };
     }
-    return { allowed: false, reason: '依頼者が動かせるのは「差戻し→再提出」と「取り下げ」だけです。進め方は受付担当が決めます', who: 'desk' };
+    return {
+      allowed: false,
+      reason: '依頼者が動かせるのは「差戻し→再提出」と「取り下げ」だけです。進め方は受付担当が決めます',
+      who: 'desk',
+    };
   }
 
   if (to === 'approved' || to === 'done') {
     if (actor.role !== 'approver') {
-      return { allowed: false, reason: `「${STATUS_LABEL[to]}」にできるのは承認者だけです（最後は人が決めます）`, who: 'approver' };
+      return {
+        allowed: false,
+        reason: `「${STATUS_LABEL[to]}」にできるのは承認者だけです（最後は人が決めます）`,
+        who: 'approver',
+      };
     }
     // 承認待ち → 承認済み は、承認者本人（または承認者が空）の依頼だけ。
     if (from === 'wait' && request.approverUserId && request.approverUserId !== actor.userId) {
@@ -690,7 +690,12 @@ export function preApprovalChecklist(input: ChecklistInput): ChecklistItem[] {
   const bad = filled.filter((c) => checkCriteria(c).kind !== 'ok');
 
   if (filled.length === 0) {
-    items.push({ key: 'crit', status: 'warn', visible: true, message: '合格の条件が1つもありません。検査機で合否を決められません' });
+    items.push({
+      key: 'crit',
+      status: 'warn',
+      visible: true,
+      message: '合格の条件が1つもありません。検査機で合否を決められません',
+    });
   } else if (bad.length > 0) {
     const first = checkCriteria(bad[0] as string);
     items.push({
@@ -700,11 +705,21 @@ export function preApprovalChecklist(input: ChecklistInput): ChecklistItem[] {
       message: `合格の条件 ${filled.length} 件のうち ${bad.length} 件が検査しにくい書き方です（例：${first.message}）`,
     });
   } else {
-    items.push({ key: 'crit', status: 'ok', visible: true, message: `合格の条件 ${filled.length} 件は、すべて検査で確かめられる書き方です` });
+    items.push({
+      key: 'crit',
+      status: 'ok',
+      visible: true,
+      message: `合格の条件 ${filled.length} 件は、すべて検査で確かめられる書き方です`,
+    });
   }
 
   if (input.outOfScope.map((s) => s.trim()).filter(Boolean).length === 0) {
-    items.push({ key: 'out', status: 'warn', visible: true, message: '「今回は作らない」が空です。作りすぎ・手戻りのおそれがあります' });
+    items.push({
+      key: 'out',
+      status: 'warn',
+      visible: true,
+      message: '「今回は作らない」が空です。作りすぎ・手戻りのおそれがあります',
+    });
   } else {
     items.push({ key: 'out', status: 'ok', visible: true, message: '「今回は作らない」が書かれています' });
   }
@@ -735,14 +750,24 @@ export function preApprovalChecklist(input: ChecklistInput): ChecklistItem[] {
   const safety = input.approvals.some((a) => (SAFETY_APPROVALS as readonly string[]).includes(a));
   items.push(
     safety
-      ? { key: 'safety', status: 'warn', visible: false, message: '安全・品質／作業船の運航にかかわります。判定・出航・作業中止を道具に決めさせない作りか確認' }
+      ? {
+          key: 'safety',
+          status: 'warn',
+          visible: false,
+          message: '安全・品質／作業船の運航にかかわります。判定・出航・作業中止を道具に決めさせない作りか確認',
+        }
       : { key: 'safety', status: 'ok', visible: false, message: '' },
   );
 
   const red = input.decides === 'r' || input.suggested === 'r';
   items.push(
     red
-      ? { key: 'red', status: 'warn', visible: false, message: '赤信号の仕事（合否・金額・契約・処遇・安全を決める）が含まれます' }
+      ? {
+          key: 'red',
+          status: 'warn',
+          visible: false,
+          message: '赤信号の仕事（合否・金額・契約・処遇・安全を決める）が含まれます',
+        }
       : { key: 'red', status: 'ok', visible: false, message: '' },
   );
 

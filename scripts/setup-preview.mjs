@@ -30,9 +30,7 @@ if (!githubToken) {
   }
 }
 
-const local = existsSync(resolve(dir, 'local.json'))
-  ? JSON.parse(readFileSync(resolve(dir, 'local.json'), 'utf8'))
-  : {};
+const local = existsSync(resolve(dir, 'local.json')) ? JSON.parse(readFileSync(resolve(dir, 'local.json'), 'utf8')) : {};
 
 const lines = [
   '# みらいSF 受付ステーション Preview 環境（0600・commit しない）',

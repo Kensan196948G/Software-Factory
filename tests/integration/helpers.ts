@@ -70,11 +70,7 @@ export interface Authed {
   user: { id: string };
 }
 
-async function login(
-  app: FastifyInstance,
-  user: { email: string; password: string },
-  role?: string,
-): Promise<Authed> {
+async function login(app: FastifyInstance, user: { email: string; password: string }, role?: string): Promise<Authed> {
   const res = await app.inject({
     method: 'POST',
     url: '/api/auth/login',

@@ -28,7 +28,9 @@ function canonical(value: unknown): string {
 }
 
 function hashEntry(prevHash: string | null, payload: unknown): string {
-  return createHash('sha256').update(`${prevHash ?? ''}|${canonical(payload)}`).digest('hex');
+  return createHash('sha256')
+    .update(`${prevHash ?? ''}|${canonical(payload)}`)
+    .digest('hex');
 }
 
 /**

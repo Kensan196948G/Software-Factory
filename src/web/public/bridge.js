@@ -37,9 +37,21 @@
   const PARTY_LABEL = { internal: '社内のみ', partner: '協力会社も使う', client: '発注者も見る' };
   const PARTY_CODE = Object.fromEntries(Object.entries(PARTY_LABEL).map(([k, v]) => [v, k]));
   const ROLE_LABEL = { requester: '依頼者', desk: '受付担当', approver: '承認者', system: 'システム' };
-  const ROLE_CODE = { requester: 'requester', desk: 'desk', approver: 'approver', ops: 'approver', sec: 'approver', admin: 'approver', auditor: 'approver' };
+  const ROLE_CODE = {
+    requester: 'requester',
+    desk: 'desk',
+    approver: 'approver',
+    ops: 'approver',
+    sec: 'approver',
+    admin: 'approver',
+    auditor: 'approver',
+  };
 
-  const lines = (v) => String(v || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+  const lines = (v) =>
+    String(v || '')
+      .split(/\r?\n/)
+      .map((x) => x.trim())
+      .filter(Boolean);
   const num = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
 
   function toolRefOf(toolId) {
@@ -88,7 +100,13 @@
       approver: r.approver,
       status: r.status,
       signalFinal: r.signalDecided || '',
-      history: (r.history || []).map((h) => ({ at: h.at, by: h.actorName, role: ROLE_LABEL[h.role] || h.role, action: h.action, note: h.note || '' })),
+      history: (r.history || []).map((h) => ({
+        at: h.at,
+        by: h.actorName,
+        role: ROLE_LABEL[h.role] || h.role,
+        action: h.action,
+        note: h.note || '',
+      })),
       comments: (r.comments || []).map((c) => ({ at: c.at, by: c.by, text: c.text })),
       // 内部用（画面には出さない）
       __v: r.version,
@@ -208,11 +226,18 @@
     });
     if (res.status === 403 && !path.startsWith('/api/auth/login')) {
       // セッションのCSRFが変わった可能性があるため1回だけ取り直す
-      const c = await fetch('/api/auth/csrf', { credentials: 'same-origin' }).then((r) => r.json()).catch(() => null);
+      const c = await fetch('/api/auth/csrf', { credentials: 'same-origin' })
+        .then((r) => r.json())
+        .catch(() => null);
       if (c && c.csrf) {
         csrf = c.csrf;
         const retryHeaders = { ...headers, 'x-csrf-token': csrf };
-        const retry = await fetch(path, { method, credentials: 'same-origin', headers: retryHeaders, body: body === undefined ? undefined : JSON.stringify(body) });
+        const retry = await fetch(path, {
+          method,
+          credentials: 'same-origin',
+          headers: retryHeaders,
+          body: body === undefined ? undefined : JSON.stringify(body),
+        });
         if (retry.ok) return retry.status === 204 ? null : retry.json();
       }
     }

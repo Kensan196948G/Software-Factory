@@ -46,10 +46,7 @@ beforeEach(async () => {
   await truncateBusiness();
 });
 
-async function createRequestAs(
-  auth: Awaited<ReturnType<typeof loginAs>>,
-  overrides: Record<string, unknown> = {},
-) {
+async function createRequestAs(auth: Awaited<ReturnType<typeof loginAs>>, overrides: Record<string, unknown> = {}) {
   const res = await app.inject({
     method: 'POST',
     url: '/api/requests',

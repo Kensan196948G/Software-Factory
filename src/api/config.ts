@@ -120,7 +120,10 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
       .map((e) => e.trim().toLowerCase())
       .filter(Boolean),
     accessAllowedDomain: (pick(file, 'ACCESS_ALLOWED_DOMAIN') ?? '').trim().toLowerCase(),
-    accessServiceTokenIds: (pick(file, 'ACCESS_SERVICE_TOKEN_IDS') ?? '').split(',').map((v) => v.trim()).filter(Boolean),
+    accessServiceTokenIds: (pick(file, 'ACCESS_SERVICE_TOKEN_IDS') ?? '')
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean),
     githubToken: pick(file, 'GITHUB_TOKEN') ?? '',
     githubRepo: pick(file, 'GITHUB_REPO') ?? 'Kensan196948G/Software-Factory',
     mailMode: mailModeOf(pick(file, 'MAIL_MODE'), isProduction),
