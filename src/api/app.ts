@@ -167,7 +167,7 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
       app: 'mirai-sf-intake',
       version: config.appVersion,
       commit: config.commitSha,
-      environment: config.nodeEnv,
+      environment: config.appEnv,
       db: db.ok ? { ok: true, latencyMs: db.latencyMs } : { ok: false, error: db.error },
       now: new Date().toISOString(),
     };
@@ -221,7 +221,7 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
     appName: 'みらいSF 受付ステーション',
     version: config.appVersion,
     commit: config.commitSha,
-    environment: config.nodeEnv,
+    environment: config.appEnv,
     now: new Date().toISOString(),
     staleWarnDays: 3,
     staleDangerDays: 7,

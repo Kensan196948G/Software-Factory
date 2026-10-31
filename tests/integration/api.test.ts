@@ -11,6 +11,7 @@ import {
   truncateBusiness,
 } from './helpers.js';
 import { createSessionForUser } from '../../src/api/auth.js';
+import { config } from '../../src/api/config.js';
 import { getBootData, purgeExpiredDrafts } from '../../src/api/service.js';
 import { query } from '../../src/api/db.js';
 import { verifyAuditChain } from '../../src/api/audit.js';
@@ -58,6 +59,27 @@ async function moveToWait(auth: Awaited<ReturnType<typeof loginAs>>, id: string,
   expect(wait.statusCode).toBe(200);
   return (wait.json() as { detail: { version: number } }).detail.version;
 }
+
+describe('環境名', () => {
+  it('APP_ENV 未指定なら environment は NODE_ENV と同じ', async () => {
+    const res = await app.inject({ method: 'GET', url: '/healthz' });
+    expect((res.json() as { environment: string }).environment).toBe('test');
+  });
+
+  it('/healthz と /api/meta の environment は appEnv を返し、nodeEnv は変わらない', async () => {
+    const restore = config.appEnv;
+    config.appEnv = 'staging';
+    try {
+      const health = await app.inject({ method: 'GET', url: '/healthz' });
+      const meta = await app.inject({ method: 'GET', url: '/api/meta' });
+      expect((health.json() as { environment: string }).environment).toBe('staging');
+      expect((meta.json() as { environment: string }).environment).toBe('staging');
+      expect(config.nodeEnv).toBe('test');
+    } finally {
+      config.appEnv = restore;
+    }
+  });
+});
 
 describe('認証・セッション', () => {
   it('ログインに成功するとユーザーとCSRFトークンを返す', async () => {
