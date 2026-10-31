@@ -42,7 +42,7 @@ Browser
 createdb -O "$USER" mirai_sf
 DATABASE_URL='postgresql:///mirai_sf?host=/var/run/postgresql' \
 MIGRATION_DATABASE_URL='postgresql:///mirai_sf?host=/var/run/postgresql' \
-SEED_ADMIN_EMAIL=kensan1969@gmail.com SEED_ADMIN_PASSWORD=... pnpm exec tsx scripts/db.ts migrate
+SEED_ADMIN_EMAIL=<管理者メール> SEED_ADMIN_PASSWORD=... pnpm exec tsx scripts/db.ts migrate
 # seed も同様に実行
 
 # 2. ビルド

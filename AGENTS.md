@@ -59,7 +59,7 @@ pnpm db:verify
 
 ## 7. リポジトリ
 
-- GitHub: `Kensan196948G/Software-Factory`（private）
+- GitHub: `Kensan196948G/Software-Factory`（private。2026-10-31 所有者決定。2026-10-28 からそれまでは public だった）
 - 保存場所: `/mnt/storage/Software-Factory/Software-Factory`（旧 `/home/kensan/Projects/Software-Factory-Project` は symlink）
 
 ## 8. 既知の制限（詳細は `docs/limitations.md`）

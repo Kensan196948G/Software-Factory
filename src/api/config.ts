@@ -2,7 +2,10 @@ import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 
 export interface AppConfig {
+  /** 実行モード。isProduction など、セキュリティ挙動の既定値はこちらで決める。 */
   nodeEnv: 'development' | 'test' | 'production';
+  /** 環境名（表示用）。挙動の判定には使わない。 */
+  appEnv: 'development' | 'test' | 'staging' | 'production';
   isProduction: boolean;
   port: number;
   host: string;
@@ -77,6 +80,13 @@ function mailModeOf(raw: string | undefined, isProduction: boolean): 'off' | 'fi
   throw new Error(`MAIL_MODE が不正です: ${value}（off / file / sendmail / smtp のいずれか）`);
 }
 
+/** APP_ENV の解釈。未指定・空なら NODE_ENV と同じ名前にする。 */
+function appEnvOf(raw: string | undefined, nodeEnv: AppConfig['nodeEnv']): AppConfig['appEnv'] {
+  const value = raw?.trim() || nodeEnv;
+  if (value === 'development' || value === 'test' || value === 'staging' || value === 'production') return value;
+  throw new Error(`APP_ENV が不正です: ${value}（development / test / staging / production のいずれか）`);
+}
+
 export function loadConfig(overrides: RawConfig = {}): AppConfig {
   const file = { ...readConfigFile(process.env.MIRAI_SF_CONFIG_FILE), ...overrides };
   const nodeEnv = (pick(file, 'NODE_ENV') ?? 'development') as AppConfig['nodeEnv'];
@@ -95,6 +105,7 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
 
   return {
     nodeEnv,
+    appEnv: appEnvOf(pick(file, 'APP_ENV'), nodeEnv),
     isProduction,
     port: Number(pick(file, 'PORT') ?? 8781),
     host: pick(file, 'HOST') ?? '127.0.0.1',
