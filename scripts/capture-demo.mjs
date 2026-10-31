@@ -8,7 +8,7 @@ import { resolve } from 'node:path';
 
 const base = process.env.DEMO_BASE_URL ?? 'http://127.0.0.1:8781';
 const outDir = resolve(process.argv[2] ?? '/tmp/msf-demo');
-const email = process.env.SEED_ADMIN_EMAIL ?? 'kensan1969@gmail.com';
+const email = process.env.SEED_ADMIN_EMAIL ?? 'admin@example.com';
 const password = process.env.SEED_ADMIN_PASSWORD ?? '';
 mkdirSync(outDir, { recursive: true });
 

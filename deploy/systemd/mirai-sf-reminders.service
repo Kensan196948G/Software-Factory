@@ -1,0 +1,15 @@
+# 雛形: Staging DB（preview.conf の DATABASE_URL）に対して日次の保守を行う。
+# MAIL_MODE はここでは決めない。preview.conf に無ければ本番既定の off で、
+# 下書きTTLだけが動く（滞留通知・再送は MAIL_MODE を設定したときに動く）。
+# 起動は既存の mirai-sf-reminders.timer（毎日 08:30）をそのまま使う。
+[Unit]
+Description=Mirai SF daily maintenance (stalled reminders + draft TTL)
+After=network.target
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.nvm/versions/node/v22.22.3/bin:/usr/local/bin:/usr/bin:/bin
+Environment=REMINDER_DAYS=3
+Environment=MAIL_OUTBOX_DIR=%h/.local/state/mirai-sf/mail-outbox
+WorkingDirectory=%h/.local/share/mirai-sf/current
+ExecStart=/usr/bin/env node scripts/ops/with-env.mjs tsx scripts/reminders.ts

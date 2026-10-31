@@ -64,7 +64,7 @@ Workspace: `/home/kensan/Projects/Software-Factory-Project`
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
 | Node / pnpm | v22.22.3 / 10.26.2                                                                                                         |
 | PostgreSQL  | 16.14（Ubuntu, 127.0.0.1:5432, unix socket）ロール `kensan`（superuser）                                                   |
-| Cloudflare  | MCP `whoami` = kensan1969@gmail.com。`CLOUDFLARE_ACCOUNT_ID` 設定済み。cloudflaredはプロジェクト別tunnel＋systemdで運用    |
+| Cloudflare  | MCP `whoami` は管理者アカウント。`CLOUDFLARE_ACCOUNT_ID` 設定済み。cloudflaredはプロジェクト別tunnel＋systemdで運用        |
 | GitHub      | `gh` ログイン済み（Kensan196948G, scope: repo/workflow）。privacy planはAPIでは取得不可                                    |
 | OpenDesign  | v0.21.1 が 127.0.0.1:5173 で稼働。`agentModels.deepseek-harness` 設定済み。`od artifacts` でプロジェクトへ成果物を登録可能 |
 | Playwright  | Chromiumキャッシュあり（E2E実行可能）                                                                                      |

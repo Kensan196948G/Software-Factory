@@ -30,3 +30,6 @@ Thumbs.db
 # cloudflare local state
 .wrangler/
 .dev.vars
+
+# Claude Code のローカル状態（worktree など）
+.claude/

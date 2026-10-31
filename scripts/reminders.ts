@@ -18,18 +18,20 @@ if (!Number.isInteger(days) || days < 1 || days > 365) {
   process.exit(2);
 }
 
-if (config.mailMode === 'off') {
-  console.log(JSON.stringify({ days, mode: 'off', queued: 0, note: 'MAIL_MODE=off のため送信しません' }));
-  await closePool();
-  process.exit(0);
-}
-
 try {
-  const queued = await enqueueStallReminders({ days });
-  const delivery = await deliverPendingMail(50);
-  const drafts = await purgeExpiredDrafts();
-  console.log(JSON.stringify({ mode: config.mailMode, ...queued, delivery, draftsPurged: drafts.deleted }));
-  if (delivery.failed > 0) process.exit(1);
+  if (config.mailMode === 'off') {
+    // 下書きTTLはメールと無関係なので、MAIL_MODE=off（本番の既定）でも実行する
+    const drafts = await purgeExpiredDrafts();
+    console.log(
+      JSON.stringify({ days, mode: 'off', queued: 0, draftsPurged: drafts.deleted, note: 'MAIL_MODE=off のため送信しません' }),
+    );
+  } else {
+    const queued = await enqueueStallReminders({ days });
+    const delivery = await deliverPendingMail(50);
+    const drafts = await purgeExpiredDrafts();
+    console.log(JSON.stringify({ mode: config.mailMode, ...queued, delivery, draftsPurged: drafts.deleted }));
+    if (delivery.failed > 0) process.exitCode = 1;
+  }
 } finally {
   await closePool();
 }
