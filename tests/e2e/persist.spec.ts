@@ -2223,6 +2223,119 @@ test.describe('UI 保存の結果待ち', () => {
     expect((await getDetail(page, held.id)).status).toBe('hold');
   });
 
+  test('照合の再送に中継の 4xx（JSON なし）が返っても、新しいキーで送らず 1 件', async ({ page }) => {
+    await login(page);
+    const title = `中継の 4xx ${Date.now()}`;
+    const fixed = `${title} 直した`;
+    await fillWizard(page, title);
+    const keys: (string | undefined)[] = [];
+    await page.route(REQUESTS, async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      keys.push(route.request().headers()['idempotency-key']);
+      if (keys.length === 1) {
+        await route.fetch();
+        return route.abort('connectionreset');
+      }
+      if (keys.length === 2) return route.fulfill({ status: 413, contentType: 'text/html', body: '<html>too large</html>' });
+      return route.fallback();
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#err')).toContainText('通信できませんでした');
+    await page.locator('.stp').nth(2).click();
+    await setValue(page, 'main input[type=text]', 0, fixed);
+    await gotoLastStep(page);
+    await page.locator('#submit').click();
+    await expect.poll(() => keys.length).toBe(2);
+    await expect(page.locator('#submit')).toBeEnabled();
+    expect(keys[1]).toBe(keys[0]);
+    await page.locator('#submit').click();
+    await expect(page.locator('#stamp')).toHaveClass(/show/, { timeout: 5000 });
+    expect(new Set(keys).size).toBe(1);
+    const all = await listRequests(page);
+    expect(all.filter((r) => r.title === fixed)).toHaveLength(1);
+    expect(all.filter((r) => r.title === title)).toHaveLength(0);
+  });
+
+  test('コードのない 409 でも競合の画面を出し、次の送信で黙って上書きしない', async ({ page }) => {
+    await login(page);
+    const title = `コードなし 409 ${Date.now()}`;
+    const created = await createViaUi(page, title);
+    const mine = `${title} 自分の編集`;
+    await openEditAtLastStep(page, title);
+    await setValue(page, 'main input[type=text]', 0, mine);
+    await gotoLastStep(page);
+    const theirs = `${title} 別の人の編集`;
+    const cur = await getDetail(page, created.id);
+    await callApi(page, 'PATCH', `/api/requests/${created.id}`, {
+      ...inputOf(theirs),
+      approver: '鈴木 一郎',
+      version: cur.version,
+    });
+    await page.route(ONE_REQUEST, (route) =>
+      route.request().method() === 'PATCH'
+        ? route.fulfill({ status: 409, contentType: 'text/plain', body: 'conflict' })
+        : route.fallback(),
+    );
+    await page.locator('#submit').click();
+    await expect(page.locator('#conflict')).toBeVisible();
+    await expect(page.locator('#submit')).toBeDisabled();
+    expect((await getDetail(page, created.id)).title).toBe(theirs);
+  });
+
+  test('送信中は役割を切り替えられない', async ({ page }) => {
+    await login(page);
+    const title = `送信中の役割 ${Date.now()}`;
+    await fillWizard(page, title);
+    const before = await page.locator('#role').inputValue();
+    const other = before === 'desk' ? 'requester' : 'desk';
+    const switches = countRequests(page, 'POST', /\/api\/auth\/role$/);
+    let release = (): void => undefined;
+    const held = new Promise<void>((r) => (release = r));
+    await page.route(REQUESTS, async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      await held;
+      return route.fallback();
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#submit')).toBeDisabled();
+    await page.locator('#role').selectOption(other);
+    await expect(page.locator('#role')).toHaveValue(before);
+    expect(switches()).toBe(0);
+    release();
+    await expect(page.locator('#stamp')).toHaveClass(/show/);
+  });
+
+  test('状態変更の保存中はダイアログを閉じられず、失敗したらメモが残る', async ({ page }) => {
+    await login(page);
+    const title = `保存中のダイアログ ${Date.now()}`;
+    const created = await createViaUi(page, title);
+    await setApiRole(page, 'desk');
+    await transition(page, created.id, 'review');
+    await page.reload();
+    await page.waitForSelector('button[data-v="home"]');
+    await setUiRole(page, 'desk');
+    await openDrawer(page, title);
+    await page.locator('#dst').click();
+    const modal = page.locator('#modal');
+    await modal.locator('input[name=ns][value=back]').check({ force: true });
+    await modal.locator('#nnote').fill('直してください（作り物）');
+    let release = (): void => undefined;
+    const held = new Promise<void>((r) => (release = r));
+    await page.route(TRANSITIONS, async (route) => {
+      await held;
+      return route.fulfill(APP_500);
+    });
+    await modal.locator('#sok').click();
+    await expect(modal.locator('#sok')).toBeDisabled();
+    await page.locator('#mmask').click({ position: { x: 3, y: 3 } });
+    await expect(page.locator('#mmask')).toHaveClass(/show/);
+    release();
+    await expect(page.locator('#toast .toast.ng').first()).toBeVisible();
+    await expect(page.locator('#mmask')).toHaveClass(/show/);
+    await expect(modal.locator('#nnote')).toHaveValue('直してください（作り物）');
+    await expect(modal.locator('#sok')).toBeEnabled();
+  });
+
   async function expectFormLocked(page: Page, locked: boolean): Promise<void> {
     const state = await page.evaluate(() => {
       const pane = document.querySelector<HTMLElement>('#pane');

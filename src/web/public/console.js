@@ -2724,6 +2724,11 @@ const SF = (function () {
   /* ---- shell ---- */
   $('#role').innerHTML = SF.ROLES.map((r) => '<option value="' + r.k + '">' + E(r.name) + '（' + E(r.l) + '）</option>').join('');
   $('#role').addEventListener('change', (e) => {
+    // 送信の途中で役割を変えると、残りの工程が別の役割で実行される
+    if (S.submitting) {
+      e.target.value = S.role;
+      return toast('送信中です。完了までお待ちください', true);
+    }
     S.role = e.target.value;
     if (window.__MSF__) window.__MSF__.switchRole(e.target.value);
     toast(me().name + 'として操作します');
@@ -4089,6 +4094,8 @@ const SF = (function () {
       submit();
     });
   }
+  // bridge が競合として最新を取り直す失敗。ここで基準の版を進めると、次の送信で黙って上書きする
+  const isConflictFailure = (f) => f.code === 'ERR-301' || (f.status === 409 && !f.code);
   function submitFailed(d, res, extra) {
     if (S.draft !== d) return; // 別の画面へ移ったあと（下書きは一覧から再開できる）
     if (S.view === 'new') {
@@ -4146,7 +4153,7 @@ const SF = (function () {
     const res = resub ? await applyStatus(rec, 'received', '', '再提出（指摘に合わせて内容を直しました）') : await persist();
     if (coreFailed(res, rec.id)) {
       const failure = (res.failures || []).find((f) => f.id === rec.id || f.serverId === rec.id);
-      if (failure && failure.code === 'ERR-301') {
+      if (failure && isConflictFailure(failure)) {
         openConflict(d);
         if (S.draft === d && S.view === 'new') showErr([res.error]);
         return;
@@ -4173,7 +4180,7 @@ const SF = (function () {
    * - 結果不明（unknown）: サーバの確定した応答がない場合だけ。同じキーと同じ本文で照合し、成功したら更新の経路へ進む
    * - サーバで作られたと分かったら（serverId）、以後は作らずに更新する
    * - 札の解放（unknown を外す）の規則は submitFailureKind を参照。解放後に入力が変わっていれば、新しいキーで送る
-   * サーバは本文の検証を Idempotency-Key の照合より先に行うので、同じ本文の照合が 400 なら最初の POST も確定していない。
+   * サーバは本文の形の検証だけを Idempotency-Key の照合より先に行う。同じ本文の形が不正なら最初の POST も作られていない。
    * 作成の後に他の人が更新していたら（照合の結果・版の違い）、更新へ進まず競合の画面で選んでもらう。
    */
   function submitFailureKind(f) {
@@ -4183,6 +4190,8 @@ const SF = (function () {
     if (!status || status === 408 || status >= 500) return 'unknown';
     // セッション・権限・混雑: 本文を検証していない。結果不明の札は解放しない
     if ([401, 403, 429].includes(status)) return 'unverified';
+    // JSON のコードがない 4xx は中継の応答。アプリの判定ではないので確定した失敗にしない
+    if (!f.code) return 'unknown';
     // アプリが答えた 4xx: 確定した失敗
     return 'rejected';
   }
@@ -4259,7 +4268,7 @@ const SF = (function () {
     if (coreFailed(res, localId)) {
       const failure = (res.failures || []).find((f) => f.id === localId) || {};
       if (failure.stage && failure.stage !== 'create') {
-        if (failure.code === 'ERR-301') {
+        if (isConflictFailure(failure)) {
           conflictAfterCreate(d, t, failure.serverId);
           if (S.draft === d && S.view === 'new') showErr([res.error]);
           return;
@@ -5416,9 +5425,12 @@ const SF = (function () {
       const btn = $('#sok');
       sending = true;
       btn.disabled = true;
-      const res = await applyStatus(r, v, note, extra);
-      sending = false;
-      btn.disabled = false;
+      S.modalBusy = true;
+      const res = await applyStatus(r, v, note, extra).finally(() => {
+        S.modalBusy = false;
+        sending = false;
+        btn.disabled = false;
+      });
       return !coreFailed(res, r.id);
     }
   }
@@ -5816,14 +5828,17 @@ const SF = (function () {
         const btn = $('#edo');
         sending = true;
         btn.disabled = true;
+        S.modalBusy = true;
         const res = await applyStatus(
           r,
           to,
           note,
           'エスカレーション（' + lv + '）：' + (d === 'spec' ? '注文書を見直す' : '見送り'),
-        );
-        sending = false;
-        btn.disabled = false;
+        ).finally(() => {
+          S.modalBusy = false;
+          sending = false;
+          btn.disabled = false;
+        });
         if (coreFailed(res, r.id)) return;
       }
       const pipe = O().pipes[r.id] || p;
@@ -8080,6 +8095,8 @@ const SF = (function () {
     $$('#modal [data-x]').forEach((x) => x.addEventListener('click', closeModal));
   }
   function closeModal() {
+    // 保存の結果を待つ間は閉じない（失敗したらダイアログとメモを残すため）
+    if (S.modalBusy) return;
     $('#mmask').classList.remove('show');
   }
   $('#mmask').addEventListener('click', (e) => {
