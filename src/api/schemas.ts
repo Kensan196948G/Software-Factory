@@ -12,6 +12,7 @@ import {
   TAILORING,
   USERS,
 } from '../shared/domain.js';
+import { JOB_STATES } from '../shared/devline.js';
 
 const nonEmpty = (max = 2000) => z.string().trim().min(1).max(max);
 const lineList = (max = 2000) => z.array(z.string().trim().min(1).max(max)).max(50);
@@ -112,4 +113,16 @@ export const importSchema = z.object({
         .passthrough(),
     )
     .max(5000),
+});
+
+/* 開発ライン（API-06・cancel・resume）。理由の空は service 側で ERR-102 にする。 */
+export const orderHandoffSchema = z.object({
+  orderVersion: z.number().int().min(1),
+  confirmAbsent: z.boolean().optional(),
+  reason: z.string().trim().max(1000).optional(),
+});
+
+export const jobOperationSchema = z.object({
+  reason: z.string().trim().max(1000).optional().default(''),
+  expectedState: z.enum(JOB_STATES).optional(),
 });

@@ -606,6 +606,34 @@ export function isRepoAllowed(repo: string, allowList: readonly string[]): boole
   return allowList.includes(repo);
 }
 
+/**
+ * 開発ラインの投入を許可するリポジトリ（ADR 11章）。repoId は GitHub の数値 ID で、
+ * 名前の付け替えや譲渡で別のリポジトリへ送らないよう、送信の前に照合する。
+ */
+export interface AllowedRepo {
+  name: string;
+  repoId: string;
+}
+
+const REPO_NAME_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+/** `owner/name:repoId` のカンマ区切りを解釈する。未設定や空は「すべて拒否」。形が違う値は設定の誤りとして例外にする。 */
+export function parseDevlineTargetRepos(raw: string | null | undefined): AllowedRepo[] {
+  const repos: AllowedRepo[] = [];
+  for (const part of (raw ?? '').split(',')) {
+    const entry = part.trim();
+    if (entry === '') continue;
+    const colon = entry.lastIndexOf(':');
+    const name = colon > 0 ? entry.slice(0, colon) : '';
+    const repoId = colon > 0 ? entry.slice(colon + 1) : '';
+    if (!REPO_NAME_RE.test(name) || name.split('/').some((s) => /^\.+$/.test(s)) || !/^[1-9]\d*$/.test(repoId)) {
+      throw new Error('DEVLINE_TARGET_REPOS の形が正しくありません（owner/name:repoId のカンマ区切り）');
+    }
+    repos.push({ name, repoId });
+  }
+  return repos;
+}
+
 /** 変更してよい場所（前方一致）。ここに無い場所（db/migrations、package.json ほか）は拒否。 */
 export const ALLOWED_PATH_PREFIXES: readonly string[] = ['src/', 'tests/', 'docs/orders/'];
 
@@ -931,6 +959,8 @@ export interface IssueAdapter {
   readonly kind: 'github' | 'fake';
   /** 連携アカウント。照合の作成者判定に使う。 */
   getActorLogin(signal: AbortSignal): Promise<IssueReadResult<string>>;
+  /** リポジトリの数値 ID。許可リストの repoId と照合する（ADR 11章）。 */
+  getRepoId(repo: string, signal: AbortSignal): Promise<IssueReadResult<string>>;
   /** 既定ブランチの先頭 SHA（base_sha）。 */
   resolveBaseSha(repo: string, signal: AbortSignal): Promise<IssueReadResult<string>>;
   createIssue(input: IssueWriteInput): Promise<IssueSendOutcome>;

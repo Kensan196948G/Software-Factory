@@ -41,7 +41,9 @@ import type { Role, Signal, Status } from '../shared/domain.js';
 import type { RequestDetail, RequestRecord, SessionUser } from '../shared/types.js';
 import type { RequestInput, TransitionInput } from './schemas.js';
 import { buildOrderYaml } from '../shared/order.js';
-import { createIssue, isGithubConfigured } from './github.js';
+import { isGithubConfigured } from './github.js';
+import { handoffOrder, type DevlineDeps } from './devline-handoff.js';
+import { canHandoff } from '../shared/devline.js';
 import { buildCsv, buildExportJson, measureOf } from '../shared/export.js';
 import { deliverOutboxMail, enqueueApprovalMailInTx, latestMailForRequest } from './mail-outbox.js';
 
@@ -1022,6 +1024,13 @@ export async function importAll(
 ) {
   if (!runtime.allowImport) throw Errors.noPermission();
   return withTransaction(async (client) => {
+    // 全置換は開発ラインの証跡を消すことになるので断る（ADR 5章・D-09）
+    const devline = await client.query<{ used: boolean }>(
+      `select exists(select 1 from order_snapshot) or exists(select 1 from handoff_intent) or exists(select 1 from job) as used`,
+    );
+    if (devline.rows[0]?.used) {
+      throw Errors.invalidTransition('開発ラインの記録があるため、全件置換の取込はできません');
+    }
     await client.query('delete from request');
     await client.query('delete from request_counter');
     let maxSeq = 0;
@@ -1107,15 +1116,33 @@ export async function importAll(
 
 /* ─────────────────────────── 開発ラインへの投入（Issue作成） ─────────────────────────── */
 
+/**
+ * 旧ルート（POST /api/requests/:id/handoff）。応答の形は変えず、新しい処理へ委譲する（ADR D-13・7章）。
+ * 扉を2つにすると Issue が重複するので、issue_no が無ければ必ず handoffOrder を通す。
+ */
 export async function handoffToGithub(
   id: string,
   actor: Actor,
   correlationId: string,
+  deps?: DevlineDeps,
 ): Promise<{ issueNo: number; issueUrl: string; created: boolean; detail: RequestDetail }> {
-  if (!isGithubConfigured()) {
+  if (!deps && !isGithubConfigured()) {
     throw new ApiError('ERR-405', 'GitHub連携が設定されていません（管理者に確認してください）', 409);
   }
-  if (!['desk', 'approver'].includes(actor.role)) throw Errors.noPermission();
+  if (!canHandoff({ role: actor.role, isAdmin: actor.user.isAdmin })) {
+    await appendAudit({
+      action: 'handoff.intent',
+      targetType: 'request',
+      targetId: id,
+      result: 'denied',
+      actorUserId: actor.userId,
+      actorName: actor.displayName,
+      role: actor.role,
+      correlationId,
+      diff: { why: 'role' },
+    });
+    throw Errors.noPermission();
+  }
 
   const row = await getRequestRow(id);
   if (!row) throw Errors.notFound('依頼');
@@ -1135,51 +1162,16 @@ export async function handoffToGithub(
     };
   }
 
-  const catalogSignal = await catalogSignalFor(row);
-  const suggested = suggestedOf(row, catalogSignal);
-  const departmentName = row.dept_name ?? (await getDepartmentName(row.dept_code)) ?? row.dept_code;
-  const yaml = buildOrderYaml({
-    request: mapRequest(row),
-    suggested: suggested.color,
-    departmentName,
-    catalogToolName: row.tool_name ?? '',
-  });
-
-  const issue = await createIssue({
-    requestId: id,
-    title: `[MSF] ${id} ${row.title}`,
-    orderYaml: yaml,
-    approver: row.approver,
-    signalLabel: SIGNAL_LABEL[(row.signal_decided ?? suggested.color) as Signal],
-    deptLabel: departmentName,
-    tailoring: row.tailoring,
-    previewUrl: config.appBaseUrl,
-  });
-
-  await withTransaction(async (client) => {
-    const locked = await getRequestRowForUpdate(client, id);
-    if (!locked) throw Errors.notFound('依頼');
-    if (locked.issue_no) return; // 同時実行で先に作られた場合は何もしない
-    await client.query(
-      'update request set issue_no = $2, version = version + 1, updated_at = now(), updated_by = $3 where id = $1',
-      [id, issue.number, actor.userId],
-    );
-    await client.query(
-      `insert into request_history (request_id, actor_name, actor_user_id, role, action, note, correlation_id)
-       values ($1,$2,$3,$4,'開発ラインへ投入',$5,$6)`,
-      [id, actor.displayName, actor.userId, actor.role, `GitHub Issue #${issue.number} を作成しました`, correlationId],
-    );
-    await appendAuditInTx(client, actor, {
-      action: 'request.handoff',
-      targetType: 'request',
-      targetId: id,
-      result: 'success',
-      correlationId,
-      diff: { issue: issue.number },
-    });
-  });
-
-  return { issueNo: issue.number, issueUrl: issue.url, created: true, detail: await getDetail(id, actor) };
+  try {
+    const result = await handoffOrder({ requestId: id, orderVersion: null }, actor, correlationId, deps);
+    return { issueNo: result.issueNo, issueUrl: result.issueUrl, created: result.created, detail: await getDetail(id, actor) };
+  } catch (err) {
+    // 旧ルートの時間切れは ERR-304 に揃える（ADR 7章）
+    if (err instanceof ApiError && err.code === 'ERR-303') {
+      throw new ApiError('ERR-304', 'GitHubに接続できませんでした（時間切れ）', 502, err.details);
+    }
+    throw err;
+  }
 }
 
 /* ─────────────────────────── デモ初期化（開発・検証用） ─────────────────────────── */
@@ -1188,6 +1180,8 @@ export async function resetDemo(actor: Actor, correlationId: string) {
   if (runtime.isProduction) throw Errors.noPermission();
   const { seedDemo } = await import('./seed.js');
   return withTransaction(async (client) => {
+    // 外部キーは on delete restrict なので、先に開発ラインの行を消す（非本番のみ。ADR 5章）
+    await client.query('truncate table verification, job_artifact, job_event, job_attempt, job, handoff_intent, order_snapshot');
     await client.query('delete from request');
     await client.query('delete from request_counter');
     await seedDemo(client);
