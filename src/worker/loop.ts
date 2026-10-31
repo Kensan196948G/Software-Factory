@@ -10,6 +10,8 @@ import { config } from '../api/config.js';
 import { pool, query } from '../api/db.js';
 import {
   acIdsOf,
+  addRunnerCost,
+  appendJobEvent,
   claimNextJob,
   closeAttempt,
   finishAttempt,
@@ -19,6 +21,7 @@ import {
   recordVerification,
   releaseLease,
   remainingWorkFor,
+  renderDraftPrBody,
   sha256Hex,
   startAttempt,
   transitionJob,
@@ -29,6 +32,7 @@ import {
 import {
   DEVLINE_POLICY,
   IMPLEMENTED_RUNNER_KINDS,
+  checkBudget,
   checkChangedPaths,
   pathsRequiringHumanApproval,
   checkTimeLimits,
@@ -50,6 +54,8 @@ import type {
 } from '../shared/devline.js';
 import type { Status } from '../shared/domain.js';
 import { buildFakeVerification } from './fake-ci.js';
+import type { CiCollectResult } from './github-ci-collector.js';
+import type { RealLine } from './real-line.js';
 import { parseRunnerResult } from './runner-result.js';
 
 export interface WorkerOptions {
@@ -61,9 +67,18 @@ export interface WorkerOptions {
   allowedRepos?: readonly AllowedRepo[];
   /** heartbeat の間隔の待ち。試験では手で進める。 */
   tick?: (signal: AbortSignal) => Promise<void>;
-  /** verifying で CI の結果を作る。null は「まだ結果が無い」。既定は fake CI。 */
-  ci?: (job: JobRow, ctx: { now: Date; correlationId: string; acIds: string[] }) => RecordVerificationInput | null;
+  /** verifying で CI の結果を作る。null は「まだ結果が無い」。既定は fake CI、実 runner は実 CI。 */
+  ci?: (
+    job: JobRow,
+    ctx: { now: Date; correlationId: string; acIds: string[] },
+  ) => RecordVerificationInput | null | Promise<CiCollectResult>;
   leaseSeconds?: number;
+  /** 実 runner のとき: 予算・push・PR・実 CI。無ければ fake の経路のまま。 */
+  line?: Pick<RealLine, 'budget' | 'preflight' | 'publish' | 'updatePrBody' | 'closeSupersededPr'> & {
+    ci: Pick<RealLine['ci'], 'collect'>;
+  };
+  /** この job だけを取る（1件実走の入口）。 */
+  onlyJobId?: string;
 }
 
 export type StepOutcome =
@@ -82,8 +97,8 @@ export function assertRunnerAllowed(runner: RunnerAdapter): void {
   if (!IMPLEMENTED_RUNNER_KINDS.includes(runner.capability.kind)) {
     throw new Error(`runner ${runner.capability.kind} は未実装です`);
   }
-  if (config.isProduction && runner.capability.kind === 'fake') {
-    throw new Error('production では fake runner を動かしません');
+  if (config.isProduction && (runner.capability.kind === 'fake' || runner.capability.kind === 'docker-claude')) {
+    throw new Error(`production では ${runner.capability.kind} runner を動かしません`);
   }
 }
 
@@ -108,8 +123,21 @@ function agentActor(runner: RunnerAdapter): JobActor {
 type RunOutcome =
   | { kind: 'result'; result: RunnerResult }
   | { kind: 'error' }
-  | { kind: 'lost' }
-  | { kind: 'limit'; reason: 'session_limit' | 'continuous_limit' };
+  | { kind: 'lost'; late: RunnerResult | null }
+  | { kind: 'limit'; reason: 'session_limit' | 'continuous_limit'; late: RunnerResult | null };
+
+/** 実費がかかる runner は止めた後の結果も待つ。遅れた結果の費用を数え落とさないため。 */
+async function settleLate(runner: RunnerAdapter, run: Promise<RunOutcome>): Promise<RunnerResult | null> {
+  if (runner.capability.costAccounting !== 'metered') return null;
+  const settled = await run;
+  return settled.kind === 'result' ? settled.result : null;
+}
+
+/** 読めない結果からでも費用だけは拾う。 */
+function costOf(raw: unknown): number {
+  const cost = (raw as { usage?: { costJpy?: unknown } } | null)?.usage?.costJpy;
+  return typeof cost === 'number' && Number.isInteger(cost) && cost > 0 ? cost : 0;
+}
 
 /** runner を動かしながら heartbeat を打ち、上限と取消（fence の失効）を見る。 */
 async function runWatched(
@@ -142,12 +170,12 @@ async function runWatched(
     const beat = await heartbeat(lease, now, options.leaseSeconds);
     if (!beat.applied) {
       await cancelRun();
-      return { kind: 'lost' };
+      return { kind: 'lost', late: await settleLate(options.runner, run) };
     }
     const limit = checkTimeLimits({ now, sessionStartedAt: job.session_started_at, continuousSeconds: job.continuous_seconds });
     if (limit) {
       await cancelRun();
-      return { kind: 'limit', reason: limit.stopReason };
+      return { kind: 'limit', reason: limit.stopReason, late: await settleLate(options.runner, run) };
     }
   }
 }
@@ -175,98 +203,195 @@ async function runStep(options: WorkerOptions, job: JobRow, lease: JobLease, cor
   const stopped = (reason: StopReason, detail: unknown, actor?: JobActor) =>
     haltStep(options, lease, reason, detail, correlationId, actor);
 
+  // 実 runner: 動かす前に対象を確かめる（public・別の repo へは送らない）
+  if (options.line) {
+    const pre = await options.line.preflight(job.target_repo_id);
+    if (!pre.ok) return stopped(pre.stop === 'policy' ? 'policy_violation' : 'runner_failure', { rule: pre.rule });
+  }
+
   const started = await startAttempt(lease, { step, runnerKind: options.runner.capability.kind, now: options.clock() });
   if (!started.applied) return { kind: 'lost', jobId: job.id, from };
   const { attemptId, attemptNo } = started.value;
 
-  const facts = await requestFacts(job.request_id);
-  const order = await loadOrder(job);
-  const controller = new AbortController();
-  const previous = job.work_state.previousFailure as
-    { causeKey: string; failedStages: string[]; failedTestIds: string[] } | undefined;
-  const outcome = await runWatched(
-    options,
-    job,
-    lease,
-    {
-      jobId: job.id,
-      attemptNo,
-      step,
-      order: { envelope: order.envelope, canonicalYaml: order.canonicalYaml },
-      acceptanceCriteriaIds: acIdsOf(facts?.criteria ?? []),
-      policyVersion: job.policy_version,
-      baseSha: order.baseSha,
-      previousFailure: step === 'revise' ? (previous ?? null) : null,
-      deadlineAt: new Date(options.clock().getTime() + DEVLINE_POLICY.maxSessionMinutes * 60_000).toISOString(),
-      signal: controller.signal,
-    },
-    controller,
-  );
+  try {
+    const facts = await requestFacts(job.request_id);
+    const order = await loadOrder(job);
+    const controller = new AbortController();
+    const previous = job.work_state.previousFailure as
+      { causeKey: string; failedStages: string[]; failedTestIds: string[] } | undefined;
+    const previousBranch = typeof job.work_state.branch === 'string' ? job.work_state.branch : null;
+    const outcome = await runWatched(
+      options,
+      job,
+      lease,
+      {
+        jobId: job.id,
+        attemptNo,
+        step,
+        order: { envelope: order.envelope, canonicalYaml: order.canonicalYaml },
+        acceptanceCriteriaIds: acIdsOf(facts?.criteria ?? []),
+        policyVersion: job.policy_version,
+        baseSha: order.baseSha,
+        previousFailure: step === 'revise' ? (previous ?? null) : null,
+        deadlineAt: new Date(options.clock().getTime() + DEVLINE_POLICY.maxSessionMinutes * 60_000).toISOString(),
+        signal: controller.signal,
+        costJpySoFar: job.cost_jpy,
+        previousHead: step === 'revise' && previousBranch && job.head_sha ? { sha: job.head_sha, branch: previousBranch } : null,
+      },
+      controller,
+    );
 
-  const now = options.clock();
-  if (outcome.kind === 'lost') {
-    // 取消や取り直しで fence が切れた。attempt を閉じるだけで job は動かさない
-    await closeAttempt(attemptId, 'discarded', now);
-    return { kind: 'lost', jobId: job.id, from };
-  }
-  if (outcome.kind === 'limit') {
-    await closeAttempt(attemptId, 'timed_out', now);
-    return stopped(outcome.reason, { step });
-  }
-  if (outcome.kind === 'error') {
-    await closeAttempt(attemptId, 'failed', now);
-    return stopped('runner_failure', { step, cause: 'runner_threw' }, agentActor(options.runner));
-  }
+    const now = options.clock();
+    if (outcome.kind === 'lost') {
+      // 取消や取り直しで fence が切れた。attempt を閉じるだけで job は動かさない
+      await closeAttempt(attemptId, 'discarded', now);
+      await addRunnerCost(job.id, costOf(outcome.late), now, {
+        attemptId,
+        cause: 'lost',
+        estimated: outcome.late?.costEstimated,
+      });
+      return { kind: 'lost', jobId: job.id, from };
+    }
+    if (outcome.kind === 'limit') {
+      await closeAttempt(attemptId, 'timed_out', now);
+      await addRunnerCost(job.id, costOf(outcome.late), now, {
+        attemptId,
+        cause: 'limit',
+        estimated: outcome.late?.costEstimated,
+      });
+      return stopped(outcome.reason, { step });
+    }
+    if (outcome.kind === 'error') {
+      await closeAttempt(attemptId, 'failed', now);
+      return stopped('runner_failure', { step, cause: 'runner_threw' }, agentActor(options.runner));
+    }
 
-  // 型は申告にすぎないので実行時に確かめる。読めない結果は記録も信用もしない
-  const result = parseRunnerResult(outcome.result);
-  if (!result) {
-    await closeAttempt(attemptId, 'rejected', now);
-    return stopped('runner_failure', { step, cause: 'invalid_result' }, agentActor(options.runner));
-  }
-  const finished = await finishAttempt(lease, attemptId, result, now);
-  if (!finished.applied) return { kind: 'lost', jobId: job.id, from };
+    // 型は申告にすぎないので実行時に確かめる。読めない結果は記録も信用もしない（費用だけは数える）
+    const result = parseRunnerResult(outcome.result);
+    if (!result) {
+      await closeAttempt(attemptId, 'rejected', now);
+      await addRunnerCost(job.id, costOf(outcome.result), now, { attemptId, cause: 'invalid_result' });
+      return stopped('runner_failure', { step, cause: 'invalid_result' }, agentActor(options.runner));
+    }
+    const finished = await finishAttempt(lease, attemptId, result, now);
+    if (!finished.applied) {
+      if (options.runner.capability.costAccounting === 'metered') {
+        await addRunnerCost(job.id, result.usage.costJpy, now, { attemptId, cause: 'late_result' });
+      }
+      return { kind: 'lost', jobId: job.id, from };
+    }
 
-  const agent = agentActor(options.runner);
-  // policy の検査を最初に行う。注文書の本文や runner の申告では変わらない
-  const violations = checkChangedPaths(result.changedPaths);
-  if (violations.length > 0) {
-    return stopped('policy_violation', { violations: violations.slice(0, 50) }, agent);
-  }
-  const touched = [...(result.humanApprovalTouched ?? []), ...pathsRequiringHumanApproval(result.changedPaths)];
-  if (touched.length > 0) {
-    return stopped('human_approval_required', { items: touched.slice(0, 50) }, agent);
-  }
-  if (result.usage.costJpy > 0 && DEVLINE_POLICY.budgetJpy === null) {
-    return stopped('budget_limit', { costJpy: result.usage.costJpy }, agent);
-  }
-  if (result.status === 'needs_human') {
-    return stopped(step === 'plan' ? 'planning_question' : 'human_approval_required', { step }, agent);
-  }
-  const headOk = step === 'plan' || (typeof result.headSha === 'string' && /^[0-9a-f]{40}$/.test(result.headSha));
-  if (result.status === 'failed' || result.exitCode !== 0 || !headOk || !artifactsMatch(result)) {
-    return stopped('runner_failure', { step, exitCode: result.exitCode }, agent);
-  }
-
-  const to: JobState = step === 'plan' ? 'implementing' : 'verifying';
-  const written = await transitionJob(lease, {
-    to,
-    now: options.clock(),
-    correlationId,
-    actor: agent,
-    detail: { attemptId },
-    patch:
-      step === 'plan'
-        ? { plan: result.plan ?? null }
-        : {
-            headSha: result.headSha,
-            ciRerunCount: 0,
-            workState: { ...job.work_state, changedPaths: [...result.changedPaths] },
+    const agent = agentActor(options.runner);
+    // policy の検査を最初に行う。注文書の本文や runner の申告では変わらない
+    const hostChecked = options.runner.capability.diffCheckedByHost === true;
+    const violations = hostChecked ? (result.serverDiff?.violations ?? []) : checkChangedPaths(result.changedPaths);
+    if (violations.length > 0) {
+      return stopped(
+        'policy_violation',
+        { violations: violations.slice(0, 50), ...(result.serverDiff ? { diffPolicy: result.serverDiff.policyVersion } : {}) },
+        agent,
+      );
+    }
+    const touched = hostChecked
+      ? (result.serverDiff?.humanApproval ?? [])
+      : [...(result.humanApprovalTouched ?? []), ...pathsRequiringHumanApproval(result.changedPaths)];
+    if (touched.length > 0) {
+      return stopped('human_approval_required', { items: touched.slice(0, 50) }, agent);
+    }
+    const budget = options.line?.budget ?? null;
+    if (budget) {
+      const after = job.cost_jpy + result.usage.costJpy;
+      const check = checkBudget(budget, job.cost_jpy, after);
+      if (check.kind === 'warn') {
+        await appendJobEvent(job.id, {
+          at: now,
+          kind: 'budget_warning',
+          correlationId,
+          detail: { costJpy: after, limitJpy: budget.limitJpy, ratio: after / budget.limitJpy },
+        });
+      }
+      if (check.kind === 'exceeded' || result.budgetExceeded === true) {
+        return stopped(
+          'budget_limit',
+          {
+            costJpy: after,
+            limitJpy: budget.limitJpy,
+            estimated: result.costEstimated === true,
+            cause: result.summary.slice(0, 300),
           },
-  });
-  if (!written.applied) return { kind: 'lost', jobId: job.id, from };
-  await releaseLease(written.value as JobLease, options.clock());
-  return { kind: 'stepped', jobId: job.id, from, to };
+          agent,
+        );
+      }
+    } else if (result.usage.costJpy > 0 && DEVLINE_POLICY.budgetJpy === null) {
+      return stopped('budget_limit', { costJpy: result.usage.costJpy }, agent);
+    }
+    if (result.status === 'needs_human') {
+      return stopped(step === 'plan' ? 'planning_question' : 'human_approval_required', { step }, agent);
+    }
+    const headOk = step === 'plan' || (typeof result.headSha === 'string' && /^[0-9a-f]{40}$/.test(result.headSha));
+    const diffOk = !hostChecked || result.serverDiff !== undefined;
+    if (result.status === 'failed' || result.exitCode !== 0 || !headOk || !diffOk || !artifactsMatch(result)) {
+      return stopped('runner_failure', { step, exitCode: result.exitCode }, agent);
+    }
+
+    const workState: Record<string, unknown> = {
+      ...job.work_state,
+      changedPaths: [...result.changedPaths],
+      ...(result.serverDiff ? { diffPolicy: result.serverDiff.policyVersion } : {}),
+    };
+    // 実 runner: 差分検査を通ったものだけをホストで push して PR にする。AI は merge しない
+    if (step !== 'plan' && options.line) {
+      const beat = await heartbeat(lease, options.clock(), options.leaseSeconds);
+      if (!beat.applied) return { kind: 'lost', jobId: job.id, from };
+      const body = await renderDraftPrBody({ ...job, work_state: workState, head_sha: result.headSha });
+      const published = await options.line.publish({
+        jobId: job.id,
+        requestId: job.request_id,
+        orderVersion: job.order_version,
+        attemptNo,
+        repo: job.target_repo_id,
+        headSha: result.headSha as string,
+        body,
+      });
+      if (!published.ok) {
+        return stopped(
+          'runner_failure',
+          { step, cause: published.cause, httpStatus: published.httpStatus ?? null },
+          WORKER_ACTOR,
+        );
+      }
+      const previousPr = job.work_state.pr as { number?: unknown } | undefined;
+      if (typeof previousPr?.number === 'number' && previousPr.number !== published.pr.number) {
+        const closed = await options.line
+          .closeSupersededPr({ repo: job.target_repo_id, number: previousPr.number, jobId: job.id })
+          .catch(() => false);
+        await appendJobEvent(job.id, {
+          at: options.clock(),
+          kind: 'pr_superseded',
+          correlationId,
+          detail: { number: previousPr.number, closed },
+        });
+      }
+      workState.branch = published.branch;
+      workState.pr = published.pr;
+      workState.attemptNo = attemptNo;
+    }
+
+    const to: JobState = step === 'plan' ? 'implementing' : 'verifying';
+    const written = await transitionJob(lease, {
+      to,
+      now: options.clock(),
+      correlationId,
+      actor: agent,
+      detail: { attemptId },
+      patch: step === 'plan' ? { plan: result.plan ?? null } : { headSha: result.headSha, ciRerunCount: 0, workState },
+    });
+    if (!written.applied) return { kind: 'lost', jobId: job.id, from };
+    await releaseLease(written.value as JobLease, options.clock());
+    return { kind: 'stepped', jobId: job.id, from, to };
+  } finally {
+    await options.runner.release?.({ jobId: job.id, attemptNo }).catch(() => undefined);
+  }
 }
 
 async function haltStep(
@@ -290,39 +415,93 @@ async function haltStep(
   return { kind: 'stepped', jobId: lease.jobId, from, to: haltTarget(from, reason) ?? 'unchanged' };
 }
 
+async function collectCi(
+  options: WorkerOptions,
+  job: JobRow,
+  ctx: { now: Date; correlationId: string; acIds: string[] },
+): Promise<CiCollectResult> {
+  if (options.ci) return options.ci(job, ctx);
+  if (options.line) {
+    const { baseSha } = await loadOrder(job);
+    return options.line.ci.collect({ ...job, base_sha: baseSha }, ctx);
+  }
+  return buildFakeVerification(
+    {
+      jobId: job.id,
+      headSha: job.head_sha as string,
+      repairCountTotal: job.repair_count_total,
+      ciRerunCount: job.ci_rerun_count,
+      resumeEpoch: Number(job.work_state.resumeEpoch ?? 0),
+    },
+    options.scenario,
+    ctx.acIds,
+    { now: ctx.now, correlationId: ctx.correlationId },
+  );
+}
+
+/** pr_ready に入った PR の本文を、CI の結果を載せた候補へ更新する。失敗しても job は戻さず記録だけ残す。 */
+async function finalizePr(options: WorkerOptions, job: JobRow, correlationId: string): Promise<void> {
+  const line = options.line;
+  const pr = job.work_state.pr as { number?: unknown } | undefined;
+  const attemptNo = job.work_state.attemptNo;
+  if (!line || typeof pr?.number !== 'number' || typeof attemptNo !== 'number' || !job.head_sha) return;
+  const { rows } = await query<{ content: string }>(
+    `select content from job_artifact where job_id=$1 and kind='pr_body_draft' order by created_at desc, id desc limit 1`,
+    [job.id],
+  );
+  const body = rows[0]?.content;
+  const updated = body
+    ? await line
+        .updatePrBody({
+          repo: job.target_repo_id,
+          number: pr.number,
+          jobId: job.id,
+          attemptNo,
+          headSha: job.head_sha,
+          body,
+        })
+        .catch(() => false)
+    : false;
+  if (!updated) {
+    await appendJobEvent(job.id, {
+      at: options.clock(),
+      kind: 'pr_body_update_failed',
+      correlationId,
+      detail: { number: pr.number },
+    });
+  }
+}
+
 async function verifyStep(options: WorkerOptions, job: JobRow, lease: JobLease, correlationId: string): Promise<StepOutcome> {
   const facts = await requestFacts(job.request_id);
   const now = options.clock();
   const acIds = acIdsOf(facts?.criteria ?? []);
-  const delivery = options.ci
-    ? options.ci(job, { now, correlationId, acIds })
-    : buildFakeVerification(
-        {
-          jobId: job.id,
-          headSha: job.head_sha as string,
-          repairCountTotal: job.repair_count_total,
-          ciRerunCount: job.ci_rerun_count,
-          resumeEpoch: Number(job.work_state.resumeEpoch ?? 0),
-        },
-        options.scenario,
-        acIds,
-        { now, correlationId },
-      );
+  const delivery = await collectCi(options, job, { now, correlationId, acIds });
   if (!delivery) {
     await releaseLease(lease, options.clock(), { keepSession: true });
     return { kind: 'stepped', jobId: job.id, from: 'verifying', to: 'unchanged' };
   }
+  if ('halt' in delivery) return haltStep(options, lease, delivery.halt.reason, delivery.halt.detail, correlationId);
   const recorded = await recordVerification(delivery);
   // 動かしたときは recordVerification が lease を外している
   // 進まなかったときは session を閉じない。結果を待ち続ける job は session_limit で止まる
   if (!recorded.advanced) await releaseLease(lease, options.clock(), { keepSession: true });
+  if (recorded.advanced && recorded.jobState === 'pr_ready') await finalizePr(options, job, correlationId);
   return { kind: 'stepped', jobId: job.id, from: 'verifying', to: recorded.advanced ? recorded.jobState : 'unchanged' };
 }
 
 /** 1つ取って1工程だけ進める。何も取れなければ idle。 */
 export async function runOnce(options: WorkerOptions): Promise<StepOutcome> {
   assertRunnerAllowed(options.runner);
-  const claimed = await claimNextJob({ owner: options.owner, now: options.clock(), leaseSeconds: options.leaseSeconds });
+  const realWorker = options.runner.capability.kind === 'docker-claude';
+  const claimed = await claimNextJob({
+    owner: options.owner,
+    now: options.clock(),
+    leaseSeconds: options.leaseSeconds,
+    // 実 runner の job と fake の job は互いに取らない（取ると runner_rejected で止めてしまう）
+    ...(realWorker ? { runnerKind: 'docker-claude' as const } : { excludeRunnerKind: 'docker-claude' as const }),
+    ...(options.onlyJobId ? { jobId: options.onlyJobId } : {}),
+  });
   if (!claimed) return { kind: 'idle' };
   const { job } = claimed;
   let lease = claimed.lease;
@@ -375,6 +554,10 @@ export async function runOnce(options: WorkerOptions): Promise<StepOutcome> {
     return { kind: 'stepped', jobId: job.id, from: 'queued', to: 'planning' };
   }
   if (job.state === 'verifying') return verifyStep(options, job, lease, correlationId);
+  // 予算を使い切った job は AI を動かさない（延長しない）
+  if (options.line && job.cost_jpy >= options.line.budget.limitJpy) {
+    return halt('budget_limit', { costJpy: job.cost_jpy, limitJpy: options.line.budget.limitJpy, at: 'claim' });
+  }
   return runStep(options, job, lease, correlationId);
 }
 

@@ -188,7 +188,9 @@ describe('遷移表（T-02, T-03）', () => {
         where c.conrelid = $1::regclass and c.contype='c' and pg_get_constraintdef(c.oid) ~ $2`,
       [table, `\\(${column} = ANY|\\(\\(${column} = ANY|${column} IS NULL`],
     );
-    const def = rows.find((r) => r.def.includes(`${column} = ANY`) && r.def.includes('ARRAY'))?.def ?? '';
+    // その列だけの CHECK を選ぶ。pg_constraint の並びは不定で、job_stop_recorded なども state = ANY を含む
+    const single = new RegExp(`^CHECK \\(+(${column} IS NULL\\) OR \\(+)?${column} = ANY \\(ARRAY\\[[^\\]]*\\]\\)\\)+$`);
+    const def = rows.find((r) => single.test(r.def))?.def ?? '';
     return [...def.matchAll(/'([^']+)'::text/g)].map((m) => m[1] as string).sort();
   }
 

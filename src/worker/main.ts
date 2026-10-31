@@ -8,9 +8,11 @@ import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { closePool } from '../api/db.js';
 import { config } from '../api/config.js';
+import { parseDevlineTargetRepos } from '../shared/devline.js';
 import type { FakeScenario } from '../shared/devline.js';
 import { createRunner, isFakeScenario } from './fake-runner.js';
 import { runOnce } from './loop.js';
+import { checkRealLineEnv, startRealLine, type RealLine } from './real-line.js';
 
 const POLL_MS = 5_000;
 
@@ -31,6 +33,15 @@ export function decideWorkerStart(env: Record<string, string | undefined>): Work
   if (env.DEVLINE_WORKER_ENABLED !== '1') return no('DEVLINE_WORKER_ENABLED=1 ではないので起動しません');
   if (env.NODE_ENV === 'production' && runnerKind === 'fake') return no('production では fake runner を起動しません');
   if (!isFakeScenario(rawScenario)) return no('DEVLINE_FAKE_SCENARIO の値が正しくありません');
+  if (runnerKind === 'docker-claude') {
+    // 資格情報とリポジトリの確認は startRealLine。ここは設定だけで決まる拒否（fake へ落とさない）
+    try {
+      const refused = checkRealLineEnv(env, parseDevlineTargetRepos(env.DEVLINE_TARGET_REPOS));
+      if (refused) return no(refused);
+    } catch (err) {
+      return no((err as Error).message);
+    }
+  }
   return { start: true, reason: null, runnerKind, scenario };
 }
 
@@ -41,7 +52,23 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const runner = createRunner(decision.runnerKind, decision.scenario);
+  let line: RealLine | undefined;
+  if (decision.runnerKind === 'docker-claude') {
+    try {
+      line = await startRealLine({
+        env: process.env,
+        allowedRepos: config.devlineTargetRepos,
+        nodeEnv: config.nodeEnv,
+        apiUrl: config.githubApiUrl,
+      });
+    } catch (err) {
+      console.error(`[worker] 起動を拒否しました: ${(err as Error).message}`);
+      process.exitCode = 1;
+      await closePool();
+      return;
+    }
+  }
+  const runner = line ? line.runner : createRunner(decision.runnerKind, decision.scenario);
   const owner = `worker-${hostname()}-${process.pid}-${randomUUID().slice(0, 8)}`;
   const stop = new AbortController();
   process.once('SIGINT', () => stop.abort());
@@ -51,7 +78,13 @@ async function main(): Promise<void> {
   while (!stop.signal.aborted) {
     let idle = true;
     try {
-      const outcome = await runOnce({ owner, runner, scenario: decision.scenario, clock: () => new Date() });
+      const outcome = await runOnce({
+        owner,
+        runner,
+        scenario: decision.scenario,
+        clock: () => new Date(),
+        ...(line ? { line } : {}),
+      });
       // 進まなかった工程（CI の結果待ちなど）も待つ。空回りで DB を叩き続けない
       idle = outcome.kind === 'idle' || (outcome.kind === 'stepped' && outcome.to === 'unchanged');
       if (outcome.kind !== 'idle') console.log(`[worker] ${JSON.stringify(outcome)}`);

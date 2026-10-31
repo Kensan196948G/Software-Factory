@@ -861,6 +861,71 @@ test.describe('見本と実依頼の分離', () => {
     await expect(p.locator('[data-dl-row="sample"] a')).toHaveCount(0);
   });
 
+  test('docker-claude の job と github の検証は実行確認済み。github.com 以外の連携先は fake', async ({ page }) => {
+    await login(page);
+    const title = `実 runner ${Date.now()}`;
+    const id = await createApproved(page, title);
+    const jobId = '33333333-3333-3333-3333-333333333333';
+    const respond = (evidence: Record<string, unknown>): void => {
+      void page.unroute(`**/api/requests/${id}/jobs`);
+      void page.route(`**/api/requests/${id}/jobs`, (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            items: [
+              {
+                id: jobId,
+                requestId: id,
+                orderVersion: 1,
+                state: 'pr_ready',
+                runnerKind: 'docker-claude',
+                stopReason: null,
+                orderCurrent: true,
+                costJpy: 120,
+              },
+            ],
+            handoffs: [],
+            evidence: { [jobId]: evidence },
+          }),
+        }),
+      );
+    };
+    respond({
+      attempts: 2,
+      verificationSources: ['github'],
+      hasPrDraft: true,
+      pr: { number: 12, url: 'https://github.invalid/x/y/pull/12', source: 'github' },
+      ciRunUrl: 'https://github.invalid/x/y/actions/runs/1',
+      ciSource: 'github',
+    });
+    await openDrawer(page, title);
+    const p = panel(page);
+    for (const row of ['job', 'plan', 'ci', 'pr']) {
+      await expect(p.locator(`[data-dl-row="${row}"] [data-dl-kind]`), row).toHaveText('実行確認済み');
+    }
+    await expect(p.locator('[data-dl-row="plan"]')).toContainText('docker-claude');
+    await expect(p.locator('[data-dl-row="plan"]')).toContainText('120 円');
+    await expect(p.locator('[data-dl-row="ci"]')).toContainText('GitHub Actions');
+    await expect(p.locator('[data-dl-row="pr"] a')).toHaveText('PR #12');
+    await expect(p.locator('[data-dl-row="pr"]')).toContainText('AI は merge しません');
+
+    // ローカルの連携先の結果は実物に見せない
+    respond({
+      attempts: 2,
+      verificationSources: ['github'],
+      hasPrDraft: true,
+      pr: { number: 12, url: 'http://127.0.0.1:1/x/y/pull/12', source: 'fake' },
+      ciRunUrl: 'http://127.0.0.1:1/x/y/actions/runs/1',
+      ciSource: 'fake',
+    });
+    await reloadAs(page, 'desk');
+    await openDrawer(page, title);
+    await expect(panel(page).locator('[data-dl-row="ci"] [data-dl-kind]')).toHaveText('fake');
+    await expect(panel(page).locator('[data-dl-row="pr"] [data-dl-kind]')).toHaveText('fake');
+    await expect(panel(page).locator('[data-dl-row="ci"]')).toContainText('実 GitHub ではありません');
+  });
+
   test('jobs を読めないときは未接続と表示する', async ({ page }) => {
     await login(page);
     const title = `未取得 ${Date.now()}`;

@@ -308,5 +308,5 @@
 
 ### 残した課題
 
-- **`changedPaths` の出どころ（M-3 の残り・U-07）**: fake は runner の申告をそのまま使う。実 runner では申告を信じず、`base_sha` と `head_sha` の git 差分から算出すること。`tests/` の新規と既存の区別も差分の add / modify で行い、`tests/generated/` の置き場の規則を外す。
+- **`changedPaths` の出どころ（M-3 の残り・U-07）**: fake は runner の申告をそのまま使う。実 runner（`docs/devline/real-runner.md`）は `src/worker/diff-policy.ts` で git の差分から算出し、試験の新規と既存を差分の状態で区別する。
 - **旧来の Issue**: マーカーの無い Issue（`request.issue_no` はあるが PoC 以前に作られたもの）は M-1 により PATCH されない（ERR-405）。

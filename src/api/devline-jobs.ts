@@ -270,6 +270,22 @@ function issueSourceOf(issueUrl: string | null): HandoffView['issueSource'] {
   return apiHost === 'api.github.com' && (issueUrl === null || urlHost === 'github.com') ? 'github' : 'fake';
 }
 
+/** github.com の URL だけを実物とする。ローカルの連携先の結果は fake と表示する。 */
+function githubSourceOf(url: string | null): 'github' | 'fake' {
+  if (url === null) return 'fake';
+  try {
+    return new URL(url).hostname === 'github.com' ? 'github' : 'fake';
+  } catch {
+    return 'fake';
+  }
+}
+
+function prEvidenceOf(raw: unknown): JobEvidence['pr'] {
+  const pr = raw as { number?: unknown; url?: unknown } | null;
+  if (!pr || typeof pr.number !== 'number' || typeof pr.url !== 'string') return null;
+  return { number: pr.number, url: pr.url, source: githubSourceOf(pr.url) };
+}
+
 /** 画面の表示用。投入の記録（版の新しい順）と job ごとの証跡の要約を返す。 */
 export async function listDevlineTrace(
   requestId: string,
@@ -299,8 +315,17 @@ export async function listDevlineTrace(
     nextAttemptAt: i.next_attempt_at?.toISOString() ?? null,
     updatedAt: i.updated_at.toISOString(),
   }));
-  const rows = await query<{ id: string; attempts: number; sources: VerificationSource[]; has_pr: boolean }>(
-    `select j.id,
+  const rows = await query<{
+    id: string;
+    attempts: number;
+    sources: VerificationSource[];
+    has_pr: boolean;
+    pr: unknown;
+    ci_url: string | null;
+  }>(
+    `select j.id, j.work_state -> 'pr' as pr,
+            (select v.log_ref from verification v where v.job_id = j.id and v.source = 'github'
+              order by v.run_sequence desc, v.run_attempt desc limit 1) as ci_url,
             (select count(*) from job_attempt a where a.job_id = j.id)::int as attempts,
             array(select distinct v.source from verification v where v.job_id = j.id order by v.source) as sources,
             exists (select 1 from job_artifact f where f.job_id = j.id and f.kind = 'pr_body_draft') as has_pr
@@ -309,7 +334,15 @@ export async function listDevlineTrace(
   );
   const evidence: Record<string, JobEvidence> = {};
   for (const r of rows.rows) {
-    evidence[r.id] = { attempts: r.attempts, verificationSources: r.sources, hasPrDraft: r.has_pr };
+    // 実 PR・実 CI の項目は記録があるときだけ載せる。fake の job の応答の形は変えない
+    const pr = prEvidenceOf(r.pr);
+    evidence[r.id] = {
+      attempts: r.attempts,
+      verificationSources: r.sources,
+      hasPrDraft: r.has_pr,
+      ...(pr ? { pr } : {}),
+      ...(r.sources.includes('github') ? { ciRunUrl: r.ci_url, ciSource: githubSourceOf(r.ci_url) } : {}),
+    };
   }
   return { handoffs, evidence };
 }
@@ -499,6 +532,9 @@ export async function claimNextJob(input: {
   owner: string;
   now: Date;
   leaseSeconds?: number;
+  runnerKind?: RunnerKind;
+  excludeRunnerKind?: RunnerKind;
+  jobId?: string;
 }): Promise<{ job: JobRow; lease: JobLease } | null> {
   const secs = input.leaseSeconds ?? DEVLINE_POLICY.leaseSeconds;
   return withTransaction(async (client) => {
@@ -507,6 +543,9 @@ export async function claimNextJob(input: {
          select id, lease_owner as prev_owner from job
           where state = any($1::text[])
             and (lease_expires_at is null or lease_expires_at <= $3::timestamptz)
+            and ($5::text is null or runner_kind = $5)
+            and ($6::text is null or runner_kind <> $6)
+            and ($7::uuid is null or id = $7)
           order by updated_at, created_at
           limit 1
           for update skip locked
@@ -517,7 +556,15 @@ export async function claimNextJob(input: {
               lease_reclaim_count=j.lease_reclaim_count + (case when j.lease_owner is null then 0 else 1 end)
          from c where j.id=c.id
        returning j.*, c.prev_owner`,
-      [JOB_RUNNABLE_STATES, input.owner, input.now, secs],
+      [
+        JOB_RUNNABLE_STATES,
+        input.owner,
+        input.now,
+        secs,
+        input.runnerKind ?? null,
+        input.excludeRunnerKind ?? null,
+        input.jobId ?? null,
+      ],
     );
     const job = rows[0];
     if (!job) return null;
@@ -883,6 +930,34 @@ export async function finishAttempt(
     return STALE;
   }
   return { applied: true, value: null };
+}
+
+/** 工程の外で job の出来事を残す（予算の警告など）。 */
+export async function appendJobEvent(
+  jobId: string,
+  event: { at: Date; kind: string; correlationId?: string | null; detail?: unknown },
+): Promise<void> {
+  await withTransaction(async (client) => {
+    await insertJobEvent(client, { jobId, actorType: 'system', ...event });
+  });
+}
+
+/**
+ * 結果を job に載せられなかった試行の費用を足す（取消・時間切れ・遅れた結果）。fence を見ない。
+ * 実際に使った費用なので、書き込みの権利とは別に数える。0 円なら何もしない。
+ */
+export async function addRunnerCost(jobId: string, costJpy: number, now: Date, detail: Record<string, unknown>): Promise<void> {
+  if (costJpy <= 0) return;
+  await withTransaction(async (client) => {
+    await client.query('update job set cost_jpy=cost_jpy+$2 where id=$1', [jobId, costJpy]);
+    await insertJobEvent(client, {
+      jobId,
+      at: now,
+      kind: 'runner_cost_late',
+      actorType: 'system',
+      detail: { costJpy, ...detail },
+    });
+  });
 }
 
 /** 結果が出なかった試行（時間切れ・取消・拒否）を閉じる。遅れていても attempt を閉じるだけで job を動かさない。 */
