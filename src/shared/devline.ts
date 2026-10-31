@@ -126,6 +126,7 @@ export const NON_RESUMABLE_STOP_REASONS: readonly StopReason[] = [
   'order_invalidated',
   'same_cause_limit',
   'repair_total_limit',
+  'ci_rerun_limit',
   'budget_limit',
   'policy_violation',
   'human_approval_required',
@@ -644,15 +645,20 @@ export const FORBIDDEN_PATH_PATTERNS: readonly RegExp[] = [
   /^\.gitlab-ci/,
   /^\.husky\//,
   // secret 類
-  /(^|\/)\.env($|\.)/,
+  /(^|\/)\.env($|\.|rc$)/,
+  /\.env$/,
   /\.(pem|key|p12|pfx|jks|kdbx|keystore)$/,
   /(^|\/)(id_rsa|id_dsa|id_ecdsa|id_ed25519)($|\.)/,
-  /(^|\/)(secrets?|credentials?)($|[./])/,
+  /(^|\/)\.?(secrets?|credentials?)($|[./])/,
   /(^|\/)\.(ssh|aws|gnupg)\//,
   /(^|\/)\.(npmrc|netrc|pgpass)$/,
   /(^|\/)local\.json$/,
   // 認証
   /^src\/api\/(auth|password|config)\.ts$/,
+  // 工場自体の定義。policy・遷移表・信号ルール・注文書のひな形・実行者・監査を自分で書きかえさせない（FR-46）
+  /^src\/shared\/(devline|domain|order)\.ts$/,
+  /^src\/worker\//,
+  /^src\/api\/(devline-[^/]*|issue-adapter[^/]*|github|service|app|http|audit|db)\.ts$/,
   // 配備定義
   /(^|\/)wrangler\.(toml|json|jsonc)$/,
   /(^|\/)dockerfile/,
@@ -691,14 +697,30 @@ export function checkChangedPaths(paths: readonly string[]): PathViolation[] {
       violations.push({ path: raw, rule: 'invalid_path' });
       continue;
     }
-    const lower = path.toLowerCase();
-    if (FORBIDDEN_PATH_PATTERNS.some((re) => re.test(lower))) {
+    // 禁止は大小文字の違いでもすり抜けさせない。許可は完全一致（`SRC/` は別の場所）
+    if (FORBIDDEN_PATH_PATTERNS.some((re) => re.test(path.toLowerCase()))) {
       violations.push({ path, rule: 'forbidden' });
-    } else if (!ALLOWED_PATH_PREFIXES.some((prefix) => lower.startsWith(prefix))) {
+    } else if (!ALLOWED_PATH_PREFIXES.some((prefix) => path.startsWith(prefix))) {
       violations.push({ path, rule: 'not_allowed' });
     }
   }
   return violations;
+}
+
+/** 新しい試験の置き場。これ以外の tests/ は既存の試験の変更とみなす。 */
+export const NEW_TEST_PATH_PREFIX = 'tests/generated/';
+
+/**
+ * 人の承認が要る変更（純関数）。既存の試験を書きかえて合格にできないようにする。
+ * git の差分が無いので新規か既存かは置き場で判定する（実 runner の課題。ADR 11章）。
+ */
+export function pathsRequiringHumanApproval(paths: readonly string[]): string[] {
+  const hits: string[] = [];
+  for (const raw of paths) {
+    const path = normalizeRepoPath(raw);
+    if (path !== null && path.startsWith('tests/') && !path.startsWith(NEW_TEST_PATH_PREFIX)) hits.push(path);
+  }
+  return hits;
 }
 
 /* ────────────────────────────── 検証証跡（ENT-09・仕様 4-5） ────────────────────────────── */
@@ -961,6 +983,8 @@ export interface IssueAdapter {
   getActorLogin(signal: AbortSignal): Promise<IssueReadResult<string>>;
   /** リポジトリの数値 ID。許可リストの repoId と照合する（ADR 11章）。 */
   getRepoId(repo: string, signal: AbortSignal): Promise<IssueReadResult<string>>;
+  /** 非公開か。公開リポジトリへは投入しない（ADR 11章）。値が読めなければ失敗を返す。 */
+  getRepoPrivate(repo: string, signal: AbortSignal): Promise<IssueReadResult<boolean>>;
   /** 既定ブランチの先頭 SHA（base_sha）。 */
   resolveBaseSha(repo: string, signal: AbortSignal): Promise<IssueReadResult<string>>;
   createIssue(input: IssueWriteInput): Promise<IssueSendOutcome>;

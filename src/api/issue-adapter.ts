@@ -188,6 +188,13 @@ export function createGithubIssueAdapter(options: GithubAdapterOptions): IssueAd
       return Number.isInteger(id) ? { ok: true, value: String(id) } : { ok: false, reason: 'http' };
     },
 
+    async getRepoPrivate(repo, signal) {
+      const got = await read(repoPath(repo), signal);
+      if (!got.ok) return got;
+      const flag = (got.value.json as { private?: unknown } | null)?.private;
+      return typeof flag === 'boolean' ? { ok: true, value: flag } : { ok: false, reason: 'http' };
+    },
+
     async resolveBaseSha(repo, signal) {
       const path = repoPath(repo);
       const meta = await read(path, signal);

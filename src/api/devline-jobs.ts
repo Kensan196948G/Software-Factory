@@ -10,7 +10,7 @@
  * - 外部呼び出しをトランザクションの中で行わない（appendAuditTx が advisory lock を取るため）。
  */
 import type { PoolClient, QueryResult } from 'pg';
-import { query, withTransaction } from './db.js';
+import { query, withTransaction, type Db } from './db.js';
 import { appendAudit, appendAuditTx } from './audit.js';
 import { Errors } from './http.js';
 import type { Actor } from './service.js';
@@ -289,6 +289,16 @@ async function denyJobOperation(action: string, jobId: string, actor: Actor, cor
   throw Errors.noPermission();
 }
 
+/** 版固定のときの信号の色で判定する。依頼の signal_decided は編集で変わるので使わない。 */
+export async function isRedOrder(db: Db, snapshotId: string): Promise<boolean> {
+  const { rows } = await query<{ decided: string | null }>(
+    `select envelope->'approval'->>'decided_signal' as decided from order_snapshot where id = $1`,
+    [snapshotId],
+    db,
+  );
+  return rows[0]?.decided === 'r';
+}
+
 async function lockJobForOperator(client: PoolClient, jobId: string, expectedState?: JobState): Promise<JobRow> {
   const { rows } = await client.query<JobRow>('select * from job where id = $1 for update', [jobId]);
   const job = rows[0];
@@ -364,6 +374,10 @@ export async function resumeJob(
     const job = await lockJobForOperator(client, input.jobId, input.expectedState);
     const decision = resumeDecision({ state: job.state, stopReason: job.stop_reason, resumeTo: job.resume_to });
     if (!decision.ok) throw Errors.invalidTransition(decision.reason);
+    // 赤信号は止まった理由が何であっても、人が範囲を変えて承認し直すまで再開しない（BR-03）
+    if (await isRedOrder(client, job.snapshot_id)) {
+      throw Errors.invalidTransition('赤信号の注文書のジョブは再開できません（範囲を変えて承認し直してください）');
+    }
     const { rows } = await client.query<{ status: Status; deleted: boolean; order_version: number }>(
       'select status, deleted, order_version from request where id = $1',
       [job.request_id],
@@ -384,6 +398,7 @@ export async function resumeJob(
       `update job set state=$2, stop_reason=null, stop_detail=null, remaining_work=null, resume_to=null, stopped_at=null,
               cancel_requested_at=null, cancel_requested_by=null, session_started_at=null, continuous_seconds=0,
               lease_reclaim_count=0, fencing_token=fencing_token+1, lease_owner=null, lease_expires_at=null, heartbeat_at=null,
+              work_state = work_state || jsonb_build_object('resumeEpoch', coalesce((work_state->>'resumeEpoch')::int, 0) + 1),
               updated_at=$3
         where id=$1`,
       [job.id, decision.to, now],
@@ -429,7 +444,7 @@ export async function claimNextJob(input: {
          select id, lease_owner as prev_owner from job
           where state = any($1::text[])
             and (lease_expires_at is null or lease_expires_at <= $3::timestamptz)
-          order by created_at
+          order by updated_at, created_at
           limit 1
           for update skip locked
        )
@@ -499,9 +514,9 @@ export async function heartbeat(
   const { rows, rowCount } = await query<{ lease_expires_at: Date }>(
     `update job set heartbeat_at=$4::timestamptz, lease_expires_at=$4::timestamptz + make_interval(secs => $5::double precision),
             updated_at=$4::timestamptz
-      where id=$1 and fencing_token=$2 and state=$3
+      where id=$1 and fencing_token=$2 and state=$3 and lease_owner=$6
       returning lease_expires_at`,
-    [lease.jobId, lease.fencingToken, lease.expectedState, now, secs],
+    [lease.jobId, lease.fencingToken, lease.expectedState, now, secs, lease.owner],
   );
   if (!rowCount || !rows[0]) {
     await recordLateWrite(lease, 'heartbeat', now);
@@ -511,11 +526,17 @@ export async function heartbeat(
 }
 
 /** 工程の終わりに必ず呼ぶ。外し忘れると正常な job が lease_lost_repeatedly で止まる。 */
-export async function releaseLease(lease: JobLease, now: Date): Promise<FencedWrite<null>> {
+export async function releaseLease(
+  lease: JobLease,
+  now: Date,
+  options: { keepSession?: boolean } = {},
+): Promise<FencedWrite<null>> {
+  // keepSession: 進まなかった工程では session を閉じない。待ち続ける job にも時間の上限が効く（ADR 11章）
+  const session = options.keepSession ? '' : `, ${rollSessionSql('$4')}`;
   const result = await query(
-    `update job set lease_owner=null, lease_expires_at=null, updated_at=$4::timestamptz, ${rollSessionSql('$4')}
-      where id=$1 and fencing_token=$2 and state=$3`,
-    [lease.jobId, lease.fencingToken, lease.expectedState, now],
+    `update job set lease_owner=null, lease_expires_at=null, updated_at=$4::timestamptz${session}
+      where id=$1 and fencing_token=$2 and state=$3 and lease_owner=$5`,
+    [lease.jobId, lease.fencingToken, lease.expectedState, now, lease.owner],
   );
   if (!rowsChanged(result)) {
     await recordLateWrite(lease, 'releaseLease', now);
@@ -535,13 +556,13 @@ export async function transitionJob(
     actor?: JobActor;
   },
 ): Promise<FencedWrite<JobLease | null>> {
-  if (!isPhase1Transition(lease.expectedState, input.to) || JOB_HALTED_STATES.includes(input.to)) {
+  // pr_ready へ進めるのは recordVerification だけ（合格の記録と PR 候補が同じトランザクションで揃う）
+  if (!isPhase1Transition(lease.expectedState, input.to) || JOB_HALTED_STATES.includes(input.to) || input.to === 'pr_ready') {
     throw new Error(`transitionJob: ${lease.expectedState} -> ${input.to} は Phase 1 で実行できません`);
   }
   const actor = input.actor ?? WORKER_ACTOR;
-  const endsLease = input.to === 'pr_ready';
   const applied = await withTransaction(async (client) => {
-    const params: unknown[] = [lease.jobId, lease.fencingToken, lease.expectedState, input.to, input.now];
+    const params: unknown[] = [lease.jobId, lease.fencingToken, lease.expectedState, input.to, input.now, lease.owner];
     const sets = ['state=$4', 'updated_at=$5::timestamptz'];
     const patch = input.patch ?? {};
     const add = (column: string, value: unknown, cast = ''): void => {
@@ -552,9 +573,8 @@ export async function transitionJob(
     if (patch.workState !== undefined) add('work_state', JSON.stringify(patch.workState), '::jsonb');
     if (patch.headSha !== undefined) add('head_sha', patch.headSha);
     if (patch.ciRerunCount !== undefined) add('ci_rerun_count', patch.ciRerunCount);
-    if (endsLease) sets.push('lease_owner=null', 'lease_expires_at=null', rollSessionSql('$5'));
     const result = await client.query(
-      `update job set ${sets.join(', ')} where id=$1 and fencing_token=$2 and state=$3`,
+      `update job set ${sets.join(', ')} where id=$1 and fencing_token=$2 and state=$3 and lease_owner=$6`,
       params as never[],
     );
     if (!rowsChanged(result)) return false;
@@ -584,7 +604,7 @@ export async function transitionJob(
     await recordLateWrite(lease, `transition:${input.to}`, input.now, input.correlationId);
     return STALE;
   }
-  return { applied: true, value: endsLease ? null : { ...lease, expectedState: input.to } };
+  return { applied: true, value: { ...lease, expectedState: input.to } };
 }
 
 /** lease の持ち主が止める。行き先は haltTarget。動かせない状態なら何もせず applied:true。 */
@@ -604,11 +624,10 @@ export async function haltJob(
   const actor = input.actor ?? WORKER_ACTOR;
   const resumeTo: JobState = to === 'cancelled' ? 'queued' : lease.expectedState;
   const applied = await withTransaction(async (client) => {
-    const { rows } = await client.query<JobRow>('select * from job where id=$1 and fencing_token=$2 and state=$3 for update', [
-      lease.jobId,
-      lease.fencingToken,
-      lease.expectedState,
-    ]);
+    const { rows } = await client.query<JobRow>(
+      'select * from job where id=$1 and fencing_token=$2 and state=$3 and lease_owner=$4 for update',
+      [lease.jobId, lease.fencingToken, lease.expectedState, lease.owner],
+    );
     const job = rows[0];
     if (!job) return false;
     await client.query(
@@ -684,11 +703,10 @@ export async function startAttempt(
   input: { step: RunnerStep; runnerKind: RunnerKind; now: Date },
 ): Promise<FencedWrite<{ attemptId: string; attemptNo: number }>> {
   const value = await withTransaction(async (client) => {
-    const { rows } = await client.query('select id from job where id=$1 and fencing_token=$2 and state=$3 for update', [
-      lease.jobId,
-      lease.fencingToken,
-      lease.expectedState,
-    ]);
+    const { rows } = await client.query(
+      'select id from job where id=$1 and fencing_token=$2 and state=$3 and lease_owner=$4 for update',
+      [lease.jobId, lease.fencingToken, lease.expectedState, lease.owner],
+    );
     if (!rows[0]) return null;
     // 落ちた worker の試行が開いたまま残っていれば閉じる
     await client.query(`update job_attempt set finished_at=$2, outcome='discarded' where job_id=$1 and finished_at is null`, [
@@ -731,11 +749,10 @@ export async function finishAttempt(
 ): Promise<FencedWrite<null>> {
   const usage = result.usage;
   const applied = await withTransaction(async (client) => {
-    const { rows } = await client.query<JobRow>('select * from job where id=$1 and fencing_token=$2 and state=$3 for update', [
-      lease.jobId,
-      lease.fencingToken,
-      lease.expectedState,
-    ]);
+    const { rows } = await client.query<JobRow>(
+      'select * from job where id=$1 and fencing_token=$2 and state=$3 and lease_owner=$4 for update',
+      [lease.jobId, lease.fencingToken, lease.expectedState, lease.owner],
+    );
     const job = rows[0];
     if (!job) {
       await closeAttemptUnfenced(client, attemptId, 'discarded', now, { exitCode: result.exitCode, usage });

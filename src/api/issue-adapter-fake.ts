@@ -20,6 +20,8 @@ export function createFakeIssueAdapter(
   options: {
     actorLogin?: string;
     repoIds?: Readonly<Record<string, string>>;
+    /** 公開リポジトリの名前。これ以外は非公開として返す。 */
+    publicRepos?: readonly string[];
     baseSha?: string;
     /** 外部へ送る瞬間に呼ぶ。送信の前に commit 済みかを確かめる試験に使う。 */
     beforeSend?: (input: IssueWriteInput) => void | Promise<void>;
@@ -66,6 +68,10 @@ export function createFakeIssueAdapter(
       calls.push({ method: 'getRepoId', repo });
       const id = options.repoIds?.[repo];
       return id ? { ok: true, value: id } : { ok: false, reason: 'http', httpStatus: 404 };
+    },
+    async getRepoPrivate(repo) {
+      calls.push({ method: 'getRepoPrivate', repo });
+      return { ok: true, value: !(options.publicRepos ?? []).includes(repo) };
     },
     async resolveBaseSha(repo) {
       calls.push({ method: 'resolveBaseSha', repo });

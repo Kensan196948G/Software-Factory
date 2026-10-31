@@ -7,7 +7,7 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { config } from '../api/config.js';
-import { query } from '../api/db.js';
+import { pool, query } from '../api/db.js';
 import {
   acIdsOf,
   claimNextJob,
@@ -15,6 +15,7 @@ import {
   finishAttempt,
   haltJob,
   heartbeat,
+  isRedOrder,
   recordVerification,
   releaseLease,
   remainingWorkFor,
@@ -29,6 +30,7 @@ import {
   DEVLINE_POLICY,
   IMPLEMENTED_RUNNER_KINDS,
   checkChangedPaths,
+  pathsRequiringHumanApproval,
   checkTimeLimits,
   haltTarget,
   isOrderCurrent,
@@ -46,8 +48,9 @@ import type {
   RunnerStep,
   StopReason,
 } from '../shared/devline.js';
-import type { Signal, Status } from '../shared/domain.js';
+import type { Status } from '../shared/domain.js';
 import { buildFakeVerification } from './fake-ci.js';
+import { parseRunnerResult } from './runner-result.js';
 
 export interface WorkerOptions {
   owner: string;
@@ -88,15 +91,13 @@ interface RequestFacts {
   status: Status;
   deleted: boolean;
   order_version: number;
-  signal_decided: Signal | null;
   criteria: string[];
 }
 
 async function requestFacts(requestId: string): Promise<RequestFacts | null> {
-  const { rows } = await query<RequestFacts>(
-    'select status, deleted, order_version, signal_decided, criteria from request where id = $1',
-    [requestId],
-  );
+  const { rows } = await query<RequestFacts>('select status, deleted, order_version, criteria from request where id = $1', [
+    requestId,
+  ]);
   return rows[0] ?? null;
 }
 
@@ -217,7 +218,12 @@ async function runStep(options: WorkerOptions, job: JobRow, lease: JobLease, cor
     return stopped('runner_failure', { step, cause: 'runner_threw' }, agentActor(options.runner));
   }
 
-  const result = outcome.result;
+  // 型は申告にすぎないので実行時に確かめる。読めない結果は記録も信用もしない
+  const result = parseRunnerResult(outcome.result);
+  if (!result) {
+    await closeAttempt(attemptId, 'rejected', now);
+    return stopped('runner_failure', { step, cause: 'invalid_result' }, agentActor(options.runner));
+  }
   const finished = await finishAttempt(lease, attemptId, result, now);
   if (!finished.applied) return { kind: 'lost', jobId: job.id, from };
 
@@ -227,8 +233,9 @@ async function runStep(options: WorkerOptions, job: JobRow, lease: JobLease, cor
   if (violations.length > 0) {
     return stopped('policy_violation', { violations: violations.slice(0, 50) }, agent);
   }
-  if (result.humanApprovalTouched && result.humanApprovalTouched.length > 0) {
-    return stopped('human_approval_required', { items: result.humanApprovalTouched.slice(0, 50) }, agent);
+  const touched = [...(result.humanApprovalTouched ?? []), ...pathsRequiringHumanApproval(result.changedPaths)];
+  if (touched.length > 0) {
+    return stopped('human_approval_required', { items: touched.slice(0, 50) }, agent);
   }
   if (result.usage.costJpy > 0 && DEVLINE_POLICY.budgetJpy === null) {
     return stopped('budget_limit', { costJpy: result.usage.costJpy }, agent);
@@ -295,18 +302,20 @@ async function verifyStep(options: WorkerOptions, job: JobRow, lease: JobLease, 
           headSha: job.head_sha as string,
           repairCountTotal: job.repair_count_total,
           ciRerunCount: job.ci_rerun_count,
+          resumeEpoch: Number(job.work_state.resumeEpoch ?? 0),
         },
         options.scenario,
         acIds,
         { now, correlationId },
       );
   if (!delivery) {
-    await releaseLease(lease, options.clock());
+    await releaseLease(lease, options.clock(), { keepSession: true });
     return { kind: 'stepped', jobId: job.id, from: 'verifying', to: 'unchanged' };
   }
   const recorded = await recordVerification(delivery);
   // 動かしたときは recordVerification が lease を外している
-  if (!recorded.advanced) await releaseLease(lease, options.clock());
+  // 進まなかったときは session を閉じない。結果を待ち続ける job は session_limit で止まる
+  if (!recorded.advanced) await releaseLease(lease, options.clock(), { keepSession: true });
   return { kind: 'stepped', jobId: job.id, from: 'verifying', to: recorded.advanced ? recorded.jobState : 'unchanged' };
 }
 
@@ -353,11 +362,15 @@ export async function runOnce(options: WorkerOptions): Promise<StepOutcome> {
   });
   if (limit) return halt(limit.stopReason, { at: 'claim' });
 
+  // 赤信号は版固定のときの色で判定する。queued には stopped への遷移が無いので planning を経て止める（T-70）
+  const red = await isRedOrder(pool, job.snapshot_id);
+  if (red && job.state !== 'queued') return halt('red_signal_human_required', { signal: 'r' });
+
   if (job.state === 'queued') {
     const moved = await transitionJob(lease, { to: 'planning', now: options.clock(), correlationId });
     if (!moved.applied) return { kind: 'lost', jobId: job.id, from: 'queued' };
     lease = moved.value as JobLease;
-    if (facts?.signal_decided === 'r') return halt('red_signal_human_required', { signal: 'r' });
+    if (red) return halt('red_signal_human_required', { signal: 'r' });
     await releaseLease(lease, options.clock());
     return { kind: 'stepped', jobId: job.id, from: 'queued', to: 'planning' };
   }

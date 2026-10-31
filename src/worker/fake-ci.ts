@@ -11,6 +11,8 @@ export interface FakeCiJobFacts {
   headSha: string;
   repairCountTotal: number;
   ciRerunCount: number;
+  /** 人の再開の回数。再開のたびに新しい試行とし、止まっていたあいだの配信と重ねない。 */
+  resumeEpoch?: number;
 }
 
 export const FAKE_FAILING_TEST = 'fake.unit.sample';
@@ -21,6 +23,7 @@ export function buildFakeVerification(
   acIds: readonly string[],
   ctx: { now: Date; correlationId: string },
 ): RecordVerificationInput {
+  const epoch = job.resumeEpoch ?? 0;
   const fails = scenario === 'same_cause_fail' || (scenario === 'test_fail_then_fix' && job.repairCountTotal === 0);
   const stages: StageResult[] = REQUIRED_STAGES.map((stage) =>
     fails && stage === 'unit' ? { stage, status: 'failed', failedTestIds: [FAKE_FAILING_TEST] } : { stage, status: 'passed' },
@@ -35,11 +38,11 @@ export function buildFakeVerification(
     .digest('hex');
   return {
     jobId: job.jobId,
-    deliveryId: `fake:${job.jobId}:${job.headSha}:${job.ciRerunCount}`,
+    deliveryId: `fake:${job.jobId}:${job.headSha}:${job.ciRerunCount}${epoch > 0 ? `:r${epoch}` : ''}`,
     source: 'fake_ci',
     ciRunId: `fake-run:${job.headSha}:${job.ciRerunCount}`,
     runSequence: job.repairCountTotal * 100 + job.ciRerunCount + 1,
-    runAttempt: 1,
+    runAttempt: epoch + 1,
     headSha: job.headSha,
     stages,
     acResults,

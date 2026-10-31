@@ -9,7 +9,7 @@ import { config } from './config.js';
 import { withTransaction } from './db.js';
 import { appendAuditTx } from './audit.js';
 import { ApiError, Errors } from './http.js';
-import { haltLockedJob, insertJobEvent, rollSessionSql, sha256Hex, type JobRow } from './devline-jobs.js';
+import { haltLockedJob, insertJobEvent, isRedOrder, rollSessionSql, sha256Hex, type JobRow } from './devline-jobs.js';
 import {
   PR_AGENTS_HEADINGS,
   PR_DECISION_ITEMS,
@@ -132,6 +132,24 @@ export async function recordVerification(input: RecordVerificationInput): Promis
     if (job.state !== 'verifying' || input.headSha !== job.head_sha || !current) {
       return { status: 'recorded', verdict, jobState: job.state, advanced: false };
     }
+    // 順不同で届いた古い配信では動かさない。合否も再実行の回数も、その SHA の最新の記録だけが決める
+    const newest = rows.rows
+      .filter((r) => r.head_sha === input.headSha)
+      .some(
+        (r) => r.run_sequence > input.runSequence || (r.run_sequence === input.runSequence && r.run_attempt > input.runAttempt),
+      );
+    if (newest) return { status: 'recorded', verdict, jobState: job.state, advanced: false };
+    // 赤信号は worker の前でも合格へ進めない
+    if (await isRedOrder(client, job.snapshot_id)) {
+      await haltLockedJob(client, job, {
+        to: 'stopped',
+        reason: 'red_signal_human_required',
+        detail: { signal: 'r' },
+        now: input.now,
+      });
+      await logTransition(client, job, 'stopped', { reason: 'red_signal_human_required' }, input);
+      return { status: 'recorded', verdict, jobState: 'stopped', advanced: true };
+    }
     const moved = await applyVerdict(client, job, verdict, input);
     return { status: 'recorded', verdict, jobState: moved.state, advanced: moved.advanced };
   });
@@ -153,6 +171,8 @@ async function applyVerdict(
 
   switch (verdict.verdict) {
     case 'passed': {
+      // DB のトリガは合格の記録と PR 候補の両方を要求するので、先に PR 候補を作る（0009）
+      await buildPrCandidate(client, job.id, verdict, now);
       await client.query(
         `update job set state='pr_ready', fencing_token=fencing_token+1, lease_owner=null, lease_expires_at=null, updated_at=$2::timestamptz,
                 ${rollSessionSql('$2')}
@@ -160,7 +180,6 @@ async function applyVerdict(
         [job.id, now],
       );
       await logTransition(client, job, 'pr_ready', { ciRunId: verdict.ciRunId }, input);
-      await buildPrCandidate(client, job.id, verdict, now);
       return { state: 'pr_ready', advanced: true };
     }
     case 'failed': {

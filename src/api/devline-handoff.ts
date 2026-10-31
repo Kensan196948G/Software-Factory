@@ -12,7 +12,7 @@ import { appendAudit, appendAuditTx } from './audit.js';
 import { ApiError, Errors } from './http.js';
 import { getRequestRow, getRequestRowForUpdate, mapRequest, type RequestRow } from './repo.js';
 import type { Actor } from './service.js';
-import { buildIssueBody } from './github.js';
+import { buildIssueBody, safeIssueTitle } from './github.js';
 import { createGithubIssueAdapter } from './issue-adapter.js';
 import { haltLockedJob, insertJobEvent, sha256Hex, type JobRow } from './devline-jobs.js';
 import {
@@ -27,6 +27,7 @@ import {
   canHandoff,
   canonicalJson,
   checkOrderForHandoff,
+  parseHandoffMarker,
   haltTarget,
   isOrderCurrent,
   isRepoAllowed,
@@ -295,6 +296,41 @@ async function assertRepoIdentity(deps: DevlineDeps): Promise<void> {
   const got = await deps.issueAdapter.getRepoId(deps.targetRepo, timeoutSignal(deps));
   if (!got.ok) throw readFailure();
   if (got.value !== allowed.repoId) throw misconfigured('対象リポジトリの ID が許可リストと一致しません（DEVLINE_TARGET_REPOS）');
+  // 注文書に依頼者欄・承認者欄が載るので、公開リポジトリへは常に投入しない（例外の設定を作らない）
+  const isPrivate = await deps.issueAdapter.getRepoPrivate(deps.targetRepo, timeoutSignal(deps));
+  if (!isPrivate.ok) throw readFailure();
+  if (!isPrivate.value) throw misconfigured('公開リポジトリへは投入できません（非公開のリポジトリを設定してください）');
+}
+
+/**
+ * PATCH の前に対象を確かめる。request.issue_no が指す番号が、PR・他人の Issue・別の依頼の Issue であれば上書きしない。
+ * 読めないときは送らない（ERR-304）。不一致は ERR-405。
+ */
+async function assertUpdateTarget(intent: IntentRow, deps: DevlineDeps): Promise<void> {
+  if (intent.op_kind !== 'update_issue') return;
+  const reject = (): ApiError => misconfigured('更新先の Issue がこの依頼のものと確認できないため、送りませんでした');
+  const login = await deps.issueAdapter.getActorLogin(timeoutSignal(deps));
+  if (!login.ok) throw readFailure();
+  const got = await deps.issueAdapter.getIssue(intent.target_repo_id, intent.target_issue_no as number, timeoutSignal(deps));
+  if (!got.ok) throw readFailure();
+  const issue = got.value;
+  if (!issue || issue.isPullRequest || issue.authorLogin !== login.value) throw reject();
+  const marker = parseHandoffMarker(issue.body);
+  if (!marker || marker.requestId !== intent.request_id || marker.repo !== intent.target_repo_id) throw reject();
+}
+
+/** 別のリポジトリに結果の分からない投入が残っている依頼は、対象を変えても作らない（作成済みかもしれない）。 */
+async function assertNoUnknownInOtherRepo(requestId: string, repo: string, db: Db = pool): Promise<void> {
+  const { rows } = await query<{ id: string }>(
+    `select id from handoff_intent where request_id=$1 and target_repo_id<>$2 and state in ('sent','unknown') limit 1`,
+    [requestId, repo],
+    db,
+  );
+  if (rows[0]) {
+    throw new ApiError('ERR-405', '別のリポジトリへの投入の結果が確認できていないため、対象を変えて投入できません', 409, {
+      handoffState: 'unknown',
+    });
+  }
 }
 
 export interface ReconcileOutcome {
@@ -642,6 +678,7 @@ async function createIntent(row: RequestRow, version: number, ctx: HandoffContex
   });
   if (!check.ok) throw checkFailure(check.code, check.reason);
 
+  await assertNoUnknownInOtherRepo(row.id, ctx.deps.targetRepo);
   await settlePriorCreates(row, version, ctx);
   await assertRepoIdentity(ctx.deps);
   const base = await ctx.deps.issueAdapter.resolveBaseSha(ctx.deps.targetRepo, timeoutSignal(ctx.deps));
@@ -656,6 +693,7 @@ async function createIntent(row: RequestRow, version: number, ctx: HandoffContex
       now,
     });
     if (frozen.orderVersion !== version) throw checkFailure('ERR-202', '指定された版は最新ではありません');
+    await assertNoUnknownInOtherRepo(row.id, ctx.deps.targetRepo, client);
 
     const locked = await client.query<{ issue_no: number | null }>('select issue_no from request where id = $1', [row.id]);
     const succeeded = await client.query<{ issue_no: number; target_repo_id: string }>(
@@ -770,12 +808,16 @@ async function resultAfterFinalize(
 /** 外部へ送る（intent は sent で commit 済み）。外部呼び出しの結果を別トランザクションで記録する。 */
 async function sendAndRecord(intent: IntentRow, row: RequestRow, ctx: HandoffContext): Promise<HandoffResult> {
   const snapshot = await loadSnapshot(intent.snapshot_id);
-  const title = `[MSF] ${row.id} ${row.title}`;
+  const title = safeIssueTitle(row.id, row.title);
+  // 承認者欄は依頼の指名ではなく、実際に承認した人
+  const approval = await query<{ approver_name: string }>('select approver_name from approval where id = $1', [
+    snapshot.envelope.approval.id,
+  ]);
   const body = buildIssueBody({
     marker: intent.marker,
     requestId: row.id,
     orderYaml: snapshot.canonical_yaml,
-    approver: row.approver,
+    approver: approval.rows[0]?.approver_name ?? '',
     signalLabel: SIGNAL_LABEL[snapshot.envelope.approval.decided_signal],
     deptLabel: row.dept_name ?? row.dept_code,
     tailoring: row.tailoring,
@@ -922,6 +964,7 @@ async function reconcileAndContinue(
   if (next === 'stay_unknown') throw unknownError(result.scanComplete);
   await settleStalePriorUpdates(row.id, intent.order_version, ctx);
   await assertRepoIdentity(ctx.deps);
+  await assertUpdateTarget(intent, ctx.deps);
   const sent = await claimForSend(
     intent,
     'unknown',
@@ -1004,6 +1047,7 @@ export async function handoffOrder(
     case 'claim_and_send': {
       await settleStalePriorUpdates(row.id, intent.order_version, ctx);
       await assertRepoIdentity(deps);
+      await assertUpdateTarget(intent, deps);
       const sent = await claimForSend(intent, intent.state, ctx, null);
       return sendAndRecord(sent, row, ctx);
     }

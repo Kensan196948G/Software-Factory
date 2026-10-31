@@ -52,7 +52,8 @@ async function main(): Promise<void> {
     let idle = true;
     try {
       const outcome = await runOnce({ owner, runner, scenario: decision.scenario, clock: () => new Date() });
-      idle = outcome.kind === 'idle';
+      // 進まなかった工程（CI の結果待ちなど）も待つ。空回りで DB を叩き続けない
+      idle = outcome.kind === 'idle' || (outcome.kind === 'stepped' && outcome.to === 'unchanged');
       if (outcome.kind !== 'idle') console.log(`[worker] ${JSON.stringify(outcome)}`);
     } catch (err) {
       // lease は期限で切れるので、次の取得で取り直される
