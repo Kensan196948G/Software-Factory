@@ -267,6 +267,16 @@
   const clone = (v) => JSON.parse(JSON.stringify(v));
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
+  /** 作られたときのままではない（作成は version 1、状態 received、受付の履歴 1 行、コメントなし）。 */
+  function touchedSinceCreate(detail) {
+    return (
+      detail.version !== 1 ||
+      detail.status !== 'received' ||
+      (detail.history || []).length > 1 ||
+      (detail.comments || []).length > 0
+    );
+  }
+
   /** 再描画が必要な差分だけを見る（履歴の時刻など、サーバとの細かな差では描き直さない） */
   function visibleSignature(it) {
     return JSON.stringify([
@@ -331,6 +341,15 @@
         const res = await api('POST', '/api/requests', body, it.__idem ? { 'idempotency-key': it.__idem } : undefined);
         s = setBase(res.request);
       });
+      // 照合で返った依頼を他の人が更新していたら、最新の版で上書きしない。利用者が競合の画面で選ぶまで何も送らない
+      if (it.__idem && touchedSinceCreate(s)) {
+        await step('content', async () => {
+          const err = new Error(CONFLICT_MESSAGE);
+          err.code = 'ERR-301';
+          err.status = 409;
+          throw err;
+        });
+      }
     }
     const wantsTransition = Boolean(it.status && it.status !== s.status);
     const serverComments = (s.comments || []).length;
@@ -474,10 +493,10 @@
         if (server) applyServer(live, server);
         else items.splice(items.indexOf(live), 1);
         changed = true;
-        continue;
+      } else {
+        if (server) mergeServer(live, it, server);
+        if (visibleSignature(live) !== before) changed = true;
       }
-      if (server) mergeServer(live, it, server);
-      if (visibleSignature(live) !== before) changed = true;
       // 照合の結果、すでに一覧にある依頼だった場合は 1 行にまとめる
       for (let i = items.length - 1; i >= 0; i--) {
         if (items[i] !== live && items[i].id === live.id) {
