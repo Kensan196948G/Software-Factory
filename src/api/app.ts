@@ -73,7 +73,10 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
     logger:
       config.nodeEnv === 'test' && process.env.DEBUG_TEST !== '1'
         ? false
-        : { level: process.env.LOG_LEVEL ?? 'info', redact: ['req.headers.cookie', 'req.headers.authorization', 'req.headers["x-csrf-token"]'] },
+        : {
+            level: process.env.LOG_LEVEL ?? 'info',
+            redact: ['req.headers.cookie', 'req.headers.authorization', 'req.headers["x-csrf-token"]'],
+          },
     trustProxy: config.trustProxy,
     bodyLimit: 2 * 1024 * 1024,
     disableRequestLogging: config.nodeEnv === 'test',
@@ -125,7 +128,11 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
     if (err instanceof ZodError) {
       const issue = err.issues[0];
       const message = issue?.message ?? '入力の形が正しくありません';
-      const code = message.includes('8件') ? 'ERR-006' : message.includes('文字数') || message.includes('60文字') ? 'ERR-002' : 'ERR-001';
+      const code = message.includes('8件')
+        ? 'ERR-006'
+        : message.includes('文字数') || message.includes('60文字')
+          ? 'ERR-002'
+          : 'ERR-001';
       sendError(reply, new ApiError(code, message, 400, { path: issue?.path, issues: err.issues }), cid);
       return;
     }
@@ -379,7 +386,9 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
     if (!ctx.user.isAdmin) throw Errors.noPermission();
     const q = req.query as Record<string, string | undefined>;
     const limit = Math.min(Number(q.limit ?? 100), 500);
-    const rows = await (await import('./db.js')).many<{
+    const rows = await (
+      await import('./db.js')
+    ).many<{
       id: number;
       at: Date;
       actor_name: string;
@@ -390,7 +399,10 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
       result: string;
       correlation_id: string | null;
       hash: string;
-    }>('select id, at, actor_name, role, action, target_type, target_id, result, correlation_id, hash from audit_log order by id desc limit $1', [limit]);
+    }>(
+      'select id, at, actor_name, role, action, target_type, target_id, result, correlation_id, hash from audit_log order by id desc limit $1',
+      [limit],
+    );
     return {
       items: rows.map((r) => ({
         id: r.id,
@@ -412,7 +424,9 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
   app.get('/api/audit-logs.csv', async (req, reply) => {
     const ctx = auth(req);
     if (!ctx.user.isAdmin) throw Errors.noPermission();
-    const rows = await (await import('./db.js')).many<{
+    const rows = await (
+      await import('./db.js')
+    ).many<{
       id: number;
       at: Date;
       actor_name: string | null;
@@ -423,14 +437,27 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
       result: string;
       correlation_id: string | null;
       hash: string;
-    }>('select id, at, actor_name, role, action, target_type, target_id, result, correlation_id, hash from audit_log order by id desc limit 5000');
+    }>(
+      'select id, at, actor_name, role, action, target_type, target_id, result, correlation_id, hash from audit_log order by id desc limit 5000',
+    );
     const cell = (v: unknown): string => {
       const text = v === null || v === undefined ? '' : String(v);
       return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
     };
     const header = ['id', 'at', 'actor_name', 'role', 'action', 'target_type', 'target_id', 'result', 'correlation_id', 'hash'];
     const lines = rows.map((r) =>
-      [r.id, r.at.toISOString(), r.actor_name ?? '', r.role, r.action, r.target_type, r.target_id ?? '', r.result, r.correlation_id ?? '', r.hash]
+      [
+        r.id,
+        r.at.toISOString(),
+        r.actor_name ?? '',
+        r.role,
+        r.action,
+        r.target_type,
+        r.target_id ?? '',
+        r.result,
+        r.correlation_id ?? '',
+        r.hash,
+      ]
         .map(cell)
         .join(','),
     );
@@ -450,7 +477,9 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
     const ctx = auth(req);
     if (!ctx.user.isAdmin) throw Errors.noPermission();
     const db = await import('./db.js');
-    const counts = await db.many<{ status: string; count: number }>('select status, count(*)::int as count from request where deleted=false group by status');
+    const counts = await db.many<{ status: string; count: number }>(
+      'select status, count(*)::int as count from request where deleted=false group by status',
+    );
     const stale = await db.many<{ id: string; updated_at: Date }>(
       `select r.id, r.updated_at from request r where r.deleted=false and r.status not in ('done','hold','cancel')`,
     );
@@ -475,7 +504,10 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
     const ctx = req.auth;
     if (!ctx) {
       if (config.authMode === 'access') {
-        void reply.status(401).type('text/html').send('<p>認証できませんでした。Cloudflare Access の設定を確認してください。</p>');
+        void reply
+          .status(401)
+          .type('text/html')
+          .send('<p>認証できませんでした。Cloudflare Access の設定を確認してください。</p>');
         return;
       }
       void reply.redirect('/login');
@@ -508,7 +540,9 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
       void reply.type('text/html; charset=utf-8').send(readFileSync(loginPath, 'utf8'));
       return;
     }
-    void reply.type('text/html; charset=utf-8').send('<!doctype html><meta charset="utf-8"><p>ログイン画面がありません（pnpm build）</p>');
+    void reply
+      .type('text/html; charset=utf-8')
+      .send('<!doctype html><meta charset="utf-8"><p>ログイン画面がありません（pnpm build）</p>');
   });
 
   /* ───────── static assets（index は上のルートで配信） ───────── */

@@ -426,7 +426,7 @@ describe('セッションの有効期限', () => {
   it('期限切れのセッションは401', async () => {
     const user = await query<{ id: string }>('select id from app_user where email=$1', [TEST_USER.email]);
     const session = await createSessionForUser(user.rows[0]!.id, 'desk');
-    await query('update session set expires_at = now() - interval \'1 hour\' where id = $1', [
+    await query("update session set expires_at = now() - interval '1 hour' where id = $1", [
       (await import('../../src/api/auth.js')).hashToken(session.token),
     ]);
     const res = await app.inject({ method: 'GET', url: '/api/home', headers: { cookie: `msf_session=${session.token}` } });
@@ -550,11 +550,21 @@ describe('運用・DevOps・SecOps のDB保存', () => {
     const unauth = await app.inject({ method: 'GET', url: '/api/ops' });
     expect(unauth.statusCode).toBe(401);
     const auth = await loginAs(app);
-    const bad = await app.inject({ method: 'PUT', url: '/api/ops', headers: authHeaders(auth), payload: { data: [1, 2, 3], version: 0 } });
+    const bad = await app.inject({
+      method: 'PUT',
+      url: '/api/ops',
+      headers: authHeaders(auth),
+      payload: { data: [1, 2, 3], version: 0 },
+    });
     expect(bad.statusCode).toBe(400);
 
     // 版番号が無い・古い場合は受け付けない（楽観ロック）
-    const noVersion = await app.inject({ method: 'PUT', url: '/api/ops', headers: authHeaders(auth), payload: { data: { apps: [] } } });
+    const noVersion = await app.inject({
+      method: 'PUT',
+      url: '/api/ops',
+      headers: authHeaders(auth),
+      payload: { data: { apps: [] } },
+    });
     expect(noVersion.statusCode).toBe(400);
     const stale = await app.inject({
       method: 'PUT',

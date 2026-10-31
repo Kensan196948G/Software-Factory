@@ -67,7 +67,11 @@ export function encodeHeader(value: string): string {
 }
 
 function base64Lines(value: string): string {
-  return (Buffer.from(value, 'utf8').toString('base64').match(/.{1,76}/g) ?? []).join('\r\n');
+  return (
+    Buffer.from(value, 'utf8')
+      .toString('base64')
+      .match(/.{1,76}/g) ?? []
+  ).join('\r\n');
 }
 
 function rfc2822Date(date: Date): string {

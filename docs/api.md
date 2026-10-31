@@ -14,39 +14,39 @@
 
 ## 2. エンドポイント
 
-| # | メソッド / パス | 説明 | 権限 |
-|---|---|---|---|
-| — | `GET /healthz` | 稼働確認（DBレイテンシ・version・commit） | なし |
-| — | `GET /readyz` | 受付可能か（DB必須、503あり） | なし |
-| — | `POST /api/auth/login` | ログイン | なし（レート制限） |
-| — | `POST /api/auth/logout` | ログアウト | 要ログイン |
-| — | `GET /api/auth/me` | 現在の利用者と役割 | 要ログイン |
-| — | `POST /api/auth/role` | 検証用の役割切替 | 要ログイン・付与済み役割のみ |
-| — | `GET /api/meta` | アプリ情報・しきい値・承認者一覧 | 要ログイン |
-| API-01 | `POST /api/requests` | 依頼の作成（採番・履歴・冪等） | 要ログイン |
-| API-02 | `GET /api/requests/{id}` | 依頼の詳細（履歴・コメント・候補・遷移） | 要ログイン |
-| API-02 | `PATCH /api/requests/{id}` | 依頼の更新（版番号必須） | 依頼者（受付/差戻しの自分の依頼）・受付担当・承認者 |
-| API-03 | `POST /api/requests/{id}/transitions` | 状態変更（遷移表・権限・理由） | 遷移表のとおり |
-| API-04 | （同上で `to=approved`） | 信号の色の決定・承認前チェック | 承認者のみ |
-| API-05 | `GET /api/requests/{id}/order` | 注文書YAML（承認済みのみ） | 要ログイン |
-| — | `POST /api/requests/{id}/comments` | コメント追加 | 要ログイン |
-| — | `GET /api/home` | あなたの番・件数・滞留 | 要ログイン |
-| — | `GET /api/requests` | 一覧（`q` `dept` `status` `signal` `mine` `includeDeleted` `page` `pageSize`） | 要ログイン |
-| — | `GET /api/drafts` / `POST /api/drafts` | 下書きの一覧（新しい順・最大50）／作成 | 要ログイン（本人のみ） |
-| — | `PUT /api/drafts/{id}` / `DELETE /api/drafts/{id}` | 下書きの更新／削除（他人の下書きは404）。保存期限 `DRAFT_TTL_DAYS`（既定30日）を過ぎたものは日次ジョブが消す | 要ログイン（本人のみ） |
-| — | `DELETE /api/drafts` | 本人の下書きをすべて削除 | 要ログイン |
-| — | `GET /api/catalog/departments` / `tools` / `summary` | カタログ | 要ログイン |
-| — | `GET /api/export.json` / `export.csv` | 全件出力（監査ログに記録） | 要ログイン |
-| — | `POST /api/import` | JSON取込（全件置換・検証付き） | 承認者/管理者・`ALLOW_IMPORT=1` |
-| API-08 | `GET /api/audit-logs` | 監査ログ（ハッシュ連鎖の検証結果つき） | 管理者 |
-| — | `GET /api/audit-logs.csv` | 監査ログのCSV（最大5000件・BOM付き） | 管理者 |
-| — | `GET /api/ops` / `PUT /api/ops` | 運用・DevOps・SecOps の画面状態（id=1 の単一ドキュメント）。PUT は `version` 必須で、古い版は409 | GET: 要ログイン / PUT: 受付担当・承認者・管理者 |
-| — | `GET /api/mail/status` | 承認依頼メールの設定と件数（Secrets・サーバ内パスは含めない） | 要ログイン |
-| — | `GET /api/mail/outbox` | 送信BOX（`status=pending|sending|sent|failed`、`limit`） | 受付担当・承認者・管理者 |
-| — | `POST /api/mail/outbox/{id}/retry` | 送信に失敗した1通を再送（送信済み・不正IDは404） | 受付担当・管理者 |
-| — | `POST /api/mail/flush` | 未送信ぶんをまとめて送る（最大20件。10分以上stuckした送信中も拾う） | 管理者 |
-| — | `POST /api/mail/reminders` | 滞留通知を積む（`days` 既定3・同じ依頼は1日1回）。日次ジョブ `pnpm reminders` と同じ処理 | 管理者 |
-| — | `POST /api/admin/reset-demo` | 見本データへ戻す（開発のみ） | 管理者・非production |
+| #      | メソッド / パス                                      | 説明                                                                                                         | 権限                                                |
+| ------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------- |
+| —      | `GET /healthz`                                       | 稼働確認（DBレイテンシ・version・commit）                                                                    | なし                                                |
+| —      | `GET /readyz`                                        | 受付可能か（DB必須、503あり）                                                                                | なし                                                |
+| —      | `POST /api/auth/login`                               | ログイン                                                                                                     | なし（レート制限）                                  |
+| —      | `POST /api/auth/logout`                              | ログアウト                                                                                                   | 要ログイン                                          |
+| —      | `GET /api/auth/me`                                   | 現在の利用者と役割                                                                                           | 要ログイン                                          |
+| —      | `POST /api/auth/role`                                | 検証用の役割切替                                                                                             | 要ログイン・付与済み役割のみ                        |
+| —      | `GET /api/meta`                                      | アプリ情報・しきい値・承認者一覧                                                                             | 要ログイン                                          |
+| API-01 | `POST /api/requests`                                 | 依頼の作成（採番・履歴・冪等）                                                                               | 要ログイン                                          |
+| API-02 | `GET /api/requests/{id}`                             | 依頼の詳細（履歴・コメント・候補・遷移）                                                                     | 要ログイン                                          |
+| API-02 | `PATCH /api/requests/{id}`                           | 依頼の更新（版番号必須）                                                                                     | 依頼者（受付/差戻しの自分の依頼）・受付担当・承認者 |
+| API-03 | `POST /api/requests/{id}/transitions`                | 状態変更（遷移表・権限・理由）                                                                               | 遷移表のとおり                                      |
+| API-04 | （同上で `to=approved`）                             | 信号の色の決定・承認前チェック                                                                               | 承認者のみ                                          |
+| API-05 | `GET /api/requests/{id}/order`                       | 注文書YAML（承認済みのみ）                                                                                   | 要ログイン                                          |
+| —      | `POST /api/requests/{id}/comments`                   | コメント追加                                                                                                 | 要ログイン                                          |
+| —      | `GET /api/home`                                      | あなたの番・件数・滞留                                                                                       | 要ログイン                                          |
+| —      | `GET /api/requests`                                  | 一覧（`q` `dept` `status` `signal` `mine` `includeDeleted` `page` `pageSize`）                               | 要ログイン                                          |
+| —      | `GET /api/drafts` / `POST /api/drafts`               | 下書きの一覧（新しい順・最大50）／作成                                                                       | 要ログイン（本人のみ）                              |
+| —      | `PUT /api/drafts/{id}` / `DELETE /api/drafts/{id}`   | 下書きの更新／削除（他人の下書きは404）。保存期限 `DRAFT_TTL_DAYS`（既定30日）を過ぎたものは日次ジョブが消す | 要ログイン（本人のみ）                              |
+| —      | `DELETE /api/drafts`                                 | 本人の下書きをすべて削除                                                                                     | 要ログイン                                          |
+| —      | `GET /api/catalog/departments` / `tools` / `summary` | カタログ                                                                                                     | 要ログイン                                          |
+| —      | `GET /api/export.json` / `export.csv`                | 全件出力（監査ログに記録）                                                                                   | 要ログイン                                          |
+| —      | `POST /api/import`                                   | JSON取込（全件置換・検証付き）                                                                               | 承認者/管理者・`ALLOW_IMPORT=1`                     |
+| API-08 | `GET /api/audit-logs`                                | 監査ログ（ハッシュ連鎖の検証結果つき）                                                                       | 管理者                                              |
+| —      | `GET /api/audit-logs.csv`                            | 監査ログのCSV（最大5000件・BOM付き）                                                                         | 管理者                                              |
+| —      | `GET /api/ops` / `PUT /api/ops`                      | 運用・DevOps・SecOps の画面状態（id=1 の単一ドキュメント）。PUT は `version` 必須で、古い版は409             | GET: 要ログイン / PUT: 受付担当・承認者・管理者     |
+| —      | `GET /api/mail/status`                               | 承認依頼メールの設定と件数（Secrets・サーバ内パスは含めない）                                                | 要ログイン                                          |
+| —      | `GET /api/mail/outbox`                               | 送信BOX（`status=pending                                                                                     | sending                                             | sent | failed`、`limit`） | 受付担当・承認者・管理者 |
+| —      | `POST /api/mail/outbox/{id}/retry`                   | 送信に失敗した1通を再送（送信済み・不正IDは404）                                                             | 受付担当・管理者                                    |
+| —      | `POST /api/mail/flush`                               | 未送信ぶんをまとめて送る（最大20件。10分以上stuckした送信中も拾う）                                          | 管理者                                              |
+| —      | `POST /api/mail/reminders`                           | 滞留通知を積む（`days` 既定3・同じ依頼は1日1回）。日次ジョブ `pnpm reminders` と同じ処理                     | 管理者                                              |
+| —      | `POST /api/admin/reset-demo`                         | 見本データへ戻す（開発のみ）                                                                                 | 管理者・非production                                |
 
 ## 3. 状態遷移の可否（要点）
 

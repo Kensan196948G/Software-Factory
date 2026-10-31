@@ -118,7 +118,9 @@ async function setRole(page: Page, role: string): Promise<void> {
 
 test('ログインしてコンソールが表示される', async ({ page }) => {
   await login(page);
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('みらい建設工業 ソフトウェアファクトリー受付・運用コンソール');
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(
+    'みらい建設工業 ソフトウェアファクトリー受付・運用コンソール',
+  );
   await expect(page.locator('.rail')).toContainText('新しい依頼');
   await expect(page.locator('.rail')).toContainText('ボード');
   await expect(page.locator('.rail')).toContainText('SecOps');
@@ -183,7 +185,9 @@ test('承認できる（承認者のみ）', async ({ page }) => {
     const cb = modal.querySelector('input[type=checkbox]') as HTMLInputElement;
     cb.checked = true;
     cb.dispatchEvent(new Event('change', { bubbles: true }));
-    const btn = Array.from(modal.querySelectorAll('button')).find((b) => b.textContent!.trim() === '変更する') as HTMLButtonElement;
+    const btn = Array.from(modal.querySelectorAll('button')).find(
+      (b) => b.textContent!.trim() === '変更する',
+    ) as HTMLButtonElement;
     btn.click();
   });
   await page.waitForTimeout(900);
@@ -285,18 +289,24 @@ test('運用データがDBに保存され、再読み込みで復元される', 
   const apps = state.data.apps as { name: string }[];
   const before = apps[0]!.name;
   const changed = `E2E変更 ${Date.now()}`;
-  await page.evaluate(async ({ data, version }) => {
-    // @ts-expect-error 画面が公開しているAPIヘルパー
-    await window.__MSF__.api('PUT', '/api/ops', { data, version });
-  }, { data: { ...state.data, apps: [{ ...apps[0], name: changed }, ...apps.slice(1)] }, version: state.version });
+  await page.evaluate(
+    async ({ data, version }) => {
+      // @ts-expect-error 画面が公開しているAPIヘルパー
+      await window.__MSF__.api('PUT', '/api/ops', { data, version });
+    },
+    { data: { ...state.data, apps: [{ ...apps[0], name: changed }, ...apps.slice(1)] }, version: state.version },
+  );
 
   await page.reload();
   await page.click('button[data-v="ops"]');
   await expect(page.locator('body')).toContainText(changed);
 
   // 元に戻す
-  await page.evaluate(async ({ data, version }) => {
-    // @ts-expect-error 画面が公開しているAPIヘルパー
-    await window.__MSF__.api('PUT', '/api/ops', { data, version });
-  }, { data: { ...state.data, apps: [{ ...apps[0], name: before }, ...apps.slice(1)] }, version: state.version + 1 });
+  await page.evaluate(
+    async ({ data, version }) => {
+      // @ts-expect-error 画面が公開しているAPIヘルパー
+      await window.__MSF__.api('PUT', '/api/ops', { data, version });
+    },
+    { data: { ...state.data, apps: [{ ...apps[0], name: before }, ...apps.slice(1)] }, version: state.version + 1 },
+  );
 });

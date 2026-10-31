@@ -37,8 +37,10 @@ export class ApiError extends Error {
 /** 画面の言い方（詳細仕様書 8-7）に対応するエラーを作る。 */
 export const Errors = {
   required: (field?: string) => new ApiError('ERR-001', '必須の項目が入っていません', 400, field ? { field } : undefined),
-  tooLong: (field?: string) => new ApiError('ERR-002', '文字数が多すぎます（件名は60文字まで）', 400, field ? { field } : undefined),
-  shape: (field?: string) => new ApiError('ERR-003', '入力の形が正しくありません（全角数字は半角に直す）', 400, field ? { field } : undefined),
+  tooLong: (field?: string) =>
+    new ApiError('ERR-002', '文字数が多すぎます（件名は60文字まで）', 400, field ? { field } : undefined),
+  shape: (field?: string) =>
+    new ApiError('ERR-003', '入力の形が正しくありません（全角数字は半角に直す）', 400, field ? { field } : undefined),
   notAllowedValue: (field?: string) => new ApiError('ERR-004', '選べない値です', 400, field ? { field } : undefined),
   criteriaLimit: () => new ApiError('ERR-006', '合格の条件は8件までです', 400),
   idempotencyConflict: () => new ApiError('ERR-008', '同じ操作キーで違う内容が送られました', 409),
@@ -47,7 +49,8 @@ export const Errors = {
   notFound: (what = '対象のデータ') => new ApiError('ERR-104', `${what}が見つかりません`, 404),
   selfApproval: () => new ApiError('ERR-105', '自分で自分を承認することはできません', 403),
   sessionExpired: () => new ApiError('ERR-106', 'ログインの期限が切れました（入力は残っています）', 401),
-  invalidTransition: (reason: string, details?: unknown) => new ApiError('ERR-201', reason || 'その状態へは変更できません', 409, details),
+  invalidTransition: (reason: string, details?: unknown) =>
+    new ApiError('ERR-201', reason || 'その状態へは変更できません', 409, details),
   approvalRequired: (message: string) => new ApiError('ERR-202', message, 409),
   signalIncomplete: (message: string) => new ApiError('ERR-203', message, 400),
   importInvalid: () => new ApiError('ERR-204', 'このファイルは取り込めません', 400),

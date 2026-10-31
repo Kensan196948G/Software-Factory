@@ -17,7 +17,10 @@ const nonEmpty = (max = 2000) => z.string().trim().min(1).max(max);
 const lineList = (max = 2000) => z.array(z.string().trim().min(1).max(max)).max(50);
 
 export const requestInputSchema = z.object({
-  clientId: z.string().regex(/^REQ-\d{4}-\d{4}$/).optional(),
+  clientId: z
+    .string()
+    .regex(/^REQ-\d{4}-\d{4}$/)
+    .optional(),
   title: z.string().trim().min(1, '件名を入れてください').max(60, '件名は60文字までです'),
   kind: z.enum(KINDS),
   deptCode: z.string().trim().min(1),
@@ -42,10 +45,19 @@ export const requestInputSchema = z.object({
   constraints: z.array(z.enum(CONSTRAINTS)).default([]),
   constraintsOther: lineList(500).default([]),
   approvals: z.array(z.enum(APPROVALS)).default([]),
-  frequency: z.enum(FREQUENCIES.map((f) => f.key) as [string, ...string[]]).optional().nullable(),
+  frequency: z
+    .enum(FREQUENCIES.map((f) => f.key) as [string, ...string[]])
+    .optional()
+    .nullable(),
   minutesPerTime: z.number().int().min(0).max(100000).optional().nullable(),
-  dataReady: z.union([z.literal(1), z.literal(3), z.literal(5)]).optional().nullable(),
-  spread: z.union([z.literal(1), z.literal(3), z.literal(5)]).optional().nullable(),
+  dataReady: z
+    .union([z.literal(1), z.literal(3), z.literal(5)])
+    .optional()
+    .nullable(),
+  spread: z
+    .union([z.literal(1), z.literal(3), z.literal(5)])
+    .optional()
+    .nullable(),
   wishDate: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, '日付の形が正しくありません')

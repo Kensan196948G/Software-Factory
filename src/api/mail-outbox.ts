@@ -314,7 +314,6 @@ export async function latestMailForRequest(requestId: string): Promise<RequestMa
   };
 }
 
-
 /** 滞留通知（催促メール）の対象になる状態。 */
 const STALLED_STATUSES: Status[] = ['wait', 'release_wait'];
 

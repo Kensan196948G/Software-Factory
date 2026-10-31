@@ -16,21 +16,21 @@
 
 ## 2. Implementation Plan（小さく検証可能な単位）
 
-| # | 作業 | 完了条件 | 状態 |
-|---|---|---|---|
-| 1 | Assessment・Scope・Plan | 文書化 | 完了 |
-| 2 | Repository作成・scaffold・.gitignore | mainに初期構成、CI雛形 | 進行中 |
-| 3 | DB migration・seed（19/118/9） | `db:verify` 成功 | 完了（ローカル実測） |
-| 4 | ドメイン（信号・条件・ものさし・遷移・権限） | unitテスト | 実装済み |
-| 5 | API（auth/home/requests/transitions/order/export/catalog/draft/audit） | integrationテスト | 実装済み |
-| 6 | 認証・セッション・CSRF・レート制限 | 401/403の検証 | 実装済み |
-| 7 | **WebUI仕様承認（OpenDesign＋Y/N）** | 明示的なY | **承認待ち** |
-| 8 | Frontend（9画面・全状態・A11y） | E2E 3フロー | 未着手（承認後） |
-| 9 | テスト（unit/integration/E2E） | 全PASS | 一部実装 |
-| 10 | CI（型・Lint・Test・Build・秘密・migration） | Required Checks | 未着手 |
-| 11 | Cloudflare Preview（Worker＋Tunnel＋Secrets） | URLで操作可能 | 未着手 |
-| 12 | Preview実動作検証（UI/API/DB/Health/Log） | Evidence取得 | 未着手 |
-| 13 | ドキュメント・最終報告 | 完了条件32項目 | 未着手 |
+| #   | 作業                                                                   | 完了条件               | 状態                 |
+| --- | ---------------------------------------------------------------------- | ---------------------- | -------------------- |
+| 1   | Assessment・Scope・Plan                                                | 文書化                 | 完了                 |
+| 2   | Repository作成・scaffold・.gitignore                                   | mainに初期構成、CI雛形 | 進行中               |
+| 3   | DB migration・seed（19/118/9）                                         | `db:verify` 成功       | 完了（ローカル実測） |
+| 4   | ドメイン（信号・条件・ものさし・遷移・権限）                           | unitテスト             | 実装済み             |
+| 5   | API（auth/home/requests/transitions/order/export/catalog/draft/audit） | integrationテスト      | 実装済み             |
+| 6   | 認証・セッション・CSRF・レート制限                                     | 401/403の検証          | 実装済み             |
+| 7   | **WebUI仕様承認（OpenDesign＋Y/N）**                                   | 明示的なY              | **承認待ち**         |
+| 8   | Frontend（9画面・全状態・A11y）                                        | E2E 3フロー            | 未着手（承認後）     |
+| 9   | テスト（unit/integration/E2E）                                         | 全PASS                 | 一部実装             |
+| 10  | CI（型・Lint・Test・Build・秘密・migration）                           | Required Checks        | 未着手               |
+| 11  | Cloudflare Preview（Worker＋Tunnel＋Secrets）                          | URLで操作可能          | 未着手               |
+| 12  | Preview実動作検証（UI/API/DB/Health/Log）                              | Evidence取得           | 未着手               |
+| 13  | ドキュメント・最終報告                                                 | 完了条件32項目         | 未着手               |
 
 ## 3. Affected Files（見込み）
 
@@ -68,14 +68,14 @@ docs/               … project / design / database / api / test / deployment / 
 
 ## 7. Test Plan
 
-| 層 | 対象 | 手段 |
-|---|---|---|
-| Unit | 信号R1〜R6、条件チェック26語、ものさし、遷移表・権限、承認チェック、YAML/CSV | vitest |
-| Integration | API（login/CSRF/採番/遷移/承認/差戻し/取消/出力/取込/監査連鎖） | vitest + Fastify inject + 実PostgreSQL |
-| E2E | F1登録、F2承認、F3進める・差戻す、空/エラー状態 | Playwright |
-| 非機能 | キーボード操作、色以外の判別、レスポンシブ（768/375） | Playwright |
-| DB | 空DB→migration→seed→verify | scripts/db.ts |
-| CI | typecheck/lint/test/build/secret scan/migration validate | GitHub Actions |
+| 層          | 対象                                                                         | 手段                                   |
+| ----------- | ---------------------------------------------------------------------------- | -------------------------------------- |
+| Unit        | 信号R1〜R6、条件チェック26語、ものさし、遷移表・権限、承認チェック、YAML/CSV | vitest                                 |
+| Integration | API（login/CSRF/採番/遷移/承認/差戻し/取消/出力/取込/監査連鎖）              | vitest + Fastify inject + 実PostgreSQL |
+| E2E         | F1登録、F2承認、F3進める・差戻す、空/エラー状態                              | Playwright                             |
+| 非機能      | キーボード操作、色以外の判別、レスポンシブ（768/375）                        | Playwright                             |
+| DB          | 空DB→migration→seed→verify                                                   | scripts/db.ts                          |
+| CI          | typecheck/lint/test/build/secret scan/migration validate                     | GitHub Actions                         |
 
 ## 8. Security Impact
 
@@ -95,15 +95,16 @@ docs/               … project / design / database / api / test / deployment / 
 
 ## 10. Risk / Rollback
 
-| リスク | 検知 | 対応 |
-|---|---|---|
-| Tunnel/DNS設定失敗 | 疎通不可 | Blocker報告。ローカルURLで検証継続 |
-| CI課金/権限不足 | Actions起動不可 | ローカル同一手順の結果をEvidenceにし、未実行を明記 |
-| DB破損 | verify失敗 | `pg_dump`バックアップ→復元。migrationはadditive |
-| 仕様解釈違い | テスト失敗 | 詳細仕様書のIDに戻って修正 |
-| 自己承認の統制 | 設計レビュー | 設定で無効化可能。本番移行時にSSO＋複数ユーザー |
+| リスク             | 検知            | 対応                                               |
+| ------------------ | --------------- | -------------------------------------------------- |
+| Tunnel/DNS設定失敗 | 疎通不可        | Blocker報告。ローカルURLで検証継続                 |
+| CI課金/権限不足    | Actions起動不可 | ローカル同一手順の結果をEvidenceにし、未実行を明記 |
+| DB破損             | verify失敗      | `pg_dump`バックアップ→復元。migrationはadditive    |
+| 仕様解釈違い       | テスト失敗      | 詳細仕様書のIDに戻って修正                         |
+| 自己承認の統制     | 設計レビュー    | 設定で無効化可能。本番移行時にSSO＋複数ユーザー    |
 
 Rollback:
+
 - アプリ: 直前のリリース（git SHA）へWorker/Nodeを戻す。
 - DB: migrationはadditiveのみ。破壊的変更は行わない。万一は `pg_dump` から復元（`docs/07-deployment.md`）。
 - Preview: Workerのversionを `wrangler rollback` で戻す。

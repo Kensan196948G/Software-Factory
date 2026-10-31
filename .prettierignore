@@ -1,0 +1,14 @@
+# 生成物・ロックファイル
+dist/
+playwright-report/
+test-results/
+pnpm-lock.yaml
+.mail/
+
+# 原本（仕様書・設計成果物・過去資料・オフライン版）は整形しない
+*.html
+docs/DocsArchieves/
+docs/patches/
+docs/assets/
+offline-Application/
+db/seed/

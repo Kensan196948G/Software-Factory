@@ -13,17 +13,17 @@ Browser
   → ローカルPostgreSQL 16（127.0.0.1:5432 / mirai_sf）
 ```
 
-| 項目 | 実測値 |
-|---|---|
-| 公開URL | `https://sf.mirai-dx-platform.com`（Access 保護。未認証はログインへ302） |
-| DNS | `sf` CNAME → `91280c04-….cfargotunnel.com`（proxied） |
-| Tunnel | `mirai-sf` / 4コネクション登録（nrt01 / nrt16） |
-| サービス | systemd user: `mirai-sf-api.service`（127.0.0.1:8782）, `mirai-sf-tunnel.service` |
-| 設定 | `~/.config/mirai-sf/preview.conf`（0600, EnvironmentFile） |
-| Access アプリ | `Mirai Software Factory 受付ステーション`（session 12h, OTP） |
-| Access ポリシー | `email_domain = mirai-const.co.jp`（allow）＋管理者アカウント（allow） |
-| DB | `mirai_sf`（19部署・118道具・見本9件） |
-| Health | `GET /healthz` = `status=ok` / `db.ok=true`（tunnel 経由） |
+| 項目            | 実測値                                                                            |
+| --------------- | --------------------------------------------------------------------------------- |
+| 公開URL         | `https://sf.mirai-dx-platform.com`（Access 保護。未認証はログインへ302）          |
+| DNS             | `sf` CNAME → `91280c04-….cfargotunnel.com`（proxied）                             |
+| Tunnel          | `mirai-sf` / 4コネクション登録（nrt01 / nrt16）                                   |
+| サービス        | systemd user: `mirai-sf-api.service`（127.0.0.1:8782）, `mirai-sf-tunnel.service` |
+| 設定            | `~/.config/mirai-sf/preview.conf`（0600, EnvironmentFile）                        |
+| Access アプリ   | `Mirai Software Factory 受付ステーション`（session 12h, OTP）                     |
+| Access ポリシー | `email_domain = mirai-const.co.jp`（allow）＋管理者アカウント（allow）            |
+| DB              | `mirai_sf`（19部署・118道具・見本9件）                                            |
+| Health          | `GET /healthz` = `status=ok` / `db.ok=true`（tunnel 経由）                        |
 
 ローカルPostgreSQLはインターネットへ公開しない。アプリは 127.0.0.1 のみにバインドし、Tunnel からのみ到達する。
 
@@ -66,16 +66,16 @@ cloudflared tunnel route dns --overwrite-dns mirai-sf sf.mirai-dx-platform.com
 
 ## 4. デプロイ後の確認（実測済み／残り）
 
-| # | 確認 | 結果 |
-|---|---|---|
-| 1 | `/healthz` が ok / db ok | ✅（tunnel 経由） |
-| 2 | 未認証で Access のログインへ302 | ✅ |
-| 3 | トップページ表示（CSPエラー0） | ローカル本番ビルドで確認済み。**Access ログイン後の実画面は人間の確認が必要** |
-| 4 | 登録→承認→注文書 | ✅（E2E 10/10、本番ビルド＋dev DB）。Preview DB `mirai_sf` は認証情報不足で未実行 |
-| 5 | API（home/catalog/export） | ✅（ローカル本番ビルド・E2E） |
-| 6 | DB Read/Write | ✅（E2E と Issue 作成で実測） |
-| 7 | Runtime（5xx/ERROR） | `journalctl --user -u mirai-sf-api` で確認 |
-| 8 | GitHub Issue 自動作成 | ✅（Issue #2） |
+| #   | 確認                            | 結果                                                                              |
+| --- | ------------------------------- | --------------------------------------------------------------------------------- |
+| 1   | `/healthz` が ok / db ok        | ✅（tunnel 経由）                                                                 |
+| 2   | 未認証で Access のログインへ302 | ✅                                                                                |
+| 3   | トップページ表示（CSPエラー0）  | ローカル本番ビルドで確認済み。**Access ログイン後の実画面は人間の確認が必要**     |
+| 4   | 登録→承認→注文書                | ✅（E2E 10/10、本番ビルド＋dev DB）。Preview DB `mirai_sf` は認証情報不足で未実行 |
+| 5   | API（home/catalog/export）      | ✅（ローカル本番ビルド・E2E）                                                     |
+| 6   | DB Read/Write                   | ✅（E2E と Issue 作成で実測）                                                     |
+| 7   | Runtime（5xx/ERROR）            | `journalctl --user -u mirai-sf-api` で確認                                        |
+| 8   | GitHub Issue 自動作成           | ✅（Issue #2）                                                                    |
 
 2026-10-28 の再デプロイ: `pnpm build` → `systemctl --user restart mirai-sf-api.service` → `/healthz` 200・`/console.js` が新版（メール送信BOXを含む）・公開URLは Access のログインへ302 を確認。
 
@@ -93,13 +93,13 @@ DNS伝播後は不要。ブラウザで名前解決できない場合は削除�
 
 ## 6. 復旧 / Rollback
 
-| 対象 | 方法 |
-|---|---|
+| 対象     | 方法                                                                                |
+| -------- | ----------------------------------------------------------------------------------- |
 | Node API | `git checkout <直前のSHA>` → `pnpm build` → `systemctl --user restart mirai-sf-api` |
-| Tunnel | `systemctl --user restart mirai-sf-tunnel`（設定変更前はバックアップ） |
-| DB | migrationはadditive。障害時は `pg_restore` でバックアップから復元 |
-| Access | アプリ/ポリシーを元に戻す（変更履歴を記録） |
-| 全停止 | `systemctl --user disable --now mirai-sf-api mirai-sf-tunnel` |
+| Tunnel   | `systemctl --user restart mirai-sf-tunnel`（設定変更前はバックアップ）              |
+| DB       | migrationはadditive。障害時は `pg_restore` でバックアップから復元                   |
+| Access   | アプリ/ポリシーを元に戻す（変更履歴を記録）                                         |
+| 全停止   | `systemctl --user disable --now mirai-sf-api mirai-sf-tunnel`                       |
 
 **破壊的DB操作は行わない。** 復元は「別DBへ復元 → 検証 → 切替」を基本とする。
 

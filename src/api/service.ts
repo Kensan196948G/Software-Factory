@@ -60,10 +60,7 @@ export function actorOf(user: SessionUser): Actor {
  * 積んだメールを送る（コミット後）。送信の失敗で業務（状態遷移・更新）を失敗させない。
  * 送れなかったときは警告だけ返し、再送は `POST /api/mail/outbox/{id}/retry` で行える。
  */
-async function deliverQueuedMail(
-  mailId: string,
-  warnings: { code: string; message: string }[],
-): Promise<void> {
+async function deliverQueuedMail(mailId: string, warnings: { code: string; message: string }[]): Promise<void> {
   const delivered = await deliverOutboxMail(mailId).catch(() => null);
   if (delivered?.status === 'sent') return;
   warnings.push({
@@ -83,7 +80,6 @@ async function resolveApproverUserId(client: PoolClient, approver: string): Prom
   );
   return rows[0]?.id ?? null;
 }
-
 
 async function catalogSignalFor(row: { tool_id: string | null }, cache?: Map<string, Signal>): Promise<Signal | null> {
   if (!row.tool_id) return null;
@@ -108,10 +104,14 @@ async function toDetail(row: RequestRow, actor: Actor): Promise<RequestDetail> {
   const catalogSignal = await catalogSignalFor(row);
   const suggested = suggestedOf(row, catalogSignal);
   const isOwner = Boolean(row.applicant_user_id && row.applicant_user_id === actor.userId);
-  const t = yourTurn(row.status, { role: actor.role, userId: actor.userId, displayName: actor.displayName }, {
-    applicantUserId: row.applicant_user_id,
-    approverUserId: row.approver_user_id,
-  });
+  const t = yourTurn(
+    row.status,
+    { role: actor.role, userId: actor.userId, displayName: actor.displayName },
+    {
+      applicantUserId: row.applicant_user_id,
+      approverUserId: row.approver_user_id,
+    },
+  );
   const record = mapRequest(row);
   const days = staleDays(statusSince(row));
 
@@ -135,7 +135,12 @@ async function toDetail(row: RequestRow, actor: Actor): Promise<RequestDetail> {
     transitions: transitionOptions(
       row.status,
       { role: actor.role, userId: actor.userId, displayName: actor.displayName },
-      { requestId: row.id, applicantUserId: row.applicant_user_id, approverUserId: row.approver_user_id, approverName: row.approver },
+      {
+        requestId: row.id,
+        applicantUserId: row.applicant_user_id,
+        approverUserId: row.approver_user_id,
+        approverName: row.approver,
+      },
       isOwner,
     ),
     criteriaChecks: row.criteria.map((text) => {
@@ -148,7 +153,11 @@ async function toDetail(row: RequestRow, actor: Actor): Promise<RequestDetail> {
   };
 }
 
-function summaryOf(row: RequestRow, catalogSignal: Signal | null, actor: Actor): RequestRecord & {
+function summaryOf(
+  row: RequestRow,
+  catalogSignal: Signal | null,
+  actor: Actor,
+): RequestRecord & {
   suggested: Signal;
   measure: number;
   staleDays: number;
@@ -158,10 +167,14 @@ function summaryOf(row: RequestRow, catalogSignal: Signal | null, actor: Actor):
   approverIsMe: boolean;
 } {
   const suggested = suggestedOf(row, catalogSignal);
-  const t = yourTurn(row.status, { role: actor.role, userId: actor.userId, displayName: actor.displayName }, {
-    applicantUserId: row.applicant_user_id,
-    approverUserId: row.approver_user_id,
-  });
+  const t = yourTurn(
+    row.status,
+    { role: actor.role, userId: actor.userId, displayName: actor.displayName },
+    {
+      applicantUserId: row.applicant_user_id,
+      approverUserId: row.approver_user_id,
+    },
+  );
   const days = staleDays(statusSince(row));
   return {
     ...mapRequest(row),
@@ -242,9 +255,7 @@ export async function homeFor(actor: Actor) {
   const summaries = rows.map((r) => summaryOf(r, r.tool_id ? (cache.get(r.tool_id) ?? null) : null, actor));
   const active = summaries.filter((s) => !CLOSED_STATUSES.includes(s.status as Status));
 
-  const turn = summaries
-    .filter((s) => s.yourTurn.target)
-    .sort((a, b) => b.staleDays - a.staleDays);
+  const turn = summaries.filter((s) => s.yourTurn.target).sort((a, b) => b.staleDays - a.staleDays);
 
   const staleOthers = active
     .filter((s) => s.staleDays >= 3 && !s.yourTurn.target)
@@ -277,7 +288,11 @@ export async function homeFor(actor: Actor) {
 export async function getOrder(id: string, actor: Actor): Promise<{ yaml: string; version: number }> {
   const row = await getRequestRow(id);
   if (!row) throw Errors.notFound('依頼');
-  if (!row.signal_decided || row.order_version < 1 || ['received', 'review', 'wait', 'back', 'hold', 'cancel'].includes(row.status)) {
+  if (
+    !row.signal_decided ||
+    row.order_version < 1 ||
+    ['received', 'review', 'wait', 'back', 'hold', 'cancel'].includes(row.status)
+  ) {
     throw Errors.orderNotApproved();
   }
   const catalogSignal = await catalogSignalFor(row);
@@ -324,7 +339,9 @@ export async function createRequest(
   const deptName = await getDepartmentName(input.deptCode);
   if (!deptName) throw Errors.notAllowedValue('deptCode');
   if (input.toolId) {
-    const tool = await one<{ id: string; dept_code: string }>('select id, dept_code from catalog_tool where id = $1', [input.toolId]);
+    const tool = await one<{ id: string; dept_code: string }>('select id, dept_code from catalog_tool where id = $1', [
+      input.toolId,
+    ]);
     if (!tool) throw Errors.notAllowedValue('toolId');
     if (tool.dept_code !== input.deptCode) throw new Error('ERR-013');
   }
@@ -459,7 +476,14 @@ function hashString(value: string): string {
 async function appendAuditInTx(
   client: PoolClient,
   actor: Actor,
-  entry: { action: string; targetType: string; targetId?: string | null; result: 'success' | 'denied' | 'error'; diff?: unknown; correlationId?: string },
+  entry: {
+    action: string;
+    targetType: string;
+    targetId?: string | null;
+    result: 'success' | 'denied' | 'error';
+    diff?: unknown;
+    correlationId?: string;
+  },
 ): Promise<void> {
   const { appendAuditTx } = await import('./audit.js');
   await appendAuditTx(client, {
@@ -551,13 +575,29 @@ export async function updateRequest(
     await client.query(
       `insert into request_history (request_id, actor_name, actor_user_id, role, action, note, correlation_id)
        values ($1,$2,$3,$4,$5,$6,$7)`,
-      [id, actor.displayName, actor.userId, actor.role, '内容を編集', afterApproval ? '承認後に編集したため承認待ちへ戻しました' : null, correlationId],
+      [
+        id,
+        actor.displayName,
+        actor.userId,
+        actor.role,
+        '内容を編集',
+        afterApproval ? '承認後に編集したため承認待ちへ戻しました' : null,
+        correlationId,
+      ],
     );
     if (afterApproval) {
       await client.query(
         `insert into request_history (request_id, actor_name, actor_user_id, role, action, note, correlation_id)
          values ($1,$2,$3,$4,$5,$6,$7)`,
-        [id, actor.displayName, actor.userId, actor.role, `状態を「承認待ち」に変更`, '内容の変更により承認を取り消しました', correlationId],
+        [
+          id,
+          actor.displayName,
+          actor.userId,
+          actor.role,
+          `状態を「承認待ち」に変更`,
+          '内容の変更により承認を取り消しました',
+          correlationId,
+        ],
       );
       // 承認を取り消して「承認待ち」へ戻したときも、承認者へ依頼メールを送る
       queuedMailId = await enqueueApprovalMailInTx(
@@ -610,7 +650,12 @@ export async function performTransition(
       row.status,
       input.to,
       { role: actor.role, userId: actor.userId, displayName: actor.displayName },
-      { requestId: row.id, applicantUserId: row.applicant_user_id, approverUserId: row.approver_user_id, approverName: row.approver },
+      {
+        requestId: row.id,
+        applicantUserId: row.applicant_user_id,
+        approverUserId: row.approver_user_id,
+        approverName: row.approver,
+      },
       isOwner,
     );
     if (!verdict.allowed) throw Errors.invalidTransition(verdict.reason ?? 'その状態へは変更できません');
@@ -674,16 +719,7 @@ export async function performTransition(
       await client.query(
         `insert into approval (request_id, approver_name, approver_user_id, decision, reason, decided_signal, suggested_signal, checklist, order_version)
          values ($1,$2,$3,'approved',$4,$5,$6,$7,$8)`,
-        [
-          id,
-          actor.displayName,
-          actor.userId,
-          reason || null,
-          decidedSignal,
-          suggested,
-          JSON.stringify(checklist),
-          orderVersion,
-        ],
+        [id, actor.displayName, actor.userId, reason || null, decidedSignal, suggested, JSON.stringify(checklist), orderVersion],
       );
     } else if (input.to === 'back') {
       await client.query(
@@ -748,7 +784,8 @@ export async function performTransition(
         correlationId,
       );
     }
-    if (input.to === 'cancel') warnings.push({ code: 'INFO-001', message: '取消にしました。データは残り、一覧の表示切替で確認できます' });
+    if (input.to === 'cancel')
+      warnings.push({ code: 'INFO-001', message: '取消にしました。データは残り、一覧の表示切替で確認できます' });
   });
 
   if (queuedMailId) await deliverQueuedMail(queuedMailId, warnings);
@@ -825,12 +862,7 @@ export async function listDrafts(userId: string): Promise<{ items: DraftView[] }
   return { items: rows.map(toDraftView) };
 }
 
-export async function createDraftItem(
-  userId: string,
-  payload: unknown,
-  step: number,
-  editId: string | null,
-): Promise<DraftView> {
+export async function createDraftItem(userId: string, payload: unknown, step: number, editId: string | null): Promise<DraftView> {
   const row = await one<DraftRow>(
     `insert into draft_item (user_id, payload, step, edit_id, label, saved_at)
      values ($1, $2, $3, $4, $5, now())
@@ -874,10 +906,9 @@ export async function deleteAllDrafts(userId: string): Promise<{ ok: true; delet
 /** 保存期限を過ぎた下書きを消す（日次ジョブから呼ぶ）。0以下なら何もしない。 */
 export async function purgeExpiredDrafts(days: number = config.draftTtlDays): Promise<{ deleted: number }> {
   if (!Number.isFinite(days) || days <= 0) return { deleted: 0 };
-  const result = await query(
-    `delete from draft_item where saved_at < now() - ($1 || ' days')::interval`,
-    [String(Math.trunc(days))],
-  );
+  const result = await query(`delete from draft_item where saved_at < now() - ($1 || ' days')::interval`, [
+    String(Math.trunc(days)),
+  ]);
   return { deleted: result.rowCount ?? 0 };
 }
 
@@ -936,9 +967,7 @@ export async function saveOpsState(
 }
 
 /** 画面起動用のデータ（履歴・コメントを含む）。監査ログには記録しない。 */
-export async function getBootData(
-  userId: string,
-): Promise<{ seq: number; items: unknown[]; drafts: DraftView[]; ops: unknown }> {
+export async function getBootData(userId: string): Promise<{ seq: number; items: unknown[]; drafts: DraftView[]; ops: unknown }> {
   const { rows } = await listRequests({ limit: 5000 });
   const items = [];
   for (const row of rows) {
@@ -986,7 +1015,11 @@ export async function exportAll(actor: Actor) {
   return { json, csv, count: records.length };
 }
 
-export async function importAll(payload: { items: Record<string, unknown>[]; seq?: number }, actor: Actor, correlationId: string) {
+export async function importAll(
+  payload: { items: Record<string, unknown>[]; seq?: number },
+  actor: Actor,
+  correlationId: string,
+) {
   if (!runtime.allowImport) throw Errors.noPermission();
   return withTransaction(async (client) => {
     await client.query('delete from request');
@@ -1086,11 +1119,20 @@ export async function handoffToGithub(
 
   const row = await getRequestRow(id);
   if (!row) throw Errors.notFound('依頼');
-  if (!row.signal_decided || row.order_version < 1 || ['received', 'review', 'wait', 'back', 'hold', 'cancel'].includes(row.status)) {
+  if (
+    !row.signal_decided ||
+    row.order_version < 1 ||
+    ['received', 'review', 'wait', 'back', 'hold', 'cancel'].includes(row.status)
+  ) {
     throw Errors.orderNotApproved();
   }
   if (row.issue_no) {
-    return { issueNo: row.issue_no, issueUrl: `https://github.com/${config.githubRepo}/issues/${row.issue_no}`, created: false, detail: await getDetail(id, actor) };
+    return {
+      issueNo: row.issue_no,
+      issueUrl: `https://github.com/${config.githubRepo}/issues/${row.issue_no}`,
+      created: false,
+      detail: await getDetail(id, actor),
+    };
   }
 
   const catalogSignal = await catalogSignalFor(row);
@@ -1118,11 +1160,10 @@ export async function handoffToGithub(
     const locked = await getRequestRowForUpdate(client, id);
     if (!locked) throw Errors.notFound('依頼');
     if (locked.issue_no) return; // 同時実行で先に作られた場合は何もしない
-    await client.query('update request set issue_no = $2, version = version + 1, updated_at = now(), updated_by = $3 where id = $1', [
-      id,
-      issue.number,
-      actor.userId,
-    ]);
+    await client.query(
+      'update request set issue_no = $2, version = version + 1, updated_at = now(), updated_by = $3 where id = $1',
+      [id, issue.number, actor.userId],
+    );
     await client.query(
       `insert into request_history (request_id, actor_name, actor_user_id, role, action, note, correlation_id)
        values ($1,$2,$3,$4,'開発ラインへ投入',$5,$6)`,
