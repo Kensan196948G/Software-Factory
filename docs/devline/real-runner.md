@@ -1,6 +1,6 @@
 # 開発ライン 実 AI ランナーと実 PR（docker-claude）
 
-状態: 実装済み・**未実走**。実 Anthropic API と github.com へはまだ一度も送っていない。実走は CTO が資格情報を受け取った後に行う。
+状態: 実装済み。**1件実走の確認済み**（2026-11-01、11 章）。作り物の注文書で `pr_ready` まで到達した。画面の投入は fake のままで、本番と実データには使っていない。
 既定は fake のまま。`DEVLINE_RUNNER_KIND=docker-claude` のときだけ動く。
 
 ## 1. 所有者の決定
@@ -163,21 +163,24 @@ Sandbox には AC と test ID の対応を報告する仕組みが無いので�
 
 推奨: main の保護（GitHub Free の private では使えない場合がある。その場合 PR の merge は人の運用で守る）。Actions は `pull_request` の実行に承認が要らない設定（同じリポジトリの PR なので既定で動く）。
 
-## 9. 実走しないと確認できないこと
+## 9. 実走で確認できたことと、まだ確認できないこと
 
-| 項目                                                                                          | 今の状態                                                        |
-| --------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| CLI が `HTTPS_PROXY` 経由で Anthropic API へ届く（TLS・`--dns 127.0.0.1` の下で）             | 未確認。プロキシの許可先への接続は別のダミーでだけ確認          |
-| 実際の CLI の出力（`structured_output`・`subtype`・`terminal_reason`・`total_cost_usd` の値） | 未確認。項目は依頼の記述に従う。stub と偽物の claude でのみ確認 |
-| `--max-turns` の実動作（`--help` に出ない）                                                   | 未確認                                                          |
-| `--bare` が clone 先の設定を無視するか                                                        | 未確認。作業場から除くので依存しない                            |
-| Bash の制限 `Bash(node --test*)` と `dontAsk` の実動作、`--read-only` の下で CLI が動くか     | `--version` と `--help` だけ確認                                |
-| CLI の費用の精度と上限超過の幅                                                                | 未確認                                                          |
-| fine-grained PAT が git over HTTPS の `Authorization: Basic x-access-token:…` で通るか        | 未確認。ローカルの git http-backend では送信だけ確認            |
-| PAT の `GET /user`、Actions runs / jobs / contents の応答の実際の形                           | 未確認。fake GitHub は公式の形に合わせた想定                    |
-| Actions の run の `pull_requests` と `head_branch` の値                                       | 未確認。`pull_requests` が空のときは条件から外す                |
-| GitHub が同じ head の2つ目の PR を 422 で断る文言（`already exists`）                         | 未確認                                                          |
-| ホストの Docker のネットワークのアドレス枠（1回の実行で2つ作る）                              | この環境では作成できた                                          |
+1件実走（11 章）で確認できたもの:
+
+- CLI が `HTTPS_PROXY` 経由で Anthropic API へ届く（`--dns 127.0.0.1` と `--read-only` の下で）
+- CLI の構造化出力と `total_cost_usd` を読み取れる
+- fine-grained PAT で git の push、PR の作成と更新、Actions の runs と jobs の読み取りができる
+- collector が head SHA に結びつく `pull_request` の run を読み、6 段階の結果を記録する
+
+| まだ確認できないこと                                              | 今の状態                                        |
+| ----------------------------------------------------------------- | ----------------------------------------------- |
+| CI 失敗からの修正（`revising`）、試行の更新と古い PR を閉じる処理 | 実走では通っていない。fake GitHub でのみ確認    |
+| 予算到達の停止、`--max-turns` の実動作                            | 実走では到達していない                          |
+| CLI の費用の精度と上限超過の幅。Anthropic Console の請求との一致  | 未確認。記録は CLI の申告から換算した値         |
+| `--bare` が clone 先の設定を無視するか                            | 未確認。作業場から除くので依存しない            |
+| 禁止差分や prompt injection に実 AI が当たったときの動作          | 未確認。作り物の素直な注文書 1 件だけ           |
+| GitHub が同じ head の 2 つ目の PR を断る文言（`already exists`）  | 未確認                                          |
+| `pnpm test:docker` の一時的な失敗（flow の 2 件、4 回中 1 回）    | 原因は未特定。再実行で成功。CI には入っていない |
 
 ## 10. 既知の制限
 
@@ -188,3 +191,18 @@ Sandbox には AC と test ID の対応を報告する仕組みが無いので�
 - CI の失敗で AI へ渡すのは段階の名前だけ（ログを渡さない）。ログは未信頼の入力になるため今回は渡さない。
 - base のイメージ `node:22-bookworm-slim` はタグ固定で digest 固定ではない。CLI は版を固定している。
 - プロンプトは argv に載る（ホストの `ps` で見える）。作り物のデータだけなので受け入れている。本番データを入れる前に見直す。
+
+## 11. 1件実走の記録（2026-11-01）
+
+| 項目     | 内容                                                                                                                                                             |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| コード   | `auto/devline-real` の `07b1380`                                                                                                                                 |
+| DB       | 専用の `mirai_sf_devline`（Staging の DB は使っていない）                                                                                                        |
+| 依頼     | 作り物の REQ-2026-0001 版 1                                                                                                                                      |
+| 実 Issue | [Sandbox #2](https://github.com/Kensan196948G/Software-Factory-Sandbox/issues/2)                                                                                 |
+| 実 PR    | [Sandbox #3](https://github.com/Kensan196948G/Software-Factory-Sandbox/pull/3)、head `a0859c215f808646cff776f11b7cf2615ec4cbb5`。未 merge、人の判断待ち          |
+| 独立 CI  | [run 41248964759](https://github.com/Kensan196948G/Software-Factory-Sandbox/actions/runs/41248964759)、6 段階すべて success。head SHA と workflow の path は一致 |
+| job      | `pr_ready`、runner `docker-claude`                                                                                                                               |
+| 費用     | 20 円（CLI の申告の換算。請求額とは未照合）                                                                                                                      |
+| 受入条件 | 未確認の表示（Sandbox に AC と test の対応を報告する仕組みが無いため）。人が確認する                                                                             |
+| トークン | 全 repo に届く fine-grained PAT。Sandbox 限定を提案し、範囲の広さを説明したうえで所有者が選んだ。接続先はコードの定数で固定し、コンテナへは渡していない          |
