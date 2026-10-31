@@ -31,6 +31,7 @@
     "smoke": "node scripts/local-run.mjs tsx scripts/smoke.ts",
     "reminders": "node scripts/local-run.mjs tsx scripts/reminders.ts",
     "audit:archive": "node scripts/local-run.mjs tsx scripts/audit-archive.ts",
+    "worker": "node scripts/local-run.mjs tsx src/worker/main.ts",
     "verify:all": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run build",
     "bootstrap:local": "node scripts/bootstrap-local.mjs"
   },
