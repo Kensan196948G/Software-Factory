@@ -546,7 +546,8 @@ describe('通信制限プロキシ', () => {
         dummyHits += 1;
         res.end('dummy');
       });
-      await new Promise<void>((r) => dummy.listen(0, '127.0.0.1', r));
+      // proxy は localhost を名前解決して接続する。環境により ::1 になるので、ダミーも同じ解決先で待つ
+      await new Promise<void>((r) => dummy.listen(0, 'localhost', r));
       dummyPort = (dummy.address() as AddressInfo).port;
       proxy = createEgressProxy({ allow: [`localhost:${dummyPort}`], allowPrivate: true, log: (l) => logs.push(l) });
       await new Promise<void>((r) => proxy.listen(0, '127.0.0.1', r));
