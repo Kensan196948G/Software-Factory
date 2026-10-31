@@ -5,6 +5,7 @@
  *   localStorage 形式（KEY: mirai-const-sf-console-v1）へ変換して書き込む。
  *   コンソールは従来どおり SF.load(KEY) で読み込む。
  * - 変更時: コンソールの persist() から persist() が呼ばれ、差分を API に同期する。
+ *   結果は Promise で返し、失敗した依頼はサーバの最新（base）へ戻す。
  * - 役割: 画面の「操作する人」を API のセッション役割へ切り替える。
  *
  * 運用・DevOps・SecOps の見本データはコンソール内の localStorage のまま（仕様どおり）。
@@ -211,11 +212,9 @@
 
   let csrf = boot.csrf || '';
   const base = new Map(boot.items.map((r) => [r.id, r]));
-  let syncing = false;
-  let pending = false;
 
-  async function api(method, path, body) {
-    const headers = {};
+  async function api(method, path, body, extraHeaders) {
+    const headers = { ...(extraHeaders || {}) };
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (csrf) headers['x-csrf-token'] = csrf;
     const res = await fetch(path, {
@@ -262,79 +261,258 @@
     return h && h.note ? String(h.note) : '';
   }
 
-  async function doSync(data) {
-    const local = Array.isArray(data.items) ? data.items : [];
-    const localIds = new Set(local.map((i) => i.id));
-    // 1) 新規
-    for (const it of local) {
-      if (base.has(it.id)) continue;
-      const res = await api('POST', '/api/requests', toServer(it));
-      base.set(it.id, res.request);
-    }
-    // 2) 更新（状態 → 内容の順）
-    for (const it of local) {
-      const s = base.get(it.id);
-      if (!s) continue;
-      if (it.status && it.status !== s.status) {
-        const payload = {
-          to: it.status,
-          version: s.version,
-          reason: lastNote(it),
-          checklistAcknowledged: true,
-          redAcknowledged: true,
-        };
-        if (it.signalFinal) payload.signal = it.signalFinal;
-        const res = await api('POST', `/api/requests/${encodeURIComponent(it.id)}/transitions`, payload);
-        base.set(it.id, res.detail);
-      } else if (contentSignature(it) !== contentSignature(toConsole(s))) {
-        const res = await api('PATCH', `/api/requests/${encodeURIComponent(it.id)}`, { ...toServer(it), version: s.version });
-        base.set(it.id, res.detail);
+  const CONFLICT_MESSAGE =
+    '他の人が先に更新しました。最新の内容を読み込みました（入力は残しています）。内容を確かめて、もう一度操作してください';
+  const clone = (v) => JSON.parse(JSON.stringify(v));
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+  /** 再描画が必要な差分だけを見る（履歴の時刻など、サーバとの細かな差では描き直さない） */
+  function visibleSignature(it) {
+    return JSON.stringify([
+      it.id,
+      it.status,
+      it.signalFinal,
+      contentSignature(it),
+      (it.history || []).length,
+      (it.comments || []).length,
+    ]);
+  }
+
+  /** サーバの内容をローカルの依頼へ反映する。他の画面が参照を持つので、同じオブジェクトのまま更新する。 */
+  function applyServer(live, server) {
+    const next = toConsole(server);
+    delete next.attachments; // 添付はサーバに無い（画面だけのメタ情報）
+    delete live.__idem;
+    Object.assign(live, next);
+  }
+
+  /** 同期の成功後の反映。同期中に利用者が触った項目は残し、次の同期へ回す。 */
+  function mergeServer(live, sent, server) {
+    if (same(live, sent)) return applyServer(live, server);
+    const next = toConsole(server);
+    delete next.attachments;
+    delete live.__idem;
+    for (const key of Object.keys(next)) {
+      if (key === 'history' || key === 'comments') {
+        const tail = (live[key] || []).slice((sent[key] || []).length);
+        live[key] = [...next[key], ...tail];
+      } else if (same(live[key], sent[key])) {
+        live[key] = next[key];
       }
-      // 3) コメント（増えた分だけ）
-      const sc = (s.comments || []).length;
-      const lc = (it.comments || []).length;
-      if (lc > sc) {
-        for (const c of it.comments.slice(sc)) {
-          if (!c || !c.text) continue;
-          const res = await api('POST', `/api/requests/${encodeURIComponent(it.id)}/comments`, { text: c.text });
-          base.set(it.id, res.detail);
-        }
+    }
+  }
+
+  /**
+   * 依頼 1 件の同期。順序は 新規 → 内容（PATCH）→ 状態（返却された最新 version で）→ コメント。
+   * 遷移するかどうかは PATCH 前の状態で決める（承認後の編集でサーバが承認待ちへ戻したとき、
+   * 自動で承認へ遷移し直さないため）。途中で失敗しても、進んだ分は base に残る。
+   */
+  async function syncItem(it, ctx) {
+    const setBase = (detail) => {
+      base.set(detail.id, detail);
+      ctx.id = detail.id;
+      return detail;
+    };
+    const path = (id) => `/api/requests/${encodeURIComponent(id)}`;
+    let s = base.get(it.id);
+    if (!s) {
+      const res = await api('POST', '/api/requests', toServer(it), it.__idem ? { 'idempotency-key': it.__idem } : undefined);
+      s = setBase(res.request);
+    }
+    const wantsTransition = Boolean(it.status && it.status !== s.status);
+    const serverComments = (s.comments || []).length;
+    let warning = '';
+    if (contentSignature(it) !== contentSignature(toConsole(s))) {
+      const res = await api('PATCH', path(s.id), { ...toServer(it), version: s.version });
+      s = setBase(res.detail);
+      const w = (res.warnings || []).find((x) => x.code === 'ERR-202');
+      if (w) warning = w.message;
+    }
+    let reason = '';
+    if (wantsTransition && it.status !== s.status) {
+      reason = lastNote(it);
+      const payload = {
+        to: it.status,
+        version: s.version,
+        reason,
+        checklistAcknowledged: true,
+        redAcknowledged: true,
+      };
+      if (it.signalFinal) payload.signal = it.signalFinal;
+      const res = await api('POST', `${path(s.id)}/transitions`, payload);
+      s = setBase(res.detail);
+    }
+    // コメント（増えた分だけ）。遷移の理由はサーバがコメントにするので、同じものを二重に送らない。
+    const added = (it.comments || []).slice(serverComments).filter((c) => c && c.text);
+    const inReason = reason ? added.findIndex((c) => reason.includes(c.text)) : -1;
+    if (inReason >= 0) added.splice(inReason, 1);
+    for (const c of added) {
+      const res = await api('POST', `${path(s.id)}/comments`, { text: c.text });
+      s = setBase(res.detail);
+    }
+    if (it.status && s.status !== it.status) {
+      ctx.notice = { id: s.id, requested: it.status, actual: s.status, message: warning };
+    }
+  }
+
+  /** 失敗の内容を、画面が扱う形にそろえる。ERR-301 は最新を取り直す（再送はしない）。 */
+  async function describeFailure(err, ctx) {
+    const code = (err && err.code) || null;
+    const status = (err && err.status) || 0;
+    let error = (err && err.message) || '保存できませんでした';
+    if (!status) error = '通信できませんでした。接続を確かめて、もう一度お試しください';
+    if (code === 'ERR-301' || status === 409) {
+      error = CONFLICT_MESSAGE;
+      try {
+        const res = await api('GET', `/api/requests/${encodeURIComponent(ctx.id)}`);
+        if (res && res.request) base.set(res.request.id, res.request);
+      } catch {
+        /* 取り直せないときは手元の base のまま */
       }
     }
-    // 4) 取消（コンソールから消えた依頼）
-    for (const [id, s] of base.entries()) {
-      if (!localIds.has(id) && !['done', 'hold', 'cancel'].includes(s.status)) {
+    return { id: ctx.localId, serverId: ctx.id, error, code, status };
+  }
+
+  /** 1 回分の同期。送るのは呼び出し時点の写し。依頼ごとに独立して処理し、失敗した依頼だけ戻す。 */
+  async function runSync(data) {
+    const sent = clone(Array.isArray(data.items) ? data.items : []);
+    const failures = [];
+    const ids = {};
+    const notices = [];
+    const results = [];
+    for (const it of sent) {
+      const ctx = { localId: it.id, id: it.id };
+      let failure = null;
+      try {
+        await syncItem(it, ctx);
+      } catch (err) {
+        failure = await describeFailure(err, ctx);
+        failures.push(failure);
+      }
+      if (ctx.id !== it.id) ids[it.id] = ctx.id;
+      if (ctx.notice) notices.push(ctx.notice);
+      results.push({ it, ctx, failure });
+    }
+
+    // コンソールから消えた依頼は取消にする
+    const present = new Set(results.map((r) => r.ctx.id));
+    const restore = [];
+    for (const [id, s] of [...base.entries()]) {
+      if (present.has(id) || ['done', 'hold', 'cancel'].includes(s.status)) continue;
+      const ctx = { localId: id, id };
+      try {
         const res = await api('POST', `/api/requests/${encodeURIComponent(id)}/transitions`, {
           to: 'cancel',
           version: s.version,
           reason: 'コンソールから取消',
         });
         base.set(id, res.detail);
+      } catch (err) {
+        failures.push(await describeFailure(err, ctx));
+        restore.push(id);
       }
     }
+
+    // 画面側のデータへ結果を反映する
+    let changed = false;
+    const items = Array.isArray(data.items) ? data.items : [];
+    const carried = [];
+    for (const { it, ctx, failure } of results) {
+      const live = items.find((x) => x.id === it.id);
+      if (!live) continue;
+      const before = visibleSignature(live);
+      const server = base.get(ctx.id);
+      if (failure) {
+        // 同期中に触られた分も、同じ依頼は一緒に戻す（競合を上書きで再送しないため）。
+        // その呼び出し元にも失敗を伝える。
+        if (!same(live, it)) carried.push(failure);
+        if (server) applyServer(live, server);
+        else items.splice(items.indexOf(live), 1);
+        changed = true;
+        continue;
+      }
+      if (server) mergeServer(live, it, server);
+      if (visibleSignature(live) !== before) changed = true;
+    }
+    for (const id of restore) {
+      const server = base.get(id);
+      if (server && !items.some((x) => x.id === id)) {
+        items.push(toConsole(server));
+        changed = true;
+      }
+    }
+    for (const id of Object.values(ids)) {
+      const n = Number(String(id).slice(-4));
+      if (Number.isFinite(n) && n > (Number(data.seq) || 0)) data.seq = n;
+    }
+    return { failures, ids, notices, changed, carried };
   }
 
+  function toResult(outcome, carriedIn) {
+    const failures = [...carriedIn, ...outcome.failures];
+    const common = { ids: outcome.ids, notices: outcome.notices };
+    if (!failures.length) return { ok: true, ...common };
+    const first = failures[0];
+    return { ok: false, error: first.error, code: first.code, status: first.status, failures, ...common };
+  }
+
+  let running = false;
+  let queued = null;
+  let carriedFailures = [];
+
+  function notifyUi(changed) {
+    const ui = window.__MSF_UI__;
+    if (ui && ui.syncApplied) ui.syncApplied(changed);
+  }
+
+  /** 同期を 1 回走らせて結果を返す（必ず解決し、reject しない）。 */
+  async function startRun(data) {
+    running = true;
+    const carriedIn = carriedFailures;
+    carriedFailures = [];
+    let result;
+    try {
+      const outcome = await runSync(data);
+      carriedFailures = outcome.carried;
+      notifyUi(outcome.changed);
+      result = toResult(outcome, carriedIn);
+    } catch (err) {
+      const error = (err && err.message) || '保存できませんでした';
+      result = { ok: false, error, code: null, status: 0, failures: carriedIn, ids: {}, notices: [] };
+    }
+    running = false;
+    if (queued) {
+      const q = queued;
+      queued = null;
+      void startRun(q.data).then(q.resolve);
+    } else {
+      carriedFailures = [];
+    }
+    return result;
+  }
+
+  /**
+   * 差分をサーバへ同期する。呼び出し時点の data を含む同期が終わると解決する。
+   * { ok:true, ids, notices } または { ok:false, error, code, status, failures, ids, notices }。
+   * 同期中に呼ばれたら次の 1 回にまとめ、呼び出し元全員が同じ結果を受け取る。
+   */
   function persist(data) {
     scheduleOpsSync(data);
-    if (syncing) {
-      pending = true;
-      return;
-    }
-    syncing = true;
-    doSync(data)
-      .catch((err) => {
-        if (window.__MSF_UI__ && window.__MSF_UI__.toast) window.__MSF_UI__.toast(err.message || '保存できませんでした', true);
-      })
-      .finally(() => {
-        syncing = false;
-        if (pending) {
-          pending = false;
-          persist(data);
-        }
+    if (!running) return startRun(data);
+    if (!queued) {
+      let resolve;
+      const promise = new Promise((r) => {
+        resolve = r;
       });
+      queued = { data, promise, resolve };
+    } else {
+      queued.data = data;
+    }
+    return queued.promise;
   }
 
   let draftTimers = new Map();
+  const draftCreating = new WeakMap(); // 下書きオブジェクト → 作成（POST）の Promise
   function saveDraft(o) {
     if (!o || !o.draft) return Promise.resolve(null);
     const key = o.id || 'new';
@@ -345,7 +523,21 @@
         setTimeout(() => {
           draftTimers.delete(key);
           const body = { draft: o.draft, step: o.step, editId: o.editId ?? null };
-          const req = o.id ? api('PUT', `/api/drafts/${encodeURIComponent(o.id)}`, body) : api('POST', '/api/drafts', body);
+          const put = (id) => api('PUT', `/api/drafts/${encodeURIComponent(id)}`, body);
+          const post = () => {
+            const created = api('POST', '/api/drafts', body);
+            draftCreating.set(o.draft, created);
+            return created;
+          };
+          let req;
+          if (o.id) req = put(o.id);
+          else if (draftCreating.has(o.draft)) {
+            // 作成の応答を待ってから更新する（同じ下書きをサーバに二重に作らない）
+            req = draftCreating.get(o.draft).then(
+              (res) => (res && res.draft && res.draft.id ? put(res.draft.id) : post()),
+              () => post(),
+            );
+          } else req = post();
           req.then(resolve).catch(() => resolve(null));
         }, 250),
       );
