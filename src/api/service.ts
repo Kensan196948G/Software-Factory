@@ -345,7 +345,7 @@ export async function createRequest(
       input.toolId,
     ]);
     if (!tool) throw Errors.notAllowedValue('toolId');
-    if (tool.dept_code !== input.deptCode) throw new Error('ERR-013');
+    if (tool.dept_code !== input.deptCode) throw Errors.comboMismatch('toolId');
   }
   const payloadHash = JSON.stringify(input);
 

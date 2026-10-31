@@ -43,6 +43,8 @@ export const Errors = {
     new ApiError('ERR-003', '入力の形が正しくありません（全角数字は半角に直す）', 400, field ? { field } : undefined),
   notAllowedValue: (field?: string) => new ApiError('ERR-004', '選べない値です', 400, field ? { field } : undefined),
   criteriaLimit: () => new ApiError('ERR-006', '合格の条件は8件までです', 400),
+  comboMismatch: (field?: string) =>
+    new ApiError('ERR-013', '入力の組み合わせが合っていません（部署と道具）', 400, field ? { field } : undefined),
   idempotencyConflict: () => new ApiError('ERR-008', '同じ操作キーで違う内容が送られました', 409),
   noPermission: () => new ApiError('ERR-101', 'この操作をする権限がありません', 403),
   reasonRequired: () => new ApiError('ERR-102', '理由をメモに書いてください', 400),

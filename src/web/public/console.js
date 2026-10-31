@@ -2380,17 +2380,19 @@ const SF = (function () {
     critUndo: {},
     bmine: false,
     submitting: false,
+    conflict: null,
+    draftLk: null,
   };
   const me = () => SF.roleOf(S.role);
   const find = (id) => S.data.items.find((x) => x.id === id);
   const colorOf = (r) => r.signalFinal || SF.judge(r).c;
-  function persist() {
+  function persist(opts) {
     if (!SF.save(KEY, S.data) && S.persistent) {
       S.persistent = false;
       notice();
     }
     if (!window.__MSF__) return Promise.resolve({ ok: true, ids: {}, notices: [] });
-    return window.__MSF__.persist(S.data).then((res) => {
+    return window.__MSF__.persist(S.data, opts).then((res) => {
       reportSync(res);
       return res;
     });
@@ -2404,6 +2406,12 @@ const SF = (function () {
     (res.notices || []).forEach((n) =>
       toast(n.message || n.id + ' はサーバ上で「' + SF.statusOf(n.actual).l + '」になっています', true),
     );
+  }
+  /* 依頼の本体（新規・内容・状態）の保存が失敗したか。コメントだけの失敗は本体の成功として扱う */
+  function coreFailed(res, id) {
+    if (!res || res.ok) return false;
+    const list = res.failures || [];
+    return !list.length || list.some((f) => (f.id === id || f.serverId === id) && f.stage !== 'comment');
   }
   /* その依頼の保存が失敗したか（別の依頼の失敗では成功扱いのまま） */
   function failedFor(res, id) {
@@ -2476,14 +2484,20 @@ const SF = (function () {
       localStorage.setItem(DKEY_LIST, JSON.stringify(a));
     } catch (e) {}
   }
-  function removeDraftLocal(id) {
-    writeDraftsList(readDrafts().filter((o) => o.id !== id));
+  /* 下書きの識別子。サーバ保存前の下書きは端末内の鍵で区別する（1 件で上書きしない） */
+  const draftKey = (o) => o.id || o.lk || 'local';
+  function newLocalKey() {
+    return window.crypto && crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2);
+  }
+  function removeDraftLocal(key) {
+    writeDraftsList(readDrafts().filter((o) => draftKey(o) !== key));
   }
 
   function writeDraft() {
     if (!S.draft) return;
-    const o = { id: S.draftId || null, draft: S.draft, editId: S.editId, step: S.step, at: SF.nowISO() };
-    const list = readDrafts().filter((x) => x.id !== o.id);
+    if (!S.draftLk) S.draftLk = newLocalKey();
+    const o = { id: S.draftId || null, lk: S.draftLk, draft: S.draft, editId: S.editId, step: S.step, at: SF.nowISO() };
+    const list = readDrafts().filter((x) => draftKey(x) !== draftKey(o) && x.lk !== o.lk);
     list.unshift(o);
     writeDraftsList(list);
     if (window.__MSF__ && window.__MSF__.saveDraft) {
@@ -2497,10 +2511,8 @@ const SF = (function () {
             window.__MSF__.clearDraft(saved.id).catch(() => undefined);
             return;
           }
-          if (S.draftId !== saved.id) S.draftId = saved.id;
-          const next = readDrafts().map((x) =>
-            x.id === saved.id || (x.id === null && saved.editId === x.editId) ? Object.assign({}, x, { id: saved.id }) : x,
-          );
+          if (S.draft === o.draft && S.draftId !== saved.id) S.draftId = saved.id;
+          const next = readDrafts().map((x) => (x.id === saved.id || x.lk === o.lk ? Object.assign({}, x, { id: saved.id }) : x));
           writeDraftsList(next);
         })
         .catch(() => undefined);
@@ -2515,14 +2527,27 @@ const SF = (function () {
 
   function clearDraft() {
     clearTimeout(draftTimer);
-    if (S.draft) clearedDrafts.add(S.draft);
     const id = S.draftId;
-    removeDraftLocal(id); // id が null（サーバ保存前）の下書きも端末から消す
+    // いま開いている下書きだけを消す（開いていないときに、端末だけの下書きを巻き込まない）
+    if (S.draft) {
+      clearedDrafts.add(S.draft);
+      if (id) removeDraftLocal(id);
+      if (S.draftLk) writeDraftsList(readDrafts().filter((o) => o.lk !== S.draftLk));
+    }
     if (id && window.__MSF__ && window.__MSF__.clearDraft) window.__MSF__.clearDraft(id).catch(() => undefined);
     try {
       localStorage.removeItem(DKEY);
     } catch (e) {}
     S.draftId = null;
+    S.draftLk = null;
+  }
+  /* 別の下書きへ移る。いまの下書きは消さずに一覧へ残す（中身が無いものだけ片付ける） */
+  function detachDraft() {
+    if (S.draft && !hasContent(S.draft)) return clearDraft();
+    if (S.draft) writeDraft();
+    clearTimeout(draftTimer);
+    S.draftId = null;
+    S.draftLk = null;
   }
   function hasContent(d) {
     return (
@@ -2537,8 +2562,10 @@ const SF = (function () {
   }
   function resumeDraft(o) {
     if (!o) return;
+    detachDraft();
     S.draft = o.draft;
     S.draftId = o.id || null;
+    S.draftLk = o.lk || null;
     S.editId = o.editId || null;
     S.step = Math.min(Math.max(0, +o.step || 0), STEPS.length - 1);
     S.pickDept = '';
@@ -2567,7 +2594,7 @@ const SF = (function () {
     });
     if (note) {
       r.comments = r.comments || [];
-      r.comments.push({ at: now, by: me().name, text: note });
+      r.comments.push({ at: now, by: me().name, text: note, __reason: true });
     }
     const from = r.status;
     r.status = v;
@@ -2604,7 +2631,7 @@ const SF = (function () {
       }
     }
     return persist().then((res) => {
-      if (failedFor(res, r.id)) {
+      if (coreFailed(res, r.id)) {
         // 依頼は bridge がサーバの最新へ戻す。パイプラインの楽観更新も戻し、監査には取り消しを追記する。
         if (pipeBefore) O().pipes[r.id] = JSON.parse(pipeBefore);
         else delete O().pipes[r.id];
@@ -2642,22 +2669,36 @@ const SF = (function () {
       cl: (r.comments || []).length,
       pipe: O().pipes[r.id] ? JSON.stringify(O().pipes[r.id]) : null,
     };
-    applyStatus(r, nx, '', '');
+    const saving = applyStatus(r, nx, '', '');
     refresh();
-    toast(r.id + ' を「' + SF.statusOf(nx).l + '」に進めました', false, {
-      l: '元に戻す',
-      fn: () => {
-        r.status = prev.status;
-        r.updatedAt = prev.updatedAt;
-        r.history.length = prev.hl;
-        if (r.comments) r.comments.length = prev.cl;
-        if (prev.pipe) O().pipes[r.id] = JSON.parse(prev.pipe);
-        else delete O().pipes[r.id];
-        addAudit('操作を元に戻した', r.id, '「' + SF.statusOf(nx).l + '」→「' + SF.statusOf(prev.status).l + '」');
-        persist();
-        refresh();
-        toast('元に戻しました');
-      },
+    saving.then((res) => {
+      if (coreFailed(res, r.id)) return;
+      toast(r.id + ' を「' + SF.statusOf(nx).l + '」に進めました', false, {
+        l: '元に戻す',
+        fn: () => {
+          const pipeNow = O().pipes[r.id] ? JSON.stringify(O().pipes[r.id]) : null;
+          r.status = prev.status;
+          r.updatedAt = prev.updatedAt;
+          r.history.length = Math.min(r.history.length, prev.hl);
+          if (r.comments) r.comments.length = Math.min(r.comments.length, prev.cl);
+          if (prev.pipe) O().pipes[r.id] = JSON.parse(prev.pipe);
+          else delete O().pipes[r.id];
+          const undoing = persist();
+          refresh();
+          undoing.then((undone) => {
+            if (coreFailed(undone, r.id)) {
+              // 依頼は bridge がサーバの最新へ戻す。パイプラインも戻す
+              if (pipeNow) O().pipes[r.id] = JSON.parse(pipeNow);
+              refresh();
+              return;
+            }
+            addAudit('操作を元に戻した', r.id, '「' + SF.statusOf(nx).l + '」→「' + SF.statusOf(prev.status).l + '」');
+            persist();
+            refresh();
+            toast('元に戻しました');
+          });
+        },
+      });
     });
   }
   const stay = (r, long) => {
@@ -2701,6 +2742,7 @@ const SF = (function () {
     else go(b.dataset.v);
   });
   function go(v) {
+    if (S.submitting && v !== 'new') return toast('送信中です。完了までお待ちください', true);
     S.view = v;
     $$('#rail button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
     render();
@@ -2862,11 +2904,11 @@ const SF = (function () {
                 '</b><small class="muted">' +
                 E(SF.fmt(o.at)) +
                 ' に自動保存</small><span class="sp"></span><button class="btn sm pri" type="button" data-dres="' +
-                E(o.id) +
+                E(draftKey(o)) +
                 '">' +
                 ico('i-arrow') +
                 '続きから再開</button><button class="btn sm dng" type="button" data-ddis="' +
-                E(o.id) +
+                E(draftKey(o)) +
                 '">' +
                 ico('i-trash') +
                 '破棄</button></div>',
@@ -2992,17 +3034,18 @@ const SF = (function () {
     $$('#view [data-dres]').forEach((b) =>
       b.addEventListener('click', (e) => {
         e.stopPropagation();
-        resumeDraft(readDrafts().find((o) => o.id === b.dataset.dres));
+        resumeDraft(readDrafts().find((o) => draftKey(o) === b.dataset.dres));
       }),
     );
     $$('#view [data-ddis]').forEach((b) =>
       b.addEventListener('click', (e) => {
         e.stopPropagation();
-        const o = readDrafts().find((x) => x.id === b.dataset.ddis);
+        const o = readDrafts().find((x) => draftKey(x) === b.dataset.ddis);
         if (!o) return;
         confirmBox('下書きを破棄', '「' + draftLabel(o) + '」の入力内容を消します。元に戻せません。', '破棄する', () => {
-          removeDraftLocal(o.id);
-          if (window.__MSF__ && window.__MSF__.clearDraft) window.__MSF__.clearDraft(o.id).catch(() => undefined);
+          removeDraftLocal(draftKey(o));
+          // id なしで呼ぶと全件消えるので、サーバに保存済みのものだけ送る
+          if (o.id && window.__MSF__ && window.__MSF__.clearDraft) window.__MSF__.clearDraft(o.id).catch(() => undefined);
           renderHome();
         });
       }),
@@ -3087,8 +3130,41 @@ const SF = (function () {
     { t: 'データと安全', h: 'この道具は何をしますか？', d: '信号の色を決める大事な質問です。「決める」仕事はAIに任せません。' },
     { t: '確認', h: 'ものさしと最終確認', d: '手間の大きさは参考値です。着手順は別途決めます。' },
   ];
+  /* 運用データから依頼を作る。サーバは必須項目を求めるので、入力画面へ渡して、受付できてから運用データへ結び付ける。 */
+  function startRequestFrom(r, origin) {
+    // 書きかけの下書きを黙って消さない。先に送信か破棄をしてもらう
+    if (S.draft && hasContent(S.draft)) {
+      toast('書きかけの依頼があります。「新しい依頼」から送信するか破棄してから、もう一度押してください', true);
+      return;
+    }
+    detachDraft();
+    r.criteria = r.criteria && r.criteria.length ? r.criteria : [''];
+    r.__origin = origin;
+    S.draft = r;
+    S.editId = null;
+    S.step = 0;
+    S.pickDept = '';
+    closeModal();
+    go('new');
+    toast('作るもの・合格の条件を書き足して受け付けてください');
+  }
+  function linkRequestOrigin(origin, id) {
+    const o = O();
+    if (origin.kind === 'feedback') {
+      const f = o.feedback.find((x) => x.id === origin.id);
+      if (!f) return;
+      f.status = '依頼にした';
+      f.ref = id;
+      addAudit('利用者の声を依頼にした', id, f.id);
+    } else if (origin.kind === 'incident') {
+      const i = o.incidents.find((x) => x.id === origin.id);
+      if (!i) return;
+      i.prevention = (i.prevention ? i.prevention + '／' : '') + id + ' で対応';
+      addAudit('再発防止を依頼にした', id, i.id);
+    }
+  }
   function freshDraft() {
-    clearDraft();
+    detachDraft();
     S.draft = SF.blank(S.role);
     S.draft.criteria = [''];
     S.editId = null;
@@ -3118,7 +3194,7 @@ const SF = (function () {
                 '　' +
                 E(SF.fmt(o.at)) +
                 ' に自動保存</div></div><span class="sp"></span><button class="btn pri" type="button" data-res="' +
-                E(o.id) +
+                E(draftKey(o)) +
                 '">続きから再開</button></div>',
             )
             .join(''),
@@ -3126,7 +3202,7 @@ const SF = (function () {
       );
       $$('#modal [data-res]').forEach((b) =>
         b.addEventListener('click', () => {
-          const o = readDrafts().find((x) => x.id === b.dataset.res);
+          const o = readDrafts().find((x) => draftKey(x) === b.dataset.res);
           closeModal();
           if (o) resumeDraft(o);
         }),
@@ -3148,7 +3224,7 @@ const SF = (function () {
       return resumeDraft(cur);
     }
     const begin = () => {
-      clearDraft();
+      detachDraft();
       S.draft = JSON.parse(JSON.stringify(r));
       if (!S.draft.criteria.length) S.draft.criteria = [''];
       S.draftId = null;
@@ -3215,7 +3291,8 @@ const SF = (function () {
     bindStep();
     updPreview();
     writeDraft();
-    if (S.submitting) setWizardBusy(true);
+    renderConflict();
+    setWizardBusy(S.submitting);
     $('#ddraft').addEventListener('click', () =>
       confirmBox(
         S.editId ? '編集をやめる' : '下書きを破棄',
@@ -3883,31 +3960,144 @@ const SF = (function () {
     );
     saveDraftSoon();
   }
-  /* 送信中は操作できないようにする（二重送信の防止） */
+  /* 送信中は操作できないようにする（二重送信の防止）。競合の選択待ちの間も送信しない */
+  const inConflict = () => !!S.conflict && S.conflict.draft === S.draft;
   function setWizardBusy(busy) {
-    ['#submit', '#prev', '#ddraft'].forEach((q) => {
+    const submitBtn = $('#submit');
+    if (submitBtn) submitBtn.disabled = busy || inConflict();
+    ['#prev', '#ddraft'].forEach((q) => {
       const el = $(q);
       if (el) el.disabled = busy;
     });
     $$('.stp').forEach((b) => (b.disabled = busy));
   }
-  function submitFailed(d, res) {
+  /* ---- 競合（他の人が先に更新）: 差分を見せて、利用者が選ぶまで送らない ---- */
+  const CONFLICT_FIELDS = [
+    ['title', '件名'],
+    ['kind', '依頼の種類'],
+    ['dept', '部署'],
+    ['applicant', '起票者'],
+    ['contact', '連絡先'],
+    ['toolRef', '対象の道具'],
+    ['problem', '困っていること'],
+    ['purpose', '目的'],
+    ['users', '使う人'],
+    ['people', '人数'],
+    ['places', '使う場所'],
+    ['scope', '作るもの'],
+    ['outScope', '作らないもの'],
+    ['criteria', '合格の条件'],
+    ['decides', '決める仕事の信号'],
+    ['data', '扱うデータ'],
+    ['parties', '使う相手'],
+    ['constraints', '制約'],
+    ['constraintsOther', 'その他の制約'],
+    ['approvals', '人の承認'],
+    ['freq', '頻度'],
+    ['minutes', '1回の時間（分）'],
+    ['dataReady', 'データの準備'],
+    ['spread', '広がり'],
+    ['wish', '希望時期'],
+    ['approver', '承認者'],
+    ['status', '状態'],
+  ];
+  function conflictValue(key, v) {
+    const text = Array.isArray(v)
+      ? v
+          .map((x) => String(x).trim())
+          .filter(Boolean)
+          .join('、')
+      : v === null || v === undefined
+        ? ''
+        : String(v).trim();
+    if (key === 'status' && text) return SF.statusOf(text).l;
+    return text;
+  }
+  function conflictDiffs(latest, d) {
+    return CONFLICT_FIELDS.map(([key, label]) => ({
+      label,
+      theirs: conflictValue(key, latest[key]),
+      mine: conflictValue(key, d[key]),
+    })).filter((x) => x.theirs !== x.mine);
+  }
+  function openConflict(d) {
+    S.conflict = { draft: d };
+    if (S.draft === d && S.view === 'new') renderWizard();
+    if (S.draft === d) writeDraft();
+  }
+  function renderConflict() {
+    if (!inConflict()) return;
+    const d = S.draft,
+      latest = find(S.editId),
+      pane = $('#pane');
+    if (!latest || !pane) return;
+    const cell = (v) => (v ? E(v) : '<span class="muted">（なし）</span>');
+    const rows = conflictDiffs(latest, d);
+    pane.insertAdjacentHTML(
+      'afterbegin',
+      '<div id="conflict" class="card pad" role="alert" style="margin-bottom:12px">' +
+        '<b>' +
+        ico('i-alert') +
+        ' 他の人が先にこの依頼を更新しました</b>' +
+        '<p class="muted" style="margin:6px 0">どちらかを選ぶまで、送信しません。</p>' +
+        (rows.length
+          ? '<table style="width:100%;font-size:13px;border-collapse:collapse"><thead><tr><th style="text-align:left">項目</th><th style="text-align:left">サーバの最新</th><th style="text-align:left">あなたの入力</th></tr></thead><tbody>' +
+            rows
+              .map(
+                (x) =>
+                  '<tr><td style="vertical-align:top;white-space:nowrap;padding-right:8px">' +
+                  E(x.label) +
+                  '</td><td style="vertical-align:top;padding-right:8px">' +
+                  cell(x.theirs) +
+                  '</td><td style="vertical-align:top">' +
+                  cell(x.mine) +
+                  '</td></tr>',
+              )
+              .join('') +
+            '</tbody></table>'
+          : '<p style="margin:6px 0">内容の項目に差はありません（コメントなどの更新です）。</p>') +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">' +
+        '<button class="btn sm pri" id="cfTake" type="button">最新を取り込んで編集し直す</button>' +
+        '<button class="btn sm dng" id="cfOverwrite" type="button">自分の内容で上書きする</button>' +
+        '</div></div>',
+    );
+    $('#cfTake').addEventListener('click', () => {
+      const cur = find(S.editId);
+      if (!cur) return;
+      Object.assign(d, JSON.parse(JSON.stringify(cur)));
+      if (!d.criteria || !d.criteria.length) d.criteria = [''];
+      S.conflict = null;
+      renderWizard();
+      toast('最新の内容を取り込みました。編集を続けてください');
+    });
+    $('#cfOverwrite').addEventListener('click', () => {
+      const cur = find(S.editId);
+      if (!cur) return;
+      d.__v = cur.__v;
+      d.status = cur.status;
+      S.conflict = null;
+      renderWizard();
+      submit();
+    });
+  }
+  function submitFailed(d, res, extra) {
     if (S.draft !== d) return; // 別の画面へ移ったあと（下書きは一覧から再開できる）
     if (S.view === 'new') {
       if (S.editId) {
-        // 競合などで状態が変わっていれば、ボタンの表示をサーバの最新に合わせる
+        // 状態が変わっていれば、ボタンの表示をサーバの最新に合わせる
         const cur = find(S.editId);
         if (cur && cur.status !== d.status) {
           d.status = cur.status;
           renderWizard();
         }
       }
-      showErr([res.error || '保存できませんでした']);
+      showErr([res.error || '保存できませんでした'].concat(extra || []));
     }
     writeDraft();
   }
   /* 成功したときだけ呼ぶ。入力を破棄して依頼の詳細へ */
   function leaveWizardAfterSave(d, id) {
+    S.submitting = false;
     if (S.draft !== d) return;
     clearDraft();
     S.draft = null;
@@ -3922,13 +4112,18 @@ const SF = (function () {
       clearDraft();
       S.draft = null;
       S.editId = null;
+      S.submitting = false;
       go('home');
       return toast('編集していた依頼が見つかりません（削除された可能性があります）', true);
     }
     // 下書きには手を付けない。状態・履歴・コメントはいまの依頼のものを使う（下書きの時点の値で戻さない）
     const cur = S.data.items[k],
-      now = SF.nowISO(),
-      rec = JSON.parse(JSON.stringify(d));
+      now = SF.nowISO();
+    // 編集を始めた版と違う（再読込で base が最新になった場合を含む）なら、送らずに選んでもらう
+    if (d.__v && cur.__v && d.__v !== cur.__v) return openConflict(d);
+    const rec = JSON.parse(JSON.stringify(d));
+    delete rec.__ticket;
+    delete rec.__origin;
     rec.criteria = rec.criteria.map((x) => x.trim()).filter(Boolean);
     rec.status = cur.status;
     rec.signalFinal = cur.signalFinal;
@@ -3940,7 +4135,18 @@ const SF = (function () {
     const before = cur.status;
     S.data.items[k] = rec;
     const res = resub ? await applyStatus(rec, 'received', '', '再提出（指摘に合わせて内容を直しました）') : await persist();
-    if (failedFor(res, rec.id)) return submitFailed(d, res);
+    if (coreFailed(res, rec.id)) {
+      const failure = (res.failures || []).find((f) => f.id === rec.id || f.serverId === rec.id);
+      if (failure && failure.code === 'ERR-301') {
+        openConflict(d);
+        if (S.draft === d && S.view === 'new') showErr([res.error]);
+        return;
+      }
+      // 競合ではない失敗。途中まで進んだ分（PATCH 成功）は自分の更新なので、基準の版を進める
+      const latest = find(rec.id);
+      if (latest) d.__v = latest.__v;
+      return submitFailed(d, res);
+    }
     const id = rec.id;
     addAudit('内容を編集', id, '');
     // 承認後の編集でサーバが承認待ちへ戻したら、パイプラインも最初へ戻す
@@ -3953,36 +4159,88 @@ const SF = (function () {
     toast(id + (resub ? ' を直して再提出しました' : ' を更新しました'));
     leaveWizardAfterSave(d, id);
   }
-  /* 再送でも同じ番号・同じキーで送る（応答だけ失われた場合に依頼を二重に作らない） */
-  const submitTickets = new WeakMap();
+  /*
+   * 新規登録の送信札（下書きと一緒に保存し、再読込しても残す）。
+   * - 結果不明（unknown）: サーバの確定した応答がない場合だけ。同じキーと同じ本文で照合し、成功したら更新の経路へ進む
+   * - サーバで作られたと分かったら（serverId）、以後は作らずに更新する
+   * - 札の解放（unknown を外す）の規則は submitFailureKind を参照。解放後に入力が変わっていれば、新しいキーで送る
+   * サーバは本文の検証を Idempotency-Key の照合より先に行うので、同じ本文の照合が 400 なら最初の POST も確定していない。
+   */
+  function submitFailureKind(f) {
+    const status = f.status || 0;
+    // 通信断・タイムアウト・中継の応答、JSON でない 5xx: サーバの確定した応答がない
+    if (!status || status === 408 || [502, 503, 504].includes(status) || (status >= 500 && !f.code)) return 'unknown';
+    // セッション・権限・混雑: 本文を検証していない。結果不明の札は解放しない
+    if ([401, 403, 429].includes(status)) return 'unverified';
+    // アプリが JSON で答えた 4xx / 500: 確定した失敗
+    return 'rejected';
+  }
+  function draftJson(d) {
+    const c = Object.assign({}, d);
+    delete c.__ticket;
+    return JSON.stringify(c);
+  }
   function ticketFor(d) {
-    const json = JSON.stringify(d);
-    let t = submitTickets.get(d);
-    if (!t || t.json !== json) {
-      const key =
-        window.crypto && crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2);
-      t = { json, id: SF.nextId(S.data), key };
-      submitTickets.set(d, t);
-    }
-    return t;
+    const json = draftJson(d);
+    const t = d.__ticket;
+    if (t && (t.json === json || t.unknown || t.serverId)) return t;
+    d.__ticket = { json, id: SF.nextId(S.data), key: newLocalKey(), first: null, unknown: false, serverId: null };
+    return d.__ticket;
   }
   async function submitNew(d) {
     const now = SF.nowISO(),
       t = ticketFor(d),
       rec = JSON.parse(JSON.stringify(d));
+    delete rec.__ticket;
+    delete rec.__origin;
     rec.criteria = rec.criteria.map((x) => x.trim()).filter(Boolean);
-    rec.id = t.id;
-    rec.__idem = t.key;
-    rec.createdAt = now;
     rec.updatedAt = now;
-    rec.status = 'received';
-    rec.history = [{ at: now, by: d.applicant, role: me().l, action: '受付', note: '依頼を登録しました' }];
-    S.data.items.push(rec);
+    const existing = t.serverId ? find(t.serverId) : null;
+    let verifying = false; // 結果が不明な送信を照合している最中か
+    if (existing) {
+      // 前回の送信で依頼はできている。作り直さず、同じ依頼を更新する
+      rec.id = existing.id;
+      rec.createdAt = existing.createdAt;
+      rec.status = existing.status;
+      rec.signalFinal = existing.signalFinal;
+      rec.history = JSON.parse(JSON.stringify(existing.history));
+      rec.comments = JSON.parse(JSON.stringify(existing.comments || []));
+      S.data.items[S.data.items.indexOf(existing)] = rec;
+    } else {
+      rec.id = t.id;
+      rec.createdAt = now;
+      rec.status = 'received';
+      rec.history = [{ at: now, by: d.applicant, role: me().l, action: '受付', note: '依頼を登録しました' }];
+      verifying = t.unknown;
+      if (t.first) rec.__postAs = t.first;
+      else t.first = JSON.parse(JSON.stringify(rec));
+      // 再読込で同じ番号が一覧に現れていても、照合が済むまでは仮の番号で扱う（行を重ねない）
+      if (find(t.id)) rec.id = 'LOCAL-' + t.key;
+      rec.__idem = t.key;
+      t.unknown = true;
+      S.data.items.push(rec);
+    }
+    // 送る前に札を端末へ残す（応答を受け取る前に閉じられても、再送で照合できる）
+    if (S.draft === d) writeDraft();
+    const localId = rec.id;
     const res = await persist();
-    if (failedFor(res, t.id)) return submitFailed(d, res);
+    if (coreFailed(res, localId)) {
+      const failure = (res.failures || []).find((f) => f.id === localId) || {};
+      if (failure.stage && failure.stage !== 'create') {
+        t.serverId = failure.serverId;
+        t.unknown = false;
+        return submitFailed(d, res, ['依頼は ' + t.serverId + ' として登録済みです。もう一度送ると、この依頼を更新します']);
+      }
+      const kind = submitFailureKind(failure);
+      if (kind === 'rejected' || (kind === 'unverified' && !verifying)) t.unknown = false;
+      // 照合で解放され、入力がすでに直されているなら、直した本文で続けて送る（どの経路でも止まらない）
+      if (verifying && !t.unknown && S.draft === d && draftJson(d) !== t.json) return submitNew(d);
+      return submitFailed(d, res);
+    }
     // 受付番号はサーバの値を正とする（別の端末と番号が重なると、サーバが別の番号を振る）
-    const id = (res.ids && res.ids[t.id]) || rec.id;
+    const id = (res.ids && res.ids[localId]) || rec.id;
     addAudit('受付', id, '依頼を登録しました');
+    if (d.__origin) linkRequestOrigin(d.__origin, id);
     persist();
     S.fresh = id;
     const stayed = S.draft === d;
@@ -3990,6 +4248,7 @@ const SF = (function () {
       clearDraft();
       S.draft = null;
     }
+    S.submitting = false;
     const sp = $('#stamp');
     $('#stampNo').textContent = id;
     $('#stampDate').textContent = SF.fmt(now, false);
@@ -4008,7 +4267,7 @@ const SF = (function () {
     );
   }
   async function submit() {
-    if (S.submitting) return;
+    if (S.submitting || inConflict()) return;
     for (let i = 0; i < STEPS.length; i++) {
       const e = validate(i);
       if (e.length) {
@@ -4393,15 +4652,34 @@ const SF = (function () {
         '登録した内容はすべて消え、最初のサンプルデータに戻ります。よろしいですか？',
         'サンプルに戻す',
         () => {
+          const prevOps = S.data.ops;
           S.data = SF.seed();
-          persist();
-          toast('サンプルデータに戻しました');
-          renderData();
+          const rowIds = S.data.items.map((x) => x.id);
+          persist({ deferOps: true }).then((res) => {
+            if (res.ok) {
+              persist(); // 依頼の同期が成功したので、運用データを送る
+              toast('サンプルデータに戻しました');
+            } else {
+              S.data.ops = prevOps; // 依頼を戻せなかったので、運用データも元のまま
+              persist();
+              toast('サンプルに戻せませんでした。' + importedNote(res, rowIds), true);
+            }
+            if (S.view === 'data') renderData();
+          });
         },
       ),
     );
     $('#view').insertAdjacentHTML('beforeend', '<div id="auditbox" class="card pad" style="margin-top:16px">読み込み中…</div>');
     loadAuditBox();
+  }
+  /* 全件置換の失敗時の説明。取消はしないが、既存 ID の行は先に更新されていることがある */
+  function importedNote(res, rowIds) {
+    const stages = res.stages || {};
+    const updated = rowIds.filter((id) => {
+      const s = stages[id];
+      return s && s.create === 'none' && (s.content === 'ok' || s.transition === 'ok');
+    }).length;
+    return updated ? '既存の依頼は取り消していませんが、' + updated + ' 件は更新済みです。' : '既存の依頼は取り消していません。';
   }
   $('#importFile').addEventListener('change', (e) => {
     const f = e.target.files[0];
@@ -4419,11 +4697,39 @@ const SF = (function () {
             o.seq = Math.max(o.seq || 0, ...o.items.map((x) => +String(x.id).split('-').pop() || 0));
             const fromIntake = !o.ops;
             if (fromIntake) o.ops = emptyOps(o.items);
+            const prevOps = S.data.ops,
+              total = o.items.length,
+              rowIds = o.items.map((x) => x.id);
             S.data = o;
-            addAudit('JSONを取り込み', 'データ', o.items.length + '件' + (fromIntake ? '（受付ステーションの形式）' : ''));
-            persist();
-            toast(o.items.length + ' 件を取り込みました');
-            go('board');
+            persist({ deferOps: true }).then((res) => {
+              // 結果の件数で伝える。保存できなかった行は bridge が取り除いている
+              const failed = (res.failures || []).filter((f) => f.stage !== 'comment');
+              const rows = failed.filter((f) => rowIds.includes(f.id)).length,
+                others = failed.length - rows,
+                saved = total - rows;
+              if (!rows && !others) {
+                addAudit('JSONを取り込み', 'データ', total + '件' + (fromIntake ? '（受付ステーションの形式）' : ''));
+                persist();
+                toast(total + ' 件を取り込みました');
+                return go('board');
+              }
+              // 置き換えは成立していないので、運用データは元のまま。既存の依頼も取り消していない
+              S.data.ops = prevOps;
+              if (saved) addAudit('JSONを取り込み', 'データ', total + '件中' + saved + '件');
+              persist();
+              toast(
+                total +
+                  ' 件中 ' +
+                  saved +
+                  ' 件を保存しました。' +
+                  (rows ? rows + ' 件は保存できませんでした。' : '') +
+                  (others ? 'ほかに ' + others + ' 件の保存に失敗しました。' : '') +
+                  importedNote(res, rowIds),
+                true,
+              );
+              if (saved) go('board');
+              else if (S.view === 'data') renderData();
+            });
           },
         );
       } catch (_) {
@@ -5078,7 +5384,7 @@ const SF = (function () {
       const res = await applyStatus(r, v, note, extra);
       sending = false;
       btn.disabled = false;
-      return !failedFor(res, r.id);
+      return !coreFailed(res, r.id);
     }
   }
 
@@ -6003,24 +6309,37 @@ const SF = (function () {
         : '<button class="btn pri" data-x type="button">閉じる</button>',
     );
     if (!okRole) return;
-    $('#edo').addEventListener('click', () => {
+    let sending = false;
+    $('#edo').addEventListener('click', async () => {
+      if (sending) return;
       const d = ($('#modal input[name=ed]:checked') || {}).value,
         note = $('#enote').value.trim();
       if (!note) return toast('判断の理由を書いてください', true);
       const label = { human: '人が修正する', split: 'タスクを分ける', spec: '注文書を見直す', hold: '見送る' }[d];
+      // 状態を変える判断は、保存の結果を待ってから記録する。失敗したらダイアログを残す
+      const to = d === 'spec' ? 'wait' : d === 'hold' ? 'hold' : null;
+      if (to && SF.canMove(S.role, r.status, to)) {
+        const btn = $('#edo');
+        sending = true;
+        btn.disabled = true;
+        const res = await applyStatus(
+          r,
+          to,
+          note,
+          'エスカレーション（' + lv + '）：' + (d === 'spec' ? '注文書を見直す' : '見送り'),
+        );
+        sending = false;
+        btn.disabled = false;
+        if (coreFailed(res, r.id)) return;
+      }
+      const pipe = O().pipes[r.id] || p;
       addAudit('エスカレーションを判断（' + lv + '）', r.id, label + '／' + note);
-      p.esc = '';
-      p.same = 0;
-      p.fail = 0;
-      if (d === 'human' || d === 'split') p.step = 5;
-      if (d === 'spec') {
-        p.step = 1;
-        if (SF.canMove(S.role, r.status, 'wait')) applyStatus(r, 'wait', note, 'エスカレーション（' + lv + '）：注文書を見直す');
-      }
-      if (d === 'hold') {
-        p.step = 12;
-        if (SF.canMove(S.role, r.status, 'hold')) applyStatus(r, 'hold', note, 'エスカレーション（' + lv + '）：見送り');
-      }
+      pipe.esc = '';
+      pipe.same = 0;
+      pipe.fail = 0;
+      if (d === 'human' || d === 'split') pipe.step = 5;
+      if (d === 'spec') pipe.step = 1;
+      if (d === 'hold') pipe.step = 12;
       O()
         .incidents.filter((i) => i.req === r.id && i.status !== '完了')
         .forEach((i) => {
@@ -7715,6 +8034,7 @@ const SF = (function () {
         criteria: [''],
         decides: 'g',
       });
+      if (window.__MSF__) return startRequestFrom(r, { kind: 'feedback', id: f.id });
       r.id = SF.nextId(S.data);
       r.createdAt = now;
       r.updatedAt = now;
@@ -8285,6 +8605,7 @@ const SF = (function () {
           criteria: [''],
           decides: 'g',
         });
+        if (window.__MSF__) return startRequestFrom(r, { kind: 'incident', id: i.id });
         r.id = SF.nextId(S.data);
         r.createdAt = now;
         r.updatedAt = now;
