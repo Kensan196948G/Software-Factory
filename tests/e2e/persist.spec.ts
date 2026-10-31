@@ -633,6 +633,29 @@ test.describe('UI 保存の結果待ち', () => {
     expect((await fb()).list.find((x) => x.id === target)?.status).toBe('依頼にした');
   });
 
+  test('利用者の声→依頼: 書きかけの下書きがあれば消さずに案内する', async ({ page }) => {
+    await login(page);
+    await setUiRole(page, 'desk');
+    await clickText(page, '新しい依頼');
+    await page.waitForTimeout(150);
+    await clickText(page, '新しい道具がほしい', false);
+    await nextStep(page);
+    await clickText(page, '現場の担当者');
+    await nextStep(page);
+    const draftTitle = `残す下書き ${Date.now()}`;
+    await setValue(page, 'main input[type=text]', 0, draftTitle);
+    await expect
+      .poll(() => callApi<{ items: { draft?: { title?: string } }[] }>(page, 'GET', '/api/drafts').then((r) => r.items.length))
+      .toBeGreaterThan(0);
+
+    await page.locator('button[data-v="ops"]').click();
+    await page.locator('[data-vt="otab|fb"]').click();
+    await page.locator('[data-act^="fbreq|"]').first().click();
+    await expect(page.locator('#toast .toast.ng')).toContainText('書きかけ');
+    const drafts = await callApi<{ items: { draft?: { title?: string } }[] }>(page, 'GET', '/api/drafts');
+    expect(drafts.items.some((d) => d.draft?.title === draftTitle)).toBe(true);
+  });
+
   test('状態変更ダイアログ: 失敗したら成功表示を出さず状態を戻す。再送で成功する', async ({ page }) => {
     await login(page);
     const title = `ダイアログ ${Date.now()}`;

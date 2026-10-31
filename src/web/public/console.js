@@ -3084,6 +3084,11 @@ const SF = (function () {
   ];
   /* 運用データから依頼を作る。サーバは必須項目を求めるので、入力画面へ渡して、受付できてから運用データへ結び付ける。 */
   function startRequestFrom(r, origin) {
+    // 書きかけの下書きを黙って消さない。先に送信か破棄をしてもらう
+    if (S.draft && hasContent(S.draft)) {
+      toast('書きかけの依頼があります。「新しい依頼」から送信するか破棄してから、もう一度押してください', true);
+      return;
+    }
     clearDraft();
     r.criteria = r.criteria && r.criteria.length ? r.criteria : [''];
     r.__origin = origin;
