@@ -1039,6 +1039,206 @@ describe('検証証跡', () => {
   });
 });
 
+describe('修復ループ1回目の指摘', () => {
+  it('B-1: 結果を待ち続ける job は idle でなくても session_limit で止まり、runUntilIdle が抜ける', async () => {
+    const id = await approvedRequest();
+    const { jobId } = (await handoff(id)).json();
+    const options = worker('success', { ci: () => null });
+    await runOnce(options); // → planning
+    await runOnce(options); // → implementing
+    await runOnce(options); // → verifying
+    // 進まなくても idle にはならないが、session は閉じず時間の上限が効く
+    expect(await runOnce(options)).toMatchObject({ kind: 'stepped', to: 'unchanged' });
+    await expect(runUntilIdle(options, 5)).rejects.toThrow();
+    expect(await getJobView(jobId)).toMatchObject({ state: 'verifying', leaseHeld: false });
+    advance(61 * 60_000);
+    await runOnce(options);
+    expect(await getJobView(jobId)).toMatchObject({ state: 'stopped', stopReason: 'session_limit' });
+  });
+
+  it('B-1: 再開ごとに配信 ID が分かれ、失敗の結果も新しい試行として進む', async () => {
+    const id = await approvedRequest();
+    const { jobId } = await untilVerifying(id);
+    await cancelJob({ jobId, reason: '止める' }, actorFrom('desk'), 'c', clock());
+    await resumeJob({ jobId, reason: '再開' }, actorFrom('desk'), 'c', clock());
+    await runOnce(worker('success'));
+    expect(await getJobView(jobId)).toMatchObject({ state: 'pr_ready' });
+    const row = (await query<any>('select delivery_id, run_attempt from verification where job_id=$1', [jobId])).rows[0];
+    expect(row.delivery_id).toMatch(/:r1$/);
+    expect(row.run_attempt).toBe(2);
+  });
+
+  it('B-3: 外した lease では heartbeat も transitionJob も通らない', async () => {
+    const id = await approvedRequest();
+    const { jobId } = (await handoff(id)).json();
+    const claimed = await claimNextJob({ owner: 'w', now: clock() });
+    expect((await releaseLease(claimed!.lease, clock())).applied).toBe(true);
+    expect((await heartbeat(claimed!.lease, clock())).applied).toBe(false);
+    expect((await transitionJob(claimed!.lease, { to: 'planning', now: clock(), correlationId: 'c' })).applied).toBe(false);
+    expect((await releaseLease(claimed!.lease, clock())).applied).toBe(false);
+    expect(await getJobView(jobId)).toMatchObject({ state: 'queued' });
+  });
+
+  it('B-5: 既存の試験を変えた結果は human_approval_required で止まる', async () => {
+    const id = await approvedRequest();
+    const { jobId } = (await handoff(id)).json();
+    const base = createFakeRunner('success');
+    const runner = {
+      ...base,
+      run: async (input: Parameters<typeof base.run>[0]) => {
+        const result = await base.run(input);
+        return input.step === 'plan' ? result : { ...result, changedPaths: ['tests/unit/domain.test.ts'] };
+      },
+    };
+    await runUntilIdle(worker('success', { runner }));
+    expect(await getJobView(jobId)).toMatchObject({ state: 'stopped', stopReason: 'human_approval_required' });
+  });
+
+  it('M-3: 形の違う runner の結果は runner_failure', async () => {
+    const id = await approvedRequest();
+    const { jobId } = (await handoff(id)).json();
+    const base = createFakeRunner('success');
+    const runner = {
+      ...base,
+      run: async () => ({ status: 'succeeded', exitCode: 0 }) as never,
+    };
+    await runUntilIdle(worker('success', { runner }));
+    expect(await getJobView(jobId)).toMatchObject({ state: 'stopped', stopReason: 'runner_failure' });
+    const attempts = (await query<any>('select outcome from job_attempt where job_id=$1', [jobId])).rows;
+    expect(attempts[0].outcome).toBe('rejected');
+  });
+
+  it('B-8: 合格の記録か PR 候補が無い pr_ready は DB が拒否する', async () => {
+    const id = await approvedRequest();
+    const { jobId, headSha } = await untilVerifying(id);
+    const raw = `update job set state='pr_ready' where id=$1`;
+    await expect(query(raw, [jobId])).rejects.toMatchObject({ code: '23514' });
+    await expect(
+      query(
+        `insert into verification (job_id, delivery_id, source, ci_run_id, run_sequence, run_attempt, head_sha, stages, received_at)
+         values ($1,'d','fake_ci','r',1,1,$2,$3::jsonb,now())`,
+        [jobId, headSha, JSON.stringify([{ stage: 'static', status: 'passed' }])],
+      ),
+    ).resolves.toBeTruthy();
+    await expect(query(raw, [jobId])).rejects.toMatchObject({ code: '23514' });
+    expect(await getJobView(jobId)).toMatchObject({ state: 'verifying' });
+    const options = worker('success', { ci: () => null });
+    const claimed = await claimNextJob({ owner: options.owner, now: clock() });
+    await expect(transitionJob(claimed!.lease, { to: 'pr_ready', now: clock(), correlationId: 'c' })).rejects.toThrow();
+  });
+
+  it('M-4: 赤信号の注文書は途中の工程でも resumeJob でも進まない', async () => {
+    const id = await approvedRequest();
+    await query(`update approval set decided_signal='r' where request_id=$1`, [id]);
+    await query(`update request set signal_decided='r' where id=$1`, [id]);
+    const { jobId } = (await handoff(id)).json();
+    await query(`update job set state='planning' where id=$1`, [jobId]);
+    const runner = createFakeRunner('success');
+    // 依頼の色が編集で消えても、版固定の色で止まる
+    await query(`update request set signal_decided=null where id=$1`, [id]);
+    await runOnce(worker('success', { runner }));
+    expect(runner.runs).toHaveLength(0);
+    expect(await getJobView(jobId)).toMatchObject({ state: 'stopped', stopReason: 'red_signal_human_required' });
+
+    await query(`update job set stop_reason='cancel_requested' where id=$1`, [jobId]);
+    await expect(resumeJob({ jobId, reason: '再開' }, actorFrom('desk'), 'c', clock())).rejects.toMatchObject({
+      code: 'ERR-201',
+    });
+  });
+
+  it('H-1: Issue の承認者欄は実際に承認した人で、値はコードの中に入る', async () => {
+    const id = await approvedRequest({ title: '@all [x](y) <!-- z', approver: 'テスト 太郎' });
+    expect((await handoff(id)).statusCode).toBe(200);
+    const issue = github.issues[0];
+    expect(issue?.title).toContain('＠all ［x］(y) ＜!-- z');
+    expect(issue?.title).not.toContain('@');
+    expect(issue?.title).not.toContain('<');
+    expect(issue?.body).toContain('- 承認者: `テスト 太郎`');
+    const other = await approvedRequest({ title: '別の依頼' });
+    await query(`update approval set approver_name='実際の 承認者 @x' where request_id=$1`, [other]);
+    await handoff(other);
+    expect(github.issues[1]?.body).toContain('- 承認者: `実際の 承認者 @x`');
+  });
+
+  it('H-2: 公開リポジトリへは投入せず、private を読めなければ送らない', async () => {
+    const id = await approvedRequest();
+    const version = await orderVersion(id);
+    github.repoPrivate = false;
+    try {
+      await expect(handoffOrder({ requestId: id, orderVersion: version }, actorFrom('desk'), 'a', deps())).rejects.toMatchObject({
+        code: 'ERR-405',
+        statusCode: 409,
+      });
+      expect(github.access.filter((a) => a.method !== 'GET')).toHaveLength(0);
+      expect(await intents(id)).toHaveLength(0);
+    } finally {
+      github.repoPrivate = true;
+    }
+    const adapter = createGithubIssueAdapter({ token: 'dummy', apiUrl: github.url, nodeEnv: 'test' });
+    const unreadable = deps({ issueAdapter: { ...adapter, getRepoPrivate: async () => ({ ok: false, reason: 'network' }) } });
+    await expect(
+      handoffOrder({ requestId: id, orderVersion: version }, actorFrom('desk'), 'b', unreadable),
+    ).rejects.toMatchObject({
+      code: 'ERR-304',
+    });
+    const fake = createFakeIssueAdapter({ repoIds: { [FAKE_REPO]: FAKE_REPO_ID }, publicRepos: [FAKE_REPO] });
+    await expect(
+      handoffOrder({ requestId: id, orderVersion: version }, actorFrom('desk'), 'c', deps({ issueAdapter: fake })),
+    ).rejects.toMatchObject({ code: 'ERR-405' });
+    expect(fake.issues).toHaveLength(0);
+  });
+
+  it('H-2: 既存の failed の再送でも公開になっていれば送らない', async () => {
+    const id = await approvedRequest();
+    const version = await orderVersion(id);
+    const adapter = createGithubIssueAdapter({ token: 'dummy', apiUrl: github.url, nodeEnv: 'test' });
+    const rejecting = deps({
+      issueAdapter: { ...adapter, createIssue: async () => ({ outcome: 'failed', reason: 'http_4xx', httpStatus: 422 }) },
+    });
+    await expect(handoffOrder({ requestId: id, orderVersion: version }, actorFrom('desk'), 'a', rejecting)).rejects.toMatchObject(
+      {
+        code: 'ERR-304',
+      },
+    );
+    github.repoPrivate = false;
+    try {
+      await expect(handoffOrder({ requestId: id, orderVersion: version }, actorFrom('desk'), 'b', deps())).rejects.toMatchObject({
+        code: 'ERR-405',
+      });
+      expect(github.issues).toHaveLength(0);
+    } finally {
+      github.repoPrivate = true;
+    }
+  });
+
+  it.each([
+    ['PR', { pull_request: {} }],
+    ['他人の Issue', { user: { login: 'mallory' } }],
+    ['別の依頼の Issue', { body: 'no marker' }],
+  ])('M-1: 更新先が %s なら送らずに ERR-405', async (_name, patch) => {
+    const id = await approvedRequest();
+    const first = (await handoff(id)).json();
+    const current = await detail(id);
+    expect(
+      (
+        await api('PATCH', `/api/requests/${id}`, {
+          ...sampleRequest({ approver: 'テスト 太郎', purpose: '別' }),
+          version: current.version,
+        })
+      ).statusCode,
+    ).toBe(200);
+    await setRole('approver');
+    await transition(id, APPROVE);
+    await setRole('desk');
+    Object.assign(github.issues[0] as object, patch);
+    const patches = () => github.access.filter((a) => a.method === 'PATCH').length;
+    const res = await handoff(id);
+    expect(res.json().error.code).toBe('ERR-405');
+    expect(patches()).toBe(0);
+    expect((await detail(id)).issueNo).toBe(first.issueNo);
+  });
+});
+
 describe('権限と HTTP（T-80, T-85, T-86）', () => {
   it('API-07 のルートは無い', async () => {
     const id = await approvedRequest();

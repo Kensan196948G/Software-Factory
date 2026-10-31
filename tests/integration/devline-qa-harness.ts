@@ -274,7 +274,7 @@ export function useHarness(options: { checkExternal?: boolean } = {}): Harness {
 
 /** 依頼者だけ、など役割を絞った利用者を作ってログインする（TEST_MEMBER は approver も持つので否定試験に足りない）。 */
 export async function loginWithRoles(app: FastifyInstance, email: string, roles: string[], isAdmin = false): Promise<Authed> {
-  const password = 'qa-pass-1234-not-a-secret';
+  const password = 'test-pass-qa-1234-not-a-secret';
   const existing = await query<{ id: string }>('select id from app_user where email=$1', [email]);
   if (!existing.rows[0]) {
     const hash = await hashPassword(password);

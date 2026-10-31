@@ -8,7 +8,7 @@ import { query } from '../../src/api/db.js';
 import { handoffOrder, type DevlineDeps } from '../../src/api/devline-service.js';
 import { createFakeIssueAdapter } from '../../src/api/issue-adapter-fake.js';
 import { handoffToGithub } from '../../src/api/service.js';
-import { HANDOFF_POLICY, parseHandoffMarker } from '../../src/shared/devline.js';
+import { HANDOFF_POLICY, buildHandoffMarker, parseHandoffMarker } from '../../src/shared/devline.js';
 import { FAKE_LOGIN, FAKE_REPO, FAKE_REPO_ID, type FakeResponder } from './fake-github-server.js';
 import { loginWithRoles, useHarness, withDbFault } from './devline-qa-harness.js';
 
@@ -623,9 +623,30 @@ describe('T-35〜T-39: 版が上がったとき', () => {
     ]);
   });
 
-  it('T-35: 既存データのように issue_no だけある依頼は、作らず PATCH する', async () => {
+  // CTO 裁定 M-1 により期待値を変更: マーカーで依頼を確認できない Issue は上書きしない（新しい Issue も作らない）
+  it('T-35: 既存データのように issue_no だけある依頼は、作らず、マーカーが無ければ PATCH もしない（M-1）', async () => {
     const id = await h.approvedRequest();
     const existing = h.github.addForeignIssue({ body: '旧版で作った Issue', login: FAKE_LOGIN });
+    await query('update request set issue_no=$2 where id=$1', [id, existing.number]);
+    const res = await h.handoff(id);
+    expect(res.statusCode, res.body).toBe(409);
+    expect(res.json().error.code).toBe('ERR-405');
+    expect(newPosts()).toBe(0);
+    expect(h.github.access.filter((a) => a.method === 'PATCH')).toHaveLength(0);
+    expect(h.github.issues).toHaveLength(1);
+    expect(existing.body).toBe('旧版で作った Issue');
+  });
+
+  it('T-35: issue_no だけある依頼でも、1行目がその依頼のマーカーなら作らず PATCH する', async () => {
+    const id = await h.approvedRequest();
+    const marker = buildHandoffMarker({
+      requestId: id,
+      orderVersion: 1,
+      op: 'create_issue',
+      repo: FAKE_REPO,
+      contentSha256: 'd'.repeat(64),
+    });
+    const existing = h.github.addForeignIssue({ body: marker, login: FAKE_LOGIN });
     await query('update request set issue_no=$2 where id=$1', [id, existing.number]);
     const res = await h.handoff(id);
     expect(res.statusCode, res.body).toBe(200);

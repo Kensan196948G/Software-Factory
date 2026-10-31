@@ -39,6 +39,8 @@ export interface FakeGithub {
   overrides: FakeResponder[];
   /** 通常の作成の直前に呼ぶ（commit 済みの確認用）。 */
   onWrite: ((body: any) => void | Promise<void>) | null;
+  /** GET /repos の private。既定は true。false で公開リポジトリを模す。 */
+  repoPrivate: boolean;
   addForeignIssue(issue: Partial<FakeGithubIssue> & { body: string; login: string }): FakeGithubIssue;
   close(): Promise<void>;
 }
@@ -54,7 +56,7 @@ export async function startFakeGithub(): Promise<FakeGithub> {
   const overrides: FakeResponder[] = [];
   let nextNumber = 100;
   let baseUrl = '';
-  const state: { onWrite: FakeGithub['onWrite'] } = { onWrite: null };
+  const state: { onWrite: FakeGithub['onWrite']; repoPrivate: boolean } = { onWrite: null, repoPrivate: true };
 
   const send = (res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void => {
     res.writeHead(status, { 'content-type': 'application/json', ...headers });
@@ -97,7 +99,7 @@ export async function startFakeGithub(): Promise<FakeGithub> {
 
       if (method === 'GET' && path === '/user') return send(res, 200, { login: FAKE_LOGIN });
       if (method === 'GET' && path === repoPrefix) {
-        return send(res, 200, { id: Number(FAKE_REPO_ID), default_branch: 'main' });
+        return send(res, 200, { id: Number(FAKE_REPO_ID), default_branch: 'main', private: state.repoPrivate });
       }
       if (method === 'GET' && path === `${repoPrefix}/commits/main`) return send(res, 200, { sha: FAKE_BASE_SHA });
       if (method === 'POST' && path === `${repoPrefix}/issues`) {
@@ -141,6 +143,12 @@ export async function startFakeGithub(): Promise<FakeGithub> {
     },
     set onWrite(fn) {
       state.onWrite = fn;
+    },
+    get repoPrivate() {
+      return state.repoPrivate;
+    },
+    set repoPrivate(value) {
+      state.repoPrivate = value;
     },
     addForeignIssue({ body, login, ...rest }) {
       const issue = newIssue(rest.title ?? 'foreign', body, login);

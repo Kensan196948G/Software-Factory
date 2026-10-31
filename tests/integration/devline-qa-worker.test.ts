@@ -981,12 +981,26 @@ describe('並行の操作と遅延（二重 worker・取消・再開）', () => 
     expect((await h.view(jobId)).state).toBe('pr_ready');
   });
 
-  it('DB に入らない成果物を返す runner: 工程は進まず、取り直しの上限で止まる（永久に回らない）', async () => {
+  it('M-3: 不正な名前の成果物を返す runner は検証で runner_failure になり、何も保存しない', async () => {
     const { jobId } = await queued();
     await runOnce(h.worker('success'));
     const poison = scriptedRunner(() => ({
       artifacts: [
         { kind: 'plan', name: '../escape', content: 'x', byteSize: 1, sha256: createHash('sha256').update('x').digest('hex') },
+      ],
+    }));
+    await runOnce(h.worker('success', { runner: poison }));
+    expect(await h.view(jobId)).toMatchObject({ state: 'stopped', stopReason: 'runner_failure' });
+    expect(await h.count(`from job_artifact where job_id=$1`, [jobId])).toBe(0);
+  });
+
+  it('DB に入らない成果物を返す runner: 工程は進まず、取り直しの上限で止まる（永久に回らない）', async () => {
+    const { jobId } = await queued();
+    await runOnce(h.worker('success'));
+    const poison = scriptedRunner(() => ({
+      artifacts: [
+        // M-3 の実行時検証は通るが DB の integer に入らない値（name の不正は下の試験で検証の段階で止まる）
+        { kind: 'plan', name: 'huge', content: 'x', byteSize: 2 ** 40, sha256: createHash('sha256').update('x').digest('hex') },
       ],
     }));
     for (let i = 0; i <= DEVLINE_POLICY.maxLeaseReclaims; i += 1) {

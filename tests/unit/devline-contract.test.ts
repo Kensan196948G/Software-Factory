@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { assertApiUrlAllowed } from '../../src/api/issue-adapter.js';
-import { buildIssueBody } from '../../src/api/github.js';
+import { buildIssueBody, inlineCode, safeIssueTitle } from '../../src/api/github.js';
+import { parseRunnerResult } from '../../src/worker/runner-result.js';
 import { renderPrBody } from '../../src/api/devline-verification.js';
 import { createRunner, createFakeRunner } from '../../src/worker/fake-runner.js';
 import { decideWorkerStart } from '../../src/worker/main.js';
@@ -24,6 +25,8 @@ import {
   nextHandoffAction,
   parseDevlineTargetRepos,
   parseHandoffMarker,
+  pathsRequiringHumanApproval,
+  resumeDecision,
 } from '../../src/shared/devline.js';
 import type { RunnerInput, VerificationRecord } from '../../src/shared/devline.js';
 import type { RequestRecord } from '../../src/shared/types.js';
@@ -230,6 +233,103 @@ describe('policy（T-66 の基本）', () => {
     expect(decideRepair({ total: 2, byCause: { x: 2 } }, 'x')).toEqual({ allow: false, stopReason: 'same_cause_limit' });
     expect(decideRepair({ total: 5, byCause: {} }, 'x')).toEqual({ allow: false, stopReason: 'repair_total_limit' });
     expect(decideRepair({ total: 1, byCause: { x: 1 } }, 'x')).toEqual({ allow: true });
+  });
+});
+
+describe('policy の追加（B-4, B-5, B-6, M-2, M-3）', () => {
+  it('ci_rerun_limit の停止は再開できない', () => {
+    const decision = resumeDecision({ state: 'stopped', stopReason: 'ci_rerun_limit', resumeTo: 'verifying' });
+    expect(decision).toMatchObject({ ok: false, code: 'ERR-201' });
+  });
+  it.each([
+    'src/shared/devline.ts',
+    'src/shared/domain.ts',
+    'src/shared/order.ts',
+    'src/worker/loop.ts',
+    'src/worker/x/y.ts',
+    'src/api/devline-jobs.ts',
+    'src/api/app.ts',
+    'src/api/http.ts',
+    'src/api/audit.ts',
+    'src/api/db.ts',
+    'SRC/API/DB.TS',
+    'src/.envrc',
+    'src/prod.env',
+    'src/.secrets/x',
+    '.secrets/x',
+  ])('%s は拒否', (path) => {
+    expect(checkChangedPaths([path])).toHaveLength(1);
+  });
+  it('許可の判定は小文字化しない', () => {
+    expect(checkChangedPaths(['SRC/generated/a.ts'])[0]?.rule).toBe('not_allowed');
+    expect(checkChangedPaths(['Tests/a.test.ts'])[0]?.rule).toBe('not_allowed');
+  });
+  it('既存の試験の変更は人の承認が要る。新しい試験の置き場は要らない', () => {
+    expect(pathsRequiringHumanApproval(['tests/unit/domain.test.ts', './tests/x.ts'])).toEqual([
+      'tests/unit/domain.test.ts',
+      'tests/x.ts',
+    ]);
+    expect(pathsRequiringHumanApproval(['tests/generated/a.test.ts', 'src/generated/a.ts'])).toEqual([]);
+  });
+});
+
+describe('Runner の結果の実行時検証（M-3）', () => {
+  const good = {
+    status: 'succeeded',
+    exitCode: 0,
+    headSha: null,
+    changedPaths: [],
+    artifacts: [],
+    logRef: null,
+    usage: { inputTokens: 0, outputTokens: 0, durationSeconds: 0, costJpy: 0 },
+    summary: 's',
+  };
+  const artifact = { kind: 'log', name: 'a.log', sha256: 'a'.repeat(64), byteSize: 1, content: 'x' };
+  it('正しい結果は通す', () => {
+    expect(parseRunnerResult(good)).toMatchObject({ status: 'succeeded' });
+    expect(parseRunnerResult({ ...good, artifacts: [artifact] })?.artifacts).toHaveLength(1);
+  });
+  it.each([
+    ['null', null],
+    ['status', { ...good, status: 'ok' }],
+    ['changedPaths', { ...good, changedPaths: 'src/a.ts' }],
+    ['負の費用', { ...good, usage: { ...good.usage, costJpy: -1 } }],
+    ['pr_body_draft', { ...good, artifacts: [{ ...artifact, kind: 'pr_body_draft' }] }],
+    ['name の ..', { ...good, artifacts: [{ ...artifact, name: '../x' }] }],
+    ['本文も保存先も無い', { ...good, artifacts: [{ ...artifact, content: null }] }],
+    ['絶対パスの保存先', { ...good, artifacts: [{ ...artifact, content: null, storageRef: '/etc/passwd' }] }],
+  ])('%s は拒否', (_name, raw) => {
+    expect(parseRunnerResult(raw)).toBeNull();
+  });
+});
+
+describe('Issue 本文とタイトルの無害化（H-1）', () => {
+  const body = (approver: string): string =>
+    buildIssueBody({ marker: 'm', requestId: 'REQ-2026-0001', orderYaml: 'a: 1\n', approver, signalLabel: 's', deptLabel: 'd' });
+  it.each(['@someone', 'a\n# 見出し\n@b', '[x](https://example.com)', '<!-- 閉じない', '`a` ``b``'])(
+    '承認者欄 %j は1行のコードに入る',
+    (value) => {
+      const line = body(value)
+        .split('\n')
+        .find((l) => l.startsWith('- 承認者:')) as string;
+      expect(line).toMatch(/^- 承認者: (`+).*\1$/);
+      expect(body(value).split('\n')).not.toContain('# 見出し');
+      expect(
+        body(value)
+          .split('\n')
+          .filter((l) => l.startsWith('@')),
+      ).toEqual([]);
+    },
+  );
+  it('backtick を含む値でも閉じられない', () => {
+    expect(inlineCode('a`b')).toBe('``a`b``');
+    expect(inlineCode('`a`')).toBe('`` `a` ``');
+    expect(inlineCode('')).toBe('`（なし）`');
+  });
+  it('タイトルは1行で、通知やリンクになる文字を残さない', () => {
+    const title = safeIssueTitle('REQ-2026-0001', 'a\n@b [c](d) <!-- e `f`');
+    expect(title).not.toMatch(/[\n@<>`]/);
+    expect(title.startsWith('[MSF] REQ-2026-0001 a ＠b ［c］(d)')).toBe(true);
   });
 });
 
