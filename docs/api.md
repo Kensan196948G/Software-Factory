@@ -10,6 +10,7 @@
 - エラー: `{ "error": { "code": "ERR-xxx", "message": "...", "details"?, "correlationId"? } }`
 - 相関ID: レスポンスヘッダ `X-Correlation-Id`。監査ログに記録。
 - 楽観ロック: 更新系は `version` を要求。不一致は 409 `ERR-301`。
+- 環境名: `GET /healthz` と `GET /api/meta` の `environment` は `APP_ENV`（`development` / `test` / `staging` / `production`）の値。未指定・空なら `NODE_ENV` と同じ。不正な値は起動エラー。表示専用で、Cookie の Secure などセキュリティ挙動は `NODE_ENV` で決まる。
 - 冪等: `POST /api/requests` は `Idempotency-Key` ヘッダ。同じキー・同じ内容なら同じ依頼を返す。内容が違えば 409 `ERR-008`。
 
 ## 2. エンドポイント
