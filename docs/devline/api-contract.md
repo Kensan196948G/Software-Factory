@@ -144,17 +144,19 @@ fence の無い関数だが、CI は lease の持ち主ではないので状態�
 
 すべて既存の `auth()` / `mutate()`（CSRF）を使い、`auth.ts` は変更しない。エラーは既存の `{error:{code,message,details,correlationId}}`。
 
-| ID     | メソッド・パス                   | 本文                                                                | 応答                                   | 権限                                                  |
-| ------ | -------------------------------- | ------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------- |
-| API-06 | `POST /api/orders/:id/handoff`   | `{ orderVersion: int≥1, confirmAbsent?: boolean, reason?: string }` | `HandoffResult`                        | desk / approver（confirm_absent は approver / admin） |
-| 既存   | `POST /api/requests/:id/handoff` | なし                                                                | `{issueNo, issueUrl, created, detail}` | desk / approver                                       |
-| 新規   | `GET /api/jobs/:id`              | －                                                                  | `{ job: JobView }`                     | ログイン済み                                          |
-| 新規   | `GET /api/requests/:id/jobs`     | －                                                                  | `{ items: JobView[] }`（版の新しい順） | ログイン済み                                          |
-| 新規   | `POST /api/jobs/:id/cancel`      | `{ reason: string, expectedState?: JobState }`                      | `{ job: JobView }`                     | desk / approver / admin                               |
-| 新規   | `POST /api/jobs/:id/resume`      | `{ reason: string, expectedState?: JobState }`                      | `{ job: JobView }`                     | desk / approver / admin                               |
+| ID     | メソッド・パス                   | 本文                                                                | 応答                                                                                                  | 権限                                                  |
+| ------ | -------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| API-06 | `POST /api/orders/:id/handoff`   | `{ orderVersion: int≥1, confirmAbsent?: boolean, reason?: string }` | `HandoffResult`                                                                                       | desk / approver（confirm_absent は approver / admin） |
+| 既存   | `POST /api/requests/:id/handoff` | なし                                                                | `{issueNo, issueUrl, created, detail}`                                                                | desk / approver                                       |
+| 新規   | `GET /api/jobs/:id`              | －                                                                  | `{ job: JobView }`                                                                                    | ログイン済み                                          |
+| 新規   | `GET /api/requests/:id/jobs`     | －                                                                  | `{ items: JobView[], handoffs: HandoffView[], evidence: Record<jobId, JobEvidence> }`（版の新しい順） | ログイン済み                                          |
+| 新規   | `POST /api/jobs/:id/cancel`      | `{ reason: string, expectedState?: JobState }`                      | `{ job: JobView }`                                                                                    | desk / approver / admin                               |
+| 新規   | `POST /api/jobs/:id/resume`      | `{ reason: string, expectedState?: JobState }`                      | `{ job: JobView }`                                                                                    | desk / approver / admin                               |
 
 - API-06 の `:id` は受付番号。注文書に別の ID は無い。
 - `JobView` に `canonical_yaml`、lease の所有者名、`stop_detail` 内の秘密情報を含めない。
+- `HandoffView` と `JobEvidence` は画面の表示用（読み取りのみ）。再読込の後も Issue の URL と結果不明を表示するために足した。`marker` と `last_error` は出さない。`issueSource` はサーバが `GITHUB_API_URL` と URL の host で決める（`api.github.com` と `github.com` のときだけ `github`）。
+- API-06 の応答に `status` / `version` は無い。画面は応答の後に `GET /api/requests/:id` で取り直す（確定で `request.version` が上がるため）。
 - API-07（`POST /api/jobs/:id/verifications`）は作らない。ルートが存在しないことを試験する。
 - zod は 3 / 4 両対応の書き方に限る: `z.record` は2引数、`error.issues`（`.errors` は使わない）、`z.string().uuid()` は可、`.merge` と `z.nativeEnum` は避ける（`z.enum(JOB_STATES)` を使う）。schema は `src/api/schemas.ts`。`src/shared/devline.ts` に zod を入れない。
 

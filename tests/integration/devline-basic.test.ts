@@ -1280,6 +1280,15 @@ describe('権限と HTTP（T-80, T-85, T-86）', () => {
     expect(bad.json().error.code).toBe('ERR-104');
     const list = await api('GET', `/api/requests/${id}/jobs`);
     expect(list.json().items).toHaveLength(1);
+    // 画面用の投入の記録と証跡の要約。マーカーと外部応答の本文は出さない
+    const trace = list.json();
+    expect(trace.handoffs).toHaveLength(1);
+    expect(trace.handoffs[0]).toMatchObject({ orderVersion: 1, state: 'succeeded', op: 'create_issue', issueSource: 'fake' });
+    expect(trace.handoffs[0].issueNo).toBeGreaterThan(0);
+    expect(trace.handoffs[0]).not.toHaveProperty('marker');
+    expect(trace.handoffs[0]).not.toHaveProperty('last_error');
+    expect(JSON.stringify(trace)).not.toContain('msf-handoff');
+    expect(trace.evidence[jobId]).toEqual({ attempts: 0, verificationSources: [], hasPrDraft: false });
     expect((await api('GET', '/api/requests/REQ-0000-0000/jobs')).json().error.code).toBe('ERR-104');
     expect(github.access.every((a) => a.authorization === 'Bearer dummy')).toBe(true);
   });

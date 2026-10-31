@@ -111,6 +111,8 @@
       comments: (r.comments || []).map((c) => ({ at: c.at, by: c.by, text: c.text })),
       // 内部用（画面には出さない）
       __v: r.version,
+      __orderVersion: r.orderVersion === null || r.orderVersion === undefined ? 0 : r.orderVersion,
+      __issueNo: r.issueNo === null || r.issueNo === undefined ? null : r.issueNo,
     };
   }
 
@@ -251,6 +253,7 @@
       const err = new Error((data && data.error && data.error.message) || '保存できませんでした');
       err.code = data && data.error && data.error.code;
       err.status = res.status;
+      err.details = (data && data.error && data.error.details) || null;
       throw err;
     }
     return data;
@@ -272,6 +275,8 @@
       it.id,
       it.status,
       it.signalFinal,
+      it.__orderVersion,
+      it.__issueNo,
       contentSignature(it),
       (it.history || []).length,
       (it.comments || []).length,
@@ -458,6 +463,7 @@
 
   let running = false;
   let queued = null;
+  let handoffGate = Promise.resolve();
   let carriedFailures = [];
 
   function notifyUi(changed) {
@@ -472,6 +478,8 @@
     carriedFailures = [];
     let result;
     try {
+      // 投入の途中で古い version の保存を走らせない（投入の確定で version が上がる）
+      await handoffGate;
       const outcome = await runSync(data);
       carriedFailures = outcome.carried;
       notifyUi(outcome.changed);
@@ -509,6 +517,89 @@
       queued.data = data;
     }
     return queued.promise;
+  }
+
+  /* ── 開発ラインへの投入（API-06） ── */
+
+  /** サーバの依頼を取り直して base と画面へ反映する。API-06 は status / version を返さないので GET する。 */
+  async function refreshRequest(id) {
+    let res;
+    try {
+      res = await api('GET', `/api/requests/${encodeURIComponent(id)}`);
+    } catch {
+      return false; // 取り直せないときは手元のまま（次の保存で 409 になり、そこで取り直す）
+    }
+    if (!res || !res.request) return false;
+    base.set(res.request.id, res.request);
+    const ui = window.__MSF_UI__;
+    const data = ui && ui.data ? ui.data() : null;
+    const live = data && Array.isArray(data.items) ? data.items.find((x) => x.id === res.request.id) : null;
+    if (live) {
+      const before = visibleSignature(live);
+      applyServer(live, res.request);
+      notifyUi(visibleSignature(live) !== before);
+    }
+    return true;
+  }
+
+  /** 失敗を画面が扱う種類に分ける。ERR-304 は details.handoffState でしか区別できない。 */
+  function handoffFailure(err) {
+    const code = (err && err.code) || null;
+    const status = (err && err.status) || 0;
+    const details = (err && err.details) || {};
+    const message = (err && err.message) || '';
+    const of = (kind) => ({ ok: false, kind, code, status, message, details });
+    if (!status) return of('network');
+    if (details.handoffState === 'unknown') return of('unknown');
+    if (code === 'ERR-405') return of('not_connected');
+    if (code === 'ERR-205') return of('not_approved');
+    if (code === 'ERR-202') return of('stale');
+    if (code === 'ERR-301') return of('in_progress');
+    if (code === 'ERR-302') return of('rate_limited');
+    if (code === 'ERR-101') return of('denied');
+    if (code === 'ERR-304') return of(details.handoffState === 'failed' ? 'rejected' : 'connect');
+    return of('error');
+  }
+
+  /**
+   * 注文書を開発ラインへ投入する。必ず解決し、reject しない。
+   * { ok:true, result } または { ok:false, kind, code, status, message, details }。
+   * 投入の確定で request.version が上がるので、応答の後にサーバの依頼を取り直す。
+   */
+  async function handoff(id, orderVersion, opts) {
+    while (running) await new Promise((r) => setTimeout(r, 50));
+    await roleSwitch;
+    let done = () => undefined;
+    const mine = new Promise((r) => {
+      done = r;
+    });
+    handoffGate = handoffGate.then(() => mine);
+    try {
+      const body = { orderVersion };
+      if (opts && opts.confirmAbsent) {
+        body.confirmAbsent = true;
+        body.reason = opts.reason;
+      }
+      const result = await api('POST', `/api/orders/${encodeURIComponent(id)}/handoff`, body);
+      await refreshRequest(id);
+      return { ok: true, result };
+    } catch (err) {
+      const failure = handoffFailure(err);
+      // 確定が走ったかもしれない応答と、版が変わった応答は取り直す
+      if (failure.kind !== 'not_connected' && failure.kind !== 'denied') await refreshRequest(id);
+      return failure;
+    } finally {
+      done();
+    }
+  }
+
+  /** job と投入の記録を読む。取得できなければ null（画面では未接続）。 */
+  async function readJobs(id) {
+    try {
+      return await api('GET', `/api/requests/${encodeURIComponent(id)}/jobs`);
+    } catch {
+      return null;
+    }
   }
 
   let draftTimers = new Map();
@@ -554,14 +645,16 @@
     return ROLE_CODE[boot.role] ? boot.role : 'requester';
   }
 
-  async function switchRole(role) {
+  let roleSwitch = Promise.resolve();
+  function switchRole(role) {
     const mapped = ROLE_CODE[role];
-    if (!mapped) return;
-    try {
-      await api('POST', '/api/auth/role', { role: mapped });
-    } catch (err) {
-      if (window.__MSF_UI__ && window.__MSF_UI__.toast) window.__MSF_UI__.toast(err.message, true);
-    }
+    if (!mapped) return Promise.resolve();
+    roleSwitch = roleSwitch
+      .then(() => api('POST', '/api/auth/role', { role: mapped }))
+      .catch((err) => {
+        if (window.__MSF_UI__ && window.__MSF_UI__.toast) window.__MSF_UI__.toast(err.message, true);
+      });
+    return roleSwitch;
   }
 
   // ヘッダの「完全オフライン」表示を、サーバ保存であることに合わせる
@@ -589,5 +682,16 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(seedOpsIfNeeded, 800));
   else setTimeout(seedOpsIfNeeded, 800);
 
-  window.__MSF__ = { initialRole, persist, switchRole, saveDraft, clearDraft, user: boot.user, api };
+  window.__MSF__ = {
+    initialRole,
+    persist,
+    switchRole,
+    saveDraft,
+    clearDraft,
+    user: boot.user,
+    api,
+    handoff,
+    readJobs,
+    refreshRequest,
+  };
 })();
