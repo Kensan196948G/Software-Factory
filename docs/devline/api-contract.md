@@ -1,6 +1,6 @@
 # 開発ライン Phase 1 の契約（Dev と QA 用）
 
-判断の理由は `docs/devline/adr-001-devline-foundation.md`。型・定数・純関数は `src/shared/devline.ts` にあり、ここと食い違うときは `devline.ts` と migration を正とする。契約を変えるときは Architect に戻す。`JobRow`・`JobPatch`（DB の行）は API 側の型なので Dev が定義する。
+判断の理由は `docs/devline/adr-001-devline-foundation.md`（実装時に確定した差分は ADR 11章）。型・定数・純関数は `src/shared/devline.ts` にあり、ここと食い違うときは `devline.ts` と migration を正とする。契約を変えるときは Architect に戻す。`JobRow`・`JobPatch`（DB の行）は API 側の型なので Dev が定義する。
 
 ## 1. サービス層の関数
 
@@ -10,8 +10,9 @@
 interface DevlineDeps {
   issueAdapter: IssueAdapter;       // 既定は GitHub 実装。テストはローカル fake を注入
   targetRepo: string;               // 既定は config.githubRepo。クライアントから受けない
-  allowedRepos: readonly string[];  // DEVLINE_ALLOWED_REPOS。未設定なら [targetRepo]
+  allowedRepos: readonly AllowedRepo[];  // DEVLINE_TARGET_REPOS（owner/name:repoId）。既定は空で投入をすべて拒否
   now: () => Date;
+  httpTimeoutMs?: number;           // 既定は HANDOFF_POLICY.httpTimeoutMs
 }
 
 // 版固定と投入
