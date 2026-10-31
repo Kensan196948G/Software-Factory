@@ -13,6 +13,52 @@ import {
   USERS,
 } from '../shared/domain.js';
 
+/**
+ * 既定の検証メッセージは `error.message` として画面に出るため、zod 3 と同じ文言に固定する。
+ * 各スキーマで指定した日本語メッセージはこの設定より優先される。
+ */
+function receivedType(input: unknown): string {
+  if (input === null) return 'null';
+  if (Array.isArray(input)) return 'array';
+  return typeof input;
+}
+
+function quoted(values: readonly unknown[]): string {
+  return values.map((v) => (typeof v === 'string' ? `'${v}'` : String(v))).join(' | ');
+}
+
+z.config({
+  customError: (issue) => {
+    switch (issue.code) {
+      case 'invalid_type': {
+        if (issue.input === undefined) return 'Required';
+        // このAPIの数値はすべて整数（Infinity も zod 3 では整数違反だった）
+        if (typeof issue.input === 'number' && (issue.expected === 'int' || issue.expected === 'number')) {
+          return 'Expected integer, received float';
+        }
+        const expected = issue.expected === 'record' ? 'object' : issue.expected;
+        return `Expected ${expected}, received ${receivedType(issue.input)}`;
+      }
+      case 'invalid_value':
+        if (issue.input === undefined) return 'Required';
+        if (typeof issue.input !== 'string') return `Expected ${quoted(issue.values)}, received ${receivedType(issue.input)}`;
+        return `Invalid enum value. Expected ${quoted(issue.values)}, received '${issue.input}'`;
+      case 'invalid_format':
+        return issue.format === 'email' ? 'Invalid email' : 'Invalid';
+      case 'too_small':
+        if (issue.origin === 'string') return `String must contain at least ${issue.minimum} character(s)`;
+        if (issue.origin === 'array') return `Array must contain at least ${issue.minimum} element(s)`;
+        return `Number must be greater than ${issue.inclusive ? 'or equal to ' : ''}${issue.minimum}`;
+      case 'too_big':
+        if (issue.origin === 'string') return `String must contain at most ${issue.maximum} character(s)`;
+        if (issue.origin === 'array') return `Array must contain at most ${issue.maximum} element(s)`;
+        return `Number must be less than ${issue.inclusive ? 'or equal to ' : ''}${issue.maximum}`;
+      default:
+        return undefined;
+    }
+  },
+});
+
 const nonEmpty = (max = 2000) => z.string().trim().min(1).max(max);
 const lineList = (max = 2000) => z.array(z.string().trim().min(1).max(max)).max(50);
 
