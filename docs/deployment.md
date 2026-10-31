@@ -49,7 +49,7 @@ SEED_ADMIN_EMAIL=<管理者メール> SEED_ADMIN_PASSWORD=... pnpm exec tsx scri
 pnpm build
 
 # 3. 設定（0600）
-node scripts/setup-preview.mjs     # ~/.config/mirai-sf/preview.conf
+node scripts/setup-preview.mjs     # ~/.config/mirai-sf/preview.conf（APP_ENV=staging を含む。既存の conf には手で追記）
 
 # 4. systemd（user）
 systemctl --user daemon-reload
