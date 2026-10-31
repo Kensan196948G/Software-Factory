@@ -361,7 +361,8 @@
     const status = (err && err.status) || 0;
     let error = (err && err.message) || '保存できませんでした';
     if (!status) error = '通信できませんでした。接続を確かめて、もう一度お試しください';
-    if (code === 'ERR-301' || status === 409) {
+    // 409 でも ERR-201（不正な遷移・権限）などは、サーバの理由をそのまま見せる
+    if (code === 'ERR-301' || (status === 409 && !code)) {
       error = CONFLICT_MESSAGE;
       try {
         const res = await api('GET', `/api/requests/${encodeURIComponent(ctx.id)}`);

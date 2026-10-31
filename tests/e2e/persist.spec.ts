@@ -565,6 +565,37 @@ test.describe('UI 保存の結果待ち', () => {
     expect(patches()).toBe(2);
   });
 
+  test('状態変更ダイアログ: ERR-201 の 409 はサーバの理由を表示する（他の人の更新と誤表示しない）', async ({ page }) => {
+    await login(page);
+    const title = `権限拒否 ${Date.now()}`;
+    const created = await createViaUi(page, title);
+    await setApiRole(page, 'desk');
+    await transition(page, created.id, 'review');
+    await page.reload();
+    await page.waitForSelector('button[data-v="home"]');
+    await setUiRole(page, 'desk');
+    await openDrawer(page, title);
+
+    await page.locator('#dst').click();
+    const modal = page.locator('#modal');
+    await modal.locator('input[name=ns][value=back]').check({ force: true });
+    await modal.locator('#nnote').fill('直してください（作り物）');
+
+    await page.route(TRANSITIONS, (route) =>
+      route.request().method() === 'POST'
+        ? route.fulfill({
+            status: 409,
+            contentType: 'application/json',
+            body: JSON.stringify({ error: { code: 'ERR-201', message: 'この依頼の承認者ではありません' } }),
+          })
+        : route.fallback(),
+    );
+    await modal.locator('#sok').click();
+    await expect(page.locator('#toast .toast.ng')).toContainText('この依頼の承認者ではありません');
+    await expect(page.locator('#toast')).not.toContainText('他の人');
+    expect((await localItem(page, created.id))?.status).toBe('review');
+  });
+
   test('状態変更ダイアログ: 失敗したら成功表示を出さず状態を戻す。再送で成功する', async ({ page }) => {
     await login(page);
     const title = `ダイアログ ${Date.now()}`;
