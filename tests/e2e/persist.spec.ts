@@ -2053,6 +2053,176 @@ test.describe('UI 保存の結果待ち', () => {
     expect((await listRequests(page)).filter((r) => r.title === title)).toHaveLength(1);
   });
 
+  const CSRF_403 = {
+    status: 403,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: { code: 'ERR-101', message: '操作を確認できませんでした' } }),
+  };
+
+  test('CSRF の再試行が commit 後に 500 → 入力を直して再送しても受付は 1 件', async ({ page }) => {
+    await login(page);
+    const title = `CSRF 後の 500 ${Date.now()}`;
+    const fixed = `${title} 直した`;
+    await fillWizard(page, title);
+    const keys: (string | undefined)[] = [];
+    await page.route(REQUESTS, async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      keys.push(route.request().headers()['idempotency-key']);
+      if (keys.length === 1) return route.fulfill(CSRF_403);
+      if (keys.length > 2) return route.fallback();
+      await route.fetch(); // 再試行はサーバに保存される
+      return route.fulfill(APP_500);
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#err')).toContainText('処理を完了できませんでした');
+    await page.locator('.stp').nth(2).click();
+    await setValue(page, 'main input[type=text]', 0, fixed);
+    await gotoLastStep(page);
+    await page.locator('#submit').click();
+    await expect(page.locator('#stamp')).toHaveClass(/show/, { timeout: 5000 });
+    expect(new Set(keys).size).toBe(1);
+    const all = await listRequests(page);
+    expect(all.filter((r) => r.title === fixed)).toHaveLength(1);
+    expect(all.filter((r) => r.title === title)).toHaveLength(0);
+  });
+
+  test('CSRF の再試行が ERR-301: 403 と取り違えず競合の画面を出す', async ({ page }) => {
+    await login(page);
+    const title = `CSRF 後の競合 ${Date.now()}`;
+    const created = await createViaUi(page, title);
+    const mine = `${title} 自分の編集`;
+    await openEditAtLastStep(page, title);
+    await setValue(page, 'main input[type=text]', 0, mine);
+    await gotoLastStep(page);
+    const theirs = `${title} 別の人の編集`;
+    const cur = await getDetail(page, created.id);
+    await callApi(page, 'PATCH', `/api/requests/${created.id}`, {
+      ...inputOf(theirs),
+      approver: '鈴木 一郎',
+      version: cur.version,
+    });
+    let first = true;
+    await page.route(ONE_REQUEST, async (route) => {
+      if (route.request().method() !== 'PATCH') return route.fallback();
+      if (!first) return route.fallback();
+      first = false;
+      return route.fulfill(CSRF_403);
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#conflict')).toBeVisible();
+    expect((await getDetail(page, created.id)).title).toBe(theirs);
+  });
+
+  test('コメントの失敗: 別の依頼を開いていたら、その依頼の入力欄へ戻さない', async ({ page }) => {
+    await login(page);
+    const stamp = Date.now();
+    const titleA = `コメント元 ${stamp}`;
+    const titleB = `コメント別 ${stamp}`;
+    await createViaUi(page, titleA);
+    await createViaUi(page, titleB);
+    await page.reload();
+    await page.waitForSelector('button[data-v="home"]');
+    await openDrawer(page, titleA);
+    await page.locator('#drawer [data-dt="log"]').click();
+    let release = (): void => undefined;
+    const held = new Promise<void>((r) => (release = r));
+    await page.route(COMMENTS, async (route) => {
+      await held;
+      return route.fulfill(APP_500);
+    });
+    await page.evaluate(() => {
+      (document.querySelector('#ctx') as HTMLTextAreaElement).value = 'A へのコメント';
+      (document.querySelector('#cad') as HTMLButtonElement).click();
+    });
+    await page.keyboard.press('Escape');
+    await openDrawer(page, titleB);
+    await page.locator('#drawer [data-dt="log"]').click();
+    release();
+    await expect(page.locator('#toast .toast.ng')).toBeVisible();
+    await page.waitForTimeout(300);
+    await expect(page.locator('#ctx')).toHaveValue('');
+  });
+
+  test('最初の工程では「もどる」を押せない', async ({ page }) => {
+    await login(page);
+    await page.click('button[data-v="new"]');
+    await expect(page.locator('#prev')).toBeDisabled();
+  });
+
+  test('JSON の取り込み: コメントだけ失敗しても、取り込み成功とは表示せず既存を取り消さない', async ({ page }) => {
+    await login(page);
+    const existing = await createViaUi(page, `コメントで不成立 ${Date.now()}`);
+    await setApiRole(page, 'desk');
+    await setUiRole(page, 'desk');
+    const row = await localItem(page, existing.id);
+    const stamp = Date.now();
+    const cancels = countCancels(page);
+    await failRoute(page, 'POST', COMMENTS);
+    await page.click('button[data-v="data"]');
+    await page.locator('#importFile').setInputFiles({
+      name: 'import.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from(
+        JSON.stringify({
+          items: [
+            {
+              ...row,
+              id: `E2E-${stamp}-1`,
+              title: `コメントつき ${stamp}`,
+              comments: [{ at: '2026-11-01T00:00:00.000Z', by: '作り物', text: '作り物のコメント' }],
+            },
+          ],
+        }),
+      ),
+    });
+    await page.locator('#mmask button:has-text("取り込む")').last().click();
+    await waitForFailureToast(page);
+    await expect(page.locator('#toast')).toContainText('1 件は登録しましたが');
+    await expectNoToast(page, '件を取り込みました');
+    await page.waitForTimeout(500);
+    expect(cancels()).toBe(0);
+    await expectExistingKept(page, existing);
+  });
+
+  test('取り込みの成功後、同期の失敗で完了・見送りの依頼を画面へ戻さない', async ({ page }) => {
+    await login(page);
+    const stamp = Date.now();
+    const heldTitle = `見送り済み ${stamp}`;
+    const held = await createViaUi(page, heldTitle);
+    const keep = await createViaUi(page, `残す依頼 ${stamp}`);
+    await setApiRole(page, 'desk');
+    await setUiRole(page, 'desk');
+    await transition(page, held.id, 'hold', { reason: '見送りの理由（作り物）' });
+    await page.reload();
+    await page.waitForSelector('button[data-v="home"]');
+    const row = await localItem(page, keep.id);
+    await page.click('button[data-v="data"]');
+    await page.locator('#importFile').setInputFiles({
+      name: 'import.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify({ items: [row] })),
+    });
+    await page.locator('#mmask button:has-text("取り込む")').last().click();
+    await expect(page.locator('#toast')).toContainText('件を取り込みました');
+    expect(await localCountByTitle(page, heldTitle)).toBe(0);
+
+    await failRoute(page, 'POST', COMMENTS);
+    await page.evaluate(async (id) => {
+      const w = window as unknown as {
+        __MSF__: { persist: (d: unknown) => Promise<unknown> };
+        __MSF_UI__: { data: () => { items: { id: string; comments: unknown[] }[] } };
+      };
+      const data = w.__MSF_UI__.data();
+      data.items
+        .find((x) => x.id === id)
+        ?.comments.push({ at: new Date().toISOString(), by: '作り物', text: '失敗するコメント' });
+      await w.__MSF__.persist(data);
+    }, keep.id);
+    await page.waitForTimeout(300);
+    expect(await localCountByTitle(page, heldTitle)).toBe(0);
+    expect((await getDetail(page, held.id)).status).toBe('hold');
+  });
+
   async function expectFormLocked(page: Page, locked: boolean): Promise<void> {
     const state = await page.evaluate(() => {
       const pane = document.querySelector<HTMLElement>('#pane');

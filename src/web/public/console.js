@@ -3962,7 +3962,7 @@ const SF = (function () {
     if (submitBtn) submitBtn.disabled = busy || inConflict();
     ['#prev', '#ddraft'].forEach((q) => {
       const el = $(q);
-      if (el) el.disabled = busy;
+      if (el) el.disabled = busy || (q === '#prev' && S.step === 0);
     });
     $$('.stp').forEach((b) => (b.disabled = busy));
     // 送信するのは開始時の内容なので、送信中の変更を受け付けない（成功時に下書きごと消えてしまう）。
@@ -4741,12 +4741,15 @@ const SF = (function () {
               rowIds = o.items.map((x) => x.id);
             S.data = o;
             persist({ deferOps: true }).then((res) => {
-              // 結果の件数で伝える。保存できなかった行は bridge が取り除いている
-              const failed = (res.failures || []).filter((f) => f.stage !== 'comment');
-              const rows = failed.filter((f) => rowIds.includes(f.id)).length,
-                others = failed.length - rows,
+              // 結果の件数で伝える。作成で失敗した行だけ bridge が取り除く。作成の後の工程の失敗は、行がサーバに残る。
+              // コメントだけの失敗でも同期の失敗なので、既存の依頼は取り消されず、置き換えは成立していない
+              const failed = res.failures || [];
+              const inRows = failed.filter((f) => rowIds.includes(f.id));
+              const rows = inRows.filter((f) => !f.stage || f.stage === 'create').length,
+                partial = inRows.length - rows,
+                others = failed.length - inRows.length,
                 saved = total - rows;
-              if (!rows && !others) {
+              if (!failed.length) {
                 addAudit('JSONを取り込み', 'データ', total + '件' + (fromIntake ? '（受付ステーションの形式）' : ''));
                 persist();
                 toast(total + ' 件を取り込みました');
@@ -4762,6 +4765,7 @@ const SF = (function () {
                   saved +
                   ' 件を保存しました。' +
                   (rows ? rows + ' 件は保存できませんでした。' : '') +
+                  (partial ? partial + ' 件は登録しましたが、内容・状態・コメントの一部を保存できませんでした。' : '') +
                   (others ? 'ほかに ' + others + ' 件の保存に失敗しました。' : '') +
                   importedNote(res, rowIds),
                 true,
@@ -5151,7 +5155,8 @@ const SF = (function () {
         persist().then((res) => {
           if (!failedFor(res, r.id)) return toast('コメントしました');
           const c = $('#ctx');
-          if (c && !c.value) c.value = t; // 書いた内容を入力欄へ戻す
+          // 書いた内容を入力欄へ戻す。別の依頼を開いていたら、その依頼の欄へ入れない
+          if (c && !c.value && S.open === r.id) c.value = t;
         });
         renderDrawer();
       });

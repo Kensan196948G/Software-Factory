@@ -213,12 +213,14 @@
 
   let csrf = boot.csrf || '';
   const base = new Map(boot.items.map((r) => [r.id, r]));
+  // 画面から外したあと、取消の対象にならなかった依頼（完了・見送り）。後の同期の失敗で画面へ戻さない
+  const retired = new Set();
 
   async function api(method, path, body, extraHeaders) {
     const headers = { ...(extraHeaders || {}) };
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (csrf) headers['x-csrf-token'] = csrf;
-    const res = await fetch(path, {
+    let res = await fetch(path, {
       method,
       credentials: 'same-origin',
       headers,
@@ -239,6 +241,8 @@
           body: body === undefined ? undefined : JSON.stringify(body),
         });
         if (retry.ok) return retry.status === 204 ? null : retry.json();
+        // 再試行の応答が実際の結果。最初の 403 で報告すると、結果不明や競合を取り違える
+        res = retry;
       }
     }
     const text = await res.text();
@@ -454,10 +458,13 @@
     for (const [id, s] of [...base.entries()]) {
       if (present.has(id)) continue;
       if (failures.length) {
-        if (s.status !== 'cancel') restore.push(id);
+        if (s.status !== 'cancel' && !retired.has(id)) restore.push(id);
         continue;
       }
-      if (['done', 'hold', 'cancel'].includes(s.status)) continue;
+      if (['done', 'hold', 'cancel'].includes(s.status)) {
+        retired.add(id);
+        continue;
+      }
       const ctx = {
         localId: id,
         id,
