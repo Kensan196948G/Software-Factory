@@ -1,7 +1,7 @@
 # 開発ライン 実 AI ランナーと実 PR（docker-claude）
 
-状態: 実装済み。**1件実走の確認済み**（2026-11-01、11 章）。作り物の注文書で `pr_ready` まで到達した。画面の投入は fake のままで、本番と実データには使っていない。
-既定は fake のまま。`DEVLINE_RUNNER_KIND=docker-claude` のときだけ動く。
+状態: 実装済み。**1件実走の確認済み**（2026-11-01、11 章）。作り物の注文書で `pr_ready` まで到達した（AC 証跡の取り込みより前の記録）。本番と実データには使っていない。
+既定は fake のまま。`DEVLINE_RUNNER_KIND=docker-claude` のときだけ動く。画面の投入も同じ設定で実 job を作る（13 章。fake GitHub と stub docker でのみ確認、実走は未実施）。
 
 ## 1. 所有者の決定
 
@@ -22,7 +22,8 @@ handoff（Issue）→ queued → planning（AI・読むだけ）→ implementing
 ```
 
 - **AI は merge も Approve もしない**。`pr-adapter.ts` にその口が無い。job は `pr_ready` で人の承認を待つ。
-- 合否の根拠は Actions の記録だけ（`verification.source='github'`）。AI の申告は使わない。
+- 合否の根拠は Actions の記録だけ（`verification.source='github'`）。AI の申告は使わない。受入条件は同じ run の artifact `ac-results` から読む（14 章）。
+- `pr_ready` は「PR 候補の準備完了」で、受入の合格ではない。merge の判断は人が行う。
 - CI の失敗は `revising`。修正は直前の head から始め、**試行ごとに新しいブランチと PR** を作る（`auto/<req>-v<版>-a<試行>`）。force push を避けるため。古い PR はマーカーと作成者を確かめて閉じる。差分検査は常に base からの全体で行う。
 
 ### 止まる場合
@@ -31,7 +32,8 @@ handoff（Issue）→ queued → planning（AI・読むだけ）→ implementing
 | -------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | 資格情報なし・0600 以外・symlink・他人のファイル                     | 起動を拒否（fake へ落とさない）                                                |
 | 許可リスト外・定数の repo 以外・repo ID 不一致・public               | 起動を拒否。動作中なら `policy_violation`                                      |
-| `NODE_ENV=production`                                                | 起動を拒否                                                                     |
+| `NODE_ENV=production`                                                | 起動を拒否。投入も ERR-405（Staging の現在の設定がこれにあたる。13 章）        |
+| AC の未確認・欠落・`not_run`、`ac-results` が読めない                | `ci_incomplete`。理由に「AC 未確認」を出す。`pr_ready` にしない                |
 | 別の worker が動いている（advisory lock を取れない）                 | 起動を拒否。コンテナの片付けもしない                                           |
 | 禁止差分・追加の中身の秘密・バイナリ（4章）                          | `policy_violation`。commit も push もしない                                    |
 | 既存の試験の変更・削除・移動（前の試行で足した試験を含む）           | `human_approval_required`。push しない                                         |
@@ -201,7 +203,7 @@ jobs:
     # 以下同じ形。build は node --check、unit / integration / e2e は node --test、security は依存なしの確認など
 ```
 
-Sandbox には AC と test ID の対応を報告する仕組みが無いので、PR の受入条件は **未確認** と出る。人が確認する。
+CI は artifact `ac-results`（14 章）を残すこと（Sandbox PR #4）。無ければ受入条件は **未確認** になり、`ci_incomplete` で止まる。
 
 推奨: main の保護（GitHub Free の private では使えない場合がある。その場合 PR の merge は人の運用で守る）。Actions は `pull_request` の実行に承認が要らない設定（同じリポジトリの PR なので既定で動く）。
 
@@ -226,7 +228,6 @@ Sandbox には AC と test ID の対応を報告する仕組みが無いので�
 
 ## 10. 既知の制限
 
-- **実 job を作るのは1件実走の入口だけ**。画面の投入は fake のまま（API は `GITHUB_TOKEN` を使うので、許可なく切り替えない）。
 - worker が push と PR 作成の間や、PR 作成と状態の記録の間でプロセスごと落ちると、そのブランチと PR が残り、次の試行は別のブランチになる。人が閉じる（マーカーの job ID で分かる）。プロセスが生きていて fence が切れた場合は閉じる。
 - worker が落ちたまま job が人に取り消された場合、開いたままの試行の割り当ては再開するまで計上されない。
 - worker が落ちた後の一時ディレクトリは残る（トークンは含まない。作業ツリーと gitdir のみ）。
@@ -247,7 +248,7 @@ Sandbox には AC と test ID の対応を報告する仕組みが無いので�
 | 独立 CI  | [run 41248964759](https://github.com/Kensan196948G/Software-Factory-Sandbox/actions/runs/41248964759)、6 段階すべて success。head SHA と workflow の path は一致 |
 | job      | `pr_ready`、runner `docker-claude`                                                                                                                               |
 | 費用     | 20 円（CLI の申告の換算。請求額とは未照合）                                                                                                                      |
-| 受入条件 | 未確認の表示（Sandbox に AC と test の対応を報告する仕組みが無いため）。人が確認する                                                                             |
+| 受入条件 | 未確認の表示（当時は Sandbox に AC と test の対応を報告する仕組みが無かった）。今の判定なら `ci_incomplete` で止まる                                             |
 | トークン | 全 repo に届く fine-grained PAT。Sandbox 限定を提案し、範囲の広さを説明したうえで所有者が選んだ。接続先はコードの定数で固定し、コンテナへは渡していない          |
 
 ## 12. `pnpm test:docker` の一時的な失敗の調査
@@ -266,3 +267,55 @@ Sandbox には AC と test ID の対応を報告する仕組みが無いので�
 - `setUpNetwork` が失敗した段階と stderr の末尾を返し、成果物に残す。実走でも同じ（費用は 0 円）。
 - Docker の試験は失敗時に段階・stderr・ブリッジの数を出す。次に起きたら原因が分かる。
 - `vitest.docker.config.ts` をファイル順の実行にして、同時に作るネットワークを減らす。
+
+## 13. 画面の投入から実 job へ
+
+runner の種別・対象・トークンはサーバの設定だけで決まる。ブラウザからは指定できない（`orderHandoffSchema` は知らない項目を捨てる。試験で固定）。
+
+| 設定                                | `POST /api/orders/:id/handoff`（と旧ルート）の動き                                                                                      |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `DEVLINE_RUNNER_KIND` なし / `fake` | 従来どおり。`GITHUB_TOKEN` と `GITHUB_REPO` で Issue を作り、job は `fake`                                                              |
+| `DEVLINE_RUNNER_KIND=docker-claude` | `DEVLINE_TARGET_REPOS` の1件へ `DEVLINE_GITHUB_TOKEN` で Issue を作り、job は `docker-claude`。`GITHUB_TOKEN` と `GITHUB_REPO` は見ない |
+| それ以外の値                        | ERR-405。fake として動かさない                                                                                                          |
+
+実 job の投入を ERR-405 で拒否する場合（fake へ落とさない）: 資格情報のファイルが無い・0600 以外・symlink・他人のもの・`DEVLINE_GITHUB_TOKEN` が無い、`DEVLINE_TARGET_REPOS` が空・`REAL_RUNNER_POLICY.allowedRepos` 以外を含む・repo ID が違う・複数のリポジトリ、公開リポジトリ、`NODE_ENV=production`。
+
+API のプロセスは `DEVLINE_GITHUB_TOKEN` だけを読む。`ANTHROPIC_API_KEY` は worker だけが読む。fake の worker は実 job を取らず、実の worker は fake の job を取らない。worker を動かさなければ job は `queued` のまま。
+
+画面の表示は `job.runnerKind` と証跡で決まる。実 job の「ジョブ」「計画・実装」「自動検査」は、完了していない段階で「実行中」、停止系で「停止」と出し、「実行確認済み」にしない。fake GitHub の結果は `fake` と出す。
+
+**Staging の未解決（CTO の判断が要る）**: `scripts/setup-preview.mjs` は Staging を `NODE_ENV=production`（`APP_ENV=staging`）にする。`checkRealLineEnv`、`assertRunnerAllowed` は `NODE_ENV=production` の docker-claude を拒否するので、今の設定のままでは Staging の投入は ERR-405 になり、worker は起動しない。この拒否は安全のための制約なので、この変更では緩めていない。
+
+## 14. 受入条件の証跡（`ac-results`）
+
+CI は同じ run に artifact `ac-results` を残す。zip の中の `.json` はちょうど 1 つ。
+
+```json
+{
+  "schema": "msf.ac-results/v1",
+  "headSha": "<run の head SHA>",
+  "ac": [{ "id": "AC-1", "status": "passed", "testIds": ["AC-1: 空文字なら 0 を返す"] }]
+}
+```
+
+- `status` は `passed` / `failed` / `not_run`。
+- 判定: 全件 `passed`（test ID あり）のときだけ合格。`failed` は `failed`（修正へ）。未確認・欠落・`not_run`・test ID なし・同じ AC の重複は `incomplete`。条件が 0 件の注文書も `incomplete`。fake CI の経路も同じ判定。
+- 実 CI の `incomplete` は `stopped(ci_incomplete)`。`stop_detail` に `cause: 'AC 未確認'`、`unconfirmedAcs`、`acArtifact`（下表）を載せる。
+
+| `acArtifact`    | 意味                                                                      |
+| --------------- | ------------------------------------------------------------------------- |
+| `ok`            | 読めた（中身に未確認がある）                                              |
+| `missing`       | 同じ run に無い。前の試行のものは使わない                                 |
+| `expired`       | 期限切れ                                                                  |
+| `too_large`     | 1 MiB を超える（一覧の大きさ、受信の途中、展開後のどれか）                |
+| `duplicate`     | 同じ試行に同じ名前が 2 つ                                                 |
+| `head_mismatch` | 一覧の `workflow_run.head_sha` か JSON の `headSha` が run の head と違う |
+| `invalid`       | zip や JSON の形が違う、リダイレクト先が許可されない                      |
+
+通信の失敗（接続エラーと 5xx）は欠落にしない。記録せず次の工程で読み直す（`delivery` は run ごとに 1 回なので、記録すると固定される）。読めないままなら `session_limit` で止まる。
+
+取得: `GET /repos/{repo}/actions/artifacts/{id}/zip` の 302 を 1 回だけ自分で追う。追う先へ token を送らない。追う先は `GITHUB_API_URL` と同じ規則（https。試験ではループバックだけ）で確かめる。依存は増やしていない（`node:zlib`）。
+
+runner のプロンプトは、試験を `test/unit/` に置き、試験名の先頭を `AC-n:` にするよう伝える。試験を書くのは AI なので、**試験が AC を本当に確かめているかは機械では分からない**。人が PR で確かめる（`docs/limitations.md`）。
+
+migration 0009 の DB ガード（`devline_has_passing_verification`）は `stages` だけを見る。AC の判定はサービス層（`evaluateVerification`）にあり、DB の最後の砦には入っていない。

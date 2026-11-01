@@ -127,12 +127,16 @@ update job j set lease_owner=$owner, lease_expires_at=$now + make_interval(secs 
 2. job を `for update`。その job の全 verification を読み `evaluateVerification(records, job.head_sha, acIds)`。
 3. job の状態が `verifying` で、記録の `head_sha` が `job.head_sha` と一致し、`isOrderCurrent` のときだけ状態を動かす。それ以外は記録だけで `advanced=false`。動かすとき（`incomplete` で状態が同じときも）は上の 4 のとおり fencing を +1 して lease を外す。
 
-| verdict               | 動き                                                                                                                                                                                                  |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `passed`              | `pr_ready`。同じトランザクションで PR 候補を作る                                                                                                                                                      |
-| `failed`              | `decideRepair`。許可なら回数を増やして `revising`。不可なら `stopped(same_cause_limit / repair_total_limit)`                                                                                          |
-| `incomplete`          | `isCiRerunAllowed` なら `ci_rerun_count + 1` で `verifying` のまま。不可なら `stopped(ci_rerun_limit)`。実 CI（`source='github'`）は再実行を要求できないので、すぐ `stopped(ci_incomplete)`（再開可） |
-| `stale` / `no_result` | 動かさない                                                                                                                                                                                            |
+| verdict               | 動き                                                                                                                                                                                                                                                                                                               |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `passed`              | `pr_ready`。同じトランザクションで PR 候補を作る                                                                                                                                                                                                                                                                   |
+| `failed`              | `decideRepair`。許可なら回数を増やして `revising`。不可なら `stopped(same_cause_limit / repair_total_limit)`                                                                                                                                                                                                       |
+| `incomplete`          | 段階の未完に加えて、AC の未確認・欠落・`not_run`、AC が 0 件の場合。`isCiRerunAllowed` なら `ci_rerun_count + 1` で `verifying` のまま。不可なら `stopped(ci_rerun_limit)`。実 CI（`source='github'`）は再実行を要求できないので、すぐ `stopped(ci_incomplete)`（再開可。AC なら `stop_detail.cause='AC 未確認'`） |
+| `stale` / `no_result` | 動かさない                                                                                                                                                                                                                                                                                                         |
+
+`pr_ready` は PR 候補の準備完了で、受入の合格ではない。`GET /api/requests/:id/jobs` の `evidence[jobId].ac` は今の head の AC の集計（`label` は「受入条件 全件確認 / 未確認あり / 不合格あり」）で、検証の記録があるときだけ載る。
+
+投入の runner は `DEVLINE_RUNNER_KIND`（サーバの設定）だけで決まる。`docker-claude` なら job の `runner_kind='docker-claude'`、Issue は `DEVLINE_GITHUB_TOKEN`。資格情報や対象が足りなければ ERR-405 で、fake へ落とさない（`docs/devline/real-runner.md` 13 章）。
 
 fence の無い関数だが、CI は lease の持ち主ではないので状態の条件で守る。production では `source='fake_ci'` を拒否する。
 
