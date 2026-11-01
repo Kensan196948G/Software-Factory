@@ -155,6 +155,7 @@ export function createGithubIssueAdapter(options: GithubAdapterOptions): IssueAd
       status: res.status,
       bodyParsed: number !== undefined,
       retryAfterPresent: retryHeader !== null,
+      rateLimitExhausted: res.headers.get('x-ratelimit-remaining') === '0',
     };
     const outcome = classifyIssueResponse(facts);
     const message = shortMessage(parsed);

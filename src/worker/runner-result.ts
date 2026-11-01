@@ -36,6 +36,25 @@ const resultSchema = z.object({
   plan: z.unknown().optional(),
   humanApprovalTouched: z.array(z.string().max(500)).max(500).optional(),
   summary: z.string(),
+  serverDiff: z
+    .object({
+      policyVersion: z.string().max(200),
+      violations: z
+        .array(
+          z.object({
+            path: z.string().max(1000),
+            rule: z.string().max(50),
+            detector: z.string().max(50).optional(),
+            line: z.number().int().min(1).optional(),
+          }),
+        )
+        .max(5000),
+      humanApproval: z.array(z.string().max(1000)).max(5000),
+    })
+    .optional(),
+  notStarted: z.boolean().optional(),
+  budgetExceeded: z.boolean().optional(),
+  costEstimated: z.boolean().optional(),
 });
 
 /** 読めない結果は null。成果物は本文の大きさと保存先も確かめる（DB の CHECK に落ちる前に runner の失敗にする）。 */

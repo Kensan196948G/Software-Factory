@@ -33,7 +33,7 @@ import {
   isRepoAllowed,
   matchIssueByMarker,
   nextHandoffAction,
-  nextRetryAt,
+  rateLimitedRetryAt,
 } from '../shared/devline.js';
 import type {
   AllowedRepo,
@@ -46,6 +46,7 @@ import type {
   IssueSummary,
   JobState,
   OrderEnvelopeV1,
+  RunnerKind,
 } from '../shared/devline.js';
 import { SIGNAL_LABEL } from '../shared/domain.js';
 import type { Signal } from '../shared/domain.js';
@@ -59,6 +60,8 @@ export interface DevlineDeps {
   now: () => Date;
   /** 外部呼び出し1回の時間切れ。既定は HANDOFF_POLICY.httpTimeoutMs。 */
   httpTimeoutMs?: number;
+  /** 作る job の runner。既定は fake。実 runner は1件実走の入口だけが指定する。 */
+  runnerKind?: RunnerKind;
 }
 
 /** 既定の依存。設定が足りなければ ERR-405。呼ぶたびに作る（試験の差し替えと設定の読み直しのため）。 */
@@ -389,7 +392,7 @@ async function lockOlderJobs(client: PoolClient, intent: IntentRow): Promise<voi
 async function finalizeIntent(
   intent: IntentRow,
   issue: { number: number; url: string },
-  ctx: { actor: Actor; correlationId: string; now: Date; recovered: boolean; duplicates?: number[] },
+  ctx: { actor: Actor; correlationId: string; now: Date; runnerKind?: RunnerKind; recovered: boolean; duplicates?: number[] },
 ): Promise<{ jobId: string | null; jobState: JobState | null }> {
   return withTransaction(async (client) => {
     const row = await getRequestRowForUpdate(client, intent.request_id);
@@ -448,7 +451,7 @@ async function ensureJobInTx(
   client: PoolClient,
   intent: IntentRow,
   row: RequestRow,
-  ctx: { actor: Actor; correlationId: string; now: Date },
+  ctx: { actor: Actor; correlationId: string; now: Date; runnerKind?: RunnerKind },
 ): Promise<{ jobId: string | null; jobState: JobState | null }> {
   const current = orderCurrent(row, intent.order_version);
   const existing = await client.query<{ id: string; state: JobState }>('select id, state from job where handoff_intent_id = $1', [
@@ -457,8 +460,8 @@ async function ensureJobInTx(
   if (existing.rows[0]) return { jobId: existing.rows[0].id, jobState: existing.rows[0].state };
   if (!current) return { jobId: null, jobState: null };
   const inserted = await client.query<{ id: string; state: JobState }>(
-    `insert into job (snapshot_id, request_id, order_version, target_repo_id, handoff_intent_id, policy_version, created_at, updated_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$7)
+    `insert into job (snapshot_id, request_id, order_version, target_repo_id, handoff_intent_id, policy_version, created_at, updated_at, runner_kind)
+     values ($1,$2,$3,$4,$5,$6,$7,$7,$8)
      on conflict do nothing
      returning id, state`,
     [
@@ -469,6 +472,7 @@ async function ensureJobInTx(
       intent.id,
       DEVLINE_POLICY.version,
       ctx.now,
+      ctx.runnerKind ?? 'fake',
     ],
   );
   const job = inserted.rows[0];
@@ -663,7 +667,7 @@ interface HandoffContext {
   deps: DevlineDeps;
   now: () => Date;
   confirmAbsent: string | null;
-  base(): { actor: Actor; correlationId: string; now: Date };
+  base(): { actor: Actor; correlationId: string; now: Date; runnerKind?: RunnerKind };
 }
 
 /** 新しい版の snapshot と intent を作る（外部呼び出しの前に commit する）。 */
@@ -856,7 +860,8 @@ async function sendAndRecord(intent: IntentRow, row: RequestRow, ctx: HandoffCon
     throw unknownError(undefined);
   }
   const rateLimited = outcome.outcome === 'rate_limited';
-  const nextAttemptAt = rateLimited ? nextRetryAt(now, intent.attempts) : null;
+  const nextAttemptAt =
+    outcome.outcome === 'rate_limited' ? rateLimitedRetryAt(now, intent.attempts, outcome.retryAfterSeconds) : null;
   const message = outcome.outcome === 'failed' ? (outcome.message ?? null) : null;
   await withTransaction(async (client) => {
     await client.query(
@@ -985,6 +990,7 @@ export async function handoffOrder(
   depsIn?: DevlineDeps,
 ): Promise<HandoffResult> {
   const facts = { role: actor.role, isAdmin: actor.user.isAdmin };
+  // 投入は desk / approver。confirm_absent はそのうえで approver / admin（フラグで投入の権限を広げない）
   if (!canHandoff(facts)) return denyHandoff(input.requestId, actor, correlationId, 'role');
   let confirmAbsent: string | null = null;
   if (input.confirmAbsent) {
@@ -1014,7 +1020,7 @@ export async function handoffOrder(
     deps,
     now: deps.now,
     confirmAbsent,
-    base: () => ({ actor, correlationId, now: deps.now() }),
+    base: () => ({ actor, correlationId, now: deps.now(), ...(deps.runnerKind ? { runnerKind: deps.runnerKind } : {}) }),
   };
 
   const intent = (await findIntent(row.id, version, deps.targetRepo)) ?? (await createIntent(row, version, ctx));

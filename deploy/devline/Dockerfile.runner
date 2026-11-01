@@ -1,0 +1,12 @@
+# 開発ラインの AI ランナー（docker-claude）。手順は docs/devline/real-runner.md
+# 非 root・読み取り専用ルートで動かす前提。HOME は実行時の tmpfs（/tmp）に置く。
+FROM node:22-bookworm-slim
+
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false NPM_CONFIG_FUND=false NPM_CONFIG_AUDIT=false
+RUN npm install --global --omit=dev @anthropic-ai/claude-code@2.1.316 \
+  && npm cache clean --force \
+  && rm -rf /root/.npm
+
+ENV HOME=/tmp/home
+WORKDIR /workspace
+USER 1000:1000

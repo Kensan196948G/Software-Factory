@@ -139,6 +139,24 @@ describe('T-85: cancel / resume の権限', () => {
     ).toBeGreaterThanOrEqual(3);
     expect(h.github.access).toHaveLength(0);
   });
+
+  it('API-06: confirmAbsent を付けても投入の権限は広がらない。admin は desk の役割のときに confirm_absent を使える', async () => {
+    const id = await h.approvedRequest();
+    const version = await h.orderVersion(id);
+    const body = { orderVersion: version, confirmAbsent: true, reason: '確かめた' };
+    const adminRequester = await loginWithRoles(h.app, 'qa-admin3@example.com', ['requester'], true);
+    const denied = await h.api('POST', `/api/orders/${id}/handoff`, body, adminRequester);
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().error.code).toBe('ERR-101');
+    expect(await h.count(`from audit_log where action='handoff.intent' and result='denied' and target_id=$1`, [id])).toBe(1);
+    expect(h.github.access).toHaveLength(0);
+    expect(await h.count(`from job where request_id=$1`, [id])).toBe(0);
+
+    const adminDesk = await loginWithRoles(h.app, 'qa-admin4@example.com', ['desk'], true);
+    await h.setRole('desk', adminDesk);
+    const res = await h.api('POST', `/api/orders/${id}/handoff`, body, adminDesk);
+    expect(res.statusCode, res.body).toBe(200);
+  });
 });
 
 describe('T-86: 未ログイン・CSRF・JobView', () => {

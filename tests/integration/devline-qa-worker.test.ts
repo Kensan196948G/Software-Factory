@@ -998,10 +998,8 @@ describe('並行の操作と遅延（二重 worker・取消・再開）', () => 
     const { jobId } = await queued();
     await runOnce(h.worker('success'));
     const poison = scriptedRunner(() => ({
-      artifacts: [
-        // M-3 の実行時検証は通るが DB の integer に入らない値（name の不正は下の試験で検証の段階で止まる）
-        { kind: 'plan', name: 'huge', content: 'x', byteSize: 2 ** 40, sha256: createHash('sha256').update('x').digest('hex') },
-      ],
+      // M-3 の実行時検証は通るが DB の integer に入らない値（name の不正は下の試験で検証の段階で止まる）
+      usage: { inputTokens: 0, outputTokens: 0, durationSeconds: 0, costJpy: 2 ** 40 },
     }));
     for (let i = 0; i <= DEVLINE_POLICY.maxLeaseReclaims; i += 1) {
       await expect(runOnce(h.worker('success', { runner: poison, leaseSeconds: 60 }))).rejects.toThrow();
@@ -1010,6 +1008,19 @@ describe('並行の操作と遅延（二重 worker・取消・再開）', () => 
     }
     await runOnce(h.worker('success', { runner: poison }));
     expect(await h.view(jobId)).toMatchObject({ state: 'stopped', stopReason: 'lease_lost_repeatedly' });
+    expect(await h.count(`from job_artifact where job_id=$1`, [jobId])).toBe(0);
+  });
+
+  it('申告の大きさが実物と違う成果物は、記録する前に runner の失敗で止まる', async () => {
+    const { jobId } = await queued();
+    await runOnce(h.worker('success'));
+    const liar = scriptedRunner(() => ({
+      artifacts: [
+        { kind: 'plan', name: 'huge', content: 'x', byteSize: 2 ** 40, sha256: createHash('sha256').update('x').digest('hex') },
+      ],
+    }));
+    await runOnce(h.worker('success', { runner: liar }));
+    expect(await h.view(jobId)).toMatchObject({ state: 'stopped', stopReason: 'runner_failure' });
     expect(await h.count(`from job_artifact where job_id=$1`, [jobId])).toBe(0);
   });
 

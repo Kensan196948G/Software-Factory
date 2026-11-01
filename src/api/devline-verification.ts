@@ -6,7 +6,7 @@
  */
 import type { PoolClient } from 'pg';
 import { config } from './config.js';
-import { withTransaction } from './db.js';
+import { query, withTransaction } from './db.js';
 import { appendAuditTx } from './audit.js';
 import { ApiError, Errors } from './http.js';
 import { haltLockedJob, insertJobEvent, isRedOrder, rollSessionSql, sha256Hex, type JobRow } from './devline-jobs.js';
@@ -109,18 +109,6 @@ export async function recordVerification(input: RecordVerificationInput): Promis
     const rows = await client.query<VerificationRow>('select * from verification where job_id = $1', [input.jobId]);
     const verdict = evaluateVerification(rows.rows.map(toRecord), job.head_sha ?? '', acIdsOf(request?.criteria ?? []));
 
-    if (!recorded) return { status: 'duplicate', verdict, jobState: job.state, advanced: false };
-
-    await appendAuditTx(client, {
-      action: 'verification.record',
-      targetType: 'job',
-      targetId: job.id,
-      result: 'success',
-      ...CI_ACTOR(input.source),
-      correlationId: input.correlationId,
-      diff: { deliveryId: input.deliveryId, ciRunId: input.ciRunId, headSha: input.headSha, verdict: verdict.verdict },
-    });
-
     const current =
       request !== undefined &&
       isOrderCurrent({
@@ -129,16 +117,42 @@ export async function recordVerification(input: RecordVerificationInput): Promis
         requestOrderVersion: request.order_version,
         jobOrderVersion: job.order_version,
       });
-    if (job.state !== 'verifying' || input.headSha !== job.head_sha || !current) {
-      return { status: 'recorded', verdict, jobState: job.state, advanced: false };
-    }
     // 順不同で届いた古い配信では動かさない。合否も再実行の回数も、その SHA の最新の記録だけが決める
     const newest = rows.rows
       .filter((r) => r.head_sha === input.headSha)
       .some(
         (r) => r.run_sequence > input.runSequence || (r.run_sequence === input.runSequence && r.run_attempt > input.runAttempt),
       );
-    if (newest) return { status: 'recorded', verdict, jobState: job.state, advanced: false };
+    const applicable = job.state === 'verifying' && input.headSha === job.head_sha && current && !newest;
+
+    if (!recorded) {
+      // 実 CI は再実行を要求できない。再開の後に同じ run しか無ければ、待たずにもう一度止める
+      if (applicable && input.source === 'github' && verdict.verdict === 'incomplete') {
+        const moved = await applyVerdict(client, job, verdict, input);
+        return { status: 'duplicate', verdict, jobState: moved.state, advanced: moved.advanced };
+      }
+      return { status: 'duplicate', verdict, jobState: job.state, advanced: false };
+    }
+
+    await appendAuditTx(client, {
+      action: 'verification.record',
+      targetType: 'job',
+      targetId: job.id,
+      result: 'success',
+      ...CI_ACTOR(input.source),
+      correlationId: input.correlationId,
+      // 届いた配信の SHA での判定と、job の今の head での判定（次の遷移を決める方）を分けて残す
+      diff: {
+        deliveryId: input.deliveryId,
+        ciRunId: input.ciRunId,
+        headSha: input.headSha,
+        verdict: evaluateVerification(rows.rows.map(toRecord), input.headSha, acIdsOf(request?.criteria ?? [])).verdict,
+        jobHeadSha: job.head_sha,
+        jobHeadVerdict: verdict.verdict,
+      },
+    });
+
+    if (!applicable) return { status: 'recorded', verdict, jobState: job.state, advanced: false };
     // 赤信号は worker の前でも合格へ進めない
     if (await isRedOrder(client, job.snapshot_id)) {
       await haltLockedJob(client, job, {
@@ -209,6 +223,19 @@ async function applyVerdict(
       return { state: 'revising', advanced: true };
     }
     case 'incomplete': {
+      // 実 CI の再実行は人が行う（worker は要求しない）。待っても結果は変わらないので、理由を付けてすぐ止める
+      if (input.source === 'github') {
+        const statusOf = (stage: string): string =>
+          input.stages.filter((s) => s.stage === stage).find((s) => s.status !== 'passed')?.status ?? 'missing';
+        return stop('ci_incomplete', {
+          ciRunId: verdict.ciRunId,
+          logRef: input.logRef ?? null,
+          runConclusion: input.diagnostics?.runConclusion ?? null,
+          stages: verdict.incompleteStages.map((stage) => ({ stage, status: statusOf(stage) })),
+          unmatchedJobs: input.diagnostics?.unmatchedJobs ?? [],
+          nextStep: 'GitHub Actions で CI を再実行してから再開する',
+        });
+      }
       if (!isCiRerunAllowed(job.ci_rerun_count)) {
         return stop('ci_rerun_limit', { incompleteStages: verdict.incompleteStages, ciRunId: verdict.ciRunId });
       }
@@ -268,7 +295,12 @@ async function logTransition(
 /* ───────────────────────────── PR 候補 ───────────────────────────── */
 
 const FIELD_USERS = ['現場の担当者', '現場所長', '現場事務', '作業船の船長・船員', '潜水士'];
-const NOT_RUN = '未実施（fake PoC）';
+const NOT_RUN_FAKE = '未実施（fake PoC）';
+const NOT_RUN_REAL = '未確認（人が確認する）';
+/** job_artifact の CHECK。超えると pr_ready の記録全体が rollback されるので、ここで必ず収める。 */
+const MAX_PR_BODY_BYTES = 262_144;
+const MAX_LISTED_PATHS = 100;
+const MAX_PATH_CHARS = 300;
 
 /** 依頼の文章は Markdown の命令にも HTML にもさせない。1行にして表示用にエスケープする。 */
 function inline(text: unknown): string {
@@ -299,16 +331,36 @@ interface PrFacts {
   snapshotSha: string;
   verdict: VerificationVerdict;
   stages: VerificationRecord['stages'];
+  /** 検査の出どころ。無いときはまだ記録が無い。実行者が実 runner かは job.runner_kind で決める。 */
+  ci?: { source: VerificationRecord['source']; runUrl: string | null } | null;
+}
+
+/** 大きすぎる本文を UTF-8 の境界で切る。末尾の見出しは残らないが、記録を失うよりよい。 */
+function capBody(body: string): string {
+  if (Buffer.byteLength(body, 'utf8') <= MAX_PR_BODY_BYTES) return body;
+  const note = '\n\n（長すぎるので以降を省略しました）\n';
+  const room = MAX_PR_BODY_BYTES - Buffer.byteLength(note, 'utf8');
+  const head = new TextDecoder().decode(Buffer.from(body, 'utf8').subarray(0, room)).replace(/\uFFFD$/, '');
+  return `${head}${note}`;
 }
 
 /** 純関数。10項目と12見出しを必ず含む。無いものは未実施と書き、成功のように書かない。 */
 export function renderPrBody(facts: PrFacts): string {
   const { job, request, snapshotSha, verdict, stages } = facts;
+  const real = job.runner_kind === 'docker-claude';
+  const NOT_RUN = real ? NOT_RUN_REAL : NOT_RUN_FAKE;
+  const ciLabel =
+    facts.ci?.source === 'github' ? 'GitHub Actions' : facts.ci?.source === 'ci' ? '実 CI' : real ? '検査の記録なし' : 'fake CI';
   const texts = request.criteria.filter((c) => c.trim() !== '');
   const list = (items: readonly string[]): string => (items.length ? items.map((s) => `- ${inline(s)}`).join('\n') : '- なし');
   const isField = request.users.some((u) => FIELD_USERS.includes(u));
   const handlesOriginals = request.data_handling.includes('photo');
-  const changedPaths = Array.isArray(job.work_state.changedPaths) ? (job.work_state.changedPaths as string[]) : [];
+  const allPaths = Array.isArray(job.work_state.changedPaths) ? (job.work_state.changedPaths as string[]) : [];
+  // 一覧は切り詰める（全件は git の差分にある）
+  const changedPaths = [
+    ...allPaths.slice(0, MAX_LISTED_PATHS).map((p) => String(p).slice(0, MAX_PATH_CHARS)),
+    ...(allPaths.length > MAX_LISTED_PATHS ? [`ほか ${allPaths.length - MAX_LISTED_PATHS} 件（一覧を省略）`] : []),
+  ];
   const acRows = verdict.acEvidence.map((ac) => {
     const index = Number(ac.acId.replace('AC-', '')) - 1;
     const tests = ac.testIds.length ? ac.testIds.map(inline).join(', ') : '－';
@@ -327,46 +379,67 @@ export function renderPrBody(facts: PrFacts): string {
       `- 注文書の版: ${job.order_version}（sha256: ${snapshotSha}）`,
       `- 信号の色: ${request.signal_decided ? SIGNAL_LABEL[request.signal_decided] : '未決定'}`,
     ].join('\n'),
-    変更範囲: ['作るもの:', list(request.scope), '', '変更された path（CI ではなく runner の結果）:', list(changedPaths)].join(
-      '\n',
-    ),
+    変更範囲: [
+      '作るもの:',
+      list(request.scope),
+      '',
+      real ? '変更された path（ホストの差分検査で算出）:' : '変更された path（CI ではなく runner の結果）:',
+      list(changedPaths),
+    ].join('\n'),
     受入条件の検証: [
       '| AC | 内容 | 結果 | test ID | CI 実行ID | SHA | digest |',
       '| --- | --- | --- | --- | --- | --- | --- |',
       ...acRows,
     ].join('\n'),
-    自動検査: [`CI 実行ID: ${inline(ciRun)}（fake CI）`, '', '| 段階 | 結果 |', '| --- | --- |', ...stageRows].join('\n'),
+    自動検査: [
+      `CI 実行ID: ${inline(ciRun)}（${ciLabel}）`,
+      ...(facts.ci?.runUrl ? [`実行の記録: ${inline(facts.ci.runUrl)}`] : []),
+      '',
+      '| 段階 | 結果 |',
+      '| --- | --- |',
+      ...stageRows,
+    ].join('\n'),
     業務確認: `- プレビューURL: ${NOT_RUN}\n- 操作手順: ${NOT_RUN}`,
     モデル現場の結果: isField ? NOT_RUN : '対象外',
     原本の保護: handlesOriginals ? NOT_RUN : '対象外',
     運用への影響: `- 設定: ${NOT_RUN}\n- 移行: ${NOT_RUN}\n- 監視: ${NOT_RUN}\n- 手順書: ${NOT_RUN}`,
     復旧方法: `- 戻し方: ${NOT_RUN}\n- DB 変更時の制約: ${NOT_RUN}`,
-    残存リスク: [
-      '- fake runner と fake CI の結果であり、実際の実装・検査ではない',
-      `- 対象外:\n${list(request.out_of_scope)}`,
-      '- 追加判断: 人の承認が必要（この PR は作成していない）',
-    ].join('\n'),
+    残存リスク: real
+      ? [
+          '- AI が作成した変更。受入条件の ○/×/未確認 を人が確かめる（CI が AC と test ID を報告しない項目は未確認）',
+          `- 対象外:\n${list(request.out_of_scope)}`,
+          '- 追加判断: 人の承認が必要（AI は merge も Approve もしない）',
+        ].join('\n')
+      : [
+          '- fake runner と fake CI の結果であり、実際の実装・検査ではない',
+          `- 対象外:\n${list(request.out_of_scope)}`,
+          '- 追加判断: 人の承認が必要（この PR は作成していない）',
+        ].join('\n'),
   };
   const agents: Record<(typeof PR_AGENTS_HEADINGS)[number], string> = {
     目的: inline(request.title),
-    MVP範囲: '開発ライン Phase 1 の fake PoC（pr_ready まで）',
+    MVP範囲: real ? '開発ライン 実 runner の1件実走（pr_ready まで）' : '開発ライン Phase 1 の fake PoC（pr_ready まで）',
     変更: changedPaths.length ? list(changedPaths) : NOT_RUN,
     UI影響: NOT_RUN,
     API影響: NOT_RUN,
     DB影響: NOT_RUN,
     Security影響: NOT_RUN,
     テスト結果:
-      verdict.verdict === 'passed' ? `fake CI の全段階 passed（実行ID ${inline(ciRun)}）` : `未合格（${verdict.verdict}）`,
-    CI結果: `fake CI（実 CI は${NOT_RUN}）`,
+      verdict.verdict === 'passed' ? `${ciLabel} の全段階 passed（実行ID ${inline(ciRun)}）` : `未合格（${verdict.verdict}）`,
+    CI結果: real ? ciLabel : `fake CI（実 CI は${NOT_RUN}）`,
     Deployment結果: NOT_RUN,
-    既知の制限: 'fake PoC。実 PR・実 AI・実 GitHub・配備は行っていない',
+    既知の制限: real
+      ? 'AI の変更は人の承認待ち。配備は行っていない。AC と test ID の対応は CI の報告が無ければ未確認'
+      : 'fake PoC。実 PR・実 AI・実 GitHub・配備は行っていない',
     Rollback: NOT_RUN,
   };
 
   const lines = [
-    `# [下書き] ${inline(request.id)} ${inline(request.title)}`,
+    `# [${real ? 'AI候補' : '下書き'}] ${inline(request.id)} ${inline(request.title)}`,
     '',
-    '> 開発ライン fake PoC の PR 候補です。実 PR は作成していません。人の承認待ちです。',
+    real
+      ? '> 開発ラインの AI が作成した PR 候補です。AI は merge も Approve もしません。人の承認待ちです。'
+      : '> 開発ライン fake PoC の PR 候補です。実 PR は作成していません。人の承認待ちです。',
     '',
     `受付の状態: ${STATUS_LABEL[request.status] ?? request.status} / job: ${job.id}`,
     '',
@@ -376,7 +449,30 @@ export function renderPrBody(facts: PrFacts): string {
   PR_DECISION_ITEMS.forEach((item, i) => lines.push(`### ${i + 1}. ${item}`, '', decision[item], ''));
   lines.push('## PR 本文（AGENTS.md）', '');
   for (const heading of PR_AGENTS_HEADINGS) lines.push(`### ${heading}`, '', agents[heading], '');
-  return `${lines.join('\n').trimEnd()}\n`;
+  return capBody(`${lines.join('\n').trimEnd()}\n`);
+}
+
+/** CI の前に PR を作るときの本文。検査の結果はまだ無いので未確認として書く（pr_ready で更新する）。 */
+export async function renderDraftPrBody(job: JobRow): Promise<string> {
+  const requests = await query<PrFacts['request']>(
+    `select id, title, kind, status, scope, out_of_scope, criteria, users, data_handling, signal_decided, issue_no
+       from request where id = $1`,
+    [job.request_id],
+  );
+  const request = requests.rows[0];
+  if (!request) throw Errors.notFound('依頼');
+  const snapshots = await query<{ content_sha256: string }>('select content_sha256 from order_snapshot where id = $1', [
+    job.snapshot_id,
+  ]);
+  const verdict = evaluateVerification([], job.head_sha ?? '', acIdsOf(request.criteria));
+  return renderPrBody({
+    job,
+    request,
+    snapshotSha: (snapshots.rows[0] as { content_sha256: string }).content_sha256,
+    verdict,
+    stages: [],
+    ci: null,
+  });
 }
 
 /** pr_ready に入るトランザクションの中で呼ぶ。 */
@@ -397,16 +493,21 @@ export async function buildPrCandidate(
   const snapshots = await client.query<{ content_sha256: string }>('select content_sha256 from order_snapshot where id = $1', [
     job.snapshot_id,
   ]);
-  const latest = await client.query<{ stages: VerificationRecord['stages'] }>(
-    'select stages from verification where job_id=$1 and ci_run_id=$2 order by run_attempt desc limit 1',
-    [jobId, 'ciRunId' in verdict ? verdict.ciRunId : ''],
-  );
+  const latest = await client.query<{
+    stages: VerificationRecord['stages'];
+    source: VerificationRecord['source'];
+    log_ref: string | null;
+  }>('select stages, source, log_ref from verification where job_id=$1 and ci_run_id=$2 order by run_attempt desc limit 1', [
+    jobId,
+    'ciRunId' in verdict ? verdict.ciRunId : '',
+  ]);
   const body = renderPrBody({
     job,
     request: requests.rows[0] as PrFacts['request'],
     snapshotSha: (snapshots.rows[0] as { content_sha256: string }).content_sha256,
     verdict,
     stages: latest.rows[0]?.stages ?? [],
+    ci: latest.rows[0] ? { source: latest.rows[0].source, runUrl: latest.rows[0].log_ref } : null,
   });
   const sha256 = sha256Hex(body);
   const inserted = await client.query<{ id: string }>(

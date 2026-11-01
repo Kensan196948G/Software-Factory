@@ -105,6 +105,7 @@ export const STOP_REASONS = [
   'session_limit',
   'continuous_limit',
   'ci_rerun_limit',
+  'ci_incomplete',
   'budget_limit',
   'policy_violation',
   'human_approval_required',
@@ -133,6 +134,26 @@ export const NON_RESUMABLE_STOP_REASONS: readonly StopReason[] = [
   'red_signal_human_required',
   'runner_rejected',
 ];
+
+/**
+ * 実 PR の後始末（純関数）。AI の候補 PR を、merge してよいように見える形で残さない。
+ * - 古い版・無効な注文書・cancelled・再開できない停止 → 閉じる（人は読めるし開き直せる）
+ * - 再開できる停止 → 開いたまま「止まっている」印を付ける（再開して pr_ready に戻れば本文が更新される）
+ * - それ以外 → 何もしない
+ */
+export type PrFollowup = 'close' | 'mark_stopped' | 'none';
+
+export function prFollowupOf(job: {
+  state: JobState;
+  stopReason: StopReason | null;
+  superseded: boolean;
+  orderCurrent: boolean;
+}): PrFollowup {
+  if (job.state === 'pr_ready') return job.superseded || !job.orderCurrent ? 'close' : 'none';
+  if (!JOB_HALTED_STATES.includes(job.state)) return 'none';
+  if (job.state === 'cancelled' || job.superseded || !job.orderCurrent) return 'close';
+  return job.stopReason !== null && NON_RESUMABLE_STOP_REASONS.includes(job.stopReason) ? 'close' : 'mark_stopped';
+}
 
 export type ResumeDecision = { ok: true; to: JobState } | { ok: false; code: 'ERR-201'; reason: string };
 
@@ -395,22 +416,42 @@ export function nextRetryAt(now: Date, attemptsSoFar: number): Date {
   return new Date(now.getTime() + (delays[index] ?? 15) * 60_000);
 }
 
+/** Retry-After の上限。読めない大きな値で投入を止め続けない（24 時間）。 */
+const MAX_RETRY_AFTER_SECONDS = 24 * 60 * 60;
+
+/** 混雑のときの次の試行時刻（純関数）。既定の待ちと Retry-After の遅い方。 */
+export function rateLimitedRetryAt(now: Date, attemptsSoFar: number, retryAfterSeconds?: number): Date {
+  const byDefault = nextRetryAt(now, attemptsSoFar);
+  if (retryAfterSeconds === undefined || !Number.isFinite(retryAfterSeconds) || retryAfterSeconds < 0) return byDefault;
+  const byServer = now.getTime() + Math.min(retryAfterSeconds, MAX_RETRY_AFTER_SECONDS) * 1000;
+  return new Date(Math.max(byDefault.getTime(), byServer));
+}
+
 export type IssueTransportFacts =
-  { kind: 'timeout' } | { kind: 'network' } | { kind: 'http'; status: number; bodyParsed: boolean; retryAfterPresent: boolean };
+  | { kind: 'timeout' }
+  | { kind: 'network' }
+  | {
+      kind: 'http';
+      status: number;
+      bodyParsed: boolean;
+      retryAfterPresent: boolean;
+      /** `x-ratelimit-remaining: 0`（primary rate limit の 403 は Retry-After を付けない）。 */
+      rateLimitExhausted?: boolean;
+    };
 
 export type IssueOutcomeClass = 'succeeded' | 'unknown' | 'failed' | 'rate_limited';
 
 /**
  * 外部応答の分類（純関数）。
  * 2xx でも本文が読めなければ作成済みの可能性があるので unknown。
- * 408・3xx・5xx も unknown。429 と Retry-After 付きの 403 は「未処理」とみなす rate_limited。
+ * 408・3xx・5xx も unknown。429 と、Retry-After 付きか `x-ratelimit-remaining: 0` の 403 は「未処理」とみなす rate_limited。
  * それ以外の 4xx は確定した失敗（Issue は作られていない）。
  */
 export function classifyIssueResponse(facts: IssueTransportFacts): IssueOutcomeClass {
   if (facts.kind !== 'http') return 'unknown';
-  const { status, bodyParsed, retryAfterPresent } = facts;
+  const { status, bodyParsed, retryAfterPresent, rateLimitExhausted } = facts;
   if (status >= 200 && status < 300) return bodyParsed ? 'succeeded' : 'unknown';
-  if (status === 429 || (status === 403 && retryAfterPresent)) return 'rate_limited';
+  if (status === 429 || (status === 403 && (retryAfterPresent || rateLimitExhausted === true))) return 'rate_limited';
   if (status === 408) return 'unknown';
   if (status >= 400 && status < 500) return 'failed';
   return 'unknown';
@@ -723,6 +764,161 @@ export function pathsRequiringHumanApproval(paths: readonly string[]): string[] 
   return hits;
 }
 
+/* ────────────────────────────── リポジトリごとの差分 policy（docker-claude） ────────────────────────────── */
+
+/**
+ * 実 runner の差分検査の規則。工場自身と製品リポジトリで分ける。
+ * forbidden は小文字にした path で判定し、許可より優先する。allowed は完全一致の前方一致。
+ */
+export interface RepoDiffPolicy {
+  version: string;
+  allowedPrefixes: readonly string[];
+  allowedExactPaths: readonly string[];
+  forbidden: readonly RegExp[];
+  /** ここの既存ファイルの変更・削除は人の承認（新規追加は可）。 */
+  protectedTestPrefixes: readonly string[];
+  maxFiles: number;
+}
+
+/**
+ * どのリポジトリでも変更させない場所。ランナーの権限を変えるもの（.claude など）は深さによらず拒否する。
+ * clone 後に作業場から除く対象（RUNNER_CONFIG_PATTERNS）もこの一部。
+ */
+export const RUNNER_CONFIG_PATTERNS: readonly RegExp[] = [
+  /(^|\/)\.claude(\/|$)/,
+  /(^|\/)\.claude\.json$/,
+  /(^|\/)\.mcp\.json$/,
+  /(^|\/)claude(\.local)?\.md$/,
+];
+
+export const COMMON_FORBIDDEN_PATTERNS: readonly RegExp[] = [
+  ...RUNNER_CONFIG_PATTERNS,
+  /(^|\/)\.git(\/|$)/,
+  /(^|\/)\.gitmodules$/,
+  /(^|\/)\.gitattributes$/,
+  /(^|\/)\.github(\/|$)/,
+  /^\.gitlab-ci/,
+  /^\.husky\//,
+  /(^|\/)\.env($|\.|rc$)/,
+  /\.env$/,
+  /\.(pem|key|p12|pfx|jks|kdbx|keystore)$/,
+  /(^|\/)(id_rsa|id_dsa|id_ecdsa|id_ed25519)($|\.)/,
+  /(^|\/)\.?(secrets?|credentials?)($|[./])/,
+  /(^|\/)\.(ssh|aws|gnupg)\//,
+  /(^|\/)\.(npmrc|netrc|pgpass)$/,
+  /(^|\/)local\.json$/,
+  /(^|\/)wrangler\.(toml|json|jsonc)$/,
+  /(^|\/)dockerfile/,
+  /(^|\/)(docker-)?compose[^/]*\.ya?ml$/,
+  /(^|\/)(deploy|deployment|infra|terraform|k8s|helm|systemd)\//,
+  /\.service$/,
+];
+
+export const FACTORY_DIFF_POLICY: RepoDiffPolicy = {
+  version: 'diff-policy/factory-v1',
+  allowedPrefixes: ALLOWED_PATH_PREFIXES,
+  allowedExactPaths: [],
+  forbidden: [...COMMON_FORBIDDEN_PATTERNS, ...FORBIDDEN_PATH_PATTERNS],
+  protectedTestPrefixes: ['tests/'],
+  maxFiles: 200,
+};
+
+/** 製品（Sandbox）。package.json は CI の中身を変えられるので許可しない。 */
+export const SANDBOX_DIFF_POLICY: RepoDiffPolicy = {
+  version: 'diff-policy/sandbox-v1',
+  allowedPrefixes: ['src/', 'test/', 'docs/'],
+  allowedExactPaths: ['README.md'],
+  forbidden: COMMON_FORBIDDEN_PATTERNS,
+  protectedTestPrefixes: ['test/'],
+  maxFiles: 200,
+};
+
+export const SANDBOX_REPO: AllowedRepo = { name: 'Kensan196948G/Software-Factory-Sandbox', repoId: '1440860477' };
+
+const REPO_DIFF_POLICIES: Readonly<Record<string, RepoDiffPolicy>> = {
+  'Kensan196948G/Software-Factory': FACTORY_DIFF_POLICY,
+  [SANDBOX_REPO.name]: SANDBOX_DIFF_POLICY,
+};
+
+/** リポジトリの差分 policy。定義の無いリポジトリは null（実 runner は動かさない）。 */
+export function diffPolicyForRepo(repo: string): RepoDiffPolicy | null {
+  return Object.hasOwn(REPO_DIFF_POLICIES, repo) ? (REPO_DIFF_POLICIES[repo] as RepoDiffPolicy) : null;
+}
+
+/* ────────────────────────────── 実 runner の予算（所有者の決定: 1タスク 1,000 円） ────────────────────────────── */
+
+export const REAL_RUNNER_POLICY = {
+  /** 1タスクの上限。これより大きい設定は起動を拒否する（延長しない）。 */
+  maxBudgetJpy: 1000,
+  /** 為替の既定は安全側（高めの円換算）。 */
+  defaultJpyPerUsd: 160,
+  budgetWarnRatio: 0.8,
+  /** 実 runner を向けてよいリポジトリ。DEVLINE_TARGET_REPOS とこの両方に載っていること。 */
+  allowedRepos: [SANDBOX_REPO] as readonly AllowedRepo[],
+  /** 検証の根拠にする workflow。 */
+  ciWorkflowPath: '.github/workflows/ci.yml',
+  ciEvent: 'pull_request',
+} as const;
+
+export interface RunnerBudget {
+  limitJpy: number;
+  jpyPerUsd: number;
+}
+
+/** 円の計上は切り上げ（少なく見積もらない）。 */
+export function usdToJpyCeil(usd: number, jpyPerUsd: number): number {
+  if (!Number.isFinite(usd) || usd <= 0) return 0;
+  return Math.ceil(Math.round(usd * jpyPerUsd * 1e6) / 1e6);
+}
+
+/** --max-budget-usd に渡す額。切り捨てで、0.01 ドル未満は実行しない（null）。 */
+export function maxBudgetUsd(budget: RunnerBudget, costJpySoFar: number): number | null {
+  const remaining = budget.limitJpy - costJpySoFar;
+  if (remaining <= 0) return null;
+  const usd = Math.floor((remaining / budget.jpyPerUsd) * 100) / 100;
+  return usd >= 0.01 ? usd : null;
+}
+
+export type BudgetCheck = { kind: 'ok' | 'warn' } | { kind: 'exceeded' };
+
+/** 費用を足した後の判定。warn は 80% を初めて超えたときだけ。上限ちょうどで止める。 */
+export function checkBudget(budget: RunnerBudget, before: number, after: number): BudgetCheck {
+  if (after >= budget.limitJpy) return { kind: 'exceeded' };
+  const warnAt = budget.limitJpy * REAL_RUNNER_POLICY.budgetWarnRatio;
+  return before < warnAt && after >= warnAt ? { kind: 'warn' } : { kind: 'ok' };
+}
+
+/* ────────────────────────────── 実 PR のマーカーとブランチ名 ────────────────────────────── */
+
+const PR_MARKER_RE = /^<!-- msf-devline-pr:v1 job=([0-9a-f-]{36}) attempt=([1-9]\d*) head=([0-9a-f]{40}) -->$/;
+
+export interface PrMarker {
+  jobId: string;
+  attemptNo: number;
+  headSha: string;
+}
+
+export function buildPrMarker(m: PrMarker): string {
+  return `<!-- msf-devline-pr:v1 job=${m.jobId} attempt=${m.attemptNo} head=${m.headSha} -->`;
+}
+
+/** 本文の1行目だけを見る（handoff のマーカーと同じ）。 */
+export function parsePrMarker(body: string | null | undefined): PrMarker | null {
+  const firstLine = (body ?? '').split('\n', 1)[0] ?? '';
+  const m = PR_MARKER_RE.exec(firstLine.replace(/\r$/, ''));
+  return m ? { jobId: m[1] as string, attemptNo: Number(m[2]), headSha: m[3] as string } : null;
+}
+
+/** auto/<REQ番号小文字>-v<版>-a<試行>。main など他の名前を作らない。 */
+export function jobBranchName(requestId: string, orderVersion: number, attemptNo: number): string {
+  if (!/^REQ-\d{4}-\d{4}$/.test(requestId) || !Number.isInteger(orderVersion) || !Number.isInteger(attemptNo)) {
+    throw new Error('ブランチ名の材料が正しくありません');
+  }
+  return `auto/${requestId.toLowerCase()}-v${orderVersion}-a${attemptNo}`;
+}
+
+export const JOB_BRANCH_RE = /^auto\/req-\d{4}-\d{4}-v[1-9]\d*-a[1-9]\d*$/;
+
 /* ────────────────────────────── 検証証跡（ENT-09・仕様 4-5） ────────────────────────────── */
 
 export const REQUIRED_STAGES = ['static', 'build', 'unit', 'integration', 'e2e', 'security'] as const;
@@ -731,7 +927,7 @@ export type RequiredStage = (typeof REQUIRED_STAGES)[number];
 export const STAGE_STATUSES = ['passed', 'failed', 'skipped', 'cancelled'] as const;
 export type StageStatus = (typeof STAGE_STATUSES)[number];
 
-export const VERIFICATION_SOURCES = ['fake_ci', 'ci'] as const;
+export const VERIFICATION_SOURCES = ['fake_ci', 'ci', 'github'] as const;
 export type VerificationSource = (typeof VERIFICATION_SOURCES)[number];
 
 export interface StageResult {
@@ -870,11 +1066,11 @@ export function evaluateVerification(
 
 /* ────────────────────────────── Runner adapter ────────────────────────────── */
 
-export const RUNNER_KINDS = ['fake', 'local-isolated', 'real'] as const;
+export const RUNNER_KINDS = ['fake', 'local-isolated', 'real', 'docker-claude'] as const;
 export type RunnerKind = (typeof RUNNER_KINDS)[number];
 
 /** 実装済みの runner。これ以外は worker の起動時に拒否する（ERR-405）。 */
-export const IMPLEMENTED_RUNNER_KINDS: readonly RunnerKind[] = ['fake'];
+export const IMPLEMENTED_RUNNER_KINDS: readonly RunnerKind[] = ['fake', 'docker-claude'];
 
 /** fake のシナリオ。注文書の本文からは選ばせない（テストと worker の設定で注入する）。 */
 export const FAKE_SCENARIOS = [
@@ -894,6 +1090,8 @@ export interface RunnerCapability {
   network: 'none' | 'allowlist' | 'unrestricted';
   supportsCancel: boolean;
   costAccounting: 'fake_zero' | 'metered';
+  /** changedPaths をホストが git の差分から算出する。worker は serverDiff で判定する。 */
+  diffCheckedByHost?: boolean;
 }
 
 export type RunnerStep = 'plan' | 'implement' | 'revise';
@@ -912,6 +1110,10 @@ export interface RunnerInput {
   /** 時刻は引数で渡す。runner は壁時計で判断しない。 */
   deadlineAt: string;
   signal: AbortSignal;
+  /** この job がすでに使った費用（円）。残りの予算の計算に使う。 */
+  costJpySoFar?: number;
+  /** revise の出発点（直前に push した head）。implement では無い。 */
+  previousHead?: { sha: string; branch: string } | null;
 }
 
 export interface RunnerArtifact {
@@ -944,6 +1146,47 @@ export interface RunnerResult {
   /** requires_human_approval に当たる項目。1件でもあれば stopped(human_approval_required)。 */
   humanApprovalTouched?: readonly string[];
   summary: string;
+  /**
+   * ホスト側の差分検査の結果（docker-claude）。AI の申告ではなく git の差分から算出したもの。
+   * capability.diffCheckedByHost の runner でこれが無い結果は worker が拒否する。
+   */
+  serverDiff?: ServerDiffResult;
+  /** CLI が起動していないと確実に分かる（費用なし）。worker は runner_failure の理由に残す。 */
+  notStarted?: boolean;
+  /** CLI が予算の上限で止まった。worker は費用の合計によらず budget_limit で止める。 */
+  budgetExceeded?: boolean;
+  /** 費用が実測ではなく見込み（結果を受け取れなかった実行は割り当て分を計上する）。 */
+  costEstimated?: boolean;
+}
+
+/** ホスト側の差分検査の結果。 */
+export interface ServerDiffResult {
+  policyVersion: string;
+  violations: readonly DiffViolation[];
+  /** 既存の試験の変更・削除など、人の承認が要るもの。 */
+  humanApproval: readonly string[];
+}
+
+export interface DiffViolation {
+  path: string;
+  rule:
+    | 'invalid_path'
+    | 'forbidden'
+    | 'not_allowed'
+    | 'symlink'
+    | 'submodule'
+    | 'rename_forbidden'
+    | 'too_many_files'
+    | 'workspace_too_large'
+    | 'git_dir_in_worktree'
+    | 'unexpected_change'
+    | 'secret_detected'
+    | 'binary_file'
+    | 'file_too_large_to_scan';
+  /** secret_detected の検出器の名前。値は入れない。 */
+  detector?: string;
+  /** secret_detected の行番号（1 始まり）。 */
+  line?: number;
 }
 
 export interface RunnerAdapter {
@@ -951,6 +1194,8 @@ export interface RunnerAdapter {
   run(input: RunnerInput): Promise<RunnerResult>;
   /** 冪等。すでに終わっていても失敗しない。 */
   cancel(run: { jobId: string; attemptNo: number }): Promise<void>;
+  /** 工程の後始末（作業場の削除）。冪等。 */
+  release?(run: { jobId: string; attemptNo: number }): Promise<void>;
 }
 
 /* ────────────────────────────── Issue adapter（実 GitHub / ローカル fake で差し替え） ────────────────────────────── */
@@ -1063,6 +1308,12 @@ export interface JobEvidence {
   /** 記録された検証の source。無ければ空。 */
   verificationSources: VerificationSource[];
   hasPrDraft: boolean;
+  /** 実 PR（docker-claude）。fake のときや作っていないときは null。 */
+  pr?: { number: number; url: string; source: 'github' | 'fake'; closed?: boolean } | null;
+  /** source='github' の検証の run URL（新しいものから1件）。 */
+  ciRunUrl?: string | null;
+  /** source='github' の記録が github.com のものか。 */
+  ciSource?: 'github' | 'fake' | null;
 }
 
 export interface RecordVerificationInput {
@@ -1077,6 +1328,8 @@ export interface RecordVerificationInput {
   acResults: readonly AcResult[];
   logRef?: string | null;
   reportDigest?: string | null;
+  /** 実 CI の補足（記録はせず、止めるときの理由に載せる）。 */
+  diagnostics?: { runConclusion: string | null; unmatchedJobs: readonly string[] };
   now: Date;
   correlationId: string;
 }

@@ -7,16 +7,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ApiError } from '../api/http.js';
-import { FAKE_SCENARIOS, IMPLEMENTED_RUNNER_KINDS, RUNNER_KINDS } from '../shared/devline.js';
-import type {
-  FakeScenario,
-  RunnerAdapter,
-  RunnerArtifact,
-  RunnerInput,
-  RunnerKind,
-  RunnerResult,
-  RunnerUsage,
-} from '../shared/devline.js';
+import { FAKE_SCENARIOS } from '../shared/devline.js';
+import type { FakeScenario, RunnerAdapter, RunnerArtifact, RunnerInput, RunnerResult, RunnerUsage } from '../shared/devline.js';
 
 const ZERO_USAGE: RunnerUsage = { inputTokens: 0, outputTokens: 0, durationSeconds: 0, costJpy: 0 };
 
@@ -129,9 +121,9 @@ export function createFakeRunner(scenario: FakeScenario): FakeRunner {
   };
 }
 
-/** runner の選択。fake 以外は未実装なので起動させない（T-61）。 */
+/** fake の選択。local-isolated / real は未実装（T-61）。docker-claude は資格情報が要るので startRealLine を通す。 */
 export function createRunner(kind: string, scenario: FakeScenario): RunnerAdapter {
-  if (!(RUNNER_KINDS as readonly string[]).includes(kind) || !IMPLEMENTED_RUNNER_KINDS.includes(kind as RunnerKind)) {
+  if (kind !== 'fake') {
     throw new ApiError('ERR-405', `この runner はまだ使えません（${kind}）`, 409);
   }
   return createFakeRunner(scenario);

@@ -5736,7 +5736,10 @@ const SF = (function () {
     const isFake = job.runnerKind === 'fake';
     const ran = ev.attempts > 0;
     const srcs = ev.verificationSources || [];
-    const ciKind = !srcs.length ? 'none' : srcs.includes('fake_ci') ? 'fake' : 'ok';
+    // github の記録でも github.com の run でなければ実物として扱わない（判定はサーバ）
+    const ciKind = !srcs.length ? 'none' : srcs.includes('fake_ci') || ev.ciSource === 'fake' ? 'fake' : 'ok';
+    const isDocker = job.runnerKind === 'docker-claude';
+    const realPr = ev.pr || null;
     const note = [
       job.state === 'queued' ? '実行者が動くまで進みません' : '',
       job.stopReason ? '理由：' + job.stopReason : '',
@@ -5773,7 +5776,15 @@ const SF = (function () {
         '計画・実装',
         ran ? (isFake ? 'fake' : 'ok') : 'none',
         ran
-          ? '実行 ' + E(ev.attempts) + ' 回' + (isFake ? '（fake runner。AI は動いていません）' : '')
+          ? '実行 ' +
+              E(ev.attempts) +
+              ' 回' +
+              (isFake
+                ? '（fake runner。AI は動いていません）'
+                : isDocker
+                  ? '（docker-claude。隔離したコンテナで AI を実行）'
+                  : '') +
+              (isDocker && job.costJpy ? '　費用 ' + E(job.costJpy) + ' 円' : '')
           : '実行の記録はありません',
       ) +
       dlRow(
@@ -5781,16 +5792,34 @@ const SF = (function () {
         '自動検査（CI）',
         ciKind,
         ciKind === 'fake'
-          ? 'fake CI の記録のみ（実 CI ではありません）'
+          ? srcs.includes('fake_ci')
+            ? 'fake CI の記録のみ（実 CI ではありません）'
+            : 'ローカルの連携先の記録のみ（実 GitHub ではありません）'
           : ciKind === 'ok'
-            ? '実 CI の記録あり'
+            ? srcs.includes('github')
+              ? 'GitHub Actions の記録あり' +
+                (/^https:\/\//.test(ev.ciRunUrl || '')
+                  ? '　<a href="' + E(ev.ciRunUrl) + '" target="_blank" rel="noopener noreferrer">実行の記録</a>'
+                  : '')
+              : '実 CI の記録あり'
             : '検査の記録はありません',
       ) +
       dlRow(
         'pr',
         'PR',
-        ev.hasPrDraft ? (isFake ? 'fake' : 'ok') : 'none',
-        ev.hasPrDraft ? 'PR 本文の下書きのみ（実 PR はありません）' : 'PR の記録はありません',
+        realPr ? (realPr.source === 'github' ? 'ok' : 'fake') : ev.hasPrDraft ? (isFake ? 'fake' : 'ok') : 'none',
+        realPr
+          ? (/^https?:\/\//.test(realPr.url || '')
+              ? '<a href="' + E(realPr.url) + '" target="_blank" rel="noopener noreferrer">PR #' + E(realPr.number) + '</a>'
+              : 'PR #' + E(realPr.number)) +
+              (realPr.closed
+                ? '（閉じました。古い版か、再開できない停止です）'
+                : job.state === 'pr_ready' && job.orderCurrent !== false && !job.supersededAt
+                  ? '（人の承認待ち。AI は merge しません）'
+                  : '')
+          : ev.hasPrDraft
+            ? 'PR 本文の下書きのみ（実 PR はありません）'
+            : 'PR の記録はありません',
       )
     );
   }

@@ -270,6 +270,24 @@ function issueSourceOf(issueUrl: string | null): HandoffView['issueSource'] {
   return apiHost === 'api.github.com' && (issueUrl === null || urlHost === 'github.com') ? 'github' : 'fake';
 }
 
+/** github.com の URL だけを実物とする。ローカルの連携先の結果は fake と表示する。 */
+function githubSourceOf(url: string | null): 'github' | 'fake' {
+  if (url === null) return 'fake';
+  try {
+    return new URL(url).hostname === 'github.com' ? 'github' : 'fake';
+  } catch {
+    return 'fake';
+  }
+}
+
+function prEvidenceOf(raw: unknown, followup: unknown): JobEvidence['pr'] {
+  const pr = raw as { number?: unknown; url?: unknown } | null;
+  if (!pr || typeof pr.number !== 'number' || typeof pr.url !== 'string') return null;
+  const state = followup as { closedNumber?: unknown; notOwn?: unknown } | null;
+  const closed = state?.closedNumber === String(pr.number) && state?.notOwn !== true;
+  return { number: pr.number, url: pr.url, source: githubSourceOf(pr.url), ...(closed ? { closed: true } : {}) };
+}
+
 /** 画面の表示用。投入の記録（版の新しい順）と job ごとの証跡の要約を返す。 */
 export async function listDevlineTrace(
   requestId: string,
@@ -299,8 +317,18 @@ export async function listDevlineTrace(
     nextAttemptAt: i.next_attempt_at?.toISOString() ?? null,
     updatedAt: i.updated_at.toISOString(),
   }));
-  const rows = await query<{ id: string; attempts: number; sources: VerificationSource[]; has_pr: boolean }>(
-    `select j.id,
+  const rows = await query<{
+    id: string;
+    attempts: number;
+    sources: VerificationSource[];
+    has_pr: boolean;
+    pr: unknown;
+    pr_followup: unknown;
+    ci_url: string | null;
+  }>(
+    `select j.id, j.work_state -> 'pr' as pr, j.work_state -> 'prFollowup' as pr_followup,
+            (select v.log_ref from verification v where v.job_id = j.id and v.source = 'github'
+              order by v.run_sequence desc, v.run_attempt desc limit 1) as ci_url,
             (select count(*) from job_attempt a where a.job_id = j.id)::int as attempts,
             array(select distinct v.source from verification v where v.job_id = j.id order by v.source) as sources,
             exists (select 1 from job_artifact f where f.job_id = j.id and f.kind = 'pr_body_draft') as has_pr
@@ -309,7 +337,15 @@ export async function listDevlineTrace(
   );
   const evidence: Record<string, JobEvidence> = {};
   for (const r of rows.rows) {
-    evidence[r.id] = { attempts: r.attempts, verificationSources: r.sources, hasPrDraft: r.has_pr };
+    // 実 PR・実 CI の項目は記録があるときだけ載せる。fake の job の応答の形は変えない
+    const pr = prEvidenceOf(r.pr, r.pr_followup);
+    evidence[r.id] = {
+      attempts: r.attempts,
+      verificationSources: r.sources,
+      hasPrDraft: r.has_pr,
+      ...(pr ? { pr } : {}),
+      ...(r.sources.includes('github') ? { ciRunUrl: r.ci_url, ciSource: githubSourceOf(r.ci_url) } : {}),
+    };
   }
   return { handoffs, evidence };
 }
@@ -493,12 +529,81 @@ export async function resumeJob(
   return (await getJobView(input.jobId)) as JobView;
 }
 
+/* ───────────────────────────── worker: 実 PR の後始末 ───────────────────────────── */
+
+export interface PrFollowupRow {
+  id: string;
+  state: JobState;
+  stop_reason: StopReason | null;
+  superseded_at: Date | null;
+  stopped_at: Date | null;
+  target_repo_id: string;
+  order_version: number;
+  fencing_token: number;
+  work_state: Record<string, unknown>;
+  request_status: Status;
+  request_deleted: boolean;
+  request_order_version: number;
+}
+
+/**
+ * 後始末を確かめる候補。止まっている job と pr_ready の job で、PR をまだ閉じていないもの。
+ * 外部呼び出しは handoff のトランザクションの外（worker）で行う。DB の状態がそのまま未処理の一覧になる。
+ */
+export async function listPrFollowupCandidates(limit = 20): Promise<PrFollowupRow[]> {
+  const { rows } = await query<PrFollowupRow>(
+    `select j.id, j.state, j.stop_reason, j.superseded_at, j.stopped_at, j.target_repo_id, j.order_version, j.fencing_token, j.work_state,
+            r.status as request_status, r.deleted as request_deleted, r.order_version as request_order_version
+       from job j join request r on r.id = j.request_id
+      where j.runner_kind = 'docker-claude'
+        and j.work_state ? 'pr'
+        and j.state = any($1::text[])
+        and (j.work_state -> 'prFollowup' ->> 'closedNumber') is distinct from (j.work_state -> 'pr' ->> 'number')
+      order by j.updated_at desc
+      limit $2`,
+    [[...JOB_HALTED_STATES, 'pr_ready'], limit],
+  );
+  return rows;
+}
+
+/**
+ * 後始末の結果を残す。fence が変わっていたら（人が再開したなど）書かない。次の確認でやり直す。
+ * lease の持ち主ではないが、状態を動かさず work_state の印だけを足す。
+ */
+export async function recordPrFollowup(
+  job: { id: string; fencing_token: number },
+  followup: Record<string, unknown>,
+  now: Date,
+  correlationId: string,
+): Promise<boolean> {
+  return withTransaction(async (client) => {
+    const result = await client.query(
+      `update job set work_state = work_state || jsonb_build_object('prFollowup', $3::jsonb)
+        where id=$1 and fencing_token=$2`,
+      [job.id, job.fencing_token, JSON.stringify(followup)],
+    );
+    if (!rowsChanged(result)) return false;
+    await insertJobEvent(client, {
+      jobId: job.id,
+      at: now,
+      kind: 'pr_followup',
+      actorType: 'system',
+      correlationId,
+      detail: followup,
+    });
+    return true;
+  });
+}
+
 /* ───────────────────────────── worker: claim / lease ───────────────────────────── */
 
 export async function claimNextJob(input: {
   owner: string;
   now: Date;
   leaseSeconds?: number;
+  runnerKind?: RunnerKind;
+  excludeRunnerKind?: RunnerKind;
+  jobId?: string;
 }): Promise<{ job: JobRow; lease: JobLease } | null> {
   const secs = input.leaseSeconds ?? DEVLINE_POLICY.leaseSeconds;
   return withTransaction(async (client) => {
@@ -507,6 +612,9 @@ export async function claimNextJob(input: {
          select id, lease_owner as prev_owner from job
           where state = any($1::text[])
             and (lease_expires_at is null or lease_expires_at <= $3::timestamptz)
+            and ($5::text is null or runner_kind = $5)
+            and ($6::text is null or runner_kind <> $6)
+            and ($7::uuid is null or id = $7)
           order by updated_at, created_at
           limit 1
           for update skip locked
@@ -517,7 +625,15 @@ export async function claimNextJob(input: {
               lease_reclaim_count=j.lease_reclaim_count + (case when j.lease_owner is null then 0 else 1 end)
          from c where j.id=c.id
        returning j.*, c.prev_owner`,
-      [JOB_RUNNABLE_STATES, input.owner, input.now, secs],
+      [
+        JOB_RUNNABLE_STATES,
+        input.owner,
+        input.now,
+        secs,
+        input.runnerKind ?? null,
+        input.excludeRunnerKind ?? null,
+        input.jobId ?? null,
+      ],
     );
     const job = rows[0];
     if (!job) return null;
@@ -745,10 +861,10 @@ async function closeAttemptUnfenced(
   attemptId: string,
   outcome: AttemptOutcome,
   now: Date,
-  extra: { exitCode?: number | null; logRef?: string | null; usage?: unknown } = {},
-): Promise<void> {
-  await client.query(
-    `update job_attempt set finished_at=$3, outcome=$2, exit_code=$4, log_ref=$5, usage=coalesce($6::jsonb, usage)
+  extra: { exitCode?: number | null; logRef?: string | null; usage?: unknown; costJpy?: number } = {},
+): Promise<boolean> {
+  const result = await client.query(
+    `update job_attempt set finished_at=$3, outcome=$2, exit_code=$4, log_ref=$5, usage=coalesce($6::jsonb, usage), cost_jpy=$7
       where id=$1 and finished_at is null`,
     [
       attemptId,
@@ -757,13 +873,80 @@ async function closeAttemptUnfenced(
       extra.exitCode ?? null,
       extra.logRef ?? null,
       extra.usage === undefined ? null : JSON.stringify(extra.usage),
+      extra.costJpy ?? 0,
     ],
   );
+  return rowsChanged(result);
+}
+
+/**
+ * 結果を job に載せられなかった試行の費用を足す（取消・時間切れ・遅れた結果）。fence を見ない。
+ * 実際に使った費用なので、書き込みの権利とは別に数える。試行を閉じられたときだけ足すので二重に数えない。
+ */
+async function chargeClosedAttemptCost(
+  client: PoolClient,
+  jobId: string,
+  costJpy: number,
+  now: Date,
+  detail: Record<string, unknown>,
+): Promise<void> {
+  if (costJpy <= 0) return;
+  await client.query('update job set cost_jpy=cost_jpy+$2 where id=$1', [jobId, costJpy]);
+  await insertJobEvent(client, {
+    jobId,
+    at: now,
+    kind: 'runner_cost_late',
+    actorType: 'system',
+    detail: { costJpy, ...detail },
+  });
+}
+
+/**
+ * 開いたまま残った試行（worker が落ちて結果を受け取れなかった実行）を閉じ、割り当てを費用として計上する。
+ * 少なく数えない。閉じるのは1回だけなので、遅れて届く結果と二重に数えない（finished_at の条件で決まる）。
+ */
+async function settleOpenAttemptsInTx(client: PoolClient, jobId: string, now: Date): Promise<number> {
+  const { rows } = await client.query<{ id: string; attempt_no: number; allotment_jpy: number }>(
+    `update job_attempt set finished_at=$2, outcome='discarded', cost_jpy=allotment_jpy
+      where job_id=$1 and finished_at is null
+      returning id, attempt_no, allotment_jpy`,
+    [jobId, now],
+  );
+  let charged = 0;
+  for (const row of rows) {
+    charged += row.allotment_jpy;
+    await insertJobEvent(client, {
+      jobId,
+      at: now,
+      kind: 'runner_cost_unsettled',
+      actorType: 'system',
+      detail: { attemptId: row.id, attemptNo: row.attempt_no, costJpy: row.allotment_jpy, estimated: true },
+    });
+  }
+  if (charged > 0) await client.query('update job set cost_jpy=cost_jpy+$2 where id=$1', [jobId, charged]);
+  return charged;
+}
+
+/** 取得の直後に呼ぶ。計上した費用を返す（予算の判定に使う）。 */
+export async function settleOrphanAttempts(lease: JobLease, now: Date): Promise<FencedWrite<{ chargedJpy: number }>> {
+  const value = await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      'select id from job where id=$1 and fencing_token=$2 and state=$3 and lease_owner=$4 for update',
+      [lease.jobId, lease.fencingToken, lease.expectedState, lease.owner],
+    );
+    if (!rows[0]) return null;
+    return { chargedJpy: await settleOpenAttemptsInTx(client, lease.jobId, now) };
+  });
+  if (!value) {
+    await recordLateWrite(lease, 'settleOrphanAttempts', now);
+    return STALE;
+  }
+  return { applied: true, value };
 }
 
 export async function startAttempt(
   lease: JobLease,
-  input: { step: RunnerStep; runnerKind: RunnerKind; now: Date },
+  input: { step: RunnerStep; runnerKind: RunnerKind; now: Date; allotmentJpy?: number },
 ): Promise<FencedWrite<{ attemptId: string; attemptNo: number }>> {
   const value = await withTransaction(async (client) => {
     const { rows } = await client.query(
@@ -772,15 +955,12 @@ export async function startAttempt(
     );
     if (!rows[0]) return null;
     // 落ちた worker の試行が開いたまま残っていれば閉じる
-    await client.query(`update job_attempt set finished_at=$2, outcome='discarded' where job_id=$1 and finished_at is null`, [
-      lease.jobId,
-      input.now,
-    ]);
+    await settleOpenAttemptsInTx(client, lease.jobId, input.now);
     const inserted = await client.query<{ id: string; attempt_no: number }>(
-      `insert into job_attempt (job_id, attempt_no, state_at_start, fencing_token, runner_kind, started_at)
-       values ($1, (select coalesce(max(attempt_no),0)+1 from job_attempt where job_id=$1), $2, $3, $4, $5)
+      `insert into job_attempt (job_id, attempt_no, state_at_start, fencing_token, runner_kind, started_at, allotment_jpy)
+       values ($1, (select coalesce(max(attempt_no),0)+1 from job_attempt where job_id=$1), $2, $3, $4, $5, $6)
        returning id, attempt_no`,
-      [lease.jobId, lease.expectedState, lease.fencingToken, input.runnerKind, input.now],
+      [lease.jobId, lease.expectedState, lease.fencingToken, input.runnerKind, input.now, input.allotmentJpy ?? 0],
     );
     const row = inserted.rows[0] as { id: string; attempt_no: number };
     return { attemptId: row.id, attemptNo: row.attempt_no };
@@ -803,12 +983,17 @@ function resultForStorage(result: RunnerResult): Record<string, unknown> {
   };
 }
 
-/** 試行の結果を記録する。遅れた結果は attempt を discarded で閉じ、成果物も費用も job に載せない。 */
+/**
+ * 試行の結果を記録する。遅れた結果は attempt を discarded で閉じ、成果物は job に載せない。
+ * chargeLate（実費のかかる runner）のときは、その試行の費用だけを別に数える。
+ * rejected は検査を通らなかった結果。rejected で閉じ、成果物を記録しない。費用は数える。
+ */
 export async function finishAttempt(
   lease: JobLease,
   attemptId: string,
   result: RunnerResult,
   now: Date,
+  options: { chargeLate?: boolean; rejected?: boolean } = {},
 ): Promise<FencedWrite<null>> {
   const usage = result.usage;
   const applied = await withTransaction(async (client) => {
@@ -818,7 +1003,13 @@ export async function finishAttempt(
     );
     const job = rows[0];
     if (!job) {
-      await closeAttemptUnfenced(client, attemptId, 'discarded', now, { exitCode: result.exitCode, usage });
+      const costJpy = options.chargeLate ? usage.costJpy : 0;
+      const closed = await closeAttemptUnfenced(client, attemptId, 'discarded', now, {
+        exitCode: result.exitCode,
+        usage,
+        costJpy,
+      });
+      if (closed) await chargeClosedAttemptCost(client, lease.jobId, costJpy, now, { attemptId, cause: 'late_result' });
       return false;
     }
     const closed = await client.query(
@@ -828,17 +1019,17 @@ export async function finishAttempt(
       [
         attemptId,
         now,
-        result.status,
+        options.rejected ? 'rejected' : result.status,
         result.exitCode,
         result.logRef,
-        JSON.stringify(resultForStorage(result)),
+        JSON.stringify(resultForStorage(options.rejected ? { ...result, artifacts: [] } : result)),
         JSON.stringify(usage),
         usage.costJpy,
         Math.max(0, Math.floor(usage.durationSeconds)),
       ],
     );
     if (!rowsChanged(closed)) return true;
-    for (const artifact of result.artifacts) {
+    for (const artifact of options.rejected ? [] : result.artifacts) {
       await client.query(
         `insert into job_artifact (job_id, attempt_id, kind, name, sha256, byte_size, storage_ref, content, created_at)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
@@ -885,7 +1076,28 @@ export async function finishAttempt(
   return { applied: true, value: null };
 }
 
-/** 結果が出なかった試行（時間切れ・取消・拒否）を閉じる。遅れていても attempt を閉じるだけで job を動かさない。 */
-export async function closeAttempt(attemptId: string, outcome: AttemptOutcome, now: Date): Promise<void> {
-  await withTransaction(async (client) => closeAttemptUnfenced(client, attemptId, outcome, now));
+/** 工程の外で job の出来事を残す（予算の警告など）。 */
+export async function appendJobEvent(
+  jobId: string,
+  event: { at: Date; kind: string; correlationId?: string | null; detail?: unknown },
+): Promise<void> {
+  await withTransaction(async (client) => {
+    await insertJobEvent(client, { jobId, actorType: 'system', ...event });
+  });
+}
+
+/**
+ * 結果が出なかった試行（時間切れ・取消・拒否）を閉じる。遅れていても attempt を閉じるだけで job を動かさない。
+ * cost があれば同じトランザクションで job に足す。すでに閉じた試行には足さない。
+ */
+export async function closeAttempt(
+  attemptId: string,
+  outcome: AttemptOutcome,
+  now: Date,
+  cost?: { jobId: string; costJpy: number; detail: Record<string, unknown> },
+): Promise<void> {
+  await withTransaction(async (client) => {
+    const closed = await closeAttemptUnfenced(client, attemptId, outcome, now, { costJpy: cost?.costJpy ?? 0 });
+    if (closed && cost) await chargeClosedAttemptCost(client, cost.jobId, cost.costJpy, now, { attemptId, ...cost.detail });
+  });
 }
