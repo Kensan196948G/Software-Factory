@@ -10,6 +10,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { crc32, deflateRawSync } from 'node:zlib';
 import { SANDBOX_REPO } from '../../src/shared/devline.js';
 
 export const REAL_REPO = SANDBOX_REPO.name;
@@ -60,6 +61,78 @@ export interface FakeRun {
   jobs: { name: string; status: string; conclusion: string | null; head_sha: string; html_url: string }[];
 }
 
+/** 中央ディレクトリつきの最小の zip（data descriptor なし）。method 8 は deflate。 */
+export function buildZip(files: Record<string, string | Buffer>, method: 0 | 8 = 8): Buffer {
+  const locals: Buffer[] = [];
+  const centrals: Buffer[] = [];
+  let offset = 0;
+  for (const [name, content] of Object.entries(files)) {
+    const raw = Buffer.from(content);
+    const data = method === 8 ? deflateRawSync(raw) : raw;
+    const nameBuf = Buffer.from(name, 'utf8');
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(method, 8);
+    local.writeUInt32LE(crc32(raw) >>> 0, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(raw.length, 22);
+    local.writeUInt16LE(nameBuf.length, 26);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(method, 10);
+    central.writeUInt32LE(crc32(raw) >>> 0, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(raw.length, 24);
+    central.writeUInt16LE(nameBuf.length, 28);
+    central.writeUInt32LE(offset, 42);
+    locals.push(local, nameBuf, data);
+    centrals.push(central, nameBuf);
+    offset += local.length + nameBuf.length + data.length;
+  }
+  const cd = Buffer.concat(centrals);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(Object.keys(files).length, 8);
+  eocd.writeUInt16LE(Object.keys(files).length, 10);
+  eocd.writeUInt32LE(cd.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, cd, eocd]);
+}
+
+/** 既定は AC-1〜AC-10 がすべて passed（注文書に無い番号は判定で無視される）。 */
+export function acDoc(headSha: string, ac?: unknown[]): unknown {
+  return {
+    schema: 'msf.ac-results/v1',
+    headSha,
+    ac:
+      ac ?? Array.from({ length: 10 }, (_, i) => ({ id: `AC-${i + 1}`, status: 'passed', testIds: [`AC-${i + 1}: fake test`] })),
+  };
+}
+
+/** fake GitHub の artifact。何も指定しなければ全件 passed の ac-results が付く。 */
+export interface FakeAcArtifact {
+  /** artifact を付けない。 */
+  none?: boolean;
+  /** ac-results.json の中身。既定は acDoc(head)。 */
+  doc?: unknown;
+  /** zip そのもの（壊れた zip など）。 */
+  zip?: Buffer;
+  expired?: boolean;
+  sizeInBytes?: number;
+  /** 一覧の workflow_run.head_sha。 */
+  listedHeadSha?: string;
+  createdAt?: string;
+  /** 同じ名前の artifact をもう1つ見せる。 */
+  duplicate?: boolean;
+  /** 2段目（保管先）の応答の status。 */
+  blobStatus?: number;
+  /** 302 の Location（既定はローカルの /blob/<id>）。 */
+  location?: string;
+}
+
 export type RealResponder = (req: { method: string; path: string; body: any }) => {
   status: number;
   body?: unknown;
@@ -75,6 +148,10 @@ export interface RealGithub {
   baseSha: string;
   bareDir: string;
   access: { method: string; path: string; query: string; authorization: string | undefined }[];
+  /** 保管先（302 の先）への要求。API とは別に記録する。token が届いていないことを確かめる。 */
+  blobAccess: { path: string; authorization: string | undefined }[];
+  /** run の artifact を差しかえる。 */
+  setArtifact(runId: number, ac: FakeAcArtifact): void;
   gitAuth: (string | undefined)[];
   gitOps: string[];
   pulls: FakePull[];
@@ -89,7 +166,9 @@ export interface RealGithub {
   fileAt(sha: string, path: string): string | null;
   /** ベースの workflow を変えた blob を head として見せる（AI が CI を弱めた場合）。 */
   workflowOverride: string | null;
-  addRun(over: Partial<FakeRun> & { head_sha: string }, jobs?: Partial<Record<string, string>>): FakeRun;
+  addRun(over: Partial<FakeRun> & { head_sha: string }, jobs?: Partial<Record<string, string>>, ac?: FakeAcArtifact): FakeRun;
+  /** autoRun の run に付ける artifact。既定は全件 passed。 */
+  autoRunAc: FakeAcArtifact;
   reset(): void;
   close(): Promise<void>;
 }
@@ -128,13 +207,21 @@ export async function startRealGithub(): Promise<RealGithub> {
   const baseSha = git(seed, 'rev-parse', 'HEAD');
 
   const access: RealGithub['access'] = [];
+  const blobAccess: RealGithub['blobAccess'] = [];
   const gitAuth: (string | undefined)[] = [];
   const gitOps: string[] = [];
   const pulls: FakePull[] = [];
   const runs: FakeRun[] = [];
   const issues: RealGithub['issues'] = [];
   const responders: RealResponder[] = [];
-  const state = { repoPrivate: true, repoId: REAL_REPO_ID, autoRun: false, workflowOverride: null as string | null };
+  const state = {
+    repoPrivate: true,
+    repoId: REAL_REPO_ID,
+    autoRun: false,
+    workflowOverride: null as string | null,
+    autoRunAc: {} as FakeAcArtifact,
+  };
+  const artifacts = new Map<number, FakeAcArtifact & { runId: number; head: string }>();
   let nextNumber = 500;
   let nextRun = 9000;
   let origin = '';
@@ -156,7 +243,7 @@ export async function startRealGithub(): Promise<RealGithub> {
     user: { login: p.login },
     head: { sha: p.headSha, ref: p.headRef, repo: { full_name: REAL_REPO } },
   });
-  const addRun: RealGithub['addRun'] = (over, jobs = {}) => {
+  const addRun: RealGithub['addRun'] = (over, jobs = {}, ac = {}) => {
     nextRun += 1;
     const run: FakeRun = {
       id: nextRun,
@@ -185,6 +272,7 @@ export async function startRealGithub(): Promise<RealGithub> {
       };
     });
     runs.push(run);
+    if (!ac.none) artifacts.set(run.id, { ...ac, runId: run.id, head: over.head_sha });
     return run;
   };
 
@@ -250,7 +338,8 @@ export async function startRealGithub(): Promise<RealGithub> {
     for await (const chunk of req) chunks.push(chunk as Buffer);
     const text = Buffer.concat(chunks).toString('utf8');
     const body = text ? (JSON.parse(text) as any) : null;
-    access.push({ method, path, query: url.search, authorization: req.headers.authorization });
+    if (path.startsWith('/blob/')) blobAccess.push({ path, authorization: req.headers.authorization });
+    else access.push({ method, path, query: url.search, authorization: req.headers.authorization });
 
     const responder = responders.shift();
     const reply = responder ? responder({ method, path, body }) : null;
@@ -335,7 +424,9 @@ export async function startRealGithub(): Promise<RealGithub> {
         login: REAL_LOGIN,
       };
       pulls.push(pull);
-      if (state.autoRun) addRun({ head_sha: headSha, head_branch: body.head, pull_requests: [{ number: pull.number }] });
+      if (state.autoRun) {
+        addRun({ head_sha: headSha, head_branch: body.head, pull_requests: [{ number: pull.number }] }, {}, state.autoRunAc);
+      }
       return finish(201, pullJson(pull));
     }
     if (method === 'GET' && path === `${repoPrefix}/pulls`) {
@@ -364,6 +455,38 @@ export async function startRealGithub(): Promise<RealGithub> {
     if (method === 'GET' && jobsPath) {
       const run = runs.find((r) => r.id === Number(jobsPath[1]) && r.run_attempt === Number(jobsPath[2]));
       return run ? finish(200, { jobs: run.jobs }) : finish(404, { message: 'Not Found' });
+    }
+    const artifactList = new RegExp(`^${repoPrefix}/actions/runs/(\\d+)/artifacts$`).exec(path);
+    if (method === 'GET' && artifactList) {
+      const runId = Number(artifactList[1]);
+      const art = artifacts.get(runId);
+      const item = art
+        ? {
+            id: runId,
+            name: 'ac-results',
+            size_in_bytes: art.sizeInBytes ?? 512,
+            expired: art.expired ?? false,
+            created_at: art.createdAt ?? '2099-01-01T00:00:00Z',
+            workflow_run: { id: runId, head_sha: art.listedHeadSha ?? art.head },
+          }
+        : null;
+      return finish(200, { artifacts: item ? (art?.duplicate ? [item, { ...item, id: runId + 100000 }] : [item]) : [] });
+    }
+    const artifactZip = new RegExp(`^${repoPrefix}/actions/artifacts/(\\d+)/zip$`).exec(path);
+    if (method === 'GET' && artifactZip) {
+      const art = artifacts.get(Number(artifactZip[1]));
+      if (!art) return finish(404, { message: 'Not Found' });
+      return finish(302, {}, { location: art.location ?? `${origin}/blob/${artifactZip[1]}` });
+    }
+    const blob = /^\/blob\/(\d+)$/.exec(path);
+    if (method === 'GET' && blob) {
+      const art = artifacts.get(Number(blob[1]));
+      if (!art) return finish(404, { message: 'Not Found' });
+      if (art.blobStatus) return finish(art.blobStatus, {});
+      const zip = art.zip ?? buildZip({ 'ac-results.json': JSON.stringify(art.doc ?? acDoc(art.head)) });
+      res.writeHead(200, { 'content-type': 'application/zip' });
+      res.end(zip);
+      return;
     }
     if (method === 'GET' && path === `${repoPrefix}/contents/.github/workflows/ci.yml`) {
       const ref = url.searchParams.get('ref') ?? '';
@@ -396,6 +519,11 @@ export async function startRealGithub(): Promise<RealGithub> {
     baseSha,
     bareDir,
     access,
+    blobAccess,
+    setArtifact(runId, ac) {
+      const art = artifacts.get(runId);
+      if (art) artifacts.set(runId, { ...ac, runId, head: art.head });
+    },
     gitAuth,
     gitOps,
     pulls,
@@ -420,6 +548,12 @@ export async function startRealGithub(): Promise<RealGithub> {
     set autoRun(v) {
       state.autoRun = v;
     },
+    get autoRunAc() {
+      return state.autoRunAc;
+    },
+    set autoRunAc(v) {
+      state.autoRunAc = v;
+    },
     get workflowOverride() {
       return state.workflowOverride;
     },
@@ -440,6 +574,7 @@ export async function startRealGithub(): Promise<RealGithub> {
       const refs = git(bareDir, 'for-each-ref', '--format=%(refname)', 'refs/heads/auto').split('\n').filter(Boolean);
       for (const ref of refs) git(bareDir, 'update-ref', '-d', ref);
       access.length = 0;
+      blobAccess.length = 0;
       gitAuth.length = 0;
       gitOps.length = 0;
       pulls.length = 0;
@@ -450,6 +585,8 @@ export async function startRealGithub(): Promise<RealGithub> {
       state.repoId = REAL_REPO_ID;
       state.autoRun = false;
       state.workflowOverride = null;
+      state.autoRunAc = {};
+      artifacts.clear();
     },
     close: () =>
       new Promise<void>((resolve, reject) => {

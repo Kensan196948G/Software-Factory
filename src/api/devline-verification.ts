@@ -14,10 +14,12 @@ import {
   PR_AGENTS_HEADINGS,
   PR_DECISION_ITEMS,
   REQUIRED_STAGES,
+  acIdsOf,
   decideRepair,
   evaluateVerification,
   isCiRerunAllowed,
   isOrderCurrent,
+  summarizeAc,
 } from '../shared/devline.js';
 import type {
   JobState,
@@ -30,10 +32,7 @@ import type {
 import { SIGNAL_LABEL, STATUS_LABEL } from '../shared/domain.js';
 import type { Signal, Status } from '../shared/domain.js';
 
-/** 合格の条件の ID。注文書の acceptance_criteria と同じく空の行を除いて数える。 */
-export function acIdsOf(criteria: readonly string[]): string[] {
-  return criteria.filter((c) => c.trim() !== '').map((_, i) => `AC-${i + 1}`);
-}
+export { acIdsOf };
 
 interface VerificationRow {
   delivery_id: string;
@@ -227,17 +226,32 @@ async function applyVerdict(
       if (input.source === 'github') {
         const statusOf = (stage: string): string =>
           input.stages.filter((s) => s.stage === stage).find((s) => s.status !== 'passed')?.status ?? 'missing';
+        const acOpen = verdict.unconfirmedAcs.length > 0 || verdict.acMissing;
         return stop('ci_incomplete', {
+          ...(acOpen
+            ? {
+                cause: 'AC 未確認',
+                unconfirmedAcs: verdict.unconfirmedAcs,
+                acMissing: verdict.acMissing,
+                acArtifact: input.diagnostics?.acArtifact ?? null,
+              }
+            : {}),
           ciRunId: verdict.ciRunId,
           logRef: input.logRef ?? null,
           runConclusion: input.diagnostics?.runConclusion ?? null,
           stages: verdict.incompleteStages.map((stage) => ({ stage, status: statusOf(stage) })),
           unmatchedJobs: input.diagnostics?.unmatchedJobs ?? [],
-          nextStep: 'GitHub Actions で CI を再実行してから再開する',
+          nextStep: acOpen
+            ? 'CI の ac-results を確かめ、GitHub Actions で CI を再実行してから再開する'
+            : 'GitHub Actions で CI を再実行してから再開する',
         });
       }
       if (!isCiRerunAllowed(job.ci_rerun_count)) {
-        return stop('ci_rerun_limit', { incompleteStages: verdict.incompleteStages, ciRunId: verdict.ciRunId });
+        return stop('ci_rerun_limit', {
+          incompleteStages: verdict.incompleteStages,
+          unconfirmedAcs: verdict.unconfirmedAcs,
+          ciRunId: verdict.ciRunId,
+        });
       }
       await client.query(
         `update job set ci_rerun_count=ci_rerun_count+1, fencing_token=fencing_token+1, lease_owner=null, lease_expires_at=null,
@@ -253,7 +267,12 @@ async function applyVerdict(
         fencingToken: job.fencing_token + 1,
         actorType: 'system',
         correlationId,
-        detail: { incompleteStages: verdict.incompleteStages, ciRunId: verdict.ciRunId, rerun: job.ci_rerun_count + 1 },
+        detail: {
+          incompleteStages: verdict.incompleteStages,
+          unconfirmedAcs: verdict.unconfirmedAcs,
+          ciRunId: verdict.ciRunId,
+          rerun: job.ci_rerun_count + 1,
+        },
       });
       return { state: 'verifying', advanced: true };
     }
@@ -371,6 +390,8 @@ export function renderPrBody(facts: PrFacts): string {
     return `| ${stage} | ${row?.status ?? '未実行'} |`;
   });
   const ciRun = 'ciRunId' in verdict ? verdict.ciRunId : '－';
+  const acSummary = summarizeAc(verdict.acEvidence);
+  const acLine = `${acSummary.label}（確認 ${acSummary.confirmed} / ${acSummary.total}）`;
 
   const decision: Record<(typeof PR_DECISION_ITEMS)[number], string> = {
     要望との対応: [
@@ -387,6 +408,8 @@ export function renderPrBody(facts: PrFacts): string {
       list(changedPaths),
     ].join('\n'),
     受入条件の検証: [
+      `判定: ${acLine}（CI の ac-results だけを根拠にする。AI の申告は使わない）`,
+      '',
       '| AC | 内容 | 結果 | test ID | CI 実行ID | SHA | digest |',
       '| --- | --- | --- | --- | --- | --- | --- |',
       ...acRows,
@@ -406,7 +429,7 @@ export function renderPrBody(facts: PrFacts): string {
     復旧方法: `- 戻し方: ${NOT_RUN}\n- DB 変更時の制約: ${NOT_RUN}`,
     残存リスク: real
       ? [
-          '- AI が作成した変更。受入条件の ○/×/未確認 を人が確かめる（CI が AC と test ID を報告しない項目は未確認）',
+          '- AI が作成した変更。PR 候補の準備完了は受入の合格ではない。試験の中身（AC を本当に確かめているか）は人が確かめる',
           `- 対象外:\n${list(request.out_of_scope)}`,
           '- 追加判断: 人の承認が必要（AI は merge も Approve もしない）',
         ].join('\n')
@@ -425,11 +448,13 @@ export function renderPrBody(facts: PrFacts): string {
     DB影響: NOT_RUN,
     Security影響: NOT_RUN,
     テスト結果:
-      verdict.verdict === 'passed' ? `${ciLabel} の全段階 passed（実行ID ${inline(ciRun)}）` : `未合格（${verdict.verdict}）`,
+      verdict.verdict === 'passed'
+        ? `${ciLabel} の全段階 passed（実行ID ${inline(ciRun)}）。${acLine}`
+        : `未合格（${verdict.verdict}）。${acLine}`,
     CI結果: real ? ciLabel : `fake CI（実 CI は${NOT_RUN}）`,
     Deployment結果: NOT_RUN,
     既知の制限: real
-      ? 'AI の変更は人の承認待ち。配備は行っていない。AC と test ID の対応は CI の報告が無ければ未確認'
+      ? 'AI の変更は人の承認待ち。配備は行っていない。AC の結果は CI の ac-results が無ければ未確認で、PR 候補にならない'
       : 'fake PoC。実 PR・実 AI・実 GitHub・配備は行っていない',
     Rollback: NOT_RUN,
   };

@@ -22,7 +22,10 @@ import {
   cancelDecision,
   canOperateJob,
   haltTarget,
+  acIdsOf,
+  evaluateVerification,
   isOrderCurrent,
+  summarizeAc,
   isPhase1Transition,
   resumeDecision,
 } from '../shared/devline.js';
@@ -35,6 +38,7 @@ import type {
   HandoffView,
   JobEvidence,
   JobView,
+  VerificationRecord,
   VerificationSource,
   RunnerKind,
   RunnerResult,
@@ -287,6 +291,52 @@ function prEvidenceOf(raw: unknown, followup: unknown): JobEvidence['pr'] {
   return { number: pr.number, url: pr.url, source: githubSourceOf(pr.url), ...(closed ? { closed: true } : {}) };
 }
 
+/** job の今の head の受入条件の結果（判定は evaluateVerification と同じ）。検証の記録が無い job は載せない。 */
+async function acEvidenceOf(requestId: string): Promise<Map<string, NonNullable<JobEvidence['ac']>>> {
+  const { rows } = await query<{
+    job_id: string;
+    head_sha: string | null;
+    criteria: string[];
+    delivery_id: string;
+    source: VerificationRecord['source'];
+    ci_run_id: string;
+    run_sequence: number;
+    run_attempt: number;
+    v_head_sha: string;
+    stages: VerificationRecord['stages'];
+    ac_results: VerificationRecord['acResults'];
+    report_digest: string | null;
+  }>(
+    `select j.id as job_id, j.head_sha, r.criteria, v.delivery_id, v.source, v.ci_run_id, v.run_sequence, v.run_attempt,
+            v.head_sha as v_head_sha, v.stages, v.ac_results, v.report_digest
+       from job j join request r on r.id = j.request_id join verification v on v.job_id = j.id
+      where j.request_id = $1`,
+    [requestId],
+  );
+  const out = new Map<string, NonNullable<JobEvidence['ac']>>();
+  for (const jobId of new Set(rows.map((r) => r.job_id))) {
+    const own = rows.filter((r) => r.job_id === jobId);
+    const first = own[0] as (typeof own)[number];
+    const records: VerificationRecord[] = own.map((r) => ({
+      deliveryId: r.delivery_id,
+      source: r.source,
+      ciRunId: r.ci_run_id,
+      runSequence: r.run_sequence,
+      runAttempt: r.run_attempt,
+      headSha: r.v_head_sha,
+      stages: r.stages,
+      acResults: r.ac_results,
+      reportDigest: r.report_digest,
+    }));
+    const { acEvidence } = evaluateVerification(records, first.head_sha ?? '', acIdsOf(first.criteria));
+    out.set(jobId, {
+      ...summarizeAc(acEvidence),
+      items: acEvidence.map((a) => ({ acId: a.acId, mark: a.mark, testIds: a.testIds })),
+    });
+  }
+  return out;
+}
+
 /** 画面の表示用。投入の記録（版の新しい順）と job ごとの証跡の要約を返す。 */
 export async function listDevlineTrace(
   requestId: string,
@@ -334,6 +384,7 @@ export async function listDevlineTrace(
        from job j where j.request_id = $1`,
     [requestId],
   );
+  const acOf = await acEvidenceOf(requestId);
   const evidence: Record<string, JobEvidence> = {};
   for (const r of rows.rows) {
     // 実 PR・実 CI の項目は記録があるときだけ載せる。fake の job の応答の形は変えない
@@ -344,6 +395,7 @@ export async function listDevlineTrace(
       hasPrDraft: r.has_pr,
       ...(pr ? { pr } : {}),
       ...(r.sources.includes('github') ? { ciRunUrl: r.ci_url, ciSource: githubSourceOf(r.ci_url) } : {}),
+      ...(acOf.has(r.id) ? { ac: acOf.get(r.id) as NonNullable<JobEvidence['ac']> } : {}),
     };
   }
   return { handoffs, evidence };
