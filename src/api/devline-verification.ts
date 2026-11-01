@@ -127,7 +127,11 @@ export async function recordVerification(input: RecordVerificationInput): Promis
     if (!recorded) {
       // 実 CI は再実行を要求できない。再開の後に同じ run しか無ければ、待たずにもう一度止める
       if (applicable && input.source === 'github' && verdict.verdict === 'incomplete') {
-        const moved = await applyVerdict(client, job, verdict, input);
+        // 記録済みの結果と今回の読み取りは別物なので、この読み取りでは AI の修正（費用がかかる）へ進めない
+        const moved = await applyVerdict(client, job, verdict, {
+          ...input,
+          diagnostics: { ...input.diagnostics, acArtifact: 'already_recorded' },
+        });
         return { status: 'duplicate', verdict, jobState: moved.state, advanced: moved.advanced };
       }
       return { status: 'duplicate', verdict, jobState: job.state, advanced: false };
