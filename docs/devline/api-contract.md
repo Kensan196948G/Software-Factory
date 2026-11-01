@@ -177,6 +177,32 @@ fence の無い関数だが、CI は lease の持ち主ではないので状態�
 - API-07（`POST /api/jobs/:id/verifications`）は作らない。ルートが存在しないことを試験する。
 - zod は 3 / 4 両対応の書き方に限る: `z.record` は2引数、`error.issues`（`.errors` は使わない）、`z.string().uuid()` は可、`.merge` と `z.nativeEnum` は避ける（`z.enum(JOB_STATES)` を使う）。schema は `src/api/schemas.ts`。`src/shared/devline.ts` に zod を入れない。
 
+### 人の承認 → merge → 検証環境への配備 → 戻し（仕様 4-9、FR-39〜41、TC-N09）
+
+実装は `src/api/devline-release.ts`、判定の純関数は `src/shared/devline-release.ts`、worker は `src/worker/deploy-*.ts`。すべて `mutate()`（CSRF）を通す。本文は strict で、repo、runner 種別、予算、イメージ名、ポートは受けない。
+
+| API                                 | 本文                           | 動き                                                                                                                    |
+| ----------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/jobs/:id/approve-merge`  | `{ headSha }`（40桁）          | サーバが検査して、`sha` を渡して squash で merge する。結果不明の押し直しは PR を読んで照合する。merge 済みなら同じ結果 |
+| `POST /api/jobs/:id/approve-deploy` | `{ sha, digest, environment }` | 3つが記録と一致するときだけ、配備の試行を積む。worker が digest をそのまま起動する                                      |
+| `POST /api/jobs/:id/rollback`       | `{ reason }`（必須）           | この job の版が環境に載っていて前の版があるときだけ、戻しの試行を積む                                                   |
+| `GET /api/requests/:id/jobs`        | －                             | `release`（job ID ごと）を足す。PR、merge、AC、承認、成果物、配備、戻し。トークンと内部エラーの本文は返さない           |
+| `GET /api/devline/summary`          | －                             | `{ stopped, mergeWaiting }`。DevOps の KPI（W-09）                                                                      |
+
+**状態**: job は merge が確定するまで `pr_ready` に置く。遷移表に `approved` から戻る辺が無く、失敗すると行き止まりになるため。確定したら同じトランザクションで `pr_ready → approved → merged`（event を1行ずつ）。配備の成功で `merged → staged`。配備の失敗は `merged` のまま、戻しの後は `staged` のまま。途中経過は `release.merge_state`（`none/sending/unknown/rejected/merged`）。
+
+**失効の規則**（`decideMerge`、`decideDeploy`、`decideRollback`）:
+
+| 操作           | 拒否する場合                                                                                                                                                                     |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| merge の承認   | 役割が approver 以外、`is_agent`、状態が `pr_ready` 以外、`headSha` が `job.head_sha` と違う、superseded、版が無効（赤信号を含む）、検査が合格でない、AC の未確認、PR の記録なし |
+| merge の送信   | PR が閉じている、head が変わった、作成者かマーカーが違う、merge 先が既定のブランチでない、GitHub の 409（失効）。405 と 403 は失効させず押し直せる                               |
+| 配備の承認     | 上の人の条件、状態が `merged` 以外、superseded、版が無効、tree の不一致か未確認、SHA・digest・環境の不一致、成果物が未検査                                                       |
+| 配備（worker） | 承認の後で版が上がった、記録が変わった（`approval_expired`）。イメージが無い、名前かポートが使用中                                                                               |
+| 戻し           | 人の条件、状態が `staged` 以外、別の版が載っている、戻す先が無い、理由が空                                                                                                       |
+
+merge の口（`createGithubPrMergeAdapter`）を作るのは `devline-release.ts` だけで、worker と runner は import しない（`tests/unit/devline-release.test.ts` で固定）。
+
 ## 3. エラーコード
 
 **新しい番号は作らない。** すべて既存の意味の範囲に収まる。
