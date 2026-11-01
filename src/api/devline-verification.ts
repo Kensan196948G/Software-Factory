@@ -141,7 +141,15 @@ export async function recordVerification(input: RecordVerificationInput): Promis
       result: 'success',
       ...CI_ACTOR(input.source),
       correlationId: input.correlationId,
-      diff: { deliveryId: input.deliveryId, ciRunId: input.ciRunId, headSha: input.headSha, verdict: verdict.verdict },
+      // 届いた配信の SHA での判定と、job の今の head での判定（次の遷移を決める方）を分けて残す
+      diff: {
+        deliveryId: input.deliveryId,
+        ciRunId: input.ciRunId,
+        headSha: input.headSha,
+        verdict: evaluateVerification(rows.rows.map(toRecord), input.headSha, acIdsOf(request?.criteria ?? [])).verdict,
+        jobHeadSha: job.head_sha,
+        jobHeadVerdict: verdict.verdict,
+      },
     });
 
     if (!applicable) return { status: 'recorded', verdict, jobState: job.state, advanced: false };
@@ -289,6 +297,10 @@ async function logTransition(
 const FIELD_USERS = ['現場の担当者', '現場所長', '現場事務', '作業船の船長・船員', '潜水士'];
 const NOT_RUN_FAKE = '未実施（fake PoC）';
 const NOT_RUN_REAL = '未確認（人が確認する）';
+/** job_artifact の CHECK。超えると pr_ready の記録全体が rollback されるので、ここで必ず収める。 */
+const MAX_PR_BODY_BYTES = 262_144;
+const MAX_LISTED_PATHS = 100;
+const MAX_PATH_CHARS = 300;
 
 /** 依頼の文章は Markdown の命令にも HTML にもさせない。1行にして表示用にエスケープする。 */
 function inline(text: unknown): string {
@@ -323,6 +335,15 @@ interface PrFacts {
   ci?: { source: VerificationRecord['source']; runUrl: string | null } | null;
 }
 
+/** 大きすぎる本文を UTF-8 の境界で切る。末尾の見出しは残らないが、記録を失うよりよい。 */
+function capBody(body: string): string {
+  if (Buffer.byteLength(body, 'utf8') <= MAX_PR_BODY_BYTES) return body;
+  const note = '\n\n（長すぎるので以降を省略しました）\n';
+  const room = MAX_PR_BODY_BYTES - Buffer.byteLength(note, 'utf8');
+  const head = new TextDecoder().decode(Buffer.from(body, 'utf8').subarray(0, room)).replace(/\uFFFD$/, '');
+  return `${head}${note}`;
+}
+
 /** 純関数。10項目と12見出しを必ず含む。無いものは未実施と書き、成功のように書かない。 */
 export function renderPrBody(facts: PrFacts): string {
   const { job, request, snapshotSha, verdict, stages } = facts;
@@ -334,7 +355,12 @@ export function renderPrBody(facts: PrFacts): string {
   const list = (items: readonly string[]): string => (items.length ? items.map((s) => `- ${inline(s)}`).join('\n') : '- なし');
   const isField = request.users.some((u) => FIELD_USERS.includes(u));
   const handlesOriginals = request.data_handling.includes('photo');
-  const changedPaths = Array.isArray(job.work_state.changedPaths) ? (job.work_state.changedPaths as string[]) : [];
+  const allPaths = Array.isArray(job.work_state.changedPaths) ? (job.work_state.changedPaths as string[]) : [];
+  // 一覧は切り詰める（全件は git の差分にある）
+  const changedPaths = [
+    ...allPaths.slice(0, MAX_LISTED_PATHS).map((p) => String(p).slice(0, MAX_PATH_CHARS)),
+    ...(allPaths.length > MAX_LISTED_PATHS ? [`ほか ${allPaths.length - MAX_LISTED_PATHS} 件（一覧を省略）`] : []),
+  ];
   const acRows = verdict.acEvidence.map((ac) => {
     const index = Number(ac.acId.replace('AC-', '')) - 1;
     const tests = ac.testIds.length ? ac.testIds.map(inline).join(', ') : '－';
@@ -423,7 +449,7 @@ export function renderPrBody(facts: PrFacts): string {
   PR_DECISION_ITEMS.forEach((item, i) => lines.push(`### ${i + 1}. ${item}`, '', decision[item], ''));
   lines.push('## PR 本文（AGENTS.md）', '');
   for (const heading of PR_AGENTS_HEADINGS) lines.push(`### ${heading}`, '', agents[heading], '');
-  return `${lines.join('\n').trimEnd()}\n`;
+  return capBody(`${lines.join('\n').trimEnd()}\n`);
 }
 
 /** CI の前に PR を作るときの本文。検査の結果はまだ無いので未確認として書く（pr_ready で更新する）。 */

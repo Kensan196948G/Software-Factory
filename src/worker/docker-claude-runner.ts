@@ -550,15 +550,19 @@ export function createDockerClaudeRunner(options: DockerClaudeOptions): DockerCl
     try {
       const network = await setUpNetwork(sandbox);
       if (!network.ok) {
-        return failed(`隔離ネットワークを用意できません（${network.step}）`, {}, {
-          artifacts: [
-            textArtifact(
-              'log',
-              `network-setup-a${input.attemptNo}.log`,
-              redact(`step=${network.step}\n${network.stderr}`) || '(stderr なし)',
-            ),
-          ],
-        });
+        return failed(
+          `隔離ネットワークを用意できません（${network.step}）`,
+          {},
+          {
+            artifacts: [
+              textArtifact(
+                'log',
+                `network-setup-a${input.attemptNo}.log`,
+                redact(`step=${network.step}\n${network.stderr}`) || '(stderr なし)',
+              ),
+            ],
+          },
+        );
       }
       phase = 'コンテナの起動';
       const args = buildDockerRunArgs({
@@ -769,7 +773,11 @@ export function createDockerClaudeRunner(options: DockerClaudeOptions): DockerCl
     },
     async sweepOrphans() {
       // 同じ DB の worker のものだけを片付ける。別の環境の worker や手で立てたものには触らない
-      const filter = ['--filter', `label=${LABEL}`, ...(options.scope ? ['--filter', `label=${SCOPE_LABEL}=${options.scope}`] : [])];
+      const filter = [
+        '--filter',
+        `label=${LABEL}`,
+        ...(options.scope ? ['--filter', `label=${SCOPE_LABEL}=${options.scope}`] : []),
+      ];
       const containers = await docker(['ps', '--all', '--quiet', ...filter]);
       for (const id of containers.stdout.split('\n').filter(Boolean)) await docker(['kill', id]);
       const networks = await docker(['network', 'ls', '--quiet', ...filter]);

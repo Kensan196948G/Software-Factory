@@ -89,6 +89,7 @@ async function main(): Promise<void> {
         runner,
         scenario: decision.scenario,
         clock: () => new Date(),
+        shutdown: stop.signal,
         ...(line ? { line } : {}),
       });
       // 進まなかった工程（CI の結果待ちなど）も待つ。空回りで DB を叩き続けない

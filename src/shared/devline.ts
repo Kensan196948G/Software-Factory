@@ -416,22 +416,42 @@ export function nextRetryAt(now: Date, attemptsSoFar: number): Date {
   return new Date(now.getTime() + (delays[index] ?? 15) * 60_000);
 }
 
+/** Retry-After の上限。読めない大きな値で投入を止め続けない（24 時間）。 */
+const MAX_RETRY_AFTER_SECONDS = 24 * 60 * 60;
+
+/** 混雑のときの次の試行時刻（純関数）。既定の待ちと Retry-After の遅い方。 */
+export function rateLimitedRetryAt(now: Date, attemptsSoFar: number, retryAfterSeconds?: number): Date {
+  const byDefault = nextRetryAt(now, attemptsSoFar);
+  if (retryAfterSeconds === undefined || !Number.isFinite(retryAfterSeconds) || retryAfterSeconds < 0) return byDefault;
+  const byServer = now.getTime() + Math.min(retryAfterSeconds, MAX_RETRY_AFTER_SECONDS) * 1000;
+  return new Date(Math.max(byDefault.getTime(), byServer));
+}
+
 export type IssueTransportFacts =
-  { kind: 'timeout' } | { kind: 'network' } | { kind: 'http'; status: number; bodyParsed: boolean; retryAfterPresent: boolean };
+  | { kind: 'timeout' }
+  | { kind: 'network' }
+  | {
+      kind: 'http';
+      status: number;
+      bodyParsed: boolean;
+      retryAfterPresent: boolean;
+      /** `x-ratelimit-remaining: 0`（primary rate limit の 403 は Retry-After を付けない）。 */
+      rateLimitExhausted?: boolean;
+    };
 
 export type IssueOutcomeClass = 'succeeded' | 'unknown' | 'failed' | 'rate_limited';
 
 /**
  * 外部応答の分類（純関数）。
  * 2xx でも本文が読めなければ作成済みの可能性があるので unknown。
- * 408・3xx・5xx も unknown。429 と Retry-After 付きの 403 は「未処理」とみなす rate_limited。
+ * 408・3xx・5xx も unknown。429 と、Retry-After 付きか `x-ratelimit-remaining: 0` の 403 は「未処理」とみなす rate_limited。
  * それ以外の 4xx は確定した失敗（Issue は作られていない）。
  */
 export function classifyIssueResponse(facts: IssueTransportFacts): IssueOutcomeClass {
   if (facts.kind !== 'http') return 'unknown';
-  const { status, bodyParsed, retryAfterPresent } = facts;
+  const { status, bodyParsed, retryAfterPresent, rateLimitExhausted } = facts;
   if (status >= 200 && status < 300) return bodyParsed ? 'succeeded' : 'unknown';
-  if (status === 429 || (status === 403 && retryAfterPresent)) return 'rate_limited';
+  if (status === 429 || (status === 403 && (retryAfterPresent || rateLimitExhausted === true))) return 'rate_limited';
   if (status === 408) return 'unknown';
   if (status >= 400 && status < 500) return 'failed';
   return 'unknown';

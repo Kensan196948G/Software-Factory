@@ -985,13 +985,14 @@ function resultForStorage(result: RunnerResult): Record<string, unknown> {
 /**
  * 試行の結果を記録する。遅れた結果は attempt を discarded で閉じ、成果物は job に載せない。
  * chargeLate（実費のかかる runner）のときは、その試行の費用だけを別に数える。
+ * rejected は検査を通らなかった結果。rejected で閉じ、成果物を記録しない。費用は数える。
  */
 export async function finishAttempt(
   lease: JobLease,
   attemptId: string,
   result: RunnerResult,
   now: Date,
-  options: { chargeLate?: boolean } = {},
+  options: { chargeLate?: boolean; rejected?: boolean } = {},
 ): Promise<FencedWrite<null>> {
   const usage = result.usage;
   const applied = await withTransaction(async (client) => {
@@ -1017,17 +1018,17 @@ export async function finishAttempt(
       [
         attemptId,
         now,
-        result.status,
+        options.rejected ? 'rejected' : result.status,
         result.exitCode,
         result.logRef,
-        JSON.stringify(resultForStorage(result)),
+        JSON.stringify(resultForStorage(options.rejected ? { ...result, artifacts: [] } : result)),
         JSON.stringify(usage),
         usage.costJpy,
         Math.max(0, Math.floor(usage.durationSeconds)),
       ],
     );
     if (!rowsChanged(closed)) return true;
-    for (const artifact of result.artifacts) {
+    for (const artifact of options.rejected ? [] : result.artifacts) {
       await client.query(
         `insert into job_artifact (job_id, attempt_id, kind, name, sha256, byte_size, storage_ref, content, created_at)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9)

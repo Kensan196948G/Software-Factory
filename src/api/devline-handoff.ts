@@ -33,7 +33,7 @@ import {
   isRepoAllowed,
   matchIssueByMarker,
   nextHandoffAction,
-  nextRetryAt,
+  rateLimitedRetryAt,
 } from '../shared/devline.js';
 import type {
   AllowedRepo,
@@ -860,7 +860,8 @@ async function sendAndRecord(intent: IntentRow, row: RequestRow, ctx: HandoffCon
     throw unknownError(undefined);
   }
   const rateLimited = outcome.outcome === 'rate_limited';
-  const nextAttemptAt = rateLimited ? nextRetryAt(now, intent.attempts) : null;
+  const nextAttemptAt =
+    outcome.outcome === 'rate_limited' ? rateLimitedRetryAt(now, intent.attempts, outcome.retryAfterSeconds) : null;
   const message = outcome.outcome === 'failed' ? (outcome.message ?? null) : null;
   await withTransaction(async (client) => {
     await client.query(
@@ -989,10 +990,14 @@ export async function handoffOrder(
   depsIn?: DevlineDeps,
 ): Promise<HandoffResult> {
   const facts = { role: actor.role, isAdmin: actor.user.isAdmin };
-  if (!canHandoff(facts)) return denyHandoff(input.requestId, actor, correlationId, 'role');
+  // 契約: 投入は desk / approver、confirm_absent は approver / admin（admin は役割によらない）
   let confirmAbsent: string | null = null;
   if (input.confirmAbsent) {
     if (!canConfirmAbsent(facts)) return denyHandoff(input.requestId, actor, correlationId, 'confirm_absent');
+  } else if (!canHandoff(facts)) {
+    return denyHandoff(input.requestId, actor, correlationId, 'role');
+  }
+  if (input.confirmAbsent) {
     confirmAbsent = input.confirmAbsent.reason.trim();
     if (confirmAbsent === '') throw Errors.reasonRequired();
   }

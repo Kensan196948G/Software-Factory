@@ -278,6 +278,7 @@ async function realRun(env: NodeJS.ProcessEnv): Promise<boolean> {
       allowedRepos: allowed,
       line,
       onlyJobId: handed.jobId,
+      shutdown: stop.signal,
     };
     let view = await getJobView(handed.jobId);
     while (view && !['pr_ready', 'stopped', 'failed', 'cancelled'].includes(view.state)) {

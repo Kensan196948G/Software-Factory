@@ -108,6 +108,7 @@ export function createGithubPrAdapter(options: GithubAdapterOptions): PrAdapter 
       status: res.status,
       bodyParsed: pull !== null,
       retryAfterPresent: res.headers.get('retry-after') !== null,
+      rateLimitExhausted: res.headers.get('x-ratelimit-remaining') === '0',
     };
     const outcome = classifyIssueResponse(facts);
     if (outcome === 'succeeded') return { outcome, pull: pull as PullSummary };

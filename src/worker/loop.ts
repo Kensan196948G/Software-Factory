@@ -79,11 +79,16 @@ export interface WorkerOptions {
   ) => RecordVerificationInput | null | Promise<CiCollectResult>;
   leaseSeconds?: number;
   /** 実 runner のとき: 予算・push・PR・実 CI。無ければ fake の経路のまま。 */
-  line?: Pick<RealLine, 'budget' | 'preflight' | 'publish' | 'updatePrBody' | 'closeSupersededPr' | 'followUpPr' | 'isLockHeld'> & {
+  line?: Pick<
+    RealLine,
+    'budget' | 'preflight' | 'publish' | 'updatePrBody' | 'closeSupersededPr' | 'followUpPr' | 'isLockHeld'
+  > & {
     ci: Pick<RealLine['ci'], 'collect'>;
   };
   /** この job だけを取る（1件実走の入口）。 */
   onlyJobId?: string;
+  /** 終了の合図（SIGINT / SIGTERM）。動いている AI を止め、試行を閉じ、lease を外して工程を終える。 */
+  shutdown?: AbortSignal;
 }
 
 export type StepOutcome =
@@ -131,7 +136,9 @@ type RunOutcome =
   | { kind: 'lost'; late: RunnerResult | null }
   | { kind: 'limit'; reason: 'session_limit' | 'continuous_limit'; late: RunnerResult | null }
   /** heartbeat や待ちが例外で失敗した。見張れない AI は動かし続けない。 */
-  | { kind: 'watch_failed'; cause: string; late: RunnerResult | null };
+  | { kind: 'watch_failed'; cause: string; late: RunnerResult | null }
+  /** worker の終了の合図で止めた。job は動かさない（次の起動で同じ工程からやり直す）。 */
+  | { kind: 'shutdown'; late: RunnerResult | null };
 
 /** 実費がかかる runner は止めた後の結果も待つ。遅れた結果の費用を数え落とさないため。 */
 async function settleLate(runner: RunnerAdapter, run: Promise<RunOutcome>): Promise<RunnerResult | null> {
@@ -167,14 +174,28 @@ async function runWatched(
     await cancelRun();
     return { kind: 'watch_failed', cause, late: await settleLate(options.runner, run) };
   };
+  const shutdown = options.shutdown;
+  const shutdownRequested: Promise<'shutdown'> = !shutdown
+    ? new Promise<never>(() => undefined)
+    : shutdown.aborted
+      ? Promise.resolve('shutdown')
+      : new Promise((resolve) => shutdown.addEventListener('abort', () => resolve('shutdown'), { once: true }));
   for (;;) {
     const waiter = new AbortController();
     const ticked = tick(waiter.signal).then(
       () => 'tick' as const,
       () => (waiter.signal.aborted ? ('never' as const) : ('tick_failed' as const)),
     );
-    const winner = await Promise.race([run, ticked.then((v) => (v === 'never' ? new Promise<never>(() => undefined) : v))]);
+    const winner = await Promise.race([
+      run,
+      shutdownRequested,
+      ticked.then((v) => (v === 'never' ? new Promise<never>(() => undefined) : v)),
+    ]);
     waiter.abort();
+    if (winner === 'shutdown') {
+      await cancelRun();
+      return { kind: 'shutdown', late: await settleLate(options.runner, run) };
+    }
     if (winner === 'tick_failed') return watchFailed('tick_failed');
     if (winner !== 'tick') return winner;
 
@@ -198,9 +219,14 @@ async function runWatched(
   }
 }
 
-/** 成果物の hash は申告を信じず実物から計算し直す。合わなければ runner の失敗として扱う。 */
+/** 成果物の hash と大きさは申告を信じず実物から計算し直す。合わなければ runner の失敗として扱う。 */
 function artifactsMatch(result: RunnerResult): boolean {
-  return result.artifacts.every((a) => a.content === null || a.content === undefined || sha256Hex(a.content) === a.sha256);
+  return result.artifacts.every(
+    (a) =>
+      a.content === null ||
+      a.content === undefined ||
+      (sha256Hex(a.content) === a.sha256 && Buffer.byteLength(a.content, 'utf8') === a.byteSize),
+  );
 }
 
 const STEP_OF: Partial<Record<JobState, RunnerStep>> = { planning: 'plan', implementing: 'implement', revising: 'revise' };
@@ -285,6 +311,15 @@ async function runStep(options: WorkerOptions, job: JobRow, lease: JobLease, cor
       });
       return stopped(outcome.reason, { step });
     }
+    if (outcome.kind === 'shutdown') {
+      await closeAttempt(attemptId, 'cancelled', now, {
+        jobId: job.id,
+        costJpy: costOf(outcome.late),
+        detail: { cause: 'shutdown', estimated: outcome.late?.costEstimated },
+      });
+      await releaseLease(lease, options.clock());
+      return { kind: 'stepped', jobId: job.id, from, to: 'unchanged' };
+    }
     if (outcome.kind === 'watch_failed') {
       // DB が戻っていなければここで例外になる。試行は開いたままで、次の取得で割り当てが計上される
       await closeAttempt(attemptId, 'failed', now, {
@@ -309,15 +344,21 @@ async function runStep(options: WorkerOptions, job: JobRow, lease: JobLease, cor
       });
       return stopped('runner_failure', { step, cause: 'invalid_result' }, agentActor(options.runner));
     }
+    // 記録より先に検査する。通らない結果は成果物を追記のみの表へ入れず、rejected で閉じる（費用は数える）
+    const agent = agentActor(options.runner);
+    const hostChecked = options.runner.capability.diffCheckedByHost === true;
+    // policy の検査を最初に行う。注文書の本文や runner の申告では変わらない
+    const violations = hostChecked ? (result.serverDiff?.violations ?? []) : checkChangedPaths(result.changedPaths);
+    const touched = hostChecked
+      ? (result.serverDiff?.humanApproval ?? [])
+      : [...(result.humanApprovalTouched ?? []), ...pathsRequiringHumanApproval(result.changedPaths)];
+    const artifactsOk = artifactsMatch(result);
     const finished = await finishAttempt(lease, attemptId, result, now, {
       chargeLate: options.runner.capability.costAccounting === 'metered',
+      rejected: violations.length > 0 || touched.length > 0 || !artifactsOk,
     });
     if (!finished.applied) return { kind: 'lost', jobId: job.id, from };
 
-    const agent = agentActor(options.runner);
-    // policy の検査を最初に行う。注文書の本文や runner の申告では変わらない
-    const hostChecked = options.runner.capability.diffCheckedByHost === true;
-    const violations = hostChecked ? (result.serverDiff?.violations ?? []) : checkChangedPaths(result.changedPaths);
     if (violations.length > 0) {
       return stopped(
         'policy_violation',
@@ -325,11 +366,11 @@ async function runStep(options: WorkerOptions, job: JobRow, lease: JobLease, cor
         agent,
       );
     }
-    const touched = hostChecked
-      ? (result.serverDiff?.humanApproval ?? [])
-      : [...(result.humanApprovalTouched ?? []), ...pathsRequiringHumanApproval(result.changedPaths)];
     if (touched.length > 0) {
       return stopped('human_approval_required', { items: touched.slice(0, 50) }, agent);
+    }
+    if (!artifactsOk) {
+      return stopped('runner_failure', { step, exitCode: result.exitCode, cause: 'artifact_mismatch' }, agent);
     }
     const budget = options.line?.budget ?? null;
     if (budget) {
@@ -363,7 +404,7 @@ async function runStep(options: WorkerOptions, job: JobRow, lease: JobLease, cor
     }
     const headOk = step === 'plan' || (typeof result.headSha === 'string' && /^[0-9a-f]{40}$/.test(result.headSha));
     const diffOk = !hostChecked || result.serverDiff !== undefined;
-    if (result.status === 'failed' || result.exitCode !== 0 || !headOk || !diffOk || !artifactsMatch(result)) {
+    if (result.status === 'failed' || result.exitCode !== 0 || !headOk || !diffOk) {
       // 原因を残す（summary は runner が redact 済み）。CLI が動かなかった失敗は費用なしで再開できる
       return stopped(
         'runner_failure',
@@ -610,6 +651,7 @@ export async function runOnce(options: WorkerOptions): Promise<StepOutcome> {
   assertRunnerAllowed(options.runner);
   // 排他を失った worker は新しい AI を動かさない（呼び出し側で止める）
   if (options.line?.isLockHeld?.() === false) throw new Error('worker の排他を失いました');
+  if (options.shutdown?.aborted) return { kind: 'idle' };
   if (options.line) await followUpPrs(options).catch(() => undefined);
   const realWorker = options.runner.capability.kind === 'docker-claude';
   const claimed = await claimNextJob({

@@ -5806,11 +5806,11 @@ const SF = (function () {
           ? (/^https?:\/\//.test(realPr.url || '')
               ? '<a href="' + E(realPr.url) + '" target="_blank" rel="noopener noreferrer">PR #' + E(realPr.number) + '</a>'
               : 'PR #' + E(realPr.number)) +
-            (realPr.closed
-              ? '（閉じました。古い版か、再開できない停止です）'
-              : job.state === 'pr_ready' && job.orderCurrent !== false && !job.supersededAt
-                ? '（人の承認待ち。AI は merge しません）'
-                : '')
+              (realPr.closed
+                ? '（閉じました。古い版か、再開できない停止です）'
+                : job.state === 'pr_ready' && job.orderCurrent !== false && !job.supersededAt
+                  ? '（人の承認待ち。AI は merge しません）'
+                  : '')
           : ev.hasPrDraft
             ? 'PR 本文の下書きのみ（実 PR はありません）'
             : 'PR の記録はありません',
