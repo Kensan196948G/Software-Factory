@@ -331,7 +331,17 @@ async function runStep(options: WorkerOptions, job: JobRow, lease: JobLease, cor
     const headOk = step === 'plan' || (typeof result.headSha === 'string' && /^[0-9a-f]{40}$/.test(result.headSha));
     const diffOk = !hostChecked || result.serverDiff !== undefined;
     if (result.status === 'failed' || result.exitCode !== 0 || !headOk || !diffOk || !artifactsMatch(result)) {
-      return stopped('runner_failure', { step, exitCode: result.exitCode }, agent);
+      // 原因を残す（summary は runner が redact 済み）。CLI が動かなかった失敗は費用なしで再開できる
+      return stopped(
+        'runner_failure',
+        {
+          step,
+          exitCode: result.exitCode,
+          cause: result.summary.slice(0, 300),
+          ...(result.notStarted ? { notStarted: true } : {}),
+        },
+        agent,
+      );
     }
 
     const workState: Record<string, unknown> = {

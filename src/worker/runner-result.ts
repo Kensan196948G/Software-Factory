@@ -39,10 +39,20 @@ const resultSchema = z.object({
   serverDiff: z
     .object({
       policyVersion: z.string().max(200),
-      violations: z.array(z.object({ path: z.string().max(1000), rule: z.string().max(50) })).max(5000),
+      violations: z
+        .array(
+          z.object({
+            path: z.string().max(1000),
+            rule: z.string().max(50),
+            detector: z.string().max(50).optional(),
+            line: z.number().int().min(1).optional(),
+          }),
+        )
+        .max(5000),
       humanApproval: z.array(z.string().max(1000)).max(5000),
     })
     .optional(),
+  notStarted: z.boolean().optional(),
   budgetExceeded: z.boolean().optional(),
   costEstimated: z.boolean().optional(),
 });

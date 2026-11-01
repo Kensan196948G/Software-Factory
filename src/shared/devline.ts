@@ -105,6 +105,7 @@ export const STOP_REASONS = [
   'session_limit',
   'continuous_limit',
   'ci_rerun_limit',
+  'ci_incomplete',
   'budget_limit',
   'policy_violation',
   'human_approval_required',
@@ -1110,6 +1111,8 @@ export interface RunnerResult {
    * capability.diffCheckedByHost の runner でこれが無い結果は worker が拒否する。
    */
   serverDiff?: ServerDiffResult;
+  /** CLI が起動していないと確実に分かる（費用なし）。worker は runner_failure の理由に残す。 */
+  notStarted?: boolean;
   /** CLI が予算の上限で止まった。worker は費用の合計によらず budget_limit で止める。 */
   budgetExceeded?: boolean;
   /** 費用が実測ではなく見込み（結果を受け取れなかった実行は割り当て分を計上する）。 */
@@ -1136,7 +1139,14 @@ export interface DiffViolation {
     | 'too_many_files'
     | 'workspace_too_large'
     | 'git_dir_in_worktree'
-    | 'unexpected_change';
+    | 'unexpected_change'
+    | 'secret_detected'
+    | 'binary_file'
+    | 'file_too_large_to_scan';
+  /** secret_detected の検出器の名前。値は入れない。 */
+  detector?: string;
+  /** secret_detected の行番号（1 始まり）。 */
+  line?: number;
 }
 
 export interface RunnerAdapter {

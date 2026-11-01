@@ -6,6 +6,9 @@
  * - 通信は `--internal` のネットワークと許可先だけを通すプロキシ（deploy/devline/egress-proxy.mjs）に限る。
  * - 結果の合否はここで決めない。changedPaths はホストの git 差分から算出し、AI の申告を使わない。
  * - 費用: 結果を受け取れなかった実行は、渡した上限をまるごと計上する（少なく数えない）。
+ *   ただし CLI が起動していないと確実に分かるとき（docker run の 125〜127 で出力なし）は 0 円。
+ *   実測がある実行は、後の検査が失敗しても実測を保つ。
+ * - 取消と時間切れは、コンテナが作られる前でも失わない。`docker run` が終わるまで kill を繰り返す。
  */
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -23,15 +26,26 @@ import type {
   RunnerUsage,
 } from '../shared/devline.js';
 import { GitWorkspace } from './git-workspace.js';
+import { makeRedactor } from './secret-scan.js';
+
+export { makeRedactor };
 
 export const RUNNER_IMAGE = 'msf-devline-runner:2.1.316';
 export const PROXY_IMAGE = 'msf-devline-egress-proxy:v1';
 const LABEL = 'msf.devline=1';
+const SCOPE_LABEL = 'msf.devline.scope';
 const PROXY_PORT = 3128;
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_PROMPT_BYTES = 100 * 1024;
 const MAX_OUTPUT_ARTIFACT_BYTES = 200 * 1024;
 const DOCKER_CMD_TIMEOUT_MS = 60_000;
+/** 取消の後、`docker run` が終わるまで kill を繰り返す間隔。 */
+const KILL_RETRY_MS = 250;
+/**
+ * `docker run` の 125（docker が失敗）と、中の `timeout` の 125〜127（起動・実行できない）。
+ * 出力が無いこのコードは CLI が動いていない（API を呼んでいない）。signal や null は判断に使わない。
+ */
+const NOT_STARTED_EXIT_CODES: ReadonlySet<number> = new Set([125, 126, 127]);
 
 export interface DockerClaudeOptions {
   apiKey: string;
@@ -49,12 +63,14 @@ export interface DockerClaudeOptions {
   pidsLimit?: number;
   hostUser?: { uid: number; gid: number };
   workspaceRoot?: string;
+  /** 片付けの範囲。ラベル `msf.devline.scope` に入れ、sweepOrphans はこの範囲のものだけを止める。 */
+  scope?: string;
 }
 
 export interface DockerClaudeRunner extends RunnerAdapter {
   /** implement / revise の作業場（publish の push に使う）。release まで有効。 */
   workspaceOf(run: { jobId: string; attemptNo: number }): GitWorkspace | null;
-  /** 落ちた worker の残したコンテナとネットワークを片付ける（ラベルで絞る。他のコンテナに触らない）。 */
+  /** 落ちた worker の残したコンテナとネットワークを片付ける（ラベルで絞る。他のコンテナに触らない）。worker の排他を取ってから呼ぶ。 */
   sweepOrphans(): Promise<void>;
   /** 必要なイメージがあるかの確認（送信なし）。 */
   checkImages(): Promise<boolean>;
@@ -174,7 +190,13 @@ export function buildClaudeArgs(input: { prompt: string; step: RunnerStep; maxTu
   ];
 }
 
+/** ラベルの引数。scope は同じ DB の worker のものだけを片付けるための印。 */
+function labelArgs(scope?: string): string[] {
+  return ['--label', LABEL, ...(scope ? ['--label', `${SCOPE_LABEL}=${scope}`] : [])];
+}
+
 export function buildDockerRunArgs(input: {
+  scope?: string;
   containerName: string;
   network: string;
   proxyName: string;
@@ -193,8 +215,7 @@ export function buildDockerRunArgs(input: {
     '--rm',
     '--name',
     input.containerName,
-    '--label',
-    LABEL,
+    ...labelArgs(input.scope),
     '--user',
     `${input.user.uid}:${input.user.gid}`,
     '--cap-drop',
@@ -240,23 +261,22 @@ export function buildDockerRunArgs(input: {
 }
 
 /** ランナーを置くネットワーク。外へ出られず、ホスト側のブリッジにも IP を持たせない（ホストのポートへ届かない）。 */
-export function internalNetworkArgs(name: string): string[] {
-  return ['network', 'create', '--internal', '--opt', 'com.docker.network.bridge.inhibit_ipv4=true', '--label', LABEL, name];
+export function internalNetworkArgs(name: string, scope?: string): string[] {
+  return ['network', 'create', '--internal', '--opt', 'com.docker.network.bridge.inhibit_ipv4=true', ...labelArgs(scope), name];
 }
 
-export function egressNetworkArgs(name: string): string[] {
-  return ['network', 'create', '--label', LABEL, name];
+export function egressNetworkArgs(name: string, scope?: string): string[] {
+  return ['network', 'create', ...labelArgs(scope), name];
 }
 
-export function proxyRunArgs(input: { name: string; network: string; image: string }): string[] {
+export function proxyRunArgs(input: { name: string; network: string; image: string; scope?: string }): string[] {
   return [
     'run',
     '--detach',
     '--rm',
     '--name',
     input.name,
-    '--label',
-    LABEL,
+    ...labelArgs(input.scope),
     '--network',
     input.network,
     '--cap-drop',
@@ -319,20 +339,6 @@ export function parseCliOutput(stdout: string): CliResult | null {
   if (Array.isArray(raw)) raw = raw.filter((e) => (e as { type?: unknown } | null)?.type === 'result').pop();
   const parsed = cliResultSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
-}
-
-/** 値そのものと、トークンらしき形を伏せる。 */
-export function makeRedactor(secrets: readonly string[]): (text: string) => string {
-  const known = secrets.filter((s) => s.length >= 4);
-  return (text) => {
-    let out = text;
-    for (const secret of known) out = out.split(secret).join('[REDACTED]');
-    return out
-      .replace(/sk-ant-[A-Za-z0-9_-]{8,}/g, '[REDACTED]')
-      .replace(/\bgh[pousr]_[A-Za-z0-9]{10,}\b/g, '[REDACTED]')
-      .replace(/\bgithub_pat_[A-Za-z0-9_]{10,}\b/g, '[REDACTED]')
-      .replace(/(authorization\s*:\s*)(basic|bearer)\s+[A-Za-z0-9+/=._-]+/gi, '$1[REDACTED]');
-  };
 }
 
 function textArtifact(kind: RunnerArtifact['kind'], name: string, content: string): RunnerArtifact {
@@ -427,6 +433,10 @@ export function createDockerClaudeRunner(options: DockerClaudeOptions): DockerCl
   const redact = makeRedactor([options.apiKey, options.gitToken]);
   const workspaces = new Map<string, GitWorkspace>();
   const running = new Map<string, Sandbox>();
+  /** 動いている実行を止める関数。`docker run` の間だけある。 */
+  const stoppers = new Map<string, () => void>();
+  /** cancel を先に受けた実行（作業場の用意中など）。 */
+  const cancelled = new Set<string>();
   const capability: RunnerCapability = {
     kind: 'docker-claude',
     isolation: 'container',
@@ -440,21 +450,26 @@ export function createDockerClaudeRunner(options: DockerClaudeOptions): DockerCl
     await docker(['kill', sandbox.containerName]);
   };
 
-  const setUpNetwork = async (sandbox: Sandbox): Promise<boolean> => {
-    const internal = await docker(internalNetworkArgs(sandbox.internal));
-    if (internal.code !== 0) return false;
-    const egress = await docker(egressNetworkArgs(sandbox.egress));
-    if (egress.code !== 0) return false;
-    const proxy = await docker(proxyRunArgs({ name: sandbox.proxyName, network: sandbox.egress, image: proxyImage }));
-    if (proxy.code !== 0) return false;
-    const connected = await docker(['network', 'connect', sandbox.internal, sandbox.proxyName]);
-    if (connected.code !== 0) return false;
+  /** 隔離ネットワークを用意する。失敗は段階と stderr の末尾を返す（原因を切り分けるため。記録の前に redact する）。 */
+  const setUpNetwork = async (sandbox: Sandbox): Promise<{ ok: true } | { ok: false; step: string; stderr: string }> => {
+    const steps: [string, string[]][] = [
+      ['internal_network', internalNetworkArgs(sandbox.internal, options.scope)],
+      ['egress_network', egressNetworkArgs(sandbox.egress, options.scope)],
+      ['proxy', proxyRunArgs({ name: sandbox.proxyName, network: sandbox.egress, image: proxyImage, scope: options.scope })],
+      ['proxy_connect', ['network', 'connect', sandbox.internal, sandbox.proxyName]],
+    ];
+    for (const [step, args] of steps) {
+      const result = await docker(args);
+      if (result.code !== 0) return { ok: false, step, stderr: result.stderrTail };
+    }
+    let last = '';
     for (let i = 0; i < 40; i += 1) {
       const logs = await docker(['logs', sandbox.proxyName]);
-      if (logs.code === 0 && logs.stdout.includes('egress-proxy listening')) return true;
+      if (logs.code === 0 && logs.stdout.includes('egress-proxy listening')) return { ok: true };
+      last = logs.stderrTail;
       await new Promise((r) => setTimeout(r, 250));
     }
-    return false;
+    return { ok: false, step: 'proxy_ready_timeout', stderr: last };
   };
 
   const tearDown = async (sandbox: Sandbox): Promise<void> => {
@@ -489,7 +504,8 @@ export function createDockerClaudeRunner(options: DockerClaudeOptions): DockerCl
     if (hostUser.uid === 0) return failed('root では実行しません');
     const allotment = maxBudgetUsd(options.budget, input.costJpySoFar ?? 0);
     if (allotment === null) return failed('予算の残りがありません', {}, { budgetExceeded: true });
-    if (input.signal.aborted) return failed('取り消されました', {}, {}, 137);
+    const isCancelled = (): boolean => input.signal.aborted || cancelled.has(key);
+    if (isCancelled()) return failed('取り消されました', {}, {}, 137);
 
     const prompt = buildRunnerPrompt(input);
     const id = createHash('sha1')
@@ -509,6 +525,7 @@ export function createDockerClaudeRunner(options: DockerClaudeOptions): DockerCl
         gitBaseUrl: options.gitBaseUrl,
         repo,
         token: options.gitToken,
+        knownSecrets: [options.apiKey],
         nodeEnv: options.nodeEnv,
         ...(options.workspaceRoot ? { rootDir: options.workspaceRoot } : {}),
       });
@@ -525,19 +542,27 @@ export function createDockerClaudeRunner(options: DockerClaudeOptions): DockerCl
     running.set(key, sandbox);
     let timedOut = false;
     const started = Date.now();
+    /** 実測か見込みの費用。ここから先の例外でも保つ。 */
+    let measured: RunnerUsage | null = null;
+    let measuredExtra: Partial<RunnerResult> = {};
+    let dockerRunStarted = false;
+    let phase = '隔離ネットワークの用意';
     try {
-      if (!(await setUpNetwork(sandbox))) return failed('隔離ネットワークを用意できません');
-      if (input.signal.aborted) return failed('取り消されました', {}, {}, 137);
-
-      const killNow = (): void => {
-        void killContainer(sandbox);
-      };
-      input.signal.addEventListener('abort', killNow, { once: true });
-      const hostTimer = setTimeout(() => {
-        timedOut = true;
-        killNow();
-      }, timeoutMs);
+      const network = await setUpNetwork(sandbox);
+      if (!network.ok) {
+        return failed(`隔離ネットワークを用意できません（${network.step}）`, {}, {
+          artifacts: [
+            textArtifact(
+              'log',
+              `network-setup-a${input.attemptNo}.log`,
+              redact(`step=${network.step}\n${network.stderr}`) || '(stderr なし)',
+            ),
+          ],
+        });
+      }
+      phase = 'コンテナの起動';
       const args = buildDockerRunArgs({
+        scope: options.scope,
         containerName: sandbox.containerName,
         network: sandbox.internal,
         proxyName: sandbox.proxyName,
@@ -555,14 +580,54 @@ export function createDockerClaudeRunner(options: DockerClaudeOptions): DockerCl
           maxBudgetUsd: allotment,
         }),
       });
+      // 起動の直前に確かめる。ここから先の取消は下の kill の繰り返しで受ける（同期なので間に割り込まれない）
+      if (isCancelled()) return failed('取り消されました', {}, {}, 137);
+
+      // コンテナが作られる前の kill は失敗する。取消を失わないように docker run が終わるまで繰り返す
+      let finished = false;
+      let killing: Promise<void> | null = null;
+      const killUntilFinished = async (): Promise<void> => {
+        while (!finished) {
+          await killContainer(sandbox);
+          if (!finished) await new Promise((r) => setTimeout(r, KILL_RETRY_MS));
+        }
+      };
+      const stopNow = (): void => {
+        killing ??= killUntilFinished();
+      };
+      stoppers.set(key, stopNow);
+      input.signal.addEventListener('abort', stopNow, { once: true });
+      const hostTimer = setTimeout(() => {
+        timedOut = true;
+        stopNow();
+      }, timeoutMs);
+      dockerRunStarted = true;
       const result = await docker(args, {
         env: { ANTHROPIC_API_KEY: options.apiKey },
         timeoutMs: timeoutMs + 60_000,
       });
+      finished = true;
       clearTimeout(hostTimer);
-      input.signal.removeEventListener('abort', killNow);
+      stoppers.delete(key);
+      input.signal.removeEventListener('abort', stopNow);
+      await killing;
       // クライアントだけが落ちた場合にコンテナを残さない。差分を読むのはコンテナが止まった後
       await killContainer(sandbox);
+
+      // CLI が起動していないと確実に分かるときは費用なし。予算の上限で止めない（再開できる失敗にする）
+      if (result.stdout.trim() === '' && result.code !== null && NOT_STARTED_EXIT_CODES.has(result.code)) {
+        return failed(
+          `CLI を起動できませんでした（exit ${result.code}）`,
+          {},
+          {
+            notStarted: true,
+            artifacts: [
+              textArtifact('log', `runner-stderr-a${input.attemptNo}.log`, redact(result.stderrTail) || '(stderr なし)'),
+            ],
+          },
+          result.code,
+        );
+      }
 
       const cli = parseCliOutput(result.stdout);
       const estimated = cli?.total_cost_usd === undefined || cli.total_cost_usd < 0;
@@ -580,8 +645,11 @@ export function createDockerClaudeRunner(options: DockerClaudeOptions): DockerCl
       const extra: Partial<RunnerResult> = estimated ? { costEstimated: true } : {};
       const terminal = `${cli?.subtype ?? ''} ${cli?.terminal_reason ?? ''}`;
       if (/budget/i.test(terminal)) extra.budgetExceeded = true;
+      measured = usage;
+      measuredExtra = extra;
+      phase = '実行後の検査';
 
-      if (input.signal.aborted) return failed('取り消されました', usage, extra, 137);
+      if (isCancelled()) return failed('取り消されました', usage, extra, 137);
       if (timedOut) return failed('時間切れで止めました', usage, extra, 137);
       if (result.overflow) return failed('出力が大きすぎます', usage, extra, 1);
       if (!cli) {
@@ -668,11 +736,15 @@ export function createDockerClaudeRunner(options: DockerClaudeOptions): DockerCl
       if (headSha === null) return { ...base, status: 'failed', exitCode: 1, headSha: null, summary: '変更がありません' };
       return { ...base, status: 'succeeded', exitCode: 0, headSha, summary };
     } catch (err) {
-      return failed(redact(`実行に失敗しました（${(err as Error).name}）`), {
-        costJpy: usdToJpyCeil(allotment, options.budget.jpyPerUsd),
-      });
+      // 実測があれば保つ。CLI を動かしていなければ 0 円。動かしたのに結果が無ければ割り当てを計上する
+      const cause = redact(`${phase}に失敗しました（${(err as Error).name}: ${(err as Error).message}）`).slice(0, 1000);
+      if (measured) return failed(cause, measured, measuredExtra);
+      return dockerRunStarted
+        ? failed(cause, { costJpy: usdToJpyCeil(allotment, options.budget.jpyPerUsd) }, { costEstimated: true })
+        : failed(cause);
     } finally {
       running.delete(key);
+      stoppers.delete(key);
       await tearDown(sandbox);
     }
   }
@@ -681,11 +753,13 @@ export function createDockerClaudeRunner(options: DockerClaudeOptions): DockerCl
     capability,
     run,
     async cancel(target) {
-      const sandbox = running.get(keyOf(target));
-      if (sandbox) await killContainer(sandbox);
+      const key = keyOf(target);
+      cancelled.add(key);
+      stoppers.get(key)?.();
     },
     async release(target) {
       const key = keyOf(target);
+      cancelled.delete(key);
       const workspace = workspaces.get(key);
       workspaces.delete(key);
       await workspace?.dispose();
@@ -694,9 +768,11 @@ export function createDockerClaudeRunner(options: DockerClaudeOptions): DockerCl
       return workspaces.get(keyOf(target)) ?? null;
     },
     async sweepOrphans() {
-      const containers = await docker(['ps', '--all', '--quiet', '--filter', `label=${LABEL}`]);
+      // 同じ DB の worker のものだけを片付ける。別の環境の worker や手で立てたものには触らない
+      const filter = ['--filter', `label=${LABEL}`, ...(options.scope ? ['--filter', `label=${SCOPE_LABEL}=${options.scope}`] : [])];
+      const containers = await docker(['ps', '--all', '--quiet', ...filter]);
       for (const id of containers.stdout.split('\n').filter(Boolean)) await docker(['kill', id]);
-      const networks = await docker(['network', 'ls', '--quiet', '--filter', `label=${LABEL}`]);
+      const networks = await docker(['network', 'ls', '--quiet', ...filter]);
       for (const id of networks.stdout.split('\n').filter(Boolean)) await docker(['network', 'rm', id]);
     },
     async checkImages() {

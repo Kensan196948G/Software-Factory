@@ -12,10 +12,22 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { JOB_BRANCH_RE, RUNNER_CONFIG_PATTERNS, normalizeRepoPath } from '../shared/devline.js';
 import type { DiffViolation, RepoDiffPolicy } from '../shared/devline.js';
-import { evaluateDiff, isRunnerConfigPath, parseRawDiff, type DiffEvaluation } from './diff-policy.js';
+import {
+  MODE_SUBMODULE,
+  MODE_SYMLINK,
+  evaluateDiff,
+  isRunnerConfigPath,
+  parseRawDiff,
+  type DiffEvaluation,
+  type RawDiffEntry,
+} from './diff-policy.js';
+import { detectSecret, isBinaryContent, knownSecretForms, makeRedactor, scanAddedText } from './secret-scan.js';
 
 const GIT_TIMEOUT_MS = 120_000;
 const MAX_WORKSPACE_BYTES = 200 * 1024 * 1024;
+/** 中身を検査できる大きさの上限。超えたものは検査できないので止める。 */
+const MAX_SCAN_BYTES = 5 * 1024 * 1024;
+const ZERO_SHA = /^0+$/;
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
 const COMMIT_IDENTITY = { name: 'mirai-sf-devline', email: 'devline@mirai-sf.invalid' };
@@ -28,6 +40,8 @@ export interface GitWorkspaceOptions {
   nodeEnv: string;
   /** 一時ディレクトリの親。既定は OS の一時領域。 */
   rootDir?: string;
+  /** 差分の中身に現れてはいけない実値（API キーなど）。token は常に含める。 */
+  knownSecrets?: readonly string[];
 }
 
 export class GitWorkspaceError extends Error {
@@ -104,6 +118,8 @@ export class GitWorkspace {
   /** clone の後に作業場から除いたランナー設定。 */
   private strippedPaths: string[] = [];
   private checkedOutBase = '';
+  private readonly secretForms: string[];
+  private readonly redact: (text: string) => string;
 
   private constructor(
     private readonly root: string,
@@ -113,6 +129,9 @@ export class GitWorkspace {
     this.gitDir = join(root, 'git');
     this.home = join(root, 'home');
     this.baseUrl = assertGitBaseUrlAllowed(options.gitBaseUrl, options.nodeEnv);
+    const known = [options.token, ...(options.knownSecrets ?? [])];
+    this.secretForms = knownSecretForms(known);
+    this.redact = makeRedactor(known);
   }
 
   static async create(options: GitWorkspaceOptions): Promise<GitWorkspace> {
@@ -145,7 +164,15 @@ export class GitWorkspace {
     };
   }
 
-  private run(args: readonly string[], opts: { network?: boolean; env?: Record<string, string> } = {}): Promise<GitRun> {
+  private async run(args: readonly string[], opts: { network?: boolean; env?: Record<string, string> } = {}): Promise<GitRun> {
+    const { stdout, stderr } = await this.runRaw(args, opts);
+    return { stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8') };
+  }
+
+  private runRaw(
+    args: readonly string[],
+    opts: { network?: boolean; env?: Record<string, string> } = {},
+  ): Promise<{ stdout: Buffer; stderr: Buffer }> {
     return new Promise((resolve, reject) => {
       const child = spawn('git', [...SAFE_GIT_ARGS, ...args], {
         cwd: this.workTree,
@@ -163,8 +190,8 @@ export class GitWorkspace {
       });
       child.on('close', (code) => {
         clearTimeout(timer);
-        const stdout = Buffer.concat(out).toString('utf8');
-        const stderr = Buffer.concat(err).toString('utf8');
+        const stdout = Buffer.concat(out);
+        const stderr = Buffer.concat(err);
         if (code === 0) resolve({ stdout, stderr });
         // stderr は URL や要求の情報を含みうるので、メッセージに載せない
         else reject(new GitWorkspaceError(`git ${args[0] ?? ''} が失敗しました（exit ${code ?? 'signal'}）`, 'git_failed'));
@@ -218,6 +245,7 @@ export class GitWorkspace {
 
   /**
    * AI の作業の後、作業ツリーの実物から差分を算出して判定する。自己申告は使わない。
+   * 判定は path に加えて追加の中身（秘密・バイナリ）も見る。違反があれば呼び出し側は commit も push もしない。
    * index へ載せるだけで commit はしない。コンテナが止まったことを呼び出し側が確かめてから呼ぶ。
    */
   async inspect(policy: RepoDiffPolicy): Promise<DiffEvaluation> {
@@ -239,8 +267,62 @@ export class GitWorkspace {
       if (deleted.length > 0) await this.run(['reset', '--quiet', 'HEAD', '--', ...deleted]);
     }
     const raw = await this.run(['diff', '--cached', '--raw', '-z', '--no-abbrev', '-M', this.checkedOutBase]);
-    const evaluation = evaluateDiff(parseRawDiff(raw.stdout), policy);
-    return { ...evaluation, violations: [...pre, ...evaluation.violations] };
+    const entries = parseRawDiff(raw.stdout);
+    const evaluation = evaluateDiff(entries, policy);
+    const content = await this.scanContent(entries);
+    // 修正の工程: 前の試行で足した試験も、この試行から見れば既存の試験。弱められないように直前の head とも比べる
+    const humanApproval = new Set(evaluation.humanApproval);
+    const head = (await this.run(['rev-parse', 'HEAD'])).stdout.trim();
+    if (head !== this.checkedOutBase) {
+      const sinceHead = await this.run(['diff', '--cached', '--raw', '-z', '--no-abbrev', '-M', head]);
+      for (const path of evaluateDiff(parseRawDiff(sinceHead.stdout), policy).humanApproval) humanApproval.add(path);
+    }
+    return {
+      ...evaluation,
+      // path は AI が決められる。記録やログへ値が出ないように伏せる
+      changedPaths: evaluation.changedPaths.map(this.redact),
+      humanApproval: [...humanApproval].map(this.redact),
+      violations: [...pre, ...evaluation.violations.map((v) => ({ ...v, path: this.redact(v.path) })), ...content],
+    };
+  }
+
+  /** 追加の中身を検査する。値はどこにも残さない（検出器の名前と行番号だけ）。 */
+  private async scanContent(entries: readonly RawDiffEntry[]): Promise<DiffViolation[]> {
+    const violations: DiffViolation[] = [];
+    for (const entry of entries) {
+      const safePath = this.redact(entry.path);
+      const inName = detectSecret(entry.path, this.secretForms);
+      if (inName) violations.push({ path: safePath, rule: 'secret_detected', detector: inName });
+      // 消した側、symlink、submodule は中身を持ち込まない（モードの違反は evaluateDiff が止める）
+      if (entry.status === 'D' || !entry.dstSha || ZERO_SHA.test(entry.dstSha)) continue;
+      if (entry.dstMode === MODE_SYMLINK || entry.dstMode === MODE_SUBMODULE) continue;
+      if (entry.srcSha === entry.dstSha) continue;
+      const size = Number((await this.run(['cat-file', '-s', entry.dstSha])).stdout.trim());
+      if (!Number.isSafeInteger(size) || size > MAX_SCAN_BYTES) {
+        violations.push({ path: safePath, rule: 'file_too_large_to_scan' });
+        continue;
+      }
+      const bytes = (await this.runRaw(['cat-file', 'blob', entry.dstSha])).stdout;
+      if (isBinaryContent(bytes)) {
+        violations.push({ path: safePath, rule: 'binary_file' });
+        continue;
+      }
+      const hasOld =
+        entry.srcSha !== undefined &&
+        !ZERO_SHA.test(entry.srcSha) &&
+        entry.srcMode !== MODE_SYMLINK &&
+        entry.srcMode !== MODE_SUBMODULE;
+      const oldText = hasOld ? (await this.runRaw(['cat-file', 'blob', entry.srcSha as string])).stdout.toString('utf8') : null;
+      for (const finding of scanAddedText(bytes.toString('utf8'), oldText, this.secretForms)) {
+        violations.push({
+          path: safePath,
+          rule: 'secret_detected',
+          detector: finding.detector,
+          ...(finding.line === null ? {} : { line: finding.line }),
+        });
+      }
+    }
+    return violations;
   }
 
   /** index の内容を commit する（inspect の後、違反が無いときだけ）。変更が無ければ null。 */

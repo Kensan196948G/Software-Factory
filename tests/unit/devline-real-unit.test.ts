@@ -71,9 +71,9 @@ describe('差分の解析', () => {
       `:000000 120000 ${'0'.repeat(40)} ${sha} A\0src/link\0` +
       `:100644 100644 ${sha} ${sha} R095\0.github/x.yml\0src/x.yml\0`;
     expect(parseRawDiff(raw)).toEqual([
-      { srcMode: '100644', dstMode: '100644', status: 'M', path: 'src/日本語 a.js' },
-      { srcMode: '000000', dstMode: '120000', status: 'A', path: 'src/link' },
-      { srcMode: '100644', dstMode: '100644', status: 'R', path: 'src/x.yml', oldPath: '.github/x.yml' },
+      { srcMode: '100644', dstMode: '100644', srcSha: sha, dstSha: sha, status: 'M', path: 'src/日本語 a.js' },
+      { srcMode: '000000', dstMode: '120000', srcSha: '0'.repeat(40), dstSha: sha, status: 'A', path: 'src/link' },
+      { srcMode: '100644', dstMode: '100644', srcSha: sha, dstSha: sha, status: 'R', path: 'src/x.yml', oldPath: '.github/x.yml' },
     ]);
     expect(parseRawDiff('')).toEqual([]);
   });

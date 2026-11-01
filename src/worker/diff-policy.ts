@@ -5,12 +5,15 @@
 import { normalizeRepoPath } from '../shared/devline.js';
 import type { DiffViolation, RepoDiffPolicy, ServerDiffResult } from '../shared/devline.js';
 
-const MODE_SYMLINK = '120000';
-const MODE_SUBMODULE = '160000';
+export const MODE_SYMLINK = '120000';
+export const MODE_SUBMODULE = '160000';
 
 export interface RawDiffEntry {
   srcMode: string;
   dstMode: string;
+  /** blob の SHA（`--no-abbrev` のとき）。追加・削除の側は 0 だけ。 */
+  srcSha?: string;
+  dstSha?: string;
   /** A / M / D / T / R / C など（類似度の数字は除く）。 */
   status: string;
   path: string;
@@ -26,9 +29,10 @@ export function parseRawDiff(output: string): RawDiffEntry[] {
   for (let i = 0; i < fields.length;) {
     const head = fields[i] as string;
     i += 1;
-    const m = /^:([0-7]{6}) ([0-7]{6}) [0-9a-f]+ [0-9a-f]+ ([A-Z])\d*$/.exec(head);
+    const m = /^:([0-7]{6}) ([0-7]{6}) ([0-9a-f]+) ([0-9a-f]+) ([A-Z])\d*$/.exec(head);
     if (!m) throw new Error('git diff の出力を読めません');
-    const status = m[3] as string;
+    const status = m[5] as string;
+    const shas = { srcSha: m[3] as string, dstSha: m[4] as string };
     const first = fields[i];
     i += 1;
     if (first === undefined) throw new Error('git diff の出力を読めません');
@@ -36,9 +40,9 @@ export function parseRawDiff(output: string): RawDiffEntry[] {
       const second = fields[i];
       i += 1;
       if (second === undefined) throw new Error('git diff の出力を読めません');
-      entries.push({ srcMode: m[1] as string, dstMode: m[2] as string, status, path: second, oldPath: first });
+      entries.push({ srcMode: m[1] as string, dstMode: m[2] as string, ...shas, status, path: second, oldPath: first });
     } else {
-      entries.push({ srcMode: m[1] as string, dstMode: m[2] as string, status, path: first });
+      entries.push({ srcMode: m[1] as string, dstMode: m[2] as string, ...shas, status, path: first });
     }
   }
   return entries;
@@ -60,6 +64,7 @@ export interface DiffEvaluation extends ServerDiffResult {
 /**
  * 判定（純関数）。1件でも violations があれば push しない。
  * リネームは両側を調べる（禁止の場所から出す・入れるのどちらも通さない）。
+ * 修正の工程では、呼び出し側が直前の head に対してもう一度これを呼び、humanApproval だけを足す（前の試行の試験も既存の試験）。
  */
 export function evaluateDiff(entries: readonly RawDiffEntry[], policy: RepoDiffPolicy): DiffEvaluation {
   const violations: DiffViolation[] = [];
