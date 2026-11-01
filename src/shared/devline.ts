@@ -1012,6 +1012,12 @@ export type VerificationVerdict =
  * 注文書に無い AC か同じ AC の重複が報告にあれば、どの結果も信用できないので全件「未確認」にする（failed でも修正へ進めない）。
  * pr_ready は「PR 候補の準備完了」であって受入の合格ではない（merge の判断は人）。
  */
+/** 合否の根拠にする記録（その head の最新の run と試行）。成果物もこの run のものだけを使う。 */
+export function latestVerificationRecord(records: readonly VerificationRecord[], headSha: string): VerificationRecord | null {
+  const forHead = records.filter((r) => (VERIFICATION_SOURCES as readonly string[]).includes(r.source) && r.headSha === headSha);
+  return [...forHead].sort((a, b) => b.runSequence - a.runSequence || b.runAttempt - a.runAttempt)[0] ?? null;
+}
+
 export function evaluateVerification(
   records: readonly VerificationRecord[],
   headSha: string,
@@ -1026,9 +1032,7 @@ export function evaluateVerification(
       ? { verdict: 'stale', acEvidence: unconfirmed() }
       : { verdict: 'no_result', acEvidence: unconfirmed() };
   }
-  const latest = [...forHead].sort(
-    (a, b) => b.runSequence - a.runSequence || b.runAttempt - a.runAttempt,
-  )[0] as VerificationRecord;
+  const latest = latestVerificationRecord(trusted, headSha) as VerificationRecord;
 
   const reported = latest.acResults.map((a) => a.acId);
   const unknownAcs = [...new Set(reported.filter((id) => !acIds.includes(id)))];

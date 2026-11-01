@@ -101,6 +101,21 @@ migrationはadditiveのみ。破壊的変更は行わない。障害時はバッ
 - **依頼の削除**: 上の表から `request` への外部キーは `on delete restrict`。開発ラインの行がある依頼は `delete from request` できない。`pnpm db:reset` は `truncate ... cascade` なので通る。
 - **ロールバック**: additive のみ。`db.ts` の方針どおりバックアップからの復元か forward fix。上の7表と関数は既存の表から参照されないので、アプリを戻すだけで影響は残らない。
 
+### 追加migration（開発ライン最終段・2026-11-01）
+
+`0012_devline_release.sql`。additive（表と列の追加だけ）。job の状態と遷移表は変えない。
+
+| テーブル／列        | 仕様ID | 内容                                                                                                                                                                                                                                                         | 更新                 |
+| ------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- |
+| `release`           | ENT-10 | 1 job・1 行。PR、head、merge の途中経過と結果、合否の根拠の run（`verified_run_*`）、tree の照合、成果物の digest と取得元（`artifact_run_id`、`artifact_run_attempt`、`artifact_id`、`artifact_tar_sha256`）、配備の承認（SHA + digest + 環境）、結果、戻し | 条件付き更新         |
+| `release_approval`  | ENT-10 | 人の承認の行（merge / deploy / rollback）。承認者は必須で役割は `approver` のみ。`decision`（approved / revoked）、申請した人、repo、PR、根拠の run を持つ。押した人ごと・取消ごとに1行。順序は `seq`                                                        | 追記のみ             |
+| `release_attempt`   | ENT-10 | CI の成果物の取得（`kind='build'`）・配備・戻しの試行。worker の lease と fence を持つ。環境のいまの版は `deployed_digest` の最新で決まる                                                                                                                    | 終わるまで・削除不可 |
+| `app_user.is_agent` | —      | AI・自動処理の利用者の印。承認の経路は DB のこの列を見て拒否する                                                                                                                                                                                             | 既定 `false`         |
+
+- 同じ環境で動く配備と戻しは1つだけ（`release_attempt_env_active`）。二重押下は unique の違反で ERR-301 にする。
+- job は lease を持てない状態（`merged` など）なので、worker の書き込みは attempt の fence で守る。
+- **ロールバック**: `release_attempt` → `release_approval` → `release` の順に落とし、`is_agent` を落とす。既存の表から参照されないので、アプリを戻すだけで影響は残らない。
+
 ## 5. インデックス
 
 - `request (status, updated_at desc)` / `(dept_code)` / `(applicant_user_id)` / `(approver_user_id)` / `(updated_at desc)`

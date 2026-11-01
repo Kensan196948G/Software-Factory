@@ -21,7 +21,7 @@ handoff（Issue）→ queued → planning（AI・読むだけ）→ implementing
   → verifying（GitHub Actions の結果を読む）→ pr_ready（本文を結果つきに更新）で止まる
 ```
 
-- **AI は merge も Approve もしない**。`pr-adapter.ts` にその口が無い。job は `pr_ready` で人の承認を待つ。
+- **AI は merge も Approve もしない**。`PrAdapter` と worker にその口が無い。job は `pr_ready` で人の承認を待つ（merge は 13 章。人の画面操作からサーバが行う）。
 - 合否の根拠は Actions の記録だけ（`verification.source='github'`）。AI の申告は使わない。受入条件は同じ run の artifact `ac-results` から読む（14 章）。
 - `pr_ready` は「PR 候補の準備完了」で、受入の合格ではない。merge の判断は人が行う。
 - CI の失敗は `revising`。修正は直前の head から始め、**試行ごとに新しいブランチと PR** を作る（`auto/<req>-v<版>-a<試行>`）。force push を避けるため。古い PR はマーカーと作成者を確かめて閉じる。差分検査は常に base からの全体で行う。
@@ -126,17 +126,19 @@ ANTHROPIC_API_KEY=
 DEVLINE_GITHUB_TOKEN=
 ```
 
-| 変数                     | 既定                            | 意味                                                |
-| ------------------------ | ------------------------------- | --------------------------------------------------- |
-| `DEVLINE_WORKER_ENABLED` | なし                            | `1` で worker が動く                                |
-| `DEVLINE_RUNNER_KIND`    | `fake`                          | `docker-claude` で実 runner                         |
-| `DEVLINE_TARGET_REPOS`   | なし（1件実走の入口は Sandbox） | `Kensan196948G/Software-Factory-Sandbox:1440860477` |
-| `DEVLINE_BUDGET_JPY`     | `1000`                          | 1タスクの上限（1000 以下）                          |
-| `DEVLINE_JPY_PER_USD`    | `160`                           | 円換算                                              |
-| `DEVLINE_SECRETS_FILE`   | 上記の path                     | 資格情報のファイル                                  |
-| `DEVLINE_GIT_BASE_URL`   | `https://github.com`            | git の接続先                                        |
-| `GITHUB_API_URL`         | `https://api.github.com`        | API の接続先                                        |
-| `DEVLINE_CI_POLL_MS`     | なし（15〜30秒）                | 1件実走の入口の CI の問い合わせ間隔                 |
+| 変数                     | 既定                            | 意味                                                                                      |
+| ------------------------ | ------------------------------- | ----------------------------------------------------------------------------------------- |
+| `DEVLINE_WORKER_ENABLED` | なし                            | `1` で worker が動く                                                                      |
+| `DEVLINE_RUNNER_KIND`    | `fake`                          | `docker-claude` で実 runner                                                               |
+| `DEVLINE_TARGET_REPOS`   | なし（1件実走の入口は Sandbox） | `Kensan196948G/Software-Factory-Sandbox:1440860477`                                       |
+| `DEVLINE_BUDGET_JPY`     | `1000`                          | 1タスクの上限（1000 以下）                                                                |
+| `DEVLINE_JPY_PER_USD`    | `160`                           | 円換算                                                                                    |
+| `DEVLINE_SECRETS_FILE`   | 上記の path                     | 資格情報のファイル                                                                        |
+| `DEVLINE_GIT_BASE_URL`   | `https://github.com`            | git の接続先                                                                              |
+| `GITHUB_API_URL`         | `https://api.github.com`        | API の接続先                                                                              |
+| `DEVLINE_CI_POLL_MS`     | なし（15〜30秒）                | 1件実走の入口の CI の問い合わせ間隔                                                       |
+| `DEVLINE_DEPLOY_ENABLED` | なし                            | `1` で worker が成果物の作成と検証環境への配備を行う                                      |
+| `DEVLINE_ARTIFACT_DIR`   | OS の一時領域                   | CI の成果物を展開する場所。tmpfs でない、空きのあるところ（最大で zip 1 GiB + tar 3 GiB） |
 
 ## 7. 1件実走の手順（CTO）
 
@@ -164,7 +166,7 @@ node scripts/local-run.mjs tsx scripts/devline-real-run.ts
 node scripts/local-run.mjs tsx scripts/devline-real-run.ts --confirm-real-run
 ```
 
-出力は段階ごとに「実行確認済み / 未到達 / 失敗」。job は `pr_ready` で止まる。Sandbox の PR を人が確認し、merge または close する。
+出力は段階ごとに「実行確認済み / 未到達 / 失敗」。job は `pr_ready` で止まる。Sandbox の PR を人が確認し、画面から merge するか（13 章）、GitHub で close する。
 
 戻し方: `docker kill`（ラベル `msf.devline=1`）、Sandbox の PR を閉じてブランチを消す、資格情報のファイルを消してキーとトークンを失効する。工場の DB には `0010` と `0011` の列と CHECK の拡張（additive）だけが入る。
 
@@ -266,6 +268,55 @@ jobs:
 - `setUpNetwork` が失敗した段階と stderr の末尾を返し、成果物に残す。実走でも同じ（費用は 0 円）。
 - Docker の試験は失敗時に段階・stderr・ブリッジの数を出す。次に起きたら原因が分かる。
 - `vitest.docker.config.ts` をファイル順の実行にして、同時に作るネットワークを減らす。
+
+## 15. 人の承認 → merge → 検証環境への配備 → 戻し
+
+契約は `docs/devline/api-contract.md`、判定は `src/shared/devline-release.ts`。「検証環境への配備」は本番公開ではない。工場本体の Staging 更新（`pnpm ops:release`）とも別物。本番公開の経路は作らない（SC-02、SC-03 が未決）。
+
+1. **merge**: 承認者が画面で「PR を承認して merge する」を押す。サーバが検査し、`DEVLINE_SECRETS_FILE` の `DEVLINE_GITHUB_TOKEN`（API はこれだけを読む。環境変数のトークンは使わない）で `sha` を渡して squash で merge する。AI も worker も呼べない。送信の前に compare API で PR の head が base の最新を含むことを確かめ、遅れていれば送らず「base が進みました。AI の修正か更新が必要です」（`base_behind`）で拒否する。読めなければ送らない。
+   結果不明（`unknown`、落ちた `sending`）のボタンは「結果を照合する」で、PR を読むだけ（merge を送らず、承認を作らず、取消も書きかえない）。merge 済みなら記録する。開いていて未 merge なら `none` へ戻し（`not_merged`）、人が「PR を承認して merge する」を押して初めて送る。404、読めない、許可の設定で確かめられないときは `unknown` のまま残す。
+2. **同一性**: merge の commit の tree が、CI で検査した head の tree と一致することを確かめる。違えば配備へ進めない（送信の前の確認と送信の間に base が動いた場合の保険）。
+3. **成果物**: worker は CI で検査した成果物を取得する（このホストで `docker build` しない。fallback も無い）。
+   - 使う run は merge の承認で固定する（`release.verified_run_id` と `verified_run_attempt`。合否の根拠にした `verification` と同じ run）。
+   - 取得は `GET /repos/{repo}/actions/runs/{run}/artifacts?name=image`。artifact の `workflow_run.id` と `head_sha` を照合し、複数あれば止まる。
+   - zip はファイルへストリームで保存し（上限 1 GiB）、`image.tar`（上限 3 GiB）と `image-meta.json` だけを展開する。余分なファイル、zip64、暗号化、CRC の不一致は拒否する。302 の先へトークンを送らない。
+   - meta（`msf.image/v1`）の `repository`、`runId`、`runAttempt`、`headSha` を照合し、`tarSha256` を実際の tar と比べる。tar は全体のヘッダを走査し（POSIX の prefix と PAX / GNU の長い名前を含む）、`manifest.json` がちょうど1つで、タグが `sandbox-artifact:ci` だけであることを確かめる（`docker load` が他のタグを上書きしないため）。複数の manifest、拡張ヘッダで manifest に当たる項目、`..` や絶対パスの名前、PAX の `size` と sparse、中身のある種類の違うヘッダ、壊れた checksum、終端の後ろの項目は `artifact_mismatch` で止まる。リンクの指す先は見ない（`docker save` の層が `../` を使う）。
+   - `docker load` の出力の ref を `docker image inspect` し、ID が `imageId` と一致することを確かめる。合わなければ `artifact_mismatch` で、配備の承認へ進めない。
+   - 通ったら `msf-sandbox-verify:<merge SHA>` のタグを付け、一時コンテナ（`msf-sandbox-smoke`）で health と smoke を確かめる。`release` に digest（イメージ ID）、run、試行、artifact ID、`tarSha256` を残す。
+   - Sandbox の main に PR #5 が入っていない古い run は artifact が無いので `artifact_missing` で止まる。
+4. **配備**: 承認者が SHA、digest、環境を見て「検証環境へ配備する」を押す。merge だけでは配備しない。worker がそのイメージ ID をそのまま起動する（作り直さない）。
+5. **確認と自動の戻し**: `/healthz` の version が SHA と一致し、`/length?text=abc` が 3 なら `staged`。失敗すれば前の digest へ自動で戻し、失敗として記録する。配備先に触る前の失敗（イメージが無い、版の失効、docker の確認の例外など）は、環境の版と URL をそのまま引き継ぐ。触った後の例外と取り直しの試行は、いま何が動いているか分からないので不明（空）にする。
+6. **戻し**: 承認者が理由を書いて「前の版へ戻す」を押す。job は `staged` のまま、記録に残す。
+7. **画面の読み直し**: 成果物の取得、配備、戻しの試行が pending / running の間だけ、開いている欄を約 4 秒ごとに読み直す（上限は約 10 分。閉じたら止める）。
+
+worker の止まり方: 配備の工程は AI の工程の例外と別に受ける（`workerTick`）。SIGTERM の後は次の試行を取らず、配備先に触る前なら試行を pending へ戻す。動いている docker の命令は待つ。lease は 120 秒で、動いている間は 30 秒ごとに延ばすので、途中で落ちた試行が環境を塞ぐのは最大 120 秒。残りは `security-residuals.md` の R-10。
+
+コンテナは `msf-sandbox-verify`、ラベル `msf.devline.deploy=1`、ネットワーク `msf-devline-verify-net`（`--internal`、`enable_icc=false`、ラベル付き）、`--read-only`、`--tmpfs /tmp`、`--cap-drop ALL`、`--security-opt no-new-privileges`、`--memory 256m`、`--pids-limit 128`。host mount、Docker socket、privileged、公開ポートは無い（`deployRunArgs` を試験で固定）。内部ネットワークでは `-p` が効かないので、このホストからコンテナの IP で確かめる（URL は起動のたびに変わることがあり、画面は最新を出す）。外部へは出られない。同じ名前でラベルの無いコンテナかネットワークがあれば失敗にし、消さない。
+
+イメージにはラベルを足せない（足すと ID が変わる）。自分のものかは `msf-sandbox-verify:` のタグで見分ける。
+
+**承認の記録**: merge の承認は押した人ごとに `release_approval` へ追記する（申請した人、承認者、repo、PR、head、判定、日時、根拠の run）。取消も行で残る。新しい commit、版の更新、取消で古い承認は失効する。承認時と merge の直前の両方で head、検査、AC、版、取消を確かめ、必須検査そのものは GitHub の保護が merge の API で確かめる。**1 ユーザーの MVP なので職務分離を満たさず、本番の承認統制を満たさない**（画面にも明記）。merge の承認と配備の承認は別の行で、配備の承認は SHA、digest、環境に結ぶ。
+
+### 実環境で CTO が行う手順
+
+Staging の設定（`preview.conf` など）へ足す（値はリポジトリに書かない）。
+
+```
+DEVLINE_DEPLOY_ENABLED=1
+DEVLINE_SECRETS_FILE=<資格情報のファイル>      # API と worker の両方
+DEVLINE_TARGET_REPOS=Kensan196948G/Software-Factory-Sandbox:1440860477
+DEVLINE_ARTIFACT_DIR=<tmpfs でない作業場>      # 任意
+```
+
+前提: Sandbox PR #5 が main に入っていること（入っていなければ `artifact_missing` で止まる）。
+
+1. migration（`0012`）を当て、API と worker を入れ替える。
+2. 実 job を `pr_ready` まで進める。画面に完全な SHA と AC が出ることを確かめ、承認者の役割で merge を押す。
+3. Sandbox の main に squash の commit ができ、merge 欄の「内容は検査した head と一致」を確かめる。成果物の欄にイメージ ID と取得元（run、試行、artifact、tar）が出るまで待つ。`docker image inspect` の ID と、CI のログの `image-meta.json` の `imageId` が一致することを確かめる（CI と host の Docker のイメージストアが違うと ID が変わり `artifact_mismatch` で止まる）。
+4. 配備を押し、画面の URL（内部ネットワークの IP）で `curl <URL>/healthz` の version が merge の SHA と一致することを確かめる。`docker exec msf-sandbox-verify` から外へ出られないことも確かめる。
+5. 2件目を配備してから「前の版へ戻す」を押し、version が前の SHA に戻ることを確かめる。
+
+未走の間は画面の証跡に fake と出る（ローカルの連携先の PR と merge）。
 
 ## 13. 画面の投入から実 job へ
 

@@ -69,6 +69,16 @@ import {
   resumeJob,
   type DevlineDeps,
 } from './devline-service.js';
+import {
+  approveDeploy,
+  approveMerge,
+  revokeMergeApproval,
+  devlineSummary,
+  listReleaseEvidence,
+  rollbackRelease,
+  type ReleaseDeps,
+} from './devline-release.js';
+import { approveDeploySchema, approveMergeSchema, revokeApprovalSchema, rollbackSchema } from './devline-release-schemas.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -79,7 +89,9 @@ declare module 'fastify' {
 /** 承認依頼メールの状態（クエリ検証に使う）。 */
 const MAIL_STATES = ['pending', 'sending', 'sent', 'failed'] as const;
 
-export async function buildApp(opts: { serveStatic?: boolean; devlineDeps?: DevlineDeps } = {}): Promise<FastifyInstance> {
+export async function buildApp(
+  opts: { serveStatic?: boolean; devlineDeps?: DevlineDeps; releaseDeps?: ReleaseDeps } = {},
+): Promise<FastifyInstance> {
   const app = Fastify({
     logger:
       config.nodeEnv === 'test' && process.env.DEBUG_TEST !== '1'
@@ -336,7 +348,46 @@ export async function buildApp(opts: { serveStatic?: boolean; devlineDeps?: Devl
     const ctx = auth(req);
     const { id } = req.params as { id: string };
     const items = await listJobsForRequest(id, actorOf(ctx.user));
-    return { items, ...(await listDevlineTrace(id)) };
+    return { items, ...(await listDevlineTrace(id)), release: await listReleaseEvidence(id) };
+  });
+
+  /* ───────── 人の承認 → merge → 検証環境への配備 → 戻し（仕様 4-9）。repo・イメージ・ポートはブラウザから受けない ───────── */
+  app.post('/api/jobs/:id/approve-merge', async (req) => {
+    const ctx = mutate(req);
+    const { id } = req.params as { id: string };
+    const body = approveMergeSchema.parse(req.body);
+    return approveMerge(
+      { jobId: id, headSha: body.headSha, ...(body.reconcileOnly ? { reconcileOnly: true } : {}) },
+      actorOf(ctx.user),
+      correlationId(req),
+      opts.releaseDeps,
+    );
+  });
+
+  app.post('/api/jobs/:id/revoke-approval', async (req) => {
+    const ctx = mutate(req);
+    const { id } = req.params as { id: string };
+    const body = revokeApprovalSchema.parse(req.body);
+    return revokeMergeApproval({ jobId: id, ...body }, actorOf(ctx.user), correlationId(req), new Date());
+  });
+
+  app.post('/api/jobs/:id/approve-deploy', async (req) => {
+    const ctx = mutate(req);
+    const { id } = req.params as { id: string };
+    const body = approveDeploySchema.parse(req.body);
+    return approveDeploy({ jobId: id, ...body }, actorOf(ctx.user), correlationId(req), new Date());
+  });
+
+  app.post('/api/jobs/:id/rollback', async (req) => {
+    const ctx = mutate(req);
+    const { id } = req.params as { id: string };
+    const body = rollbackSchema.parse(req.body);
+    return rollbackRelease({ jobId: id, reason: body.reason }, actorOf(ctx.user), correlationId(req), new Date());
+  });
+
+  app.get('/api/devline/summary', async (req) => {
+    auth(req);
+    return devlineSummary();
   });
 
   app.post('/api/jobs/:id/cancel', async (req) => {
