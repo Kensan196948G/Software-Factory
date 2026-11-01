@@ -295,8 +295,8 @@ describe('CLI の呼び出しと結果', () => {
     expect(value('--max-budget-usd')).toBe('6.25');
     expect(value('--permission-mode')).toBe('dontAsk');
     expect(value('--permission-prompts')).toBe('none');
-    expect(value('--tools')).toBe('Read,Edit,Write,Glob,Grep,Bash');
-    expect(value('--allowedTools')).toBe('Read,Edit,Write,Glob,Grep,Bash(node --test*)');
+    expect(value('--tools')).toBe('Read,Edit,Write,Glob,Grep');
+    expect(value('--allowedTools')).toBe('Read,Edit,Write,Glob,Grep');
     expect(args.slice(args.indexOf('--disallowedTools') + 1)).toEqual([
       'WebFetch',
       'WebSearch',

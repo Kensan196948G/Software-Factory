@@ -219,7 +219,7 @@ describe('主経路', () => {
       expect(call.argv.filter((a) => a === '--mount')).toHaveLength(1);
       const mount = call.argv[call.argv.indexOf('--mount') + 1]!;
       expect(mount).toMatch(/\/work,dst=\/workspace$/);
-      expect(call.argv).toContain('msf-devline-runner:2.1.316');
+      expect(call.argv).toContain('msf-devline-runner:2.1.316-2');
       // docker クライアントへ渡す環境は最小。GitHub トークン・DB の接続文字列を渡さない
       expect(call.env.ANTHROPIC_API_KEY).toBe(DUMMY_API_KEY);
       expect(Object.keys(call.env).filter((k) => /GITHUB|DATABASE|TOKEN|SESSION|SECRET/.test(k))).toEqual([]);

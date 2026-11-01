@@ -30,7 +30,7 @@ import { knownSecretForms, makeRedactor } from './secret-scan.js';
 
 export { makeRedactor };
 
-export const RUNNER_IMAGE = 'msf-devline-runner:2.1.316';
+export const RUNNER_IMAGE = 'msf-devline-runner:2.1.316-2';
 export const PROXY_IMAGE = 'msf-devline-egress-proxy:v1';
 const LABEL = 'msf.devline=1';
 const SCOPE_LABEL = 'msf.devline.scope';
@@ -46,6 +46,8 @@ const KILL_RETRY_MS = 250;
  * 出力が無いこのコードは CLI が動いていない（API を呼んでいない）。signal や null は判断に使わない。
  */
 const NOT_STARTED_EXIT_CODES: ReadonlySet<number> = new Set([125, 126, 127]);
+/** CLI が API を呼ぶ前に起動を拒んだときの stderr の先頭。exit 1 なので終了コードだけでは見分けられない。 */
+const CLI_REFUSED_TO_START = /^\s*Claude Code could not start:/;
 
 export interface DockerClaudeOptions {
   apiKey: string;
@@ -99,7 +101,7 @@ export function sanitizeOrderYamlForRunner(yaml: string): string {
 
 /** 受入条件と試験の対応は CI が試験名から報告する。形が違うと未確認になり、PR 候補にならない。 */
 const AC_TEST_RULES = [
-  '新しい試験は test/unit/ に新しいファイルとして追加し、`node --test` で確かめてください。',
+  '新しい試験は test/unit/ に新しいファイルとして追加してください。このコンテナでは実行できません。実行と合否の判定は CI が行います。',
   '受入条件の試験は、試験名の先頭を `AC-n:`（n は注文書の acceptance_criteria の番号。1 から数える。meta の acceptance_criteria_ids と同じ）にしてください。例: `AC-1: 空文字なら 0 を返す`。',
   'acceptance_criteria_ids のすべてに少なくとも1つ試験を書いてください。',
 ];
@@ -160,8 +162,12 @@ export function buildRunnerPrompt(input: RunnerInput, nonce: string = randomByte
 
 /* ──────────────── コンテナの引数 ──────────────── */
 
-export const ALLOWED_TOOLS_WORK = 'Read,Edit,Write,Glob,Grep,Bash(node --test*)';
-export const TOOLS_WORK = 'Read,Edit,Write,Glob,Grep,Bash';
+/**
+ * Bash を渡さない。`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` の Bash は bubblewrap を使うが、このコンテナの隔離
+ * （cap-drop、seccomp、AppArmor）の下では名前空間を作れず必ず失敗する。隔離を緩めず、試験は独立した CI で確かめる。
+ */
+export const ALLOWED_TOOLS_WORK = 'Read,Edit,Write,Glob,Grep';
+export const TOOLS_WORK = 'Read,Edit,Write,Glob,Grep';
 /** 計画の工程は読むだけ。 */
 const TOOLS_PLAN = 'Read,Glob,Grep';
 
@@ -630,7 +636,11 @@ export function createDockerClaudeRunner(options: DockerClaudeOptions): DockerCl
       await killContainer(sandbox);
 
       // CLI が起動していないと確実に分かるときは費用なし。予算の上限で止めない（再開できる失敗にする）
-      if (result.stdout.trim() === '' && result.code !== null && NOT_STARTED_EXIT_CODES.has(result.code)) {
+      if (
+        result.stdout.trim() === '' &&
+        result.code !== null &&
+        (NOT_STARTED_EXIT_CODES.has(result.code) || (result.code === 1 && CLI_REFUSED_TO_START.test(result.stderrTail)))
+      ) {
         return failed(
           `CLI を起動できませんでした（exit ${result.code}）`,
           {},

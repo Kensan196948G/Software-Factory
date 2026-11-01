@@ -146,7 +146,7 @@ DEVLINE_GITHUB_TOKEN=
 
 ```bash
 # 1. イメージを作る
-docker build -f deploy/devline/Dockerfile.runner -t msf-devline-runner:2.1.316 deploy/devline
+docker build -f deploy/devline/Dockerfile.runner -t msf-devline-runner:2.1.316-2 deploy/devline
 docker build -f deploy/devline/Dockerfile.proxy  -t msf-devline-egress-proxy:v1 deploy/devline
 pnpm test:docker                # 実 Docker の確認。外部へは送らない
 
@@ -226,6 +226,15 @@ jobs:
 | 禁止差分や prompt injection に実 AI が当たったときの動作          | 未確認。作り物の素直な注文書 1 件だけ        |
 | GitHub が同じ head の 2 つ目の PR を断る文言（`already exists`）  | 未確認                                       |
 | 堅牢化（`ci_incomplete`、PR の後始末、排他、費用の規則）の実走    | 未走。stub docker と fake GitHub でのみ確認  |
+
+## 9-2. AI のコンテナでは試験を実行しない（2026-11-01）
+
+Staging の最初の投入（REQ-2026-0010、job `914b0043`）は、`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` の CLI が bubblewrap を求めて起動せず、1.7 秒で止まった。実際の AI の呼び出しは無いが、当時は exit 1 を「動いた」扱いにしたので、割り当ての 1,000 円が費用の見積もりとして計上され、`budget_limit` で再開できない。記録は書きかえない。
+
+- イメージ `msf-devline-runner:2.1.316-2` に bubblewrap を入れた。
+- 今の隔離（`--cap-drop ALL`、`no-new-privileges`、既定の seccomp と AppArmor）では `bwrap` が名前空間を作れず、Bash は必ず失敗する。`seccomp=unconfined` でも失敗した。隔離は緩めない。`SCRUB=0` は子プロセスからキーが見えるので使わない。
+- そのため AI の工具から Bash を外した。AI は試験を書くが実行できない。試験の実行と合否は独立した CI が行う。
+- stdout が空で exit 1、stderr が `Claude Code could not start:` で始まる場合は CLI 未起動として扱い、費用 0 円で再開できる失敗にする。
 
 ## 10. 既知の制限
 

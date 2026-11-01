@@ -142,6 +142,29 @@ describe('runner イメージ', () => {
     expect(probe.out).toContain('READONLY');
   });
 
+  it('実際の隔離の条件で CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 の CLI が起動する（キーなし、--network none で費用なし）', () => {
+    const run = tryDocker(
+      'run',
+      '--rm',
+      '--network',
+      'none',
+      ...HARDENED,
+      '--user',
+      '1000:1000',
+      '--env',
+      'HOME=/tmp/home',
+      '--env',
+      'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1',
+      RUNNER_IMAGE,
+      'sh',
+      '-c',
+      'mkdir -p "$HOME"; cd /tmp; timeout 40 claude --bare -p hi --output-format json 2>&1; echo "rc=$?"; command -v bwrap',
+    );
+    expect(run.out).not.toContain('could not start');
+    expect(run.out).toContain('"total_cost_usd":0');
+    expect(run.out).toContain('/usr/bin/bwrap');
+  });
+
   it('確認済みのフラグが --help にある（--max-turns は help に出ない）', () => {
     const help = docker('run', '--rm', '--network', 'none', ...HARDENED, '--user', '1000:1000', RUNNER_IMAGE, 'claude', '--help');
     for (const flag of [
