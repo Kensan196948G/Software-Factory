@@ -71,7 +71,7 @@ export interface DevlineDeps {
  */
 function realDevlineDeps(): DevlineDeps {
   const allowed = config.devlineTargetRepos;
-  const refused = checkRealLineEnv({ ...process.env, NODE_ENV: config.nodeEnv }, allowed);
+  const refused = checkRealLineEnv({ ...process.env, NODE_ENV: config.nodeEnv, APP_ENV: config.appEnv }, allowed);
   if (refused) throw new ApiError('ERR-405', `開発ラインの設定が正しくありません（${refused}）`, 409);
   const target = allowed[0] as AllowedRepo;
   if (allowed.some((r) => r.name !== target.name)) {

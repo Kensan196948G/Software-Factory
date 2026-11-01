@@ -91,7 +91,8 @@ export function isRealRunnerTarget(repo: string, allowed: readonly AllowedRepo[]
 
 /** 設定だけで決まる起動の拒否（純関数）。接続はしない。 */
 export function checkRealLineEnv(env: Record<string, string | undefined>, allowed: readonly AllowedRepo[]): string | null {
-  if (env.NODE_ENV === 'production') return 'production では docker-claude を起動しません';
+  // Staging は NODE_ENV=production で動く。APP_ENV=staging を明示したときだけ許す。本番は常に拒否（所有者の決定、2026-11-01）
+  if (env.NODE_ENV === 'production' && env.APP_ENV !== 'staging') return 'production では docker-claude を起動しません';
   if (!allowed.some((r) => isRealRunnerTarget(r.name, allowed))) {
     return 'DEVLINE_TARGET_REPOS に実 runner の許可先がありません';
   }
