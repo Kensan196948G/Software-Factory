@@ -61,6 +61,48 @@ async function moveToWait(auth: Awaited<ReturnType<typeof loginAs>>, id: string,
 }
 
 describe('道具と部署の組み合わせ', () => {
+  it('接続プールを超える同時の作成でも詰まらない', async () => {
+    const auth = await loginAs(app, 'desk');
+    const results = await Promise.all(
+      Array.from({ length: 25 }, (_, i) =>
+        app.inject({
+          method: 'POST',
+          url: '/api/requests',
+          headers: authHeaders(auth),
+          payload: sampleRequest({ title: `同時の作成 ${i}（作り物）` }),
+        }),
+      ),
+    );
+    expect(results.map((r) => r.statusCode)).toEqual(results.map(() => 201));
+  }, 30_000);
+
+  it('作成後にマスタが変わっても、同じキーの再送は作成済みの依頼を返す', async () => {
+    const auth = await loginAs(app, 'desk');
+    const tool = (await query<{ id: string; dept_code: string }>('select id, dept_code from catalog_tool limit 1')).rows[0]!;
+    const other = (await query<{ code: string }>('select code from department where code <> $1 limit 1', [tool.dept_code]))
+      .rows[0]!;
+    const inject = () =>
+      app.inject({
+        method: 'POST',
+        url: '/api/requests',
+        headers: { ...authHeaders(auth), 'idempotency-key': 'replay-after-master-change' },
+        payload: sampleRequest({ title: 'マスタ変更後の再送（作り物）', toolId: tool.id, deptCode: tool.dept_code }),
+      });
+    const first = await inject();
+    expect(first.statusCode).toBe(201);
+    await query('update catalog_tool set dept_code = $1 where id = $2', [other.code, tool.id]);
+    try {
+      const again = await inject();
+      expect(again.statusCode).toBe(201);
+      const ids = [first, again].map((r) => (r.json() as { request: { id: string } }).request.id);
+      expect(ids[1]).toBe(ids[0]);
+      const rows = await query('select 1 from request where title = $1', ['マスタ変更後の再送（作り物）']);
+      expect(rows.rows).toHaveLength(1);
+    } finally {
+      await query('update catalog_tool set dept_code = $1 where id = $2', [tool.dept_code, tool.id]);
+    }
+  });
+
   it('部署と合わない道具は ERR-013（400）を返し、依頼を作らない', async () => {
     const auth = await loginAs(app, 'desk');
     const res = await app.inject({
