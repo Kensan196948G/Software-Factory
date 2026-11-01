@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 /**
  * 開発ライン QA の共通部品。実装者の試験とは独立に、契約（docs/devline/api-contract.md）から書く。
  * 外部は OS 割当ポートのローカル fake GitHub だけ。時刻は引数で進め、sleep しない。
@@ -274,7 +275,7 @@ export function useHarness(options: { checkExternal?: boolean } = {}): Harness {
 
 /** 依頼者だけ、など役割を絞った利用者を作ってログインする（TEST_MEMBER は approver も持つので否定試験に足りない）。 */
 export async function loginWithRoles(app: FastifyInstance, email: string, roles: string[], isAdmin = false): Promise<Authed> {
-  const password = 'test-pass-qa-1234-not-a-secret';
+  const password = createHash('sha256').update(email).digest('hex'); // 試験だけの決定的な値
   const existing = await query<{ id: string }>('select id from app_user where email=$1', [email]);
   if (!existing.rows[0]) {
     const hash = await hashPassword(password);
