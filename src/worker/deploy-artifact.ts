@@ -414,6 +414,9 @@ export function tarImageId(tarPath: string): string | null {
       Config?: unknown;
     }[];
     if (!Array.isArray(manifest) || manifest.length !== 1) return null;
+    // Go の JSON はキーの大文字小文字を区別しないので、`repotags` などで別のタグを渡せる。決まったキーだけを受ける
+    const keys = Object.keys((manifest[0] ?? {}) as object).sort();
+    if (keys.join(',') !== 'Config,Layers,RepoTags') return null;
     const tags = manifest[0]?.RepoTags;
     if (!Array.isArray(tags) || tags.length !== 1 || tags[0] !== DEPLOY_ARTIFACT_TAG) return null;
     const config = manifest[0]?.Config;

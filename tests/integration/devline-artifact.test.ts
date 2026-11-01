@@ -384,6 +384,13 @@ describe('純関数', () => {
       }
     });
 
+    it('manifest のキーは Config、RepoTags、Layers だけ（Go は大文字小文字を区別しない）', () => {
+      const item = { Config: `blobs/sha256/${IMAGE.slice(7)}`, RepoTags: ['sandbox-artifact:ci'], Layers: [] };
+      expect(passes([{ name: 'manifest.json', data: JSON.stringify([{ ...item, repotags: ['victim:latest'] }]) }])).toBe(false);
+      expect(passes([{ name: 'manifest.json', data: JSON.stringify([{ ...item, Parent: 'x' }]) }])).toBe(false);
+      expect(passes([{ name: 'manifest.json', data: JSON.stringify([item]) }])).toBe(true);
+    });
+
     it('manifest の重複と、同じ名前の重複を拒否する', () => {
       expect(passes([last, { name: 'manifest.json', data: evil }])).toBe(false);
       expect(passes([{ name: FILE, data: 'x' }, { name: FILE, data: 'y' }, last])).toBe(false);
