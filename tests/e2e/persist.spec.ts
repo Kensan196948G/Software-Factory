@@ -421,6 +421,11 @@ const REQUESTS = /\/api\/requests$/;
 const ONE_REQUEST = /\/api\/requests\/REQ-\d{4}-\d{4}$/;
 const TRANSITIONS = /\/api\/requests\/REQ-\d{4}-\d{4}\/transitions$/;
 const COMMENTS = /\/api\/requests\/REQ-\d{4}-\d{4}\/comments$/;
+const APP_500 = {
+  status: 500,
+  contentType: 'application/json',
+  body: JSON.stringify({ error: { code: 'ERR-401', message: '処理を完了できませんでした' } }),
+};
 
 test.describe('UI 保存の結果待ち', () => {
   test('bridge.persist は結果を返す（reject しない）。同期中の呼び出しは次の同期にまとまる', async ({ page }) => {
@@ -1799,23 +1804,19 @@ test.describe('UI 保存の結果待ち', () => {
     expect((await listRequests(page)).filter((r) => r.title === title)).toHaveLength(1);
   });
 
-  test('アプリの 500 → 入力を直す → 新しい本文で成功して 1 件（札を解放する）', async ({ page }) => {
+  test('アプリの 500（作られていない）→ 入力を直す → 同じキーで照合して直した内容の 1 件', async ({ page }) => {
     await login(page);
-    const title = `500 で解放 ${Date.now()}`;
+    const title = `500 未確定 ${Date.now()}`;
     const fixed = `${title} 直した`;
     await fillWizard(page, title);
     const keys: (string | undefined)[] = [];
-    // 元の本文だけサーバが必ず 500 を返す状況
+    let failed = false;
     await page.route(REQUESTS, async (route) => {
       if (route.request().method() !== 'POST') return route.fallback();
       keys.push(route.request().headers()['idempotency-key']);
-      const body = route.request().postDataJSON() as { title: string };
-      if (body.title !== title) return route.fallback();
-      return route.fulfill({
-        status: 500,
-        contentType: 'application/json',
-        body: JSON.stringify({ error: { code: 'ERR-401', message: '処理を完了できませんでした' } }),
-      });
+      if (failed) return route.fallback();
+      failed = true;
+      return route.fulfill(APP_500);
     });
     await page.locator('#submit').click();
     await expect(page.locator('#err')).toContainText('処理を完了できませんでした');
@@ -1825,10 +1826,549 @@ test.describe('UI 保存の結果待ち', () => {
     await page.locator('#submit').click();
     await expect(page.locator('#stamp')).toHaveClass(/show/, { timeout: 5000 });
     expect(keys).toHaveLength(2);
-    expect(keys[1]).not.toBe(keys[0]);
+    expect(keys[1]).toBe(keys[0]);
     const all = await listRequests(page);
     expect(all.filter((r) => r.title === fixed)).toHaveLength(1);
     expect(all.filter((r) => r.title === title)).toHaveLength(0);
+  });
+
+  test('保存の commit 後の 500 → 入力を直す → 再送しても受付は 1 件', async ({ page }) => {
+    await login(page);
+    const title = `commit 後の 500 ${Date.now()}`;
+    const fixed = `${title} 直した`;
+    await fillWizard(page, title);
+    const keys: (string | undefined)[] = [];
+    let failed = false;
+    await page.route(REQUESTS, async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      keys.push(route.request().headers()['idempotency-key']);
+      if (failed) return route.fallback();
+      failed = true;
+      await route.fetch(); // サーバには保存される
+      return route.fulfill(APP_500);
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#err')).toContainText('処理を完了できませんでした');
+    expect((await listRequests(page)).filter((r) => r.title === title)).toHaveLength(1);
+
+    await page.locator('.stp').nth(2).click();
+    await setValue(page, 'main input[type=text]', 0, fixed);
+    await gotoLastStep(page);
+    await page.locator('#submit').click();
+    await expect(page.locator('#stamp')).toHaveClass(/show/, { timeout: 5000 });
+    expect(keys[1]).toBe(keys[0]);
+    const all = await listRequests(page);
+    expect(all.filter((r) => r.title === fixed)).toHaveLength(1);
+    expect(all.filter((r) => r.title === title)).toHaveLength(0);
+  });
+
+  test('500 が続く間は入力を直しても新しいキーで送らない', async ({ page }) => {
+    await login(page);
+    const title = `500 が続く ${Date.now()}`;
+    await fillWizard(page, title);
+    const keys: (string | undefined)[] = [];
+    await page.route(REQUESTS, async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      keys.push(route.request().headers()['idempotency-key']);
+      return route.fulfill(APP_500);
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#err')).toContainText('処理を完了できませんでした');
+    await page.locator('.stp').nth(2).click();
+    await setValue(page, 'main input[type=text]', 0, `${title} 直した`);
+    await gotoLastStep(page);
+    await page.locator('#submit').click();
+    await expect.poll(() => keys.length).toBe(2);
+    await expect(page.locator('#err')).toContainText('処理を完了できませんでした');
+    expect(keys[1]).toBe(keys[0]);
+    expect(await page.locator('#stamp').getAttribute('class')).not.toContain('show');
+  });
+
+  /** POST の応答を失わせ、作られた依頼を他の人の更新で変えておく。入力を直して再送の直前まで進める。 */
+  async function lostPostThenOtherEdit(page: Page, title: string, fixed: string): Promise<Detail> {
+    await fillWizard(page, title);
+    let lost = false;
+    await page.route(REQUESTS, async (route) => {
+      if (route.request().method() !== 'POST' || lost) return route.fallback();
+      lost = true;
+      await route.fetch();
+      await route.abort('connectionreset');
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#err')).toContainText('通信できませんでした');
+    const created = (await findByTitle(page, title)) as Detail;
+    await callApi(page, 'PATCH', `/api/requests/${created.id}`, {
+      ...inputOf(title),
+      approver: '鈴木 一郎',
+      problem: '他の人の修正（作り物）',
+      version: created.version,
+    });
+    await page.locator('.stp').nth(2).click();
+    await setValue(page, 'main input[type=text]', 0, fixed);
+    await gotoLastStep(page);
+    return created;
+  }
+
+  test('応答喪失の照合で他の人の更新を見つけたら、選ぶまで PATCH も遷移もしない', async ({ page }) => {
+    await login(page);
+    const title = `照合で競合 ${Date.now()}`;
+    const fixed = `${title} 直した`;
+    const created = await lostPostThenOtherEdit(page, title, fixed);
+    const patches = countRequests(page, 'PATCH', ONE_REQUEST);
+    const moves = countRequests(page, 'POST', TRANSITIONS);
+
+    await page.locator('#submit').click();
+    const panel = page.locator('#conflict');
+    await expect(panel).toBeVisible();
+    await expect(panel).toContainText(fixed);
+    await expect(panel).toContainText('他の人の修正（作り物）');
+    await expect(page.locator('#submit')).toBeDisabled();
+    await page.waitForTimeout(500);
+    expect(patches()).toBe(0);
+    expect(moves()).toBe(0);
+    expect(await page.locator('#stamp').getAttribute('class')).not.toContain('show');
+    const untouched = await getDetail(page, created.id);
+    expect(untouched.title).toBe(title);
+    expect(untouched.problem).toBe('他の人の修正（作り物）');
+    expect(await localCountByTitle(page, untouched.title)).toBe(1);
+
+    // 上書きを選んだときだけ、最新の版に対して 1 回送る
+    await page.locator('#cfOverwrite').click();
+    await expect(page.locator('#toast')).toContainText('を更新しました');
+    expect(patches()).toBe(1);
+    expect((await getDetail(page, created.id)).title).toBe(fixed);
+    expect((await listRequests(page)).filter((r) => r.title === title || r.title === fixed)).toHaveLength(1);
+  });
+
+  test('照合で差戻しを見つけたら、受付へ戻さず、最新を取り込める', async ({ page }) => {
+    await login(page);
+    const title = `照合で差戻し ${Date.now()}`;
+    const fixed = `${title} 直した`;
+    await fillWizard(page, title);
+    let lost = false;
+    await page.route(REQUESTS, async (route) => {
+      if (route.request().method() !== 'POST' || lost) return route.fallback();
+      lost = true;
+      await route.fetch();
+      await route.abort('connectionreset');
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#err')).toContainText('通信できませんでした');
+    const created = (await findByTitle(page, title)) as Detail;
+    await setApiRole(page, 'desk');
+    await transition(page, created.id, 'review');
+    await transition(page, created.id, 'back', { reason: '差戻しの理由（作り物）' });
+    const moved = await getDetail(page, created.id);
+    await page.locator('.stp').nth(2).click();
+    await setValue(page, 'main input[type=text]', 0, fixed);
+    await gotoLastStep(page);
+
+    const patches = countRequests(page, 'PATCH', ONE_REQUEST);
+    const moves = countRequests(page, 'POST', TRANSITIONS);
+    await page.locator('#submit').click();
+    await expect(page.locator('#conflict')).toBeVisible();
+    await page.waitForTimeout(500);
+    expect(patches()).toBe(0);
+    expect(moves()).toBe(0);
+    const after = await getDetail(page, created.id);
+    expect(after.status).toBe('back');
+    expect(after.version).toBe(moved.version);
+
+    await page.locator('#cfTake').click();
+    await expect(page.locator('#conflict')).toHaveCount(0);
+    await expect(page.locator('#toast')).toContainText('最新の内容を取り込みました');
+    expect(patches()).toBe(0);
+    expect((await getDetail(page, created.id)).status).toBe('back');
+  });
+
+  test('作成後の PATCH 失敗 → 他の人の更新 → 再読込 → 再送: 上書きせず競合で止める', async ({ page }) => {
+    await login(page);
+    const title = `作成後の競合 ${Date.now()}`;
+    await fillWizard(page, title);
+    // サーバの返却と入力に差を作り、POST の直後に PATCH を走らせる
+    await page.route(REQUESTS, async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      const res = await route.fetch();
+      const body = (await res.json()) as { request: { title: string } };
+      body.request.title = `${body.request.title} サーバ整形`;
+      await route.fulfill({ response: res, json: body });
+    });
+    const hits = await failRoute(page, 'PATCH', ONE_REQUEST);
+    await page.locator('#submit').click();
+    await expect.poll(hits).toBe(1);
+    await expect(page.locator('#err')).toContainText('処理を完了できませんでした');
+    await page.unroute(REQUESTS);
+    await page.unroute(ONE_REQUEST);
+    const created = (await findByTitle(page, title)) as Detail;
+    await callApi(page, 'PATCH', `/api/requests/${created.id}`, {
+      ...inputOf(title),
+      approver: '鈴木 一郎',
+      problem: '他の人の修正（作り物）',
+      version: created.version,
+    });
+    await expect.poll(async () => (await callApi<{ items: unknown[] }>(page, 'GET', '/api/drafts')).items.length).toBe(1);
+    await page.waitForTimeout(700);
+    await page.reload();
+    await page.waitForSelector('button[data-v="home"]');
+    await page.getByRole('button', { name: '続きから再開' }).click();
+    await gotoLastStep(page);
+
+    const patches = countRequests(page, 'PATCH', ONE_REQUEST);
+    await page.locator('#submit').click();
+    await expect(page.locator('#conflict')).toBeVisible();
+    await page.waitForTimeout(500);
+    expect(patches()).toBe(0);
+    expect((await getDetail(page, created.id)).problem).toBe('他の人の修正（作り物）');
+    expect((await listRequests(page)).filter((r) => r.title === title)).toHaveLength(1);
+  });
+
+  const CSRF_403 = {
+    status: 403,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: { code: 'ERR-101', message: '操作を確認できませんでした' } }),
+  };
+
+  test('CSRF の再試行が commit 後に 500 → 入力を直して再送しても受付は 1 件', async ({ page }) => {
+    await login(page);
+    const title = `CSRF 後の 500 ${Date.now()}`;
+    const fixed = `${title} 直した`;
+    await fillWizard(page, title);
+    const keys: (string | undefined)[] = [];
+    await page.route(REQUESTS, async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      keys.push(route.request().headers()['idempotency-key']);
+      if (keys.length === 1) return route.fulfill(CSRF_403);
+      if (keys.length > 2) return route.fallback();
+      await route.fetch(); // 再試行はサーバに保存される
+      return route.fulfill(APP_500);
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#err')).toContainText('処理を完了できませんでした');
+    await page.locator('.stp').nth(2).click();
+    await setValue(page, 'main input[type=text]', 0, fixed);
+    await gotoLastStep(page);
+    await page.locator('#submit').click();
+    await expect(page.locator('#stamp')).toHaveClass(/show/, { timeout: 5000 });
+    expect(new Set(keys).size).toBe(1);
+    const all = await listRequests(page);
+    expect(all.filter((r) => r.title === fixed)).toHaveLength(1);
+    expect(all.filter((r) => r.title === title)).toHaveLength(0);
+  });
+
+  test('CSRF の再試行が ERR-301: 403 と取り違えず競合の画面を出す', async ({ page }) => {
+    await login(page);
+    const title = `CSRF 後の競合 ${Date.now()}`;
+    const created = await createViaUi(page, title);
+    const mine = `${title} 自分の編集`;
+    await openEditAtLastStep(page, title);
+    await setValue(page, 'main input[type=text]', 0, mine);
+    await gotoLastStep(page);
+    const theirs = `${title} 別の人の編集`;
+    const cur = await getDetail(page, created.id);
+    await callApi(page, 'PATCH', `/api/requests/${created.id}`, {
+      ...inputOf(theirs),
+      approver: '鈴木 一郎',
+      version: cur.version,
+    });
+    let first = true;
+    await page.route(ONE_REQUEST, async (route) => {
+      if (route.request().method() !== 'PATCH') return route.fallback();
+      if (!first) return route.fallback();
+      first = false;
+      return route.fulfill(CSRF_403);
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#conflict')).toBeVisible();
+    expect((await getDetail(page, created.id)).title).toBe(theirs);
+  });
+
+  test('コメントの失敗: 別の依頼を開いていたら、その依頼の入力欄へ戻さない', async ({ page }) => {
+    await login(page);
+    const stamp = Date.now();
+    const titleA = `コメント元 ${stamp}`;
+    const titleB = `コメント別 ${stamp}`;
+    await createViaUi(page, titleA);
+    await createViaUi(page, titleB);
+    await page.reload();
+    await page.waitForSelector('button[data-v="home"]');
+    await openDrawer(page, titleA);
+    await page.locator('#drawer [data-dt="log"]').click();
+    let release = (): void => undefined;
+    const held = new Promise<void>((r) => (release = r));
+    await page.route(COMMENTS, async (route) => {
+      await held;
+      return route.fulfill(APP_500);
+    });
+    await page.evaluate(() => {
+      (document.querySelector('#ctx') as HTMLTextAreaElement).value = 'A へのコメント';
+      (document.querySelector('#cad') as HTMLButtonElement).click();
+    });
+    await page.keyboard.press('Escape');
+    await openDrawer(page, titleB);
+    await page.locator('#drawer [data-dt="log"]').click();
+    release();
+    await expect(page.locator('#toast .toast.ng')).toBeVisible();
+    await page.waitForTimeout(300);
+    await expect(page.locator('#ctx')).toHaveValue('');
+  });
+
+  test('最初の工程では「もどる」を押せない', async ({ page }) => {
+    await login(page);
+    await page.click('button[data-v="new"]');
+    await expect(page.locator('#prev')).toBeDisabled();
+  });
+
+  test('JSON の取り込み: コメントだけ失敗しても、取り込み成功とは表示せず既存を取り消さない', async ({ page }) => {
+    await login(page);
+    const existing = await createViaUi(page, `コメントで不成立 ${Date.now()}`);
+    await setApiRole(page, 'desk');
+    await setUiRole(page, 'desk');
+    const row = await localItem(page, existing.id);
+    const stamp = Date.now();
+    const cancels = countCancels(page);
+    await failRoute(page, 'POST', COMMENTS);
+    await page.click('button[data-v="data"]');
+    await page.locator('#importFile').setInputFiles({
+      name: 'import.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from(
+        JSON.stringify({
+          items: [
+            {
+              ...row,
+              id: `E2E-${stamp}-1`,
+              title: `コメントつき ${stamp}`,
+              comments: [{ at: '2026-11-01T00:00:00.000Z', by: '作り物', text: '作り物のコメント' }],
+            },
+          ],
+        }),
+      ),
+    });
+    await page.locator('#mmask button:has-text("取り込む")').last().click();
+    await waitForFailureToast(page);
+    await expect(page.locator('#toast')).toContainText('1 件は登録しましたが');
+    await expectNoToast(page, '件を取り込みました');
+    await page.waitForTimeout(500);
+    expect(cancels()).toBe(0);
+    await expectExistingKept(page, existing);
+  });
+
+  test('取り込みの成功後、同期の失敗で完了・見送りの依頼を画面へ戻さない', async ({ page }) => {
+    await login(page);
+    const stamp = Date.now();
+    const heldTitle = `見送り済み ${stamp}`;
+    const held = await createViaUi(page, heldTitle);
+    const keep = await createViaUi(page, `残す依頼 ${stamp}`);
+    await setApiRole(page, 'desk');
+    await setUiRole(page, 'desk');
+    await transition(page, held.id, 'hold', { reason: '見送りの理由（作り物）' });
+    await page.reload();
+    await page.waitForSelector('button[data-v="home"]');
+    const row = await localItem(page, keep.id);
+    await page.click('button[data-v="data"]');
+    await page.locator('#importFile').setInputFiles({
+      name: 'import.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify({ items: [row] })),
+    });
+    await page.locator('#mmask button:has-text("取り込む")').last().click();
+    await expect(page.locator('#toast')).toContainText('件を取り込みました');
+    expect(await localCountByTitle(page, heldTitle)).toBe(0);
+
+    await failRoute(page, 'POST', COMMENTS);
+    await page.evaluate(async (id) => {
+      const w = window as unknown as {
+        __MSF__: { persist: (d: unknown) => Promise<unknown> };
+        __MSF_UI__: { data: () => { items: { id: string; comments: unknown[] }[] } };
+      };
+      const data = w.__MSF_UI__.data();
+      data.items
+        .find((x) => x.id === id)
+        ?.comments.push({ at: new Date().toISOString(), by: '作り物', text: '失敗するコメント' });
+      await w.__MSF__.persist(data);
+    }, keep.id);
+    await page.waitForTimeout(300);
+    expect(await localCountByTitle(page, heldTitle)).toBe(0);
+    expect((await getDetail(page, held.id)).status).toBe('hold');
+  });
+
+  test('照合の再送に中継の 4xx（JSON なし）が返っても、新しいキーで送らず 1 件', async ({ page }) => {
+    await login(page);
+    const title = `中継の 4xx ${Date.now()}`;
+    const fixed = `${title} 直した`;
+    await fillWizard(page, title);
+    const keys: (string | undefined)[] = [];
+    await page.route(REQUESTS, async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      keys.push(route.request().headers()['idempotency-key']);
+      if (keys.length === 1) {
+        await route.fetch();
+        return route.abort('connectionreset');
+      }
+      if (keys.length === 2) return route.fulfill({ status: 413, contentType: 'text/html', body: '<html>too large</html>' });
+      return route.fallback();
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#err')).toContainText('通信できませんでした');
+    await page.locator('.stp').nth(2).click();
+    await setValue(page, 'main input[type=text]', 0, fixed);
+    await gotoLastStep(page);
+    await page.locator('#submit').click();
+    await expect.poll(() => keys.length).toBe(2);
+    await expect(page.locator('#submit')).toBeEnabled();
+    expect(keys[1]).toBe(keys[0]);
+    await page.locator('#submit').click();
+    await expect(page.locator('#stamp')).toHaveClass(/show/, { timeout: 5000 });
+    expect(new Set(keys).size).toBe(1);
+    const all = await listRequests(page);
+    expect(all.filter((r) => r.title === fixed)).toHaveLength(1);
+    expect(all.filter((r) => r.title === title)).toHaveLength(0);
+  });
+
+  test('コードのない 409 でも競合の画面を出し、次の送信で黙って上書きしない', async ({ page }) => {
+    await login(page);
+    const title = `コードなし 409 ${Date.now()}`;
+    const created = await createViaUi(page, title);
+    const mine = `${title} 自分の編集`;
+    await openEditAtLastStep(page, title);
+    await setValue(page, 'main input[type=text]', 0, mine);
+    await gotoLastStep(page);
+    const theirs = `${title} 別の人の編集`;
+    const cur = await getDetail(page, created.id);
+    await callApi(page, 'PATCH', `/api/requests/${created.id}`, {
+      ...inputOf(theirs),
+      approver: '鈴木 一郎',
+      version: cur.version,
+    });
+    await page.route(ONE_REQUEST, (route) =>
+      route.request().method() === 'PATCH'
+        ? route.fulfill({ status: 409, contentType: 'text/plain', body: 'conflict' })
+        : route.fallback(),
+    );
+    await page.locator('#submit').click();
+    await expect(page.locator('#conflict')).toBeVisible();
+    await expect(page.locator('#submit')).toBeDisabled();
+    expect((await getDetail(page, created.id)).title).toBe(theirs);
+  });
+
+  test('送信中は役割を切り替えられない', async ({ page }) => {
+    await login(page);
+    const title = `送信中の役割 ${Date.now()}`;
+    await fillWizard(page, title);
+    const before = await page.locator('#role').inputValue();
+    const other = before === 'desk' ? 'requester' : 'desk';
+    const switches = countRequests(page, 'POST', /\/api\/auth\/role$/);
+    let release = (): void => undefined;
+    const held = new Promise<void>((r) => (release = r));
+    await page.route(REQUESTS, async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      await held;
+      return route.fallback();
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#submit')).toBeDisabled();
+    await page.locator('#role').selectOption(other);
+    await expect(page.locator('#role')).toHaveValue(before);
+    expect(switches()).toBe(0);
+    release();
+    await expect(page.locator('#stamp')).toHaveClass(/show/);
+  });
+
+  test('状態変更の保存中はダイアログを閉じられず、失敗したらメモが残る', async ({ page }) => {
+    await login(page);
+    const title = `保存中のダイアログ ${Date.now()}`;
+    const created = await createViaUi(page, title);
+    await setApiRole(page, 'desk');
+    await transition(page, created.id, 'review');
+    await page.reload();
+    await page.waitForSelector('button[data-v="home"]');
+    await setUiRole(page, 'desk');
+    await openDrawer(page, title);
+    await page.locator('#dst').click();
+    const modal = page.locator('#modal');
+    await modal.locator('input[name=ns][value=back]').check({ force: true });
+    await modal.locator('#nnote').fill('直してください（作り物）');
+    let release = (): void => undefined;
+    const held = new Promise<void>((r) => (release = r));
+    await page.route(TRANSITIONS, async (route) => {
+      await held;
+      return route.fulfill(APP_500);
+    });
+    await modal.locator('#sok').click();
+    await expect(modal.locator('#sok')).toBeDisabled();
+    await page.locator('#mmask').click({ position: { x: 3, y: 3 } });
+    await expect(page.locator('#mmask')).toHaveClass(/show/);
+    release();
+    await expect(page.locator('#toast .toast.ng').first()).toBeVisible();
+    await expect(page.locator('#mmask')).toHaveClass(/show/);
+    await expect(modal.locator('#nnote')).toHaveValue('直してください（作り物）');
+    await expect(modal.locator('#sok')).toBeEnabled();
+  });
+
+  async function expectFormLocked(page: Page, locked: boolean): Promise<void> {
+    const state = await page.evaluate(() => {
+      const pane = document.querySelector<HTMLElement>('#pane');
+      const controls = [...(pane?.querySelectorAll<HTMLInputElement>('input,select,textarea') ?? [])];
+      return { inert: pane?.inert, total: controls.length, enabled: controls.filter((c) => !c.disabled).length };
+    });
+    expect(state.total).toBeGreaterThan(0);
+    expect(state.inert).toBe(locked);
+    if (locked) expect(state.enabled).toBe(0);
+    else expect(state.enabled).toBeGreaterThan(0);
+  }
+
+  test('新規の送信中は入力全体を止める。失敗したら戻り、入力は残る', async ({ page }) => {
+    await login(page);
+    const title = `送信中の入力 ${Date.now()}`;
+    await fillWizard(page, title);
+    let release = (): void => undefined;
+    const held = new Promise<void>((r) => (release = r));
+    let failed = false;
+    await page.route(REQUESTS, async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      if (failed) return route.fallback();
+      failed = true;
+      await held;
+      return route.fulfill(APP_500);
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#submit')).toBeDisabled();
+    await expectFormLocked(page, true);
+    // 入力欄へ書こうとしても受け付けない
+    await expect(page.locator('#pane input, #pane select, #pane textarea').first().fill('x', { timeout: 500 })).rejects.toThrow();
+    release();
+    await expect(page.locator('#err')).toContainText('処理を完了できませんでした');
+    await expectFormLocked(page, false);
+    await expect(page.locator('#submit')).toBeEnabled();
+    await page.locator('.stp').nth(2).click();
+    await expect(page.locator('main input[type=text]').first()).toHaveValue(title);
+    await gotoLastStep(page);
+    await page.locator('#submit').click();
+    await expect(page.locator('#stamp')).toHaveClass(/show/);
+    expect((await listRequests(page)).filter((r) => r.title === title)).toHaveLength(1);
+  });
+
+  test('編集の送信中も入力全体を止める。遅れて成功しても失う入力がない', async ({ page }) => {
+    await login(page);
+    const title = `編集の送信中 ${Date.now()}`;
+    const created = await createViaUi(page, title);
+    const mine = `${title} 編集`;
+    await openEditAtLastStep(page, title);
+    await setValue(page, 'main input[type=text]', 0, mine);
+    await gotoLastStep(page);
+    let release = (): void => undefined;
+    const held = new Promise<void>((r) => (release = r));
+    await page.route(ONE_REQUEST, async (route) => {
+      if (route.request().method() !== 'PATCH') return route.fallback();
+      await held;
+      return route.fallback();
+    });
+    await page.locator('#submit').click();
+    await expect(page.locator('#submit')).toBeDisabled();
+    await expectFormLocked(page, true);
+    release();
+    await expect(page.locator('#toast')).toContainText('を更新しました');
+    expect((await getDetail(page, created.id)).title).toBe(mine);
   });
 
   test('通信断の後の照合が 400 → 件名を直す → 成功して 1 件', async ({ page }) => {
