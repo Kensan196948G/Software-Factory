@@ -339,6 +339,7 @@ describe('CLI の呼び出しと結果', () => {
       'HTTP_PROXY=http://p:3128',
       'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
       'DISABLE_AUTOUPDATER=1',
+      'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1',
     ]);
     expect(argv.filter((a) => a === '--mount' || a === '-v' || a === '--volume')).toEqual(['--mount']);
     expect(argv.slice(argv.indexOf('img') + 1, argv.indexOf('img') + 4)).toEqual(['timeout', '--signal=KILL', '100']);

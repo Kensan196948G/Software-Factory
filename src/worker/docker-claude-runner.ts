@@ -251,6 +251,9 @@ export function buildDockerRunArgs(input: {
     'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
     '--env',
     'DISABLE_AUTOUPDATER=1',
+    // AI が動かす試験などの子プロセスへ API キーを渡さない（CLI の予算の上限を迂回させない）
+    '--env',
+    'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1',
     input.image,
     // worker が落ちてもコンテナが動き続けないように、中でも時間を切る
     'timeout',
