@@ -5693,7 +5693,8 @@ const SF = (function () {
   /* 結果が確定していない投入。前の版の作成が残っていると、新しい版は投入できない */
   function dlUnresolved(s, cur) {
     if (cur && (cur.state === 'unknown' || cur.state === 'sent')) return cur;
-    return s.handoffs.find((h) => h.state === 'unknown' || h.state === 'sent') || null;
+    // サーバが新しい版を止めるのは作成だけ。前の版の更新の不明は、次の投入で上書きされる
+    return s.handoffs.find((h) => h.op === 'create_issue' && (h.state === 'unknown' || h.state === 'sent')) || null;
   }
   function dlIssueRow(r, s, cur) {
     if (cur && cur.state === 'succeeded') {
@@ -5981,6 +5982,8 @@ const SF = (function () {
     const message = res.message || '';
     switch (res.kind) {
       case 'not_connected':
+        // 別のリポジトリへの投入が結果不明のときは、作られていないとは言えない
+        if (res.details && res.details.handoffState === 'unknown') return { t: '開発ライン未接続：' + message, ng: true };
         return { t: '開発ライン未接続：' + message + '。Issue は作られていません', ng: true };
       case 'unknown':
         if (res.details && res.details.scanComplete === true) {
