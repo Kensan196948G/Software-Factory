@@ -230,6 +230,8 @@ describe('起動の判定', () => {
       false,
     );
     expect(checkRealLineEnv({}, [])).toContain('許可先');
+    // Staging の緩和は Approval PR で扱う。それまでは APP_ENV に関係なく拒否する
+    expect(checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: 'staging' }, [])).toContain('production');
   });
   it('git の接続先は https とループバックだけ。試験はループバックだけ', () => {
     expect(() => assertGitBaseUrlAllowed('https://github.com', 'test')).toThrow();

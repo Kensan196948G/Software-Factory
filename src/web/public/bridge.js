@@ -540,6 +540,9 @@
   }
 
   let running = false;
+  // running は門を待っている間も立つ。実際に送っている間だけ syncing を立て、始まるたびに syncEpoch を進める
+  let syncing = false;
+  let syncEpoch = 0;
   let queued = null;
   let handoffGate = Promise.resolve();
   let carriedFailures = [];
@@ -558,7 +561,14 @@
     try {
       // 投入の途中で古い version の保存を走らせない（投入の確定で version が上がる）
       await handoffGate;
-      const outcome = await runSync(data);
+      syncing = true;
+      syncEpoch += 1;
+      let outcome;
+      try {
+        outcome = await runSync(data);
+      } finally {
+        syncing = false;
+      }
       carriedFailures = outcome.carried;
       notifyUi(outcome.changed);
       result = toResult(outcome, carriedIn);
@@ -603,13 +613,25 @@
 
   /* ── 開発ラインへの投入（API-06） ── */
 
-  /** サーバの依頼を取り直して base と画面へ反映する。API-06 は status / version を返さないので GET する。 */
+  const REFRESH_MAX_TRIES = 5;
+
+  /**
+   * サーバの依頼を取り直して base と画面へ反映する。API-06 は status / version を返さないので GET する。
+   * 同期と重ねない。送信済みで base に未反映のコメントを含む応答を反映すると、手元のコメントが二重になり次の同期で再送される。
+   * 同期の間は待ち、取得の間に同期が始まった応答は捨てて取り直す。門を待つ同期は待たない（投入は門を持ったままここへ来る）。
+   */
   async function refreshRequest(id) {
     let res;
-    try {
-      res = await api('GET', `/api/requests/${encodeURIComponent(id)}`);
-    } catch {
-      return false; // 取り直せないときは手元のまま（次の保存で 409 になり、そこで取り直す）
+    for (let tries = 0; ; tries += 1) {
+      if (tries >= REFRESH_MAX_TRIES) return false; // 手元のまま（次の読み込みで取り直す）
+      while (syncing) await new Promise((r) => setTimeout(r, 50));
+      const epoch = syncEpoch;
+      try {
+        res = await api('GET', `/api/requests/${encodeURIComponent(id)}`);
+      } catch {
+        return false; // 取り直せないときは手元のまま（次の保存で 409 になり、そこで取り直す）
+      }
+      if (!syncing && epoch === syncEpoch) break;
     }
     if (!res || !res.request) return false;
     // 同期が先に進めた版を、遅れて届いた古い応答で戻さない

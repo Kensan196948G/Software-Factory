@@ -14,6 +14,7 @@ import { getRequestRow, getRequestRowForUpdate, mapRequest, type RequestRow } fr
 import type { Actor } from './service.js';
 import { buildIssueBody, safeIssueTitle } from './github.js';
 import { createGithubIssueAdapter } from './issue-adapter.js';
+import { DEFAULT_SECRETS_PATH, RealLineRefused, checkRealLineEnv, loadDevlineGithubToken } from './devline-real-config.js';
 import { haltLockedJob, insertJobEvent, sha256Hex, type JobRow } from './devline-jobs.js';
 import {
   DEVLINE_POLICY,
@@ -64,8 +65,44 @@ export interface DevlineDeps {
   runnerKind?: RunnerKind;
 }
 
-/** 既定の依存。設定が足りなければ ERR-405。呼ぶたびに作る（試験の差し替えと設定の読み直しのため）。 */
+/**
+ * 実 runner の依存。対象は DEVLINE_TARGET_REPOS の唯一の許可先、トークンは DEVLINE_GITHUB_TOKEN だけ。
+ * GITHUB_REPO・GITHUB_TOKEN は見ない。読めない・足りないときは ERR-405 で、fake へ落とさない。
+ */
+function realDevlineDeps(): DevlineDeps {
+  const allowed = config.devlineTargetRepos;
+  const refused = checkRealLineEnv({ ...process.env, NODE_ENV: config.nodeEnv }, allowed);
+  if (refused) throw new ApiError('ERR-405', `開発ラインの設定が正しくありません（${refused}）`, 409);
+  const target = allowed[0] as AllowedRepo;
+  if (allowed.some((r) => r.name !== target.name)) {
+    throw new ApiError('ERR-405', '開発ラインの設定が正しくありません（DEVLINE_TARGET_REPOS は1件にしてください）', 409);
+  }
+  let token: string;
+  try {
+    token = loadDevlineGithubToken(config.devlineSecretsFile || DEFAULT_SECRETS_PATH, config.nodeEnv);
+  } catch (err) {
+    const why = err instanceof RealLineRefused ? err.message : '資格情報を読めません';
+    throw new ApiError('ERR-405', `開発ラインの設定が正しくありません（${why}）`, 409);
+  }
+  return {
+    issueAdapter: createGithubIssueAdapter({ token, apiUrl: config.githubApiUrl, nodeEnv: config.nodeEnv }),
+    targetRepo: target.name,
+    allowedRepos: allowed,
+    now: () => new Date(),
+    runnerKind: 'docker-claude',
+  };
+}
+
+/**
+ * 既定の依存。設定が足りなければ ERR-405。呼ぶたびに作る（試験の差し替えと設定の読み直しのため）。
+ * runner の種別・対象・トークンはサーバの設定だけで決まる。ブラウザからは指定できない。
+ */
 export function defaultDevlineDeps(): DevlineDeps {
+  if (config.devlineRunnerKind === 'docker-claude') return realDevlineDeps();
+  // 綴りの誤りを fake として動かさない
+  if (config.devlineRunnerKind !== 'fake') {
+    throw new ApiError('ERR-405', '開発ラインの設定が正しくありません（DEVLINE_RUNNER_KIND）', 409);
+  }
   if (!config.githubToken || !config.githubRepo) {
     throw new ApiError('ERR-405', 'GitHub連携が設定されていません（管理者に確認してください）', 409);
   }
@@ -324,14 +361,15 @@ async function assertUpdateTarget(intent: IntentRow, deps: DevlineDeps): Promise
 
 /** 別のリポジトリに結果の分からない投入が残っている依頼は、対象を変えても作らない（作成済みかもしれない）。 */
 async function assertNoUnknownInOtherRepo(requestId: string, repo: string, db: Db = pool): Promise<void> {
-  const { rows } = await query<{ id: string }>(
-    `select id from handoff_intent where request_id=$1 and target_repo_id<>$2 and state in ('sent','unknown') limit 1`,
+  const { rows } = await query<{ target_repo_id: string }>(
+    `select target_repo_id from handoff_intent where request_id=$1 and target_repo_id<>$2 and state in ('sent','unknown') limit 1`,
     [requestId, repo],
     db,
   );
   if (rows[0]) {
     throw new ApiError('ERR-405', '別のリポジトリへの投入の結果が確認できていないため、対象を変えて投入できません', 409, {
       handoffState: 'unknown',
+      targetRepo: rows[0].target_repo_id,
     });
   }
 }

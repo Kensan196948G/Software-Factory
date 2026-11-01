@@ -1,0 +1,27 @@
+# 雛形: 開発ライン worker（手順は docs/deployment.md の「開発ライン worker」）。~/.config/systemd/user/ へコピーして使う。
+# current のリリースを参照する。リリースの切替後は再起動する（動いている AI は SIGTERM で止まり、次の起動で同じ工程からやり直す）。
+# preview.conf に DEVLINE_WORKER_ENABLED=1 が無ければ起動しない。資格情報は DEVLINE_SECRETS_FILE（0600）だけに置き、ここへ書かない。
+[Unit]
+Description=Mirai Software Factory devline worker
+After=network.target postgresql.service docker.service
+# 設定や資格情報の誤りで繰り返し失敗したら止める（AI を動かし続けない）
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+Environment=PATH=%h/.nvm/versions/node/v22.22.3/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/.local/share/mirai-sf/current
+EnvironmentFile=%h/.config/mirai-sf/preview.conf
+EnvironmentFile=%h/.local/share/mirai-sf/current/release.env
+ExecStart=/usr/bin/env node dist/worker/main.js
+Restart=on-failure
+RestartSec=30
+# 止める合図で動いている AI を止め、試行を閉じてから終わる
+KillSignal=SIGTERM
+TimeoutStopSec=120
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
