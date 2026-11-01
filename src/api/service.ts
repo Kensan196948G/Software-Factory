@@ -41,8 +41,7 @@ import type { Role, Signal, Status } from '../shared/domain.js';
 import type { RequestDetail, RequestRecord, SessionUser } from '../shared/types.js';
 import type { RequestInput, TransitionInput } from './schemas.js';
 import { buildOrderYaml } from '../shared/order.js';
-import { isGithubConfigured } from './github.js';
-import { handoffOrder, type DevlineDeps } from './devline-handoff.js';
+import { defaultDevlineDeps, handoffOrder, type DevlineDeps } from './devline-handoff.js';
 import { canHandoff } from '../shared/devline.js';
 import { buildCsv, buildExportJson, measureOf } from '../shared/export.js';
 import { deliverOutboxMail, enqueueApprovalMailInTx, latestMailForRequest } from './mail-outbox.js';
@@ -1126,11 +1125,10 @@ export async function handoffToGithub(
   id: string,
   actor: Actor,
   correlationId: string,
-  deps?: DevlineDeps,
+  depsIn?: DevlineDeps,
 ): Promise<{ issueNo: number; issueUrl: string; created: boolean; detail: RequestDetail }> {
-  if (!deps && !isGithubConfigured()) {
-    throw new ApiError('ERR-405', 'GitHub連携が設定されていません（管理者に確認してください）', 409);
-  }
+  // 新しいルートと同じ解決にする（実 runner の設定なら DEVLINE_GITHUB_TOKEN。足りなければ ERR-405）
+  const deps = depsIn ?? defaultDevlineDeps();
   if (!canHandoff({ role: actor.role, isAdmin: actor.user.isAdmin })) {
     await appendAudit({
       action: 'handoff.intent',
@@ -1156,9 +1154,15 @@ export async function handoffToGithub(
     throw Errors.orderNotApproved();
   }
   if (row.issue_no) {
+    // 投入の記録があればその URL（GITHUB_REPO とは別のリポジトリのことがある）
+    const recorded = await query<{ issue_url: string | null }>(
+      `select issue_url from handoff_intent where request_id=$1 and state='succeeded' and issue_no=$2
+        order by order_version desc limit 1`,
+      [id, row.issue_no],
+    );
     return {
       issueNo: row.issue_no,
-      issueUrl: `https://github.com/${config.githubRepo}/issues/${row.issue_no}`,
+      issueUrl: recorded.rows[0]?.issue_url ?? `https://github.com/${config.githubRepo}/issues/${row.issue_no}`,
       created: false,
       detail: await getDetail(id, actor),
     };
