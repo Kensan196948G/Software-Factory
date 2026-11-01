@@ -52,12 +52,15 @@ import {
   commentSchema,
   draftSchema,
   importSchema,
+  jobOperationSchema,
   loginSchema,
+  orderHandoffSchema,
   requestInputSchema,
   roleSchema,
   transitionSchema,
 } from './schemas.js';
 import { staleDays } from '../shared/domain.js';
+import { cancelJob, getJob, handoffOrder, listJobsForRequest, resumeJob, type DevlineDeps } from './devline-service.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -68,7 +71,7 @@ declare module 'fastify' {
 /** 承認依頼メールの状態（クエリ検証に使う）。 */
 const MAIL_STATES = ['pending', 'sending', 'sent', 'failed'] as const;
 
-export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<FastifyInstance> {
+export async function buildApp(opts: { serveStatic?: boolean; devlineDeps?: DevlineDeps } = {}): Promise<FastifyInstance> {
   const app = Fastify({
     logger:
       config.nodeEnv === 'test' && process.env.DEBUG_TEST !== '1'
@@ -295,7 +298,52 @@ export async function buildApp(opts: { serveStatic?: boolean } = {}): Promise<Fa
   app.post('/api/requests/:id/handoff', async (req) => {
     const ctx = mutate(req);
     const { id } = req.params as { id: string };
-    return handoffToGithub(id, actorOf(ctx.user), correlationId(req));
+    return handoffToGithub(id, actorOf(ctx.user), correlationId(req), opts.devlineDeps);
+  });
+
+  /* ───────── 開発ライン（API-06・ジョブ）。API-07 は別の Approval PR なので作らない ───────── */
+  app.post('/api/orders/:id/handoff', async (req) => {
+    const ctx = mutate(req);
+    const { id } = req.params as { id: string };
+    const body = orderHandoffSchema.parse(req.body);
+    return handoffOrder(
+      {
+        requestId: id,
+        orderVersion: body.orderVersion,
+        ...(body.confirmAbsent ? { confirmAbsent: { reason: body.reason ?? '' } } : {}),
+      },
+      actorOf(ctx.user),
+      correlationId(req),
+      opts.devlineDeps,
+    );
+  });
+
+  app.get('/api/jobs/:id', async (req) => {
+    const ctx = auth(req);
+    const { id } = req.params as { id: string };
+    return { job: await getJob(id, actorOf(ctx.user)) };
+  });
+
+  app.get('/api/requests/:id/jobs', async (req) => {
+    const ctx = auth(req);
+    const { id } = req.params as { id: string };
+    return { items: await listJobsForRequest(id, actorOf(ctx.user)) };
+  });
+
+  app.post('/api/jobs/:id/cancel', async (req) => {
+    const ctx = mutate(req);
+    const { id } = req.params as { id: string };
+    const body = jobOperationSchema.parse(req.body ?? {});
+    const job = await cancelJob({ jobId: id, ...body }, actorOf(ctx.user), correlationId(req), new Date());
+    return { job };
+  });
+
+  app.post('/api/jobs/:id/resume', async (req) => {
+    const ctx = mutate(req);
+    const { id } = req.params as { id: string };
+    const body = jobOperationSchema.parse(req.body ?? {});
+    const job = await resumeJob({ jobId: id, ...body }, actorOf(ctx.user), correlationId(req), new Date());
+    return { job };
   });
 
   app.get('/api/requests/:id/order', async (req) => {

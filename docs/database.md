@@ -82,6 +82,25 @@ migrationはadditiveのみ。破壊的変更は行わない。障害時はバッ
 | `0006_drafts_multi.sql`      | `draft_item`（複数下書き）と旧 `draft` からの引き継ぎ                                 |
 | `0007_mail_retry.sql`        | `next_attempt_at`（失敗時の指数バックオフ再送）と索引                                 |
 
+### 追加migration（開発ライン Phase 1・2026-10-31）
+
+`0008_devline_foundation.sql`。判断の理由は `docs/devline/adr-001-devline-foundation.md`。既存の表は変更しない。
+
+| テーブル         | 仕様ID | 内容                                                                                                          | 更新               |
+| ---------------- | ------ | ------------------------------------------------------------------------------------------------------------- | ------------------ |
+| `order_snapshot` | —      | 承認済み注文書の版固定（正規化した YAML、sha256、envelope、承認、対象リポジトリ、base_sha、policy の版）      | 追記のみ           |
+| `handoff_intent` | —      | 外部呼び出しの前に残す意図。補助状態 `intent/sent/succeeded/unknown/failed`。unique(依頼, 版, リポジトリ, op) | 遷移のみ・削除不可 |
+| `job`            | ENT-08 | 実行ジョブ。状態は仕様 4-3 の15値。lease と fencing_token、修正回数・時間・費用（円の整数）・停止理由         | 遷移のみ・削除不可 |
+| `job_attempt`    | ENT-08 | 実行の試行。終わった試行は変更不可                                                                            | 終了まで・削除不可 |
+| `job_event`      | ENT-08 | 出来事（遷移、遅れて捨てた書き込みなど）                                                                      | 追記のみ           |
+| `job_artifact`   | ENT-08 | 成果物のハッシュと参照。PR 候補の本文もここ                                                                   | 追記のみ           |
+| `verification`   | ENT-09 | 検証結果。`delivery_id` unique。`source` は `fake_ci` / `ci` のみ（Agent の申告を入れない）                   | 追記のみ           |
+
+- **追記のみ**: `audit_log` と同じく BEFORE UPDATE/DELETE トリガで拒否する。TRUNCATE は拒否しない。
+- **遷移**: `job` と `handoff_intent` は BEFORE UPDATE トリガで遷移表（`devline_job_transition_allowed` / `devline_handoff_transition_allowed`）を確かめる。正本は `src/shared/devline.ts`。
+- **依頼の削除**: 上の表から `request` への外部キーは `on delete restrict`。開発ラインの行がある依頼は `delete from request` できない。`pnpm db:reset` は `truncate ... cascade` なので通る。
+- **ロールバック**: additive のみ。`db.ts` の方針どおりバックアップからの復元か forward fix。上の7表と関数は既存の表から参照されないので、アプリを戻すだけで影響は残らない。
+
 ## 5. インデックス
 
 - `request (status, updated_at desc)` / `(dept_code)` / `(applicant_user_id)` / `(approver_user_id)` / `(updated_at desc)`

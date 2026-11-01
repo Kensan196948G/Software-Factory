@@ -99,7 +99,7 @@ export async function loginAs(app: FastifyInstance, role?: string): Promise<Auth
   return login(app, TEST_USER, role);
 }
 
-/** 管理者ではない利用者（依頼者のみ）でログインする。権限の否定テスト用。 */
+/** 管理者ではない利用者（依頼者＋承認者の役割を持つ）でログインする。権限の否定テスト用。 */
 export async function loginAsMember(app: FastifyInstance): Promise<Authed> {
   return login(app, TEST_MEMBER);
 }

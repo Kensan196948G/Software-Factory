@@ -1,0 +1,1112 @@
+/**
+ * 開発ライン Phase 1 fake 縦断 PoC の契約（型・定数・純関数）。
+ *
+ * 根拠: docs/devline/adr-001-devline-foundation.md / docs/devline/api-contract.md
+ * 正本: 詳細仕様書 V1.0 4-2, 4-3, 4-5, 4-8, 6-4, 6-6, 6-7
+ *
+ * このファイルは web からも読めるため、node:crypto・zod・DB を読み込まない。
+ * ハッシュの計算（sha256）は API／worker 側で行う: createHash('sha256').update(text, 'utf8').digest('hex')
+ */
+import type { Role, Signal, Status } from './domain.js';
+import { buildOrderYaml } from './order.js';
+import type { OrderContext } from './order.js';
+
+/* ────────────────────────────── job 状態（ENT-08・仕様 4-3） ────────────────────────────── */
+
+export const JOB_STATES = [
+  'queued',
+  'planning',
+  'implementing',
+  'verifying',
+  'revising',
+  'pr_ready',
+  'reviewing',
+  'approved',
+  'merged',
+  'staged',
+  'released',
+  'closed',
+  'stopped',
+  'failed',
+  'cancelled',
+] as const;
+export type JobState = (typeof JOB_STATES)[number];
+
+/**
+ * 遷移表（仕様 4-3 をそのまま写したもの）。
+ * db/migrations/0008 の devline_job_transition_allowed と一致させる（試験 T-02）。
+ *
+ * - 実行中の取消の行き先は stopped（仕様に実行中 → cancelled は無い。ADR D-05）。
+ * - stopped / failed / cancelled の行き先は「人の指示の再開先」と closed（ADR D-06）。
+ */
+export const JOB_TRANSITIONS: Readonly<Record<JobState, readonly JobState[]>> = {
+  queued: ['planning', 'cancelled'],
+  planning: ['implementing', 'stopped'],
+  implementing: ['verifying', 'stopped', 'failed'],
+  verifying: ['pr_ready', 'revising', 'stopped'],
+  revising: ['verifying', 'stopped'],
+  pr_ready: ['reviewing', 'approved'],
+  reviewing: ['approved', 'revising', 'stopped'],
+  approved: ['merged'],
+  merged: ['staged'],
+  staged: ['released'],
+  released: ['closed'],
+  closed: [],
+  stopped: ['planning', 'implementing', 'verifying', 'revising', 'reviewing', 'closed'],
+  failed: ['implementing', 'closed'],
+  cancelled: ['queued', 'closed'],
+};
+
+export function isJobState(value: string): value is JobState {
+  return (JOB_STATES as readonly string[]).includes(value);
+}
+
+export function isJobTransitionAllowed(from: JobState, to: JobState): boolean {
+  return JOB_TRANSITIONS[from].includes(to);
+}
+
+/** 停止系。理由・残作業の記録が必須で、人の指示でしか動かない。 */
+export const JOB_HALTED_STATES: readonly JobState[] = ['stopped', 'failed', 'cancelled'];
+
+/** worker が lease を取って進めてよい状態。 */
+export const JOB_RUNNABLE_STATES: readonly JobState[] = ['queued', 'planning', 'implementing', 'revising', 'verifying'];
+
+/** 人の取消で動かせる実行中の状態（行き先は stopped）。queued は cancelled へ直接動かす。 */
+export const JOB_STOPPABLE_STATES: readonly JobState[] = ['planning', 'implementing', 'verifying', 'revising', 'reviewing'];
+
+/** Phase 1 が到達してよい最後の状態。ここから先へ進めるコードを今回は作らない。 */
+export const PHASE1_FINAL_STATE: JobState = 'pr_ready';
+
+const PHASE1_REACHABLE: readonly JobState[] = [
+  'queued',
+  'planning',
+  'implementing',
+  'verifying',
+  'revising',
+  'pr_ready',
+  'stopped',
+  'failed',
+  'cancelled',
+];
+
+/** Phase 1 のサービス層が実行してよい遷移か（DB の遷移表より狭い）。 */
+export function isPhase1Transition(from: JobState, to: JobState): boolean {
+  return isJobTransitionAllowed(from, to) && PHASE1_REACHABLE.includes(from) && PHASE1_REACHABLE.includes(to);
+}
+
+/* ────────────────────────────── 停止理由と再開 ────────────────────────────── */
+
+export const STOP_REASONS = [
+  'cancel_requested',
+  'order_superseded',
+  'order_invalidated',
+  'same_cause_limit',
+  'repair_total_limit',
+  'session_limit',
+  'continuous_limit',
+  'ci_rerun_limit',
+  'budget_limit',
+  'policy_violation',
+  'human_approval_required',
+  'red_signal_human_required',
+  'planning_question',
+  'lease_lost_repeatedly',
+  'runner_failure',
+  'runner_rejected',
+  'human_stop',
+] as const;
+export type StopReason = (typeof STOP_REASONS)[number];
+
+/**
+ * 再開しても同じ停止に戻るか、再開の前に人の判断（再承認など）が要る理由。
+ * 修正回数は注文書の再承認（= 新しい版の job）でだけ戻る（仕様 4-5）。
+ */
+export const NON_RESUMABLE_STOP_REASONS: readonly StopReason[] = [
+  'order_superseded',
+  'order_invalidated',
+  'same_cause_limit',
+  'repair_total_limit',
+  'ci_rerun_limit',
+  'budget_limit',
+  'policy_violation',
+  'human_approval_required',
+  'red_signal_human_required',
+  'runner_rejected',
+];
+
+export type ResumeDecision = { ok: true; to: JobState } | { ok: false; code: 'ERR-201'; reason: string };
+
+/** 再開の可否（純関数）。注文書がまだ有効かは呼び出し側が isOrderCurrent で別に確かめる（無効なら ERR-202）。 */
+export function resumeDecision(job: {
+  state: JobState;
+  stopReason: StopReason | null;
+  resumeTo: JobState | null;
+}): ResumeDecision {
+  if (!JOB_HALTED_STATES.includes(job.state)) {
+    return { ok: false, code: 'ERR-201', reason: '停止していないジョブは再開できません' };
+  }
+  if (job.stopReason && NON_RESUMABLE_STOP_REASONS.includes(job.stopReason)) {
+    return {
+      ok: false,
+      code: 'ERR-201',
+      reason: `この理由（${job.stopReason}）の停止は再開できません。注文書の見直しや再承認が必要です`,
+    };
+  }
+  if (!job.resumeTo || job.resumeTo === 'closed' || !isJobTransitionAllowed(job.state, job.resumeTo)) {
+    return { ok: false, code: 'ERR-201', reason: '再開先が記録されていません' };
+  }
+  return { ok: true, to: job.resumeTo };
+}
+
+export type CancelDecision =
+  | { ok: true; alreadyDone: boolean; to: JobState; stopReason: StopReason | null }
+  | { ok: false; code: 'ERR-201'; reason: string };
+
+/**
+ * 取消の可否（純関数）。
+ * queued → cancelled、実行中 → stopped(cancel_requested)。
+ * pr_ready は仕様 4-3 に停止の行き先が無いので受けない（ADR の未確定事項 U-02）。
+ */
+export function cancelDecision(state: JobState): CancelDecision {
+  if (state === 'queued') return { ok: true, alreadyDone: false, to: 'cancelled', stopReason: 'cancel_requested' };
+  if (JOB_STOPPABLE_STATES.includes(state))
+    return { ok: true, alreadyDone: false, to: 'stopped', stopReason: 'cancel_requested' };
+  if (state === 'stopped' || state === 'cancelled') return { ok: true, alreadyDone: true, to: state, stopReason: null };
+  return { ok: false, code: 'ERR-201', reason: `いまの状態（${state}）のジョブは取り消せません` };
+}
+
+/**
+ * worker やサービスが止めるときの行き先（純関数）。仕様 4-3 に沿う。
+ * queued に stopped への遷移は無いので cancelled。failed へ行けるのは implementing の runner 失敗だけ。
+ * 止める遷移が無い状態（pr_ready 以降・停止系）は null で、状態を動かさない。
+ */
+export function haltTarget(state: JobState, reason: StopReason): 'stopped' | 'failed' | 'cancelled' | null {
+  if (state === 'queued') return 'cancelled';
+  if (state === 'implementing' && reason === 'runner_failure') return 'failed';
+  return JOB_STOPPABLE_STATES.includes(state) ? 'stopped' : null;
+}
+
+/* ────────────────────────────── 受付12状態との対応（仕様 4-2） ────────────────────────────── */
+
+/**
+ * 受付の状態で見て、その job 状態のときに受付がとりうる状態（表示と試験のための参照）。
+ * 受付と job は別管理で、worker は request.status を書きかえない（ADR D-07）。
+ * 仕様 4-2 の工程の対応から導く。停止系は受付の状態を動かさないので、実行中と同じ範囲を返す。
+ */
+export const JOB_STATE_REQUEST_STATUSES: Readonly<Record<JobState, readonly Status[]>> = {
+  queued: ['approved'],
+  planning: ['approved', 'dev'],
+  implementing: ['approved', 'dev'],
+  verifying: ['approved', 'dev'],
+  revising: ['approved', 'dev'],
+  pr_ready: ['approved', 'dev', 'verify'],
+  reviewing: ['verify'],
+  approved: ['verify'],
+  merged: ['verify', 'field'],
+  staged: ['verify', 'field', 'release_wait'],
+  released: ['done'],
+  closed: ['done'],
+  stopped: ['approved', 'dev', 'verify'],
+  failed: ['approved', 'dev', 'verify'],
+  cancelled: ['approved', 'dev', 'verify'],
+};
+
+/** 依頼がこの状態なら、同じ版の job は進めてよい（承認が生きている）。 */
+export const ORDER_LIVE_STATUSES: readonly Status[] = ['approved', 'dev', 'verify', 'field', 'release_wait', 'done'];
+
+/** 依頼の版が job と同じで、承認が取り消されていないか。worker は毎工程で確かめる。 */
+export function isOrderCurrent(input: {
+  requestStatus: Status;
+  requestDeleted: boolean;
+  requestOrderVersion: number;
+  jobOrderVersion: number;
+}): boolean {
+  return (
+    !input.requestDeleted &&
+    input.requestOrderVersion === input.jobOrderVersion &&
+    ORDER_LIVE_STATUSES.includes(input.requestStatus)
+  );
+}
+
+/* ────────────────────────────── 承認の有効性 ────────────────────────────── */
+
+export interface ApprovalFacts {
+  id: string;
+  decision: 'approved' | 'returned' | 'held';
+  orderVersion: number | null;
+  approverUserId: string | null;
+  decidedSignal: Signal | null;
+  suggestedSignal: Signal | null;
+  at: string;
+}
+
+export interface HandoffCheckInput {
+  requestStatus: Status;
+  requestDeleted: boolean;
+  requestOrderVersion: number;
+  requestSignalDecided: Signal | null;
+  /** 最新の approval（`order by at desc, id desc limit 1`）。無ければ null。 */
+  latestApproval: ApprovalFacts | null;
+  /** API-06 の本文の版。旧ルート（版の指定なし）は null。 */
+  requestedOrderVersion: number | null;
+}
+
+export type HandoffCheck =
+  | { ok: true; approvalId: string; approverUserId: string; suggested: Signal; decided: Signal }
+  | { ok: false; code: 'ERR-202' | 'ERR-205'; reason: string };
+
+/**
+ * 新しい版を固定してよいか（ADR D-03）。
+ * すでに固定済みの版を返すだけの再実行は、ここを通さずに既存の結果を返す。
+ */
+export function checkOrderForHandoff(input: HandoffCheckInput): HandoffCheck {
+  const a = input.latestApproval;
+  if (input.requestedOrderVersion !== null && input.requestedOrderVersion !== input.requestOrderVersion) {
+    return { ok: false, code: 'ERR-202', reason: '指定された版は最新ではありません' };
+  }
+  if (input.requestDeleted || input.requestStatus !== 'approved') {
+    return { ok: false, code: 'ERR-205', reason: '依頼が承認済みの状態ではありません' };
+  }
+  if (input.requestOrderVersion < 1 || !input.requestSignalDecided) {
+    return { ok: false, code: 'ERR-205', reason: '注文書の版または信号の色がありません' };
+  }
+  if (!a || a.decision !== 'approved') {
+    return { ok: false, code: 'ERR-205', reason: '最新の承認記録が承認ではありません' };
+  }
+  if (a.orderVersion !== input.requestOrderVersion) {
+    return { ok: false, code: 'ERR-205', reason: '承認記録の版が注文書の版と一致しません' };
+  }
+  if (!a.approverUserId) {
+    return { ok: false, code: 'ERR-205', reason: '承認者が利用者IDで確認できません' };
+  }
+  if (!a.suggestedSignal || a.decidedSignal !== input.requestSignalDecided) {
+    return { ok: false, code: 'ERR-205', reason: '承認記録の信号の色が依頼と一致しません' };
+  }
+  return {
+    ok: true,
+    approvalId: a.id,
+    approverUserId: a.approverUserId,
+    suggested: a.suggestedSignal,
+    decided: a.decidedSignal,
+  };
+}
+
+/* ────────────────────────────── 正規化とハッシュの入力（ADR D-02） ────────────────────────────── */
+
+/**
+ * canonical_yaml の正規化。NFC、改行は LF、値の中に残った単独 CR は空白（q() の「改行は空白」に合わせる）、
+ * 末尾の改行はちょうど1つ。content_sha256 はこの結果の UTF-8 バイト列の sha256。
+ */
+export function canonicalizeOrderYaml(yaml: string): string {
+  const lf = yaml.normalize('NFC').replace(/\r\n/g, '\n').replace(/\r/g, ' ');
+  return `${lf.replace(/\n+$/, '')}\n`;
+}
+
+/**
+ * 版固定に使う YAML を作る（注文書 YAML の形式は変えない）。
+ * 時間とともに変わる入力を固定する: status は承認済み、suggested は承認記録の値。
+ * 版固定のときに一度だけ呼ぶ。保存した後は再生成して比べない。
+ */
+export function buildSnapshotYaml(ctx: OrderContext & { approvalSuggested: Signal }): string {
+  return canonicalizeOrderYaml(
+    buildOrderYaml({
+      request: { ...ctx.request, status: 'approved' },
+      suggested: ctx.approvalSuggested,
+      departmentName: ctx.departmentName,
+      catalogToolName: ctx.catalogToolName,
+      schemaVersion: ctx.schemaVersion,
+    }),
+  );
+}
+
+/** キー順を固定し、文字列を NFC・LF にした決定的な JSON（envelope_sha256 の入力）。 */
+export function canonicalJson(value: unknown): string {
+  const walk = (v: unknown): unknown => {
+    if (typeof v === 'string') return v.normalize('NFC').replace(/\r\n?/g, '\n');
+    if (v === null || typeof v !== 'object') return v;
+    if (Array.isArray(v)) return v.map(walk);
+    const obj = v as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(obj).sort()) out[key.normalize('NFC')] = walk(obj[key]);
+    return out;
+  };
+  return JSON.stringify(walk(value ?? null));
+}
+
+export const ORDER_ENVELOPE_SCHEMA = 'msf.order-envelope/v1';
+
+export interface OrderEnvelopeV1 {
+  schema: typeof ORDER_ENVELOPE_SCHEMA;
+  request_id: string;
+  order_version: number;
+  content_sha256: string;
+  approval: {
+    id: string;
+    approver_user_id: string;
+    decided_signal: Signal;
+    suggested_signal: Signal;
+    approved_at: string;
+  };
+  target_repo_id: string;
+  base_sha: string;
+  policy_version: string;
+  frozen_at: string;
+}
+
+/* ────────────────────────────── handoff_intent（IF-03・ADR D-04） ────────────────────────────── */
+
+export const HANDOFF_STATES = ['intent', 'sent', 'succeeded', 'unknown', 'failed'] as const;
+export type HandoffState = (typeof HANDOFF_STATES)[number];
+
+export const HANDOFF_OPS = ['create_issue', 'update_issue'] as const;
+export type HandoffOp = (typeof HANDOFF_OPS)[number];
+
+/** db/migrations/0008 の devline_handoff_transition_allowed と一致させる（試験 T-02）。 */
+export const HANDOFF_TRANSITIONS: Readonly<Record<HandoffState, readonly HandoffState[]>> = {
+  intent: ['sent', 'failed'],
+  sent: ['succeeded', 'unknown', 'failed'],
+  succeeded: [],
+  unknown: ['succeeded', 'sent'],
+  failed: ['sent'],
+};
+
+export function isHandoffTransitionAllowed(from: HandoffState, to: HandoffState): boolean {
+  return HANDOFF_TRANSITIONS[from].includes(to);
+}
+
+export const HANDOFF_POLICY = {
+  /** 外部呼び出し1回の時間切れ。SENT_STALE より必ず短くする。 */
+  httpTimeoutMs: 30_000,
+  /** これを過ぎた sent は、応答が失われたものとして照合する。これより新しい sent は別の処理の最中とみなす。 */
+  sentStaleMs: 120_000,
+  /** 混雑（429）時の再試行の間隔（IF-03）。 */
+  retryDelaysMinutes: [1, 5, 15],
+  /** 照合の list API の取得範囲。since は intent の作成時刻からこの分だけ前にする（時計のずれ）。 */
+  reconcileSinceMarginMinutes: 5,
+  reconcilePerPage: 100,
+  /** これを超えたら「見つからなかった」と言わず不完全のまま unknown に留める。 */
+  reconcileMaxPages: 10,
+} as const;
+
+/** 何回目の混雑かに応じた次の試行時刻（3回目以降は最後の間隔）。 */
+export function nextRetryAt(now: Date, attemptsSoFar: number): Date {
+  const delays = HANDOFF_POLICY.retryDelaysMinutes;
+  const index = Math.min(Math.max(attemptsSoFar - 1, 0), delays.length - 1);
+  return new Date(now.getTime() + (delays[index] ?? 15) * 60_000);
+}
+
+export type IssueTransportFacts =
+  { kind: 'timeout' } | { kind: 'network' } | { kind: 'http'; status: number; bodyParsed: boolean; retryAfterPresent: boolean };
+
+export type IssueOutcomeClass = 'succeeded' | 'unknown' | 'failed' | 'rate_limited';
+
+/**
+ * 外部応答の分類（純関数）。
+ * 2xx でも本文が読めなければ作成済みの可能性があるので unknown。
+ * 408・3xx・5xx も unknown。429 と Retry-After 付きの 403 は「未処理」とみなす rate_limited。
+ * それ以外の 4xx は確定した失敗（Issue は作られていない）。
+ */
+export function classifyIssueResponse(facts: IssueTransportFacts): IssueOutcomeClass {
+  if (facts.kind !== 'http') return 'unknown';
+  const { status, bodyParsed, retryAfterPresent } = facts;
+  if (status >= 200 && status < 300) return bodyParsed ? 'succeeded' : 'unknown';
+  if (status === 429 || (status === 403 && retryAfterPresent)) return 'rate_limited';
+  if (status === 408) return 'unknown';
+  if (status >= 400 && status < 500) return 'failed';
+  return 'unknown';
+}
+
+export type HandoffAction = 'return_existing' | 'claim_and_send' | 'send_not_allowed' | 'in_flight' | 'retry_later' | 'reconcile';
+
+/**
+ * 既存の intent に対して次に何をするか（純関数）。
+ * sendAllowed は「この intent の版が依頼の最新の版で、isOrderCurrent が真」。偽なら外部へ送らない
+ * （古い版の PATCH が新しい版を上書きする、取消・差戻しの後に Issue を作る、を防ぐ）。
+ * 照合は読み取りだけなので、sendAllowed が偽でも行ってよい。
+ */
+export function nextHandoffAction(
+  intent: { state: HandoffState; sentAt: Date | null; nextAttemptAt: Date | null },
+  now: Date,
+  context: { sendAllowed: boolean },
+): HandoffAction {
+  switch (intent.state) {
+    case 'succeeded':
+      return 'return_existing';
+    case 'intent':
+      return context.sendAllowed ? 'claim_and_send' : 'send_not_allowed';
+    case 'failed':
+      if (!context.sendAllowed) return 'send_not_allowed';
+      return intent.nextAttemptAt && intent.nextAttemptAt.getTime() > now.getTime() ? 'retry_later' : 'claim_and_send';
+    case 'sent':
+      return intent.sentAt && now.getTime() - intent.sentAt.getTime() >= HANDOFF_POLICY.sentStaleMs ? 'reconcile' : 'in_flight';
+    case 'unknown':
+      return 'reconcile';
+  }
+}
+
+export type AfterNotFound = 'stay_unknown' | 'resend_patch' | 'resend_create';
+
+/**
+ * 照合で見つからなかったときの次の手（純関数）。
+ * create は権限者の confirm_absent があるときだけ再作成する。走査が途中で切れたら、何があっても再送しない。
+ * update は同じ内容で PATCH するだけなので再送できる。どちらも sendAllowed（nextHandoffAction と同じ）のときに限る。
+ */
+export function afterReconcileNotFound(input: {
+  op: HandoffOp;
+  scanComplete: boolean;
+  confirmAbsent: boolean;
+  sendAllowed: boolean;
+}): AfterNotFound {
+  if (!input.scanComplete || !input.sendAllowed) return 'stay_unknown';
+  if (input.op === 'update_issue') return 'resend_patch';
+  return input.confirmAbsent ? 'resend_create' : 'stay_unknown';
+}
+
+const MARKER_RE =
+  /^<!-- msf-handoff:v1 request=(REQ-\d{4}-\d{4}) version=([1-9]\d*) op=(create_issue|update_issue) repo=([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+) sha256=([0-9a-f]{64}) -->$/;
+
+export interface HandoffMarker {
+  requestId: string;
+  orderVersion: number;
+  op: HandoffOp;
+  repo: string;
+  contentSha256: string;
+}
+
+export function buildHandoffMarker(m: HandoffMarker): string {
+  return `<!-- msf-handoff:v1 request=${m.requestId} version=${m.orderVersion} op=${m.op} repo=${m.repo} sha256=${m.contentSha256} -->`;
+}
+
+/** 本文の1行目だけを見る。注文書の文章の中に同じ文字列があっても一致させない。 */
+export function parseHandoffMarker(body: string | null | undefined): HandoffMarker | null {
+  const firstLine = (body ?? '').split('\n', 1)[0] ?? '';
+  const m = MARKER_RE.exec(firstLine.replace(/\r$/, ''));
+  if (!m) return null;
+  return {
+    requestId: m[1] as string,
+    orderVersion: Number(m[2]),
+    op: m[3] as HandoffOp,
+    repo: m[4] as string,
+    contentSha256: m[5] as string,
+  };
+}
+
+export interface IssueSummary {
+  number: number;
+  url: string;
+  body: string | null;
+  authorLogin: string | null;
+  /** GitHub の issues API は PR も返すので区別する。 */
+  isPullRequest: boolean;
+}
+
+export interface MarkerMatch {
+  found: IssueSummary | null;
+  /** 2件以上見つかったときの残りの番号（小さい番号を正とし、残りは記録して人へ）。 */
+  duplicates: number[];
+}
+
+/**
+ * 照合の一致判定（純関数）。リポジトリは公開なので、だれでも同じ文字列の Issue を作れる。
+ * そのため PR を除き、作成者が連携アカウント本人のものだけを見る。
+ */
+export function matchIssueByMarker(issues: readonly IssueSummary[], marker: string, actorLogin: string): MarkerMatch {
+  const hits = issues
+    .filter((i) => !i.isPullRequest && i.authorLogin === actorLogin)
+    .filter((i) => ((i.body ?? '').split('\n', 1)[0] ?? '').replace(/\r$/, '') === marker)
+    .sort((a, b) => a.number - b.number);
+  return { found: hits[0] ?? null, duplicates: hits.slice(1).map((i) => i.number) };
+}
+
+/* ────────────────────────────── 権限（既存の actor 判定の上に載せる） ────────────────────────────── */
+
+export interface DevlineActorFacts {
+  role: Role;
+  isAdmin: boolean;
+}
+
+/** 投入（API-06・旧ルート）。旧ルートと同じ。 */
+export function canHandoff(a: DevlineActorFacts): boolean {
+  return a.role === 'desk' || a.role === 'approver';
+}
+
+/** cancel / resume。 */
+export function canOperateJob(a: DevlineActorFacts): boolean {
+  return a.role === 'desk' || a.role === 'approver' || a.isAdmin;
+}
+
+/** confirm_absent。誤ると Issue が重複するので受付担当には任せない。 */
+export function canConfirmAbsent(a: DevlineActorFacts): boolean {
+  return a.role === 'approver' || a.isAdmin;
+}
+
+/* ────────────────────────────── policy（devline-policy/v1） ────────────────────────────── */
+
+export const POLICY_VERSION = 'devline-policy/v1';
+
+/**
+ * 実行上限。仕様 4-5 の（案）と本セッションの指示の厳しい側。注文書の本文では上書きできない。
+ * 回数はいずれも「すでに行った回数」がこの値に達したら次を行わない。
+ */
+export const DEVLINE_POLICY = {
+  version: POLICY_VERSION,
+  /** 同じ原因の修正（仕様の案は3回） */
+  maxSameCauseRepairs: 2,
+  /** 1タスクの修正の合計（仕様の案は6回）。注文書の再承認（新しい版の job）で戻る。 */
+  maxTotalRepairs: 5,
+  /** 1セッション */
+  maxSessionMinutes: 60,
+  /** 連続作業時間 */
+  maxContinuousMinutes: 120,
+  /** 同じコミットの CI 再実行 */
+  maxCiRerunsPerCommit: 2,
+  /** 予算は未設定（null）。実 AI を動かさない理由。fake の費用は 0 円で計上だけする。 */
+  budgetJpy: null as number | null,
+  budgetWarnRatio: 0.8,
+  /** lease の既定の長さと、取り直しの上限。 */
+  leaseSeconds: 300,
+  maxLeaseReclaims: 3,
+} as const;
+
+export type RepairDecision = { allow: true } | { allow: false; stopReason: 'same_cause_limit' | 'repair_total_limit' };
+
+export function decideRepair(
+  counters: { total: number; byCause: Readonly<Record<string, number>> },
+  causeKey: string,
+): RepairDecision {
+  if ((counters.byCause[causeKey] ?? 0) >= DEVLINE_POLICY.maxSameCauseRepairs) {
+    return { allow: false, stopReason: 'same_cause_limit' };
+  }
+  if (counters.total >= DEVLINE_POLICY.maxTotalRepairs) return { allow: false, stopReason: 'repair_total_limit' };
+  return { allow: true };
+}
+
+/** 原因のキー。CI の結果（段階とテストID）から作り、Agent の申告を使わない。順序に左右されない。 */
+export function failureCauseKey(failedStages: readonly string[], failedTestIds: readonly string[]): string {
+  return `${[...failedStages].sort().join(',')}|${[...failedTestIds].sort().join(',')}`;
+}
+
+/** 時間の上限（ちょうどで止める）。時刻は引数で受ける。 */
+export function checkTimeLimits(input: {
+  now: Date;
+  sessionStartedAt: Date | null;
+  continuousSeconds: number;
+}): { stopReason: 'session_limit' | 'continuous_limit' } | null {
+  const session = input.sessionStartedAt ? Math.max(0, (input.now.getTime() - input.sessionStartedAt.getTime()) / 1000) : 0;
+  if (input.continuousSeconds + session >= DEVLINE_POLICY.maxContinuousMinutes * 60) return { stopReason: 'continuous_limit' };
+  if (session >= DEVLINE_POLICY.maxSessionMinutes * 60) return { stopReason: 'session_limit' };
+  return null;
+}
+
+export function isCiRerunAllowed(rerunsSoFar: number): boolean {
+  return rerunsSoFar < DEVLINE_POLICY.maxCiRerunsPerCommit;
+}
+
+/** 対象リポジトリの許可リスト。完全一致のみ。 */
+export function isRepoAllowed(repo: string, allowList: readonly string[]): boolean {
+  return allowList.includes(repo);
+}
+
+/**
+ * 開発ラインの投入を許可するリポジトリ（ADR 11章）。repoId は GitHub の数値 ID で、
+ * 名前の付け替えや譲渡で別のリポジトリへ送らないよう、送信の前に照合する。
+ */
+export interface AllowedRepo {
+  name: string;
+  repoId: string;
+}
+
+const REPO_NAME_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+/** `owner/name:repoId` のカンマ区切りを解釈する。未設定や空は「すべて拒否」。形が違う値は設定の誤りとして例外にする。 */
+export function parseDevlineTargetRepos(raw: string | null | undefined): AllowedRepo[] {
+  const repos: AllowedRepo[] = [];
+  for (const part of (raw ?? '').split(',')) {
+    const entry = part.trim();
+    if (entry === '') continue;
+    const colon = entry.lastIndexOf(':');
+    const name = colon > 0 ? entry.slice(0, colon) : '';
+    const repoId = colon > 0 ? entry.slice(colon + 1) : '';
+    if (!REPO_NAME_RE.test(name) || name.split('/').some((s) => /^\.+$/.test(s)) || !/^[1-9]\d*$/.test(repoId)) {
+      throw new Error('DEVLINE_TARGET_REPOS の形が正しくありません（owner/name:repoId のカンマ区切り）');
+    }
+    repos.push({ name, repoId });
+  }
+  return repos;
+}
+
+/** 変更してよい場所（前方一致）。ここに無い場所（db/migrations、package.json ほか）は拒否。 */
+export const ALLOWED_PATH_PREFIXES: readonly string[] = ['src/', 'tests/', 'docs/orders/'];
+
+/** 変更してはいけない場所（FR-34, FR-46）。正規化して小文字にした path で判定する。許可より優先。 */
+export const FORBIDDEN_PATH_PATTERNS: readonly RegExp[] = [
+  // CI 定義・保護ルール
+  /^\.github\//,
+  /^\.gitlab-ci/,
+  /^\.husky\//,
+  // secret 類
+  /(^|\/)\.env($|\.|rc$)/,
+  /\.env$/,
+  /\.(pem|key|p12|pfx|jks|kdbx|keystore)$/,
+  /(^|\/)(id_rsa|id_dsa|id_ecdsa|id_ed25519)($|\.)/,
+  /(^|\/)\.?(secrets?|credentials?)($|[./])/,
+  /(^|\/)\.(ssh|aws|gnupg)\//,
+  /(^|\/)\.(npmrc|netrc|pgpass)$/,
+  /(^|\/)local\.json$/,
+  // 認証
+  /^src\/api\/(auth|password|config)\.ts$/,
+  // 工場自体の定義。policy・遷移表・信号ルール・注文書のひな形・実行者・監査を自分で書きかえさせない（FR-46）
+  /^src\/shared\/(devline|domain|order)\.ts$/,
+  /^src\/worker\//,
+  /^src\/api\/(devline-[^/]*|issue-adapter[^/]*|github|service|app|http|audit|db)\.ts$/,
+  // 配備定義
+  /(^|\/)wrangler\.(toml|json|jsonc)$/,
+  /(^|\/)dockerfile/,
+  /(^|\/)(docker-)?compose[^/]*\.ya?ml$/,
+  /(^|\/)(deploy|deployment|infra|terraform|k8s|helm|systemd)\//,
+  /\.service$/,
+  /^scripts\/(deploy|preview|staging|prod)/,
+];
+
+/** 正規化。読めない path は null（呼び出し側は違反として扱う）。 */
+export function normalizeRepoPath(raw: string): string | null {
+  const text = raw.normalize('NFC');
+
+  if (text === '' || /[\u0000-\u001f\u007f\\]/.test(text)) return null;
+  if (text.startsWith('/') || /^[A-Za-z]:/.test(text)) return null;
+  const parts: string[] = [];
+  for (const part of text.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') return null;
+    parts.push(part);
+  }
+  return parts.length === 0 ? null : parts.join('/');
+}
+
+export interface PathViolation {
+  path: string;
+  rule: 'invalid_path' | 'forbidden' | 'not_allowed';
+}
+
+/** 変更された path の検査（純関数）。1件でも違反があれば job は stopped(policy_violation)。 */
+export function checkChangedPaths(paths: readonly string[]): PathViolation[] {
+  const violations: PathViolation[] = [];
+  for (const raw of paths) {
+    const path = normalizeRepoPath(raw);
+    if (path === null) {
+      violations.push({ path: raw, rule: 'invalid_path' });
+      continue;
+    }
+    // 禁止は大小文字の違いでもすり抜けさせない。許可は完全一致（`SRC/` は別の場所）
+    if (FORBIDDEN_PATH_PATTERNS.some((re) => re.test(path.toLowerCase()))) {
+      violations.push({ path, rule: 'forbidden' });
+    } else if (!ALLOWED_PATH_PREFIXES.some((prefix) => path.startsWith(prefix))) {
+      violations.push({ path, rule: 'not_allowed' });
+    }
+  }
+  return violations;
+}
+
+/** 新しい試験の置き場。これ以外の tests/ は既存の試験の変更とみなす。 */
+export const NEW_TEST_PATH_PREFIX = 'tests/generated/';
+
+/**
+ * 人の承認が要る変更（純関数）。既存の試験を書きかえて合格にできないようにする。
+ * git の差分が無いので新規か既存かは置き場で判定する（実 runner の課題。ADR 11章）。
+ */
+export function pathsRequiringHumanApproval(paths: readonly string[]): string[] {
+  const hits: string[] = [];
+  for (const raw of paths) {
+    const path = normalizeRepoPath(raw);
+    if (path !== null && path.startsWith('tests/') && !path.startsWith(NEW_TEST_PATH_PREFIX)) hits.push(path);
+  }
+  return hits;
+}
+
+/* ────────────────────────────── 検証証跡（ENT-09・仕様 4-5） ────────────────────────────── */
+
+export const REQUIRED_STAGES = ['static', 'build', 'unit', 'integration', 'e2e', 'security'] as const;
+export type RequiredStage = (typeof REQUIRED_STAGES)[number];
+
+export const STAGE_STATUSES = ['passed', 'failed', 'skipped', 'cancelled'] as const;
+export type StageStatus = (typeof STAGE_STATUSES)[number];
+
+export const VERIFICATION_SOURCES = ['fake_ci', 'ci'] as const;
+export type VerificationSource = (typeof VERIFICATION_SOURCES)[number];
+
+export interface StageResult {
+  stage: string;
+  status: StageStatus;
+  failedTestIds?: readonly string[];
+  logRef?: string | null;
+  digest?: string | null;
+}
+
+/** AC → test ID の対応。run と SHA と digest は行そのものが持つ。 */
+export interface AcResult {
+  acId: string;
+  testIds: readonly string[];
+  status: 'passed' | 'failed' | 'not_run';
+}
+
+export interface VerificationRecord {
+  deliveryId: string;
+  source: VerificationSource;
+  ciRunId: string;
+  /** CI 側で増える順序番号。到着順は信用しない。 */
+  runSequence: number;
+  runAttempt: number;
+  headSha: string;
+  stages: readonly StageResult[];
+  acResults: readonly AcResult[];
+  reportDigest?: string | null;
+}
+
+export type AcMark = '○' | '×' | '未確認';
+
+export interface AcEvidence {
+  acId: string;
+  mark: AcMark;
+  testIds: readonly string[];
+  ciRunId: string | null;
+  headSha: string | null;
+  reportDigest: string | null;
+}
+
+export type VerificationVerdict =
+  /** 必須段階が全部 passed で、× の AC が無い。 */
+  | { verdict: 'passed'; ciRunId: string; acEvidence: AcEvidence[] }
+  /** 実際に失敗した（修正の対象）。 */
+  | {
+      verdict: 'failed';
+      ciRunId: string;
+      failedStages: string[];
+      failedTestIds: string[];
+      causeKey: string;
+      acEvidence: AcEvidence[];
+    }
+  /** 走り切っていない（missing/skipped/cancelled）。合格ではないが修正回数は使わず CI 再実行の対象。 */
+  | { verdict: 'incomplete'; ciRunId: string; incompleteStages: string[]; acEvidence: AcEvidence[] }
+  /** head_sha の結果が無く、古い SHA の結果だけがある。 */
+  | { verdict: 'stale'; acEvidence: AcEvidence[] }
+  /** 結果がまだ1件も無い。 */
+  | { verdict: 'no_result'; acEvidence: AcEvidence[] };
+
+/**
+ * 判定（純関数）。head_sha の中で (runSequence, runAttempt) が最大の1件だけで決める。
+ * 古い run の成功で新しい失敗を上書きせず、段階を複数の run から寄せ集めもしない。
+ * 合格の条件（AC）は test ID の無い passed を証拠として認めず「未確認」にする。
+ */
+export function evaluateVerification(
+  records: readonly VerificationRecord[],
+  headSha: string,
+  acIds: readonly string[],
+): VerificationVerdict {
+  const unconfirmed = (): AcEvidence[] =>
+    acIds.map((acId) => ({ acId, mark: '未確認', testIds: [], ciRunId: null, headSha: null, reportDigest: null }));
+  const trusted = records.filter((r) => (VERIFICATION_SOURCES as readonly string[]).includes(r.source));
+  const forHead = trusted.filter((r) => r.headSha === headSha);
+  if (forHead.length === 0) {
+    return trusted.length > 0
+      ? { verdict: 'stale', acEvidence: unconfirmed() }
+      : { verdict: 'no_result', acEvidence: unconfirmed() };
+  }
+  const latest = [...forHead].sort(
+    (a, b) => b.runSequence - a.runSequence || b.runAttempt - a.runAttempt,
+  )[0] as VerificationRecord;
+
+  const acEvidence: AcEvidence[] = acIds.map((acId) => {
+    const hit = latest.acResults.find((a) => a.acId === acId);
+    const mark: AcMark = !hit
+      ? '未確認'
+      : hit.status === 'failed'
+        ? '×'
+        : hit.status === 'passed' && hit.testIds.length > 0
+          ? '○'
+          : '未確認';
+    return {
+      acId,
+      mark,
+      testIds: hit?.testIds ?? [],
+      ciRunId: latest.ciRunId,
+      headSha: latest.headSha,
+      reportDigest: latest.reportDigest ?? null,
+    };
+  });
+
+  const statusOf = (stage: string): StageStatus | 'missing' => {
+    const rows = latest.stages.filter((s) => s.stage === stage);
+    if (rows.length === 0) return 'missing';
+    // 同じ段階が複数あるときは悪い方を採る
+    for (const bad of ['failed', 'cancelled', 'skipped'] as const) {
+      if (rows.some((s) => s.status === bad)) return bad;
+    }
+    return rows.every((s) => s.status === 'passed') ? 'passed' : 'missing';
+  };
+  const failedStages = REQUIRED_STAGES.filter((s) => statusOf(s) === 'failed');
+  const incompleteStages = REQUIRED_STAGES.filter((s) => ['missing', 'skipped', 'cancelled'].includes(statusOf(s)));
+  const failedAcs = acEvidence.filter((a) => a.mark === '×');
+
+  if (failedStages.length > 0 || failedAcs.length > 0) {
+    const failedTestIds = [
+      ...latest.stages.filter((s) => s.status === 'failed').flatMap((s) => s.failedTestIds ?? []),
+      ...failedAcs.flatMap((a) => a.testIds),
+    ];
+    const uniqueTests = [...new Set(failedTestIds)];
+    return {
+      verdict: 'failed',
+      ciRunId: latest.ciRunId,
+      failedStages: [...failedStages],
+      failedTestIds: uniqueTests,
+      causeKey: failureCauseKey(failedStages, uniqueTests),
+      acEvidence,
+    };
+  }
+  if (incompleteStages.length > 0) {
+    return { verdict: 'incomplete', ciRunId: latest.ciRunId, incompleteStages: [...incompleteStages], acEvidence };
+  }
+  return { verdict: 'passed', ciRunId: latest.ciRunId, acEvidence };
+}
+
+/* ────────────────────────────── Runner adapter ────────────────────────────── */
+
+export const RUNNER_KINDS = ['fake', 'local-isolated', 'real'] as const;
+export type RunnerKind = (typeof RUNNER_KINDS)[number];
+
+/** 実装済みの runner。これ以外は worker の起動時に拒否する（ERR-405）。 */
+export const IMPLEMENTED_RUNNER_KINDS: readonly RunnerKind[] = ['fake'];
+
+/** fake のシナリオ。注文書の本文からは選ばせない（テストと worker の設定で注入する）。 */
+export const FAKE_SCENARIOS = [
+  'success',
+  'test_fail_then_fix',
+  'same_cause_fail',
+  'hang',
+  'forbidden_path',
+  'injection',
+] as const;
+export type FakeScenario = (typeof FAKE_SCENARIOS)[number];
+
+export interface RunnerCapability {
+  kind: RunnerKind;
+  /** 隔離の実態を正直に申告する。fake は 'none'。 */
+  isolation: 'none' | 'process' | 'container' | 'vm';
+  network: 'none' | 'allowlist' | 'unrestricted';
+  supportsCancel: boolean;
+  costAccounting: 'fake_zero' | 'metered';
+}
+
+export type RunnerStep = 'plan' | 'implement' | 'revise';
+
+export interface RunnerInput {
+  jobId: string;
+  attemptNo: number;
+  step: RunnerStep;
+  /** 注文書はデータとして渡す。ここの文章を命令や policy の上書きとして扱わない（仕様 4-4）。 */
+  order: { envelope: OrderEnvelopeV1; canonicalYaml: string };
+  acceptanceCriteriaIds: readonly string[];
+  policyVersion: string;
+  baseSha: string;
+  /** revise のときの直前の失敗（CI の結果から作る）。 */
+  previousFailure?: { causeKey: string; failedStages: readonly string[]; failedTestIds: readonly string[] } | null;
+  /** 時刻は引数で渡す。runner は壁時計で判断しない。 */
+  deadlineAt: string;
+  signal: AbortSignal;
+}
+
+export interface RunnerArtifact {
+  kind: 'plan' | 'patch' | 'log' | 'test_report' | 'runner_output';
+  name: string;
+  sha256: string;
+  byteSize: number;
+  storageRef?: string | null;
+  content?: string | null;
+}
+
+export interface RunnerUsage {
+  inputTokens: number;
+  outputTokens: number;
+  durationSeconds: number;
+  costJpy: number;
+}
+
+export interface RunnerResult {
+  status: 'succeeded' | 'failed' | 'needs_human';
+  exitCode: number;
+  /** implement / revise の成果のコミット。plan は null。 */
+  headSha: string | null;
+  /** 変更された path。worker は必ず checkChangedPaths を通す。 */
+  changedPaths: readonly string[];
+  artifacts: readonly RunnerArtifact[];
+  logRef: string | null;
+  usage: RunnerUsage;
+  plan?: unknown;
+  /** requires_human_approval に当たる項目。1件でもあれば stopped(human_approval_required)。 */
+  humanApprovalTouched?: readonly string[];
+  summary: string;
+}
+
+export interface RunnerAdapter {
+  readonly capability: RunnerCapability;
+  run(input: RunnerInput): Promise<RunnerResult>;
+  /** 冪等。すでに終わっていても失敗しない。 */
+  cancel(run: { jobId: string; attemptNo: number }): Promise<void>;
+}
+
+/* ────────────────────────────── Issue adapter（実 GitHub / ローカル fake で差し替え） ────────────────────────────── */
+
+export type IssueSendOutcome =
+  | { outcome: 'succeeded'; number: number; url: string }
+  | { outcome: 'unknown'; reason: 'timeout' | 'network' | 'http' | 'bad_response'; httpStatus?: number; message?: string }
+  | { outcome: 'failed'; reason: 'http_4xx'; httpStatus: number; message?: string }
+  | { outcome: 'rate_limited'; httpStatus: number; retryAfterSeconds?: number };
+
+export interface IssueWriteInput {
+  repo: string;
+  title: string;
+  /** 1行目が buildHandoffMarker の結果であること。 */
+  body: string;
+  signal: AbortSignal;
+}
+
+export interface IssueListPage {
+  issues: readonly IssueSummary[];
+  nextPage: number | null;
+}
+
+export type IssueReadResult<T> =
+  { ok: true; value: T } | { ok: false; reason: 'timeout' | 'network' | 'http'; httpStatus?: number };
+
+export interface IssueAdapter {
+  readonly kind: 'github' | 'fake';
+  /** 連携アカウント。照合の作成者判定に使う。 */
+  getActorLogin(signal: AbortSignal): Promise<IssueReadResult<string>>;
+  /** リポジトリの数値 ID。許可リストの repoId と照合する（ADR 11章）。 */
+  getRepoId(repo: string, signal: AbortSignal): Promise<IssueReadResult<string>>;
+  /** 非公開か。公開リポジトリへは投入しない（ADR 11章）。値が読めなければ失敗を返す。 */
+  getRepoPrivate(repo: string, signal: AbortSignal): Promise<IssueReadResult<boolean>>;
+  /** 既定ブランチの先頭 SHA（base_sha）。 */
+  resolveBaseSha(repo: string, signal: AbortSignal): Promise<IssueReadResult<string>>;
+  createIssue(input: IssueWriteInput): Promise<IssueSendOutcome>;
+  updateIssue(input: IssueWriteInput & { issueNo: number }): Promise<IssueSendOutcome>;
+  getIssue(repo: string, issueNo: number, signal: AbortSignal): Promise<IssueReadResult<IssueSummary | null>>;
+  /** `state=all`、`since`、昇順のページ送り。search API を使わない。 */
+  listIssuesSince(
+    input: { repo: string; since: Date; page: number; perPage: number },
+    signal: AbortSignal,
+  ): Promise<IssueReadResult<IssueListPage>>;
+}
+
+/* ────────────────────────────── サービスの結果型 ────────────────────────────── */
+
+export interface HandoffResult {
+  requestId: string;
+  orderVersion: number;
+  issueNo: number;
+  issueUrl: string;
+  jobId: string;
+  jobState: JobState;
+  contentSha256: string;
+  /** この呼び出しで外部へ作成・更新したか。再実行や照合での回収は false。 */
+  created: boolean;
+  op: HandoffOp;
+}
+
+export interface JobView {
+  id: string;
+  requestId: string;
+  orderVersion: number;
+  state: JobState;
+  targetRepoId: string;
+  policyVersion: string;
+  runnerKind: RunnerKind;
+  contentSha256: string;
+  headSha: string | null;
+  plan: unknown;
+  workState: unknown;
+  repairCountTotal: number;
+  repairCountByCause: Record<string, number>;
+  ciRerunCount: number;
+  continuousSeconds: number;
+  costJpy: number;
+  stopReason: StopReason | null;
+  stopDetail: unknown;
+  remainingWork: unknown;
+  stoppedAt: string | null;
+  cancelRequestedAt: string | null;
+  supersededAt: string | null;
+  /** いまの依頼に対してこの job の版がまだ有効か（isOrderCurrent）。 */
+  orderCurrent: boolean;
+  /** lease の所有者名は出さない。 */
+  leaseHeld: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecordVerificationInput {
+  jobId: string;
+  deliveryId: string;
+  source: VerificationSource;
+  ciRunId: string;
+  runSequence: number;
+  runAttempt: number;
+  headSha: string;
+  stages: readonly StageResult[];
+  acResults: readonly AcResult[];
+  logRef?: string | null;
+  reportDigest?: string | null;
+  now: Date;
+  correlationId: string;
+}
+
+export interface RecordVerificationResult {
+  /** recorded: 新規。duplicate: delivery_id か run の重複で無視。 */
+  status: 'recorded' | 'duplicate';
+  verdict: VerificationVerdict;
+  jobState: JobState;
+  /** job の状態を動かしたか。cancel 後・停止中・古い SHA の結果は記録だけして動かさない。 */
+  advanced: boolean;
+}
+
+/** 書き込みの権利。fencing の3条件を必ず where に入れる。 */
+export interface JobLease {
+  jobId: string;
+  owner: string;
+  fencingToken: number;
+  expectedState: JobState;
+}
+
+/** 遅れた書き込みは例外にせず、結果で返して event に残す。 */
+export type FencedWrite<T> = { applied: true; value: T } | { applied: false; reason: 'stale_lease' };
+
+/* ────────────────────────────── PR 候補（仕様 4-8・6-4／AGENTS.md） ────────────────────────────── */
+
+/** 判断材料10項目。欠けた項目のある PR は承認の対象にしない。 */
+export const PR_DECISION_ITEMS = [
+  '要望との対応',
+  '変更範囲',
+  '受入条件の検証',
+  '自動検査',
+  '業務確認',
+  'モデル現場の結果',
+  '原本の保護',
+  '運用への影響',
+  '復旧方法',
+  '残存リスク',
+] as const;
+
+/** AGENTS.md の PR 本文の見出し。 */
+export const PR_AGENTS_HEADINGS = [
+  '目的',
+  'MVP範囲',
+  '変更',
+  'UI影響',
+  'API影響',
+  'DB影響',
+  'Security影響',
+  'テスト結果',
+  'CI結果',
+  'Deployment結果',
+  '既知の制限',
+  'Rollback',
+] as const;

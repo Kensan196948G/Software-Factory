@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
+import { parseDevlineTargetRepos, type AllowedRepo } from '../shared/devline.js';
 
 export interface AppConfig {
   /** 実行モード。isProduction など、セキュリティ挙動の既定値はこちらで決める。 */
@@ -35,6 +36,13 @@ export interface AppConfig {
   /** GitHub Issue 自動作成（未設定なら無効） */
   githubToken: string;
   githubRepo: string;
+  /** GitHub API の接続先。試験ではローカルの fake サーバだけを指す。 */
+  githubApiUrl: string;
+  /**
+   * 開発ラインの投入を許可するリポジトリ（DEVLINE_TARGET_REPOS）。既定は空で、投入はすべて拒否する。
+   * GITHUB_REPO を暗黙の許可先にしない（注文書 YAML に依頼者欄・承認者欄が載るため）。
+   */
+  devlineTargetRepos: readonly AllowedRepo[];
   /** 承認依頼メールの送信経路。off=送らない / file=ローカルの送信BOX / sendmail=ローカルMTA */
   mailMode: 'off' | 'file' | 'sendmail' | 'smtp';
   mailFrom: string;
@@ -137,6 +145,8 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
       .filter(Boolean),
     githubToken: pick(file, 'GITHUB_TOKEN') ?? '',
     githubRepo: pick(file, 'GITHUB_REPO') ?? 'Kensan196948G/Software-Factory',
+    githubApiUrl: pick(file, 'GITHUB_API_URL') ?? 'https://api.github.com',
+    devlineTargetRepos: parseDevlineTargetRepos(pick(file, 'DEVLINE_TARGET_REPOS')),
     mailMode: mailModeOf(pick(file, 'MAIL_MODE'), isProduction),
     mailFrom: pick(file, 'MAIL_FROM') ?? 'no-reply@mirai-sf.local',
     mailApprovalTo: (pick(file, 'MAIL_APPROVAL_TO') ?? '').trim(),

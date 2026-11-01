@@ -31,6 +31,7 @@
     "smoke": "node scripts/local-run.mjs tsx scripts/smoke.ts",
     "reminders": "node scripts/local-run.mjs tsx scripts/reminders.ts",
     "audit:archive": "node scripts/local-run.mjs tsx scripts/audit-archive.ts",
+    "worker": "node scripts/local-run.mjs tsx src/worker/main.ts",
     "ops:backup": "node scripts/ops/with-env.mjs scripts/ops/backup.sh",
     "ops:restore-drill": "node scripts/ops/with-env.mjs scripts/ops/restore-drill.sh",
     "ops:release": "bash scripts/ops/release.sh",

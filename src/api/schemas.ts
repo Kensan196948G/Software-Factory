@@ -12,6 +12,7 @@ import {
   TAILORING,
   USERS,
 } from '../shared/domain.js';
+import { JOB_STATES } from '../shared/devline.js';
 
 /**
  * 既定の検証メッセージは `error.message` として画面に出るため、zod 3 と同じ文言に固定する。
@@ -158,4 +159,16 @@ export const importSchema = z.object({
         .passthrough(),
     )
     .max(5000),
+});
+
+/* 開発ライン（API-06・cancel・resume）。理由の空は service 側で ERR-102 にする。 */
+export const orderHandoffSchema = z.object({
+  orderVersion: z.number().int().min(1),
+  confirmAbsent: z.boolean().optional(),
+  reason: z.string().trim().max(1000).optional(),
+});
+
+export const jobOperationSchema = z.object({
+  reason: z.string().trim().max(1000).optional().default(''),
+  expectedState: z.enum(JOB_STATES).optional(),
 });
