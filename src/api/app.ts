@@ -60,7 +60,15 @@ import {
   transitionSchema,
 } from './schemas.js';
 import { staleDays } from '../shared/domain.js';
-import { cancelJob, getJob, handoffOrder, listJobsForRequest, resumeJob, type DevlineDeps } from './devline-service.js';
+import {
+  cancelJob,
+  getJob,
+  handoffOrder,
+  listDevlineTrace,
+  listJobsForRequest,
+  resumeJob,
+  type DevlineDeps,
+} from './devline-service.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -327,7 +335,8 @@ export async function buildApp(opts: { serveStatic?: boolean; devlineDeps?: Devl
   app.get('/api/requests/:id/jobs', async (req) => {
     const ctx = auth(req);
     const { id } = req.params as { id: string };
-    return { items: await listJobsForRequest(id, actorOf(ctx.user)) };
+    const items = await listJobsForRequest(id, actorOf(ctx.user));
+    return { items, ...(await listDevlineTrace(id)) };
   });
 
   app.post('/api/jobs/:id/cancel', async (req) => {

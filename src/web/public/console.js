@@ -2433,7 +2433,7 @@ const SF = (function () {
   function notice() {
     $('#notice').innerHTML = window.__MSF__
       ? ico('i-shield') +
-        ' 受付の依頼はサーバ（PostgreSQL）に保存されます。運用・DevOps・SecOps の数値とできごとは、操作を確かめるための見本です。部署はみらい建設工業の公開情報（会社概要・役員一覧・事業所一覧）をもとにした例で、実際の組織の区切りとは異なる場合があります。人名はすべて架空です。'
+        ' 受付の依頼はサーバ（PostgreSQL）に保存されます。運用・DevOps・SecOps の数値とできごとは、操作を確かめるための見本です（「見本」と書いた開発ラインの操作は実行できません）。部署はみらい建設工業の公開情報（会社概要・役員一覧・事業所一覧）をもとにした例で、実際の組織の区切りとは異なる場合があります。人名はすべて架空です。'
       : ico('i-shield') +
         ' 外部と一切通信しない完全オフラインのサンプルです。データはこのブラウザの中だけに' +
         (S.persistent
@@ -2605,27 +2605,30 @@ const SF = (function () {
       r.id,
       ['「' + SF.statusOf(from).l + '」から', extra, note].filter(Boolean).join('／'),
     );
-    const o = O(),
-      p = o.pipes[r.id];
-    if (v === 'approved' && !p) o.pipes[r.id] = newPipe();
-    if (p && v === 'dev' && p.step === 1) {
-      p.issue = p.issue || ++o.seq.issue;
-      p.step = 2;
-    }
-    if (p && v === 'verify' && p.step < 9) {
-      p.pr = p.pr || ++o.seq.pr;
-      SF.CHECKS.forEach((c) => {
-        if (c[0] !== 'offline' || SF.isFieldTool(r)) p.checks[c[0]] = 'ok';
-      });
-      p.prItems = SF.PRITEMS.map(() => 1);
-      p.esc = '';
-      p.step = 9;
-    }
-    if (p && v === 'field' && p.step < 10) p.step = 10;
-    if (p && v === 'release_wait' && p.step < 11) p.step = 11;
-    if (p && ['wait', 'back'].includes(v) && p.step < 12) {
-      p.step = 1;
-      p.esc = '';
+    // 見本モードだけパイプを動かす。サーバ接続時の実依頼で Issue・PR・検査結果を作らない
+    if (!window.__MSF__) {
+      const o = O(),
+        p = o.pipes[r.id];
+      if (v === 'approved' && !p) o.pipes[r.id] = newPipe();
+      if (p && v === 'dev' && p.step === 1) {
+        p.issue = p.issue || ++o.seq.issue;
+        p.step = 2;
+      }
+      if (p && v === 'verify' && p.step < 9) {
+        p.pr = p.pr || ++o.seq.pr;
+        SF.CHECKS.forEach((c) => {
+          if (c[0] !== 'offline' || SF.isFieldTool(r)) p.checks[c[0]] = 'ok';
+        });
+        p.prItems = SF.PRITEMS.map(() => 1);
+        p.esc = '';
+        p.step = 9;
+      }
+      if (p && v === 'field' && p.step < 10) p.step = 10;
+      if (p && v === 'release_wait' && p.step < 11) p.step = 11;
+      if (p && ['wait', 'back'].includes(v) && p.step < 12) {
+        p.step = 1;
+        p.esc = '';
+      }
     }
     return persist().then((res) => {
       if (coreFailed(res, r.id)) {
@@ -2641,6 +2644,8 @@ const SF = (function () {
   }
   /* マージ前に「現場試用」「公開承認待ち」「完了」へは進めない（本番の遷移表） */
   function mergeBlock(r, to) {
+    // 接続時は見本のマージを実行できないので条件にしない。実際のマージの確認は開発ラインの接続後に足す
+    if (window.__MSF__) return '';
     const p = O().pipes[r.id];
     return ['field', 'release_wait', 'done'].includes(to) && p && !p.merged
       ? 'PR #' + (p.pr || '－') + ' のマージがまだです（DevOps 画面で承認者がマージを判断します）'
@@ -4847,13 +4852,15 @@ const SF = (function () {
           ' 日）</p>'
         : '';
     const pp = O().pipes[r.id],
-      ap = appByReq(r.id);
+      ap = appByReq(r.id),
+      dlLive = !!window.__MSF__ && dlRelevant(r);
     const lineBox =
-      pp || ap
+      pp || ap || dlLive
         ? '<div class="box"><h4>' +
           ico('i-git') +
           '開発ラインと運用</h4>' +
-          (pp
+          (dlLive ? dlPanel(r) : '') +
+          (pp && !window.__MSF__
             ? '<div>開発ライン：<b>L' +
               pp.step +
               ' ' +
@@ -4881,7 +4888,9 @@ const SF = (function () {
               '</div>'
             : '') +
           '<div class="data-row" style="margin-top:8px">' +
-          (pp ? '<button type="button" class="btn sm" data-go="devops|line">' + ico('i-git') + 'DevOps で見る</button>' : '') +
+          (pp || dlLive
+            ? '<button type="button" class="btn sm" data-go="devops|line">' + ico('i-git') + 'DevOps で見る</button>'
+            : '') +
           (ap ? '<button type="button" class="btn sm" data-go="ops|apps">' + ico('i-pulse') + '運用で見る</button>' : '') +
           '</div></div>'
         : '';
@@ -5395,6 +5404,11 @@ const SF = (function () {
         const opt = { wave: $('#rwave').value, type: $('#rtype').value };
         if (!(await applyInDialog('done', note, '公開を承認（リリース判定のチェックをすべて確認）／公開範囲：' + opt.wave)))
           return;
+        if (window.__MSF__) {
+          closeModal();
+          refresh();
+          return toast(r.id + ' を完了にしました（配備は未接続のため、運用の台帳には登録しません）');
+        }
         const a = releaseDeploy(r, opt);
         persist();
         closeModal();
@@ -5586,6 +5600,534 @@ const SF = (function () {
     return why.length ? { k: 'warn', l: '注意', why } : { k: 'ok', l: '正常', why: ['問題は見つかっていません'] };
   }
 
+  /* ---- 開発ライン（実データ。サーバ接続時だけ使う） ----
+     投入は POST /api/orders/:id/handoff。表示は GET /api/requests/:id/jobs の記録だけから作る。
+     各項目の区別（実行確認済み／fake／未接続／見本）は runner_kind と証跡の種別で機械的に決める。 */
+  const SAMPLE_LOCK =
+    '見本の操作は実行できません（サーバ接続時は実依頼の状態を見本で進めません。実行の結果は開発ライン欄の記録だけを表示します）';
+  const DL_KIND = {
+    ok: { l: '実行確認済み', c: 'ok', m: '✓' },
+    fake: { l: 'fake', c: 'fake', m: '△' },
+    none: { l: '未接続', c: 'none', m: '－' },
+    sample: { l: '見本', c: 'sample', m: '◇' },
+  };
+  const JOB_STATE_LABEL = {
+    queued: '待機',
+    planning: '計画中',
+    implementing: '実装中',
+    verifying: 'CIで検証中',
+    revising: '修正中',
+    pr_ready: 'PR候補まで完了・人の確認待ち',
+    reviewing: '人が確認中',
+    approved: '承認',
+    merged: 'マージ',
+    staged: 'ステージング',
+    released: '公開',
+    closed: '終了',
+    stopped: '停止',
+    failed: '失敗',
+    cancelled: '中止',
+  };
+  const DL_LIVE_STATUS = ['approved', 'dev', 'verify', 'field', 'release_wait', 'done'];
+  const DL_HANDOFF_ROLES = ['desk', 'approver', 'admin'];
+  const DL_ABSENT_ROLES = ['approver', 'admin'];
+  const DL_TTL_MS = 5000;
+  const dlStates = new Map();
+  function dlOf(id) {
+    if (!dlStates.has(id)) {
+      dlStates.set(id, {
+        busy: false,
+        loading: false,
+        loadP: null,
+        loadedAt: 0,
+        failed: false,
+        items: [],
+        handoffs: [],
+        evidence: {},
+        msg: null,
+        absentOpen: false,
+        absentReason: '',
+        absentChecked: false,
+        follow: 0,
+      });
+    }
+    return dlStates.get(id);
+  }
+  function dlRelevant(r) {
+    return DL_LIVE_STATUS.includes(r.status) || r.__issueNo > 0 || !!O().pipes[r.id];
+  }
+  function dlCurrent(r, s) {
+    return s.handoffs.find((h) => h.orderVersion === r.__orderVersion) || null;
+  }
+  function dlChip(kind) {
+    const k = DL_KIND[kind];
+    return (
+      '<span class="dlk dlk-' +
+      k.c +
+      '"><span aria-hidden="true">' +
+      k.m +
+      '</span><span data-dl-kind>' +
+      E(k.l) +
+      '</span></span>'
+    );
+  }
+  function dlRow(row, label, kind, body) {
+    return (
+      '<li class="dlrow" data-dl-row="' +
+      row +
+      '"><span class="dll">' +
+      E(label) +
+      '</span>' +
+      dlChip(kind) +
+      '<span class="dlb">' +
+      body +
+      '</span></li>'
+    );
+  }
+  function dlIssueLink(h) {
+    const label = 'Issue #' + E(h.issueNo);
+    return /^https?:\/\//.test(h.issueUrl || '')
+      ? '<a href="' + E(h.issueUrl) + '" target="_blank" rel="noopener noreferrer">' + label + '</a>'
+      : label;
+  }
+  /* 結果が確定していない投入。前の版の作成が残っていると、新しい版は投入できない */
+  function dlUnresolved(s, cur) {
+    if (cur && (cur.state === 'unknown' || cur.state === 'sent')) return cur;
+    // サーバが新しい版を止めるのは作成だけ。前の版の更新の不明は、次の投入で上書きされる
+    return s.handoffs.find((h) => h.op === 'create_issue' && (h.state === 'unknown' || h.state === 'sent')) || null;
+  }
+  function dlIssueRow(r, s, cur) {
+    if (cur && cur.state === 'succeeded') {
+      const verb = cur.op === 'update_issue' ? '更新済み' : '作成済み';
+      return dlRow(
+        'issue',
+        '注文書の投入',
+        cur.issueSource === 'github' ? 'ok' : 'fake',
+        dlIssueLink(cur) + '　版 ' + E(cur.orderVersion) + '（' + verb + '）',
+      );
+    }
+    // 結果が確定していなければ、前の版の成功より先に伝える
+    if (dlUnresolved(s, cur)) return dlRow('issue', '注文書の投入', 'none', '結果不明・要照合');
+    const older = s.handoffs.find((h) => h.state === 'succeeded');
+    if (older) {
+      return dlRow(
+        'issue',
+        '注文書の投入',
+        older.issueSource === 'github' ? 'ok' : 'fake',
+        dlIssueLink(older) + '　版 ' + E(older.orderVersion) + ' のまま（いまの版 ' + E(r.__orderVersion) + ' は未反映）',
+      );
+    }
+    if (r.__issueNo > 0) {
+      return dlRow('issue', '注文書の投入', 'none', 'Issue #' + E(r.__issueNo) + '（受付の記録のみ。投入の証跡はありません）');
+    }
+    return dlRow('issue', '注文書の投入', 'none', 'Issue はまだありません');
+  }
+  function dlJobRows(s) {
+    const job = s.items[0];
+    if (!job) {
+      return (
+        dlRow('job', 'ジョブ', 'none', s.failed ? '読み込めませんでした' : 'ジョブはありません') +
+        dlRow('plan', '計画・実装', 'none', '実行の記録はありません') +
+        dlRow('ci', '自動検査（CI）', 'none', '検査の記録はありません') +
+        dlRow('pr', 'PR', 'none', 'PR の記録はありません')
+      );
+    }
+    const ev = s.evidence[job.id] || { attempts: 0, verificationSources: [], hasPrDraft: false };
+    const isFake = job.runnerKind === 'fake';
+    const ran = ev.attempts > 0;
+    const srcs = ev.verificationSources || [];
+    const ciKind = !srcs.length ? 'none' : srcs.includes('fake_ci') ? 'fake' : 'ok';
+    const note = [
+      job.state === 'queued' ? '実行者が動くまで進みません' : '',
+      job.stopReason ? '理由：' + job.stopReason : '',
+      job.orderCurrent === false ? 'この版はいまは無効です' : '',
+    ].filter(Boolean);
+    return (
+      dlRow(
+        'job',
+        'ジョブ',
+        isFake ? 'fake' : ran ? 'ok' : 'none',
+        mono(job.id) +
+          '　版 ' +
+          E(job.orderVersion) +
+          '　<b>' +
+          E(JOB_STATE_LABEL[job.state] || job.state) +
+          '</b>（' +
+          E(job.state) +
+          '）' +
+          (note.length ? '<br><small>' + E(note.join('／')) + '</small>' : ''),
+      ) +
+      s.items
+        .slice(1)
+        .map((o) =>
+          dlRow(
+            'job-old',
+            '前の版のジョブ',
+            o.runnerKind === 'fake' ? 'fake' : 'none',
+            '版 ' + E(o.orderVersion) + '　' + E(JOB_STATE_LABEL[o.state] || o.state) + '（' + E(o.state) + '）',
+          ),
+        )
+        .join('') +
+      dlRow(
+        'plan',
+        '計画・実装',
+        ran ? (isFake ? 'fake' : 'ok') : 'none',
+        ran
+          ? '実行 ' + E(ev.attempts) + ' 回' + (isFake ? '（fake runner。AI は動いていません）' : '')
+          : '実行の記録はありません',
+      ) +
+      dlRow(
+        'ci',
+        '自動検査（CI）',
+        ciKind,
+        ciKind === 'fake'
+          ? 'fake CI の記録のみ（実 CI ではありません）'
+          : ciKind === 'ok'
+            ? '実 CI の記録あり'
+            : '検査の記録はありません',
+      ) +
+      dlRow(
+        'pr',
+        'PR',
+        ev.hasPrDraft ? (isFake ? 'fake' : 'ok') : 'none',
+        ev.hasPrDraft ? 'PR 本文の下書きのみ（実 PR はありません）' : 'PR の記録はありません',
+      )
+    );
+  }
+  function dlSampleRow(r) {
+    const p = pipeOf(r);
+    if (!p || !(p.step > 1 || p.issue || p.pr)) return '';
+    const btn = pipeBtn(r, p);
+    return dlRow(
+      'sample',
+      '見本の進み',
+      'sample',
+      'L' +
+        E(p.step) +
+        ' ' +
+        E(SF.LINE[p.step] || '') +
+        '　Issue ' +
+        (p.issue ? '#' + E(p.issue) : '－') +
+        '　PR ' +
+        (p.pr ? '#' + E(p.pr) : '－') +
+        '（操作を確かめるための見本で、実行していません）' +
+        (btn ? '<br>' + btn + '<br><small>' + E(SAMPLE_LOCK) + '</small>' : ''),
+    );
+  }
+  function dlStatusText(r, s, cur) {
+    if (s.busy) return { t: '送信中です。結果が出るまでお待ちください', ng: false };
+    // 版が変わる前の説明（承認し直すと投入できます、など）は残さない
+    if (s.msg && (!s.msg.v || s.msg.v === r.__orderVersion)) return s.msg;
+    if (cur && cur.state === 'succeeded') {
+      return {
+        t: '投入済みです（Issue #' + cur.issueNo + '・版 ' + cur.orderVersion + '）。受付の状態はボードで人が進めます',
+        ng: false,
+      };
+    }
+    if (dlUnresolved(s, cur)) {
+      return {
+        t: '結果不明・要照合：Issue が作られたか確認できていません。「照合する」を押すと一覧から探します（再送はしません）',
+        ng: true,
+      };
+    }
+    if (s.failed) return { t: '開発ラインの記録を読み込めませんでした（未接続として表示しています）', ng: true };
+    if (cur && cur.state === 'failed') return { t: '前回の投入は完了していません。もう一度押して再試行できます', ng: true };
+    return { t: 'まだ投入していません', ng: false };
+  }
+  function dlButton(r, s, cur) {
+    if (cur && cur.state === 'succeeded') return '';
+    const pending = !!dlUnresolved(s, cur);
+    const v = r.__orderVersion;
+    let label = pending
+      ? '照合する（再送しません）'
+      : r.__issueNo > 0
+        ? '開発ラインへ投入（Issue #' + r.__issueNo + ' を版 ' + v + ' に更新）'
+        : '開発ラインへ投入（版 ' + v + '）';
+    if (s.busy) label = '送信中…';
+    let why = '';
+    if (!DL_HANDOFF_ROLES.includes(S.role)) why = '投入できるのは受付担当か承認者です';
+    else if (!v) why = '承認済みになってから投入します';
+    else if (!pending && r.status !== 'approved' && !cur)
+      why =
+        '承認済みの状態でだけ投入できます（いまは「' +
+        SF.statusOf(r.status).l +
+        '」。投入の前に進めた依頼は、承認待ちへ戻して承認し直します）';
+    else if (!pending && !DL_LIVE_STATUS.includes(r.status)) why = '承認が取り消されているので投入できません';
+    const off = s.busy || (s.loading && !s.loadedAt) || !!why;
+    return (
+      '<div class="dlact"><button type="button" class="btn sm ' +
+      (off ? '' : 'go') +
+      '" data-dl="handoff" data-id="' +
+      E(r.id) +
+      '"' +
+      (off ? ' disabled aria-disabled="true"' : '') +
+      '>' +
+      ico(pending ? 'i-undo' : 'i-git') +
+      E(label) +
+      '</button>' +
+      (why ? '<small class="muted">' + E(why) + '</small>' : '') +
+      '</div>'
+    );
+  }
+  function dlAbsentHtml(r, s, cur) {
+    // 走査が完全で見つからなかったときだけ。サーバも不完全な走査では再作成しない
+    const open = dlUnresolved(s, cur);
+    if (!open || open.state !== 'unknown' || !s.msg || s.msg.scanComplete !== true) return '';
+    if (!DL_ABSENT_ROLES.includes(S.role)) {
+      return '<p class="hint" style="margin:6px 0 0">作られていないと確定して作り直せるのは、承認者か管理責任者です。</p>';
+    }
+    if (!s.absentOpen) {
+      return (
+        '<div class="dlact"><button type="button" class="btn sm" data-dl="absent-open" data-id="' +
+        E(r.id) +
+        '">' +
+        ico('i-alert') +
+        '作られていないと確定して作り直す…</button></div>'
+      );
+    }
+    const ok = s.absentChecked && s.absentReason.trim();
+    return (
+      '<div class="dlform" data-dl-form data-id="' +
+      E(r.id) +
+      '"><b>Issue を作り直す前の確認</b>' +
+      '<p class="hint" style="margin:4px 0">連携先に同じ Issue が無いことを人が確かめた場合だけ実行します。実はできていた場合は Issue が二重になります。</p>' +
+      '<label class="fl" for="dlar-' +
+      E(r.id) +
+      '">確かめた内容（理由・必須）</label><textarea id="dlar-' +
+      E(r.id) +
+      '" data-dl-input="reason" data-id="' +
+      E(r.id) +
+      '" style="min-height:52px">' +
+      E(s.absentReason) +
+      '</textarea><label class="dlchk"><input type="checkbox" data-dl-input="check" data-id="' +
+      E(r.id) +
+      '"' +
+      (s.absentChecked ? ' checked' : '') +
+      '> 連携先に Issue が無いことを確かめました</label><div class="dlact"><button type="button" class="btn sm" data-dl="absent-cancel" data-id="' +
+      E(r.id) +
+      '">やめる</button><button type="button" class="btn sm dng" data-dl="absent-do" data-id="' +
+      E(r.id) +
+      '"' +
+      (ok && !s.busy ? '' : ' disabled') +
+      '>' +
+      ico('i-alert') +
+      'Issue を作り直す</button></div></div>'
+    );
+  }
+  function dlInner(r) {
+    const s = dlOf(r.id),
+      cur = dlCurrent(r, s),
+      st = dlStatusText(r, s, cur);
+    return (
+      '<div class="dlstatus' +
+      (st.ng ? ' ng' : '') +
+      '" data-dl-status role="status" tabindex="-1">' +
+      ico(st.ng ? 'i-alert' : 'i-git') +
+      '<span>' +
+      E(st.t) +
+      '</span></div>' +
+      dlButton(r, s, cur) +
+      dlAbsentHtml(r, s, cur) +
+      '<ul class="dlrows">' +
+      dlIssueRow(r, s, cur) +
+      dlJobRows(s) +
+      dlRow('release', 'マージ・配備・公開', 'none', 'この段階は開発ラインに接続していません') +
+      dlSampleRow(r) +
+      '</ul>'
+    );
+  }
+  function dlPanel(r) {
+    dlLoad(r.id);
+    return '<div class="dlp" data-dl-panel="' + E(r.id) + '">' + dlInner(r) + '</div>';
+  }
+  function dlPaint(id) {
+    const r = find(id);
+    if (!r) return;
+    $$('[data-dl-panel]')
+      .filter((el) => el.dataset.dlPanel === id)
+      .forEach((el) => {
+        // 確認欄に入力中は描き直さない
+        const a = document.activeElement;
+        if (a && el.contains(a) && a.dataset && a.dataset.dlInput) return;
+        el.innerHTML = dlInner(r);
+      });
+  }
+  /* 読み込みは TTL の間は1回だけ。描画からは呼んでもよい（描き直しは dlPaint だけで、再描画のループにしない） */
+  function dlLoad(id, force) {
+    const s = dlOf(id);
+    // 投入の直後は、読み込み中の古い結果ではなく、その後の新しい結果を待つ
+    if (s.loading) return force ? s.loadP.then(() => dlLoad(id, true)) : s.loadP;
+    if (!force && s.loadedAt && Date.now() - s.loadedAt < DL_TTL_MS) return Promise.resolve();
+    s.loading = true;
+    s.loadP = window.__MSF__.readJobs(id).then((res) => {
+      s.loading = false;
+      s.loadedAt = Date.now();
+      s.failed = !res;
+      if (res) {
+        s.items = Array.isArray(res.items) ? res.items : [];
+        s.handoffs = Array.isArray(res.handoffs) ? res.handoffs : [];
+        s.evidence = res.evidence || {};
+      }
+      const r = find(id);
+      const cur = r ? dlCurrent(r, s) : null;
+      // 「別の操作の進行中」の説明は、結果が出たら残さない
+      if (s.msg && s.msg.follow && cur && ['unknown', 'failed'].includes(cur.state)) s.msg = null;
+      if (cur && cur.state === 'succeeded') {
+        // 別のタブや通信断の裏で確定していた。古い失敗の表示を残さない
+        s.msg = null;
+        if (!(r.__issueNo > 0)) void window.__MSF__.refreshRequest(id);
+      }
+      if (!s.busy) dlPaint(id);
+    });
+    return s.loadP;
+  }
+  function dlMessage(r, res) {
+    const message = res.message || '';
+    switch (res.kind) {
+      case 'not_connected':
+        // 別のリポジトリへの投入が結果不明のときは、作られていないとは言えない
+        if (res.details && res.details.handoffState === 'unknown') return { t: '開発ライン未接続：' + message, ng: true };
+        return { t: '開発ライン未接続：' + message + '。Issue は作られていません', ng: true };
+      case 'unknown':
+        if (res.details && res.details.scanComplete === true) {
+          return {
+            t: '結果不明・要照合：照合しましたが Issue は見つかりませんでした（一覧は最後まで確認済み）。自動では作り直しません',
+            ng: true,
+            scanComplete: true,
+          };
+        }
+        if (res.details && res.details.scanComplete === false) {
+          return { t: '結果不明・要照合：一覧を最後まで確認できませんでした。もう一度「照合する」を押してください', ng: true };
+        }
+        return {
+          t: '結果不明・要照合：連携先の応答を確認できませんでした。Issue が作られた可能性があります。「照合する」を押すと一覧から探します（再送はしません）',
+          ng: true,
+        };
+      case 'not_approved':
+        return {
+          t:
+            '投入できません（ERR-205）：' +
+            message +
+            '。承認待ちへ戻して承認し直すと投入できます（見本データの承認記録には承認者の利用者IDがないため、そのままでは投入できません）',
+          ng: true,
+        };
+      case 'stale':
+        return {
+          t: '注文書の版が新しくなっていました（ERR-202）。最新を読み込みました。内容を確かめて、もう一度押してください',
+          ng: true,
+        };
+      case 'in_progress':
+        return { t: '別の操作が投入を進めています（ERR-301）。少し待つと結果を読み込みます', ng: true, follow: true };
+      case 'rate_limited':
+        return {
+          t:
+            '連携先が混み合っています（ERR-302）。' +
+            (res.details && res.details.nextAttemptAt ? SF.fmt(res.details.nextAttemptAt) + ' 以降に' : '少し待って') +
+            '再試行してください',
+          ng: true,
+        };
+      case 'denied':
+        return { t: 'この操作の権限がありません（ERR-101）', ng: true };
+      case 'rejected':
+        return { t: '連携先が受け付けませんでした。Issue は作られていません。もう一度押して再試行できます', ng: true };
+      case 'connect':
+        return { t: '連携先に接続できませんでした（送信前です）。もう一度押して再試行できます', ng: true };
+      case 'network':
+        return { t: '通信できませんでした。接続を確かめて、もう一度押してください（押し直しても Issue は増えません）', ng: true };
+      default:
+        return { t: (message || '処理を完了できませんでした') + '。もう一度押して再試行できます', ng: true };
+    }
+  }
+  function dlFocus(id, panel) {
+    const el =
+      panel && panel.isConnected ? panel : $('#drawer [data-dl-panel="' + id + '"]') || $('[data-dl-panel="' + id + '"]');
+    const st = el && el.querySelector('[data-dl-status]');
+    if (st) st.focus();
+  }
+  async function dlHandoff(id, panel, confirm) {
+    const r = find(id),
+      s = dlOf(id);
+    if (!r || s.busy) return;
+    if (!DL_HANDOFF_ROLES.includes(S.role)) return toast('投入できるのは受付担当か承認者です', true);
+    if (confirm && !DL_ABSENT_ROLES.includes(S.role)) return toast('作り直しを確定できるのは承認者か管理責任者です', true);
+    s.busy = true;
+    s.msg = null;
+    dlPaint(id);
+    const res = await window.__MSF__.handoff(id, r.__orderVersion, confirm || undefined);
+    if (res.ok) {
+      s.absentOpen = false;
+      s.absentReason = '';
+      s.absentChecked = false;
+    } else {
+      s.msg = Object.assign({ v: r.__orderVersion }, dlMessage(r, res));
+    }
+    await dlLoad(id, true);
+    s.busy = false;
+    dlPaint(id);
+    dlFocus(id, panel);
+    if (res.ok) {
+      toast(
+        res.result.created
+          ? 'Issue #' + res.result.issueNo + '（版 ' + res.result.orderVersion + '）に投入しました'
+          : 'Issue #' + res.result.issueNo + '（版 ' + res.result.orderVersion + '）を確認しました（重ねて作っていません）',
+      );
+    } else if (s.msg && s.msg.follow) {
+      s.follow = 0;
+      dlFollow(id);
+    }
+  }
+  /* 別の操作の進行中は、少し待って読み直す（送信はしない） */
+  function dlFollow(id) {
+    const s = dlOf(id);
+    if (s.follow >= 10) return;
+    s.follow += 1;
+    setTimeout(async () => {
+      if (s.busy || !s.msg || !s.msg.follow) return;
+      await dlLoad(id, true);
+      if (s.msg && s.msg.follow) dlFollow(id);
+    }, 1000);
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('[data-dl]');
+    if (!b || !window.__MSF__ || b.disabled) return;
+    const id = b.dataset.id,
+      s = dlOf(id),
+      panel = b.closest('[data-dl-panel]');
+    if (b.dataset.dl === 'handoff') return void dlHandoff(id, panel, null);
+    if (b.dataset.dl === 'absent-open') {
+      s.absentOpen = true;
+      dlPaint(id);
+      const area = panel && panel.querySelector('[data-dl-input="reason"]');
+      if (area) area.focus();
+      return;
+    }
+    if (b.dataset.dl === 'absent-cancel') {
+      s.absentOpen = false;
+      s.absentReason = '';
+      s.absentChecked = false;
+      dlPaint(id);
+      dlFocus(id, panel);
+      return;
+    }
+    if (b.dataset.dl === 'absent-do') {
+      const reason = s.absentReason.trim();
+      if (!reason || !s.absentChecked) return;
+      return void dlHandoff(id, panel, { confirmAbsent: true, reason });
+    }
+  });
+  function dlInputChanged(e) {
+    const el = e.target;
+    if (!el.dataset || !el.dataset.dlInput) return;
+    const s = dlOf(el.dataset.id);
+    if (el.dataset.dlInput === 'reason') s.absentReason = el.value;
+    if (el.dataset.dlInput === 'check') s.absentChecked = el.checked;
+    const form = el.closest('[data-dl-form]'),
+      go = form && form.querySelector('[data-dl="absent-do"]');
+    if (go) go.disabled = !(s.absentChecked && s.absentReason.trim()) || s.busy;
+  }
+  document.addEventListener('input', dlInputChanged);
+  document.addEventListener('change', dlInputChanged);
+
   /* ---- 開発ライン（パイプライン） ---- */
   function pipeOf(r) {
     return O().pipes[r.id];
@@ -5619,6 +6161,7 @@ const SF = (function () {
     L4: { who: ['admin'], l: 'L4 重大（管理責任者が2時間以内に判断）' },
   };
   function runCI(r, p) {
+    if (window.__MSF__) return toast(SAMPLE_LOCK, true);
     p.total++;
     p.hours = Math.round((p.hours + 0.3) * 10) / 10;
     p.cost += 600;
@@ -5659,6 +6202,7 @@ const SF = (function () {
     toast('CIに合格し、PR #' + p.pr + ' を作りました。承認者がマージを判断します');
   }
   function pipeAct(r) {
+    if (window.__MSF__) return toast(SAMPLE_LOCK, true);
     const p = pipeOf(r);
     if (!p) return;
     if (p.step === 1) {
@@ -5706,6 +6250,7 @@ const SF = (function () {
     }
   }
   function openMerge(r, p) {
+    if (window.__MSF__) return toast(SAMPLE_LOCK, true);
     modal(
       ico('i-git') + 'マージを承認する　<span class="muted" style="font-size:12.5px">' + E(r.id) + '／PR #' + p.pr + '</span>',
       '<p style="margin:0 0 8px">完成版（main）への取り込みを判断します。<b>公開（本番）は別の判断</b>です。</p>' +
@@ -5759,6 +6304,7 @@ const SF = (function () {
     });
   }
   function openEsc(r, p) {
+    if (window.__MSF__) return toast(SAMPLE_LOCK, true);
     const lv = p.esc,
       okRole = (ESC[lv] || { who: [] }).who.includes(S.role);
     modal(
@@ -6074,7 +6620,7 @@ const SF = (function () {
             v.status === 'リスク受容（承認待ち）',
         )
         .forEach((v) => add('脆弱性', v.id, v.title, 'リスク受容の申請を判断する', ['secops', 'vul']));
-      Object.keys(o.pipes).forEach((id) => {
+      Object.keys(window.__MSF__ ? {} : o.pipes).forEach((id) => {
         const p = o.pipes[id],
           r = find(id);
         if (r && p.esc && (ESC[p.esc] || { who: [] }).who.includes(role))
@@ -6086,14 +6632,19 @@ const SF = (function () {
         .filter((f) => f.status === '例外の承認待ち')
         .forEach((f) => add('棚卸し', f.id, f.kind + '：' + f.who, '例外を判断する', ['secops', 'acc']));
     if (role === 'approver')
-      Object.keys(o.pipes).forEach((id) => {
+      Object.keys(window.__MSF__ ? {} : o.pipes).forEach((id) => {
         const p = o.pipes[id],
           r = find(id);
         if (r && p.step === 9 && r.approver === me().name)
           add('開発ライン', id, r.title, 'PR #' + p.pr + ' のマージを判断する', ['devops', 'line']);
       });
     if (role === 'desk') {
-      Object.keys(o.pipes).forEach((id) => {
+      if (window.__MSF__) {
+        S.data.items
+          .filter((r) => r.status === 'approved' && !(r.__issueNo > 0))
+          .forEach((r) => add('開発ライン', r.id, r.title, '注文書を開発ラインへ投入する', ['devops', 'line']));
+      }
+      Object.keys(window.__MSF__ ? {} : o.pipes).forEach((id) => {
         const p = o.pipes[id],
           r = find(id);
         if (!r || (SF.ENDED.includes(r.status) && p.step === 12)) return;
@@ -6108,7 +6659,7 @@ const SF = (function () {
           add('利用者の声', f.id, f.text, '依頼にするか決める', ['ops', 'fb'], Math.floor(minsBetween(f.at) / 1440)),
         );
       o.incidents
-        .filter((i) => i.status !== '完了' && i.cat === '開発ライン' && !o.pipes[i.req]?.esc)
+        .filter((i) => i.status !== '完了' && i.cat === '開発ライン' && (window.__MSF__ || !o.pipes[i.req]?.esc))
         .forEach((i) => add('障害', i.id, i.title, '対応を記録する', ['ops', 'inc']));
     }
     if (role === 'auditor')
@@ -6544,10 +7095,19 @@ const SF = (function () {
   function renderDevops() {
     const o = O(),
       t = S.dvtab || 'line';
-    const act = Object.keys(o.pipes)
-      .map((id) => ({ r: find(id), p: o.pipes[id] }))
-      .filter((x) => x.r && x.p.step < 12 && !SF.ENDED.includes(x.r.status))
-      .sort((a, b) => b.p.step - a.p.step);
+    // サーバ接続時は見本のパイプの有無によらず、依頼の状態と Issue の記録から並べる
+    const act = window.__MSF__
+      ? S.data.items
+          .filter(
+            (r) =>
+              !SF.ENDED.includes(r.status) &&
+              (DL_LIVE_STATUS.includes(r.status) || r.__issueNo > 0 || (o.pipes[r.id] && o.pipes[r.id].step < 12)),
+          )
+          .map((r) => ({ r, p: o.pipes[r.id] || null }))
+      : Object.keys(o.pipes)
+          .map((id) => ({ r: find(id), p: o.pipes[id] }))
+          .filter((x) => x.r && x.p.step < 12 && !SF.ENDED.includes(x.r.status))
+          .sort((a, b) => b.p.step - a.p.step);
     const relWait = S.data.items.filter((r) => r.status === 'release_wait');
     const since30 = Date.now() - 30 * 86400000,
       prod = o.deploys.filter((d) => d.env === 'prod' && new Date(d.at).getTime() >= since30);
@@ -6557,6 +7117,22 @@ const SF = (function () {
         (act.length
           ? act
               .map(({ r, p }) => {
+                if (window.__MSF__) {
+                  return (
+                    '<div class="card pipe"><div class="ph"><a data-open="' +
+                    E(r.id) +
+                    '">' +
+                    mono(r.id) +
+                    '</a><b>' +
+                    E(r.title) +
+                    '</b>' +
+                    sig(colorOf(r)) +
+                    st(r.status) +
+                    '</div>' +
+                    dlPanel(r) +
+                    '</div>'
+                  );
+                }
                 const nextBtn = pipeBtn(r, p);
                 return (
                   '<div class="card pipe"><div class="ph"><a data-open="' +
@@ -6614,7 +7190,9 @@ const SF = (function () {
               })
               .join('')
           : '<p class="muted">開発ラインに流れている依頼はありません</p>') +
-        '<p class="hint">AIの修正には上限（案）があります：同じ原因3回・合計6回・作業2時間・1タスク¥5,000（80%で警告、100%で停止）。上限に達すると自動で止まり、L2〜L4 のエスカレーションで人が判断します。操作はシミュレーションです。</p>';
+        (window.__MSF__
+          ? '<p class="hint">各項目の「実行確認済み」「fake」「未接続」「見本」は記録の種類です。fake と見本は実際の実行ではありません。受付の状態はボードで人が進めます。</p>'
+          : '<p class="hint">AIの修正には上限（案）があります：同じ原因3回・合計6回・作業2時間・1タスク¥5,000（80%で警告、100%で停止）。上限に達すると自動で止まり、L2〜L4 のエスカレーションで人が判断します。操作はシミュレーションです。</p>');
     }
     if (t === 'rel') {
       const latestProd = {};
@@ -6939,17 +7517,22 @@ const SF = (function () {
     $('#view').innerHTML =
       '<div class="btool"><h2 class="h2" style="margin:0">' +
       ico('i-git') +
-      'DevOps（開発ライン・リリース）</h2><span class="sp"></span><span class="muted" style="font-size:12.5px">GitHub・CI・デプロイの動きを、オフラインで再現した見本です</span></div>' +
+      'DevOps（開発ライン・リリース）</h2><span class="sp"></span><span class="muted" style="font-size:12.5px">' +
+      (window.__MSF__
+        ? '開発ライン欄は記録だけを表示します。リリース・指標・変更管理は見本です'
+        : 'GitHub・CI・デプロイの動きを、オフラインで再現した見本です') +
+      '</span></div>' +
       '<div class="kpis">' +
       kcard('開発ラインに流れている依頼', act.length, 'i-git', '件') +
       kcard(
         '止まっている（エスカレーション）',
-        act.filter((x) => x.p.esc).length,
+        // 接続時は実の集計がまだないので、0 件と見せない（W-09）
+        window.__MSF__ ? '－' : act.filter((x) => x.p.esc).length,
         'i-alert',
         '件',
-        act.some((x) => x.p.esc) ? 'ng' : '',
+        act.some((x) => !window.__MSF__ && x.p.esc) ? 'ng' : '',
       ) +
-      kcard('マージ判断待ち', act.filter((x) => x.p.step === 9).length, 'i-stamp', '件') +
+      kcard('マージ判断待ち', window.__MSF__ ? '－' : act.filter((x) => x.p.step === 9).length, 'i-stamp', '件') +
       kcard('リリース判定待ち', relWait.length, 'i-rocket', '件') +
       kcard('本番デプロイ（30日）', prod.filter((d) => d.result !== 'ロールバック').length, 'i-gauge', '回') +
       '</div>' +
@@ -6967,8 +7550,11 @@ const SF = (function () {
     bindCommon();
   }
   function pipeBtn(r, p) {
+    const live = !!window.__MSF__;
+    // 接続時の step 1 は投入ボタン（実 API）が別にあるので、見本のボタンを出さない
+    if (live && p.step === 1) return '';
     const B = (ok, label, icon, why, cls) =>
-      ok
+      ok && !live
         ? '<button type="button" class="btn sm ' +
           (cls || 'go') +
           '" data-act="pipe|' +
@@ -6977,7 +7563,12 @@ const SF = (function () {
           ico(icon) +
           E(label) +
           '</button>'
-        : '<button type="button" class="btn sm" disabled title="' + E(why) + '">' + ico(icon) + E(label) + '</button>';
+        : '<button type="button" class="btn sm" disabled title="' +
+          E(live ? SAMPLE_LOCK : why) +
+          '">' +
+          ico(icon) +
+          E(label) +
+          '</button>';
     if (p.step === 1)
       return B(
         can('pipeIssue') && r.status === 'approved',

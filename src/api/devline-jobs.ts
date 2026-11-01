@@ -10,6 +10,7 @@
  * - 外部呼び出しをトランザクションの中で行わない（appendAuditTx が advisory lock を取るため）。
  */
 import type { PoolClient, QueryResult } from 'pg';
+import { config } from './config.js';
 import { query, withTransaction, type Db } from './db.js';
 import { appendAudit, appendAuditTx } from './audit.js';
 import { Errors } from './http.js';
@@ -29,7 +30,12 @@ import type {
   FencedWrite,
   JobLease,
   JobState,
+  HandoffOp,
+  HandoffState,
+  HandoffView,
+  JobEvidence,
   JobView,
+  VerificationSource,
   RunnerKind,
   RunnerResult,
   RunnerStep,
@@ -249,6 +255,63 @@ function toView(row: ViewRow): JobView {
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
+}
+
+/** api.github.com へ送って github.com の URL が返ったものだけを実物とする。判定はサーバで行う。 */
+function issueSourceOf(issueUrl: string | null): HandoffView['issueSource'] {
+  let apiHost = '';
+  let urlHost = '';
+  try {
+    apiHost = new URL(config.githubApiUrl).hostname;
+    if (issueUrl) urlHost = new URL(issueUrl).hostname;
+  } catch {
+    return 'fake';
+  }
+  return apiHost === 'api.github.com' && (issueUrl === null || urlHost === 'github.com') ? 'github' : 'fake';
+}
+
+/** 画面の表示用。投入の記録（版の新しい順）と job ごとの証跡の要約を返す。 */
+export async function listDevlineTrace(
+  requestId: string,
+): Promise<{ handoffs: HandoffView[]; evidence: Record<string, JobEvidence> }> {
+  const intents = await query<{
+    order_version: number;
+    state: HandoffState;
+    op_kind: HandoffOp;
+    issue_no: number | null;
+    issue_url: string | null;
+    attempts: number;
+    next_attempt_at: Date | null;
+    updated_at: Date;
+  }>(
+    `select order_version, state, op_kind, issue_no, issue_url, attempts, next_attempt_at, updated_at
+       from handoff_intent where request_id = $1 order by order_version desc, created_at desc`,
+    [requestId],
+  );
+  const handoffs = intents.rows.map((i): HandoffView => ({
+    orderVersion: i.order_version,
+    state: i.state,
+    op: i.op_kind,
+    issueNo: i.issue_no,
+    issueUrl: i.issue_url,
+    issueSource: issueSourceOf(i.issue_url),
+    attempts: i.attempts,
+    nextAttemptAt: i.next_attempt_at?.toISOString() ?? null,
+    updatedAt: i.updated_at.toISOString(),
+  }));
+  const rows = await query<{ id: string; attempts: number; sources: VerificationSource[]; has_pr: boolean }>(
+    `select j.id,
+            (select count(*) from job_attempt a where a.job_id = j.id)::int as attempts,
+            array(select distinct v.source from verification v where v.job_id = j.id order by v.source) as sources,
+            exists (select 1 from job_artifact f where f.job_id = j.id and f.kind = 'pr_body_draft') as has_pr
+       from job j where j.request_id = $1`,
+    [requestId],
+  );
+  const evidence: Record<string, JobEvidence> = {};
+  for (const r of rows.rows) {
+    evidence[r.id] = { attempts: r.attempts, verificationSources: r.sources, hasPrDraft: r.has_pr };
+  }
+  return { handoffs, evidence };
 }
 
 export async function getJobView(jobId: string): Promise<JobView | null> {

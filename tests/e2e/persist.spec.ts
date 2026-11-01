@@ -1226,7 +1226,7 @@ test.describe('UI 保存の結果待ち', () => {
     await expectNoToast(page, '件を取り込みました');
   });
 
-  test('エスカレーション: 遷移に失敗したら成功表示を出さず、ダイアログを残す', async ({ page }) => {
+  test('エスカレーション: 接続時は見本の判断を開けず、実依頼の状態を変えない', async ({ page }) => {
     await login(page);
     const title = `エスカレーション ${Date.now()}`;
     const created = await createViaUi(page, title);
@@ -1248,42 +1248,11 @@ test.describe('UI 保存の結果待ち', () => {
       const p = d.ops.pipes[id] ?? (d.ops.pipes[id] = {});
       Object.assign(p, { step: 6, esc: 'L3', same: 2, fail: 2, total: 2, hours: 1, checks: {}, prItems: [], cost: 0 });
     }, created.id);
+    // 接続時は見本のパイプから実依頼の状態を動かさない（開発ライン接続で閉じた経路）
     await page.click('button[data-v="devops"]');
-    await page.locator(`[data-act="pipe|${created.id}"]`).click();
-    const modal = page.locator('#modal');
-    await modal.locator('#enote').fill('判断の理由（作り物）');
-
-    // 「見送る」: 遷移表に dev → hold は無いのでサーバが拒否する。成功と表示せず、ダイアログを残す
-    await modal.locator('input[name=ed][value=hold]').check({ force: true });
-    await modal.locator('#edo').click();
-    await expect(page.locator('#toast .toast.ng').first()).toBeVisible();
-    await expectNoToast(page, '判断を記録しました');
-    await expect(page.locator('#mmask')).toHaveClass(/show/);
+    await expect(page.locator(`[data-act="pipe|${created.id}"]`)).toHaveCount(0);
+    await expect(page.locator('#mmask')).not.toHaveClass(/show/);
     expect((await getDetail(page, created.id)).status).toBe('dev');
-
-    // 「注文書を見直す」: 保存の失敗では記録せず、再送で成功する
-    await modal.locator('input[name=ed][value=spec]').check({ force: true });
-    const hits = await failRoute(page, 'POST', TRANSITIONS);
-    await modal.locator('#edo').click();
-    await expect.poll(hits).toBe(1);
-    await expect(page.locator('#toast .toast.ng', { hasText: '処理を完了できませんでした' }).first()).toBeVisible();
-    await page.waitForTimeout(300);
-    await expectNoToast(page, '判断を記録しました');
-    await expect(page.locator('#mmask')).toHaveClass(/show/);
-    expect((await localItem(page, created.id))?.status).toBe('dev');
-    const esc = await page.evaluate(
-      (id) =>
-        (
-          window as unknown as { __MSF_UI__: { data: () => { ops: { pipes: Record<string, { esc: string }> } } } }
-        ).__MSF_UI__.data().ops.pipes[id]?.esc,
-      created.id,
-    );
-    expect(esc).toBe('L3');
-    await page.unroute(TRANSITIONS);
-
-    await modal.locator('#edo').click();
-    await expect(page.locator('#toast')).toContainText('判断を記録しました');
-    expect((await getDetail(page, created.id)).status).toBe('wait');
   });
 
   for (const wish of ['2026-12-31', '2027-01-01', '2027-01-31', '2027-02-28']) {

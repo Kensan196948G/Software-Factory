@@ -1043,6 +1043,28 @@ export interface JobView {
   updatedAt: string;
 }
 
+/** 版ごとの投入の記録（画面用の読み取り）。マーカーと外部の応答の全文は出さない。 */
+export interface HandoffView {
+  orderVersion: number;
+  state: HandoffState;
+  op: HandoffOp;
+  issueNo: number | null;
+  issueUrl: string | null;
+  /** 連携先の種別。api.github.com 以外（ローカル fake など）は fake。 */
+  issueSource: 'github' | 'fake';
+  attempts: number;
+  nextAttemptAt: string | null;
+  updatedAt: string;
+}
+
+/** job の証跡の要約（画面の「実行確認済み／fake／未接続」を機械的に決めるため）。 */
+export interface JobEvidence {
+  attempts: number;
+  /** 記録された検証の source。無ければ空。 */
+  verificationSources: VerificationSource[];
+  hasPrDraft: boolean;
+}
+
 export interface RecordVerificationInput {
   jobId: string;
   deliveryId: string;
