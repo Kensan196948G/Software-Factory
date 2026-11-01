@@ -334,7 +334,7 @@ API のプロセスは `DEVLINE_GITHUB_TOKEN` だけを読む。`ANTHROPIC_API_K
 
 画面の表示は `job.runnerKind` と証跡で決まる。実 job の「ジョブ」「計画・実装」「自動検査」は、完了していない段階で「実行中」、停止系で「停止」と出し、「実行確認済み」にしない。fake GitHub の結果は `fake` と出す。
 
-**Staging は Approval PR で扱う**: `scripts/setup-preview.mjs` は Staging を `NODE_ENV=production`（`APP_ENV=staging`）にする。`checkRealLineEnv`、`assertRunnerAllowed` は `NODE_ENV=production` の docker-claude を `APP_ENV` に関係なく拒否するので、今の設定のままでは Staging の投入は ERR-405 になり、worker は起動しない。この拒否を緩める変更はこのブランチに含めず、別の Approval PR で扱う。
+**Staging**: `scripts/setup-preview.mjs` は Staging を `NODE_ENV=production`（`APP_ENV=staging`）にする。実 runner は `APP_ENV=staging` を明示したときだけ許し（所有者の決定、Approval PR）、それ以外の production は拒否する。fake は Staging でも動かさない。
 
 ## 14. 受入条件の証跡（`ac-results`）
 

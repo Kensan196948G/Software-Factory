@@ -85,7 +85,7 @@ export async function workerTick(steps: {
 }
 
 async function main(): Promise<void> {
-  const decision = decideWorkerStart({ ...process.env, NODE_ENV: config.nodeEnv });
+  const decision = decideWorkerStart({ ...process.env, NODE_ENV: config.nodeEnv, APP_ENV: config.appEnv });
   if (!decision.start) {
     console.error(`[worker] ${decision.reason}`);
     process.exitCode = 1;
