@@ -273,4 +273,4 @@ systemctl --user enable --now mirai-sf-worker.service
 journalctl --user -u mirai-sf-worker.service -n 50
 ```
 
-`pnpm ops:release` と `pnpm ops:rollback` は、worker が動いていれば再起動します（止まっていれば起動しません）。
+起動を拒否すると（資格情報なし、イメージなし、公開リポジトリなど）exit 1 で終わり、理由をログに出す。fake へ落とさない。繰り返し失敗するとユニットは止まる。`pnpm ops:release` と `pnpm ops:rollback` は、worker が動いていれば再起動する（止まっていれば起動しない）。

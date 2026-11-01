@@ -130,7 +130,11 @@ export async function recordVerification(input: RecordVerificationInput): Promis
         // 記録済みの結果と今回の読み取りは別物なので、この読み取りでは AI の修正（費用がかかる）へ進めない
         const moved = await applyVerdict(client, job, verdict, {
           ...input,
-          diagnostics: { ...input.diagnostics, acArtifact: 'already_recorded' },
+          diagnostics: {
+            runConclusion: input.diagnostics?.runConclusion ?? null,
+            unmatchedJobs: input.diagnostics?.unmatchedJobs ?? [],
+            acArtifact: 'already_recorded',
+          },
         });
         return { status: 'duplicate', verdict, jobState: moved.state, advanced: moved.advanced };
       }
