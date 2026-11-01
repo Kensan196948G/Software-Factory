@@ -1183,7 +1183,9 @@ export async function resetDemo(actor: Actor, correlationId: string) {
   const { seedDemo } = await import('./seed.js');
   return withTransaction(async (client) => {
     // 外部キーは on delete restrict なので、先に開発ラインの行を消す（非本番のみ。ADR 5章）
-    await client.query('truncate table verification, job_artifact, job_event, job_attempt, job, handoff_intent, order_snapshot');
+    await client.query(
+      'truncate table release_attempt, release_approval, release, verification, job_artifact, job_event, job_attempt, job, handoff_intent, order_snapshot',
+    );
     await client.query('delete from request');
     await client.query('delete from request_counter');
     await seedDemo(client);
