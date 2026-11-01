@@ -5848,7 +5848,10 @@ const SF = (function () {
     if (!DL_HANDOFF_ROLES.includes(S.role)) why = '投入できるのは受付担当か承認者です';
     else if (!v) why = '承認済みになってから投入します';
     else if (!pending && r.status !== 'approved' && !cur)
-      why = '承認済みの状態でだけ投入できます（いまは「' + SF.statusOf(r.status).l + '」。投入の前に進めた依頼は、承認待ちへ戻して承認し直します）';
+      why =
+        '承認済みの状態でだけ投入できます（いまは「' +
+        SF.statusOf(r.status).l +
+        '」。投入の前に進めた依頼は、承認待ちへ戻して承認し直します）';
     else if (!pending && !DL_LIVE_STATUS.includes(r.status)) why = '承認が取り消されているので投入できません';
     const off = s.busy || (s.loading && !s.loadedAt) || !!why;
     return (
