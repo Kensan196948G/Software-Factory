@@ -92,13 +92,17 @@ export function decideMerge(f: MergeFacts): MergeDecision {
   if (f.mergeState === 'rejected' && f.mergeDetail !== null && MERGE_EXPIRED_DETAILS.includes(f.mergeDetail)) {
     return no('expired', '前回の merge で承認が失効しました。注文書の版を上げて作り直してください');
   }
+  // 結果不明の merge は、版が変わっていても照合して記録する。実際には merge 済みかもしれない
+  if (f.mergeState === 'unknown' || f.mergeState === 'sending') {
+    return f.hasPr ? { ok: true, mode: 'reconcile' } : no('no_pr', '実 PR の記録がありません');
+  }
   if (f.superseded) return no('superseded', '新しい版に置きかえられた job は承認できません');
   if (!f.orderCurrent) return no('order_not_current', '注文書が無効になっているため承認できません');
   if (f.verdict !== 'passed' || !f.acAllConfirmed) {
     return no('verification', 'この SHA の検査が合格していません（失敗、skip、未確認、証跡の欠落のいずれか）');
   }
   if (!f.hasPr) return no('no_pr', '実 PR の記録がありません');
-  return { ok: true, mode: f.mergeState === 'unknown' || f.mergeState === 'sending' ? 'reconcile' : 'send' };
+  return { ok: true, mode: 'send' };
 }
 
 export interface DeployFacts {

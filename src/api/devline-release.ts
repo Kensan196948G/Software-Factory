@@ -652,8 +652,9 @@ export async function approveDeploy(
       const release = existing.rows[0];
       const facts = await orderFacts(client, job);
       const isAgent = await isAgentUser(client, actor.userId);
-      // 押し直し。同じ3つで配備済みなら同じ結果を返す
+      // 押し直し。同じ3つで配備済みで、いまも動いているなら同じ結果を返す（戻した後は成功と言わない）
       if (
+        (await environmentNow(client, DEPLOY_ENVIRONMENT)).digest === input.digest &&
         job.state === 'staged' &&
         !isAgent &&
         actor.role === 'approver' &&

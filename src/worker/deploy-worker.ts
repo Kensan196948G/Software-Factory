@@ -198,8 +198,10 @@ async function runBuild(a: AttemptRow, facts: JobFacts, o: DeployWorkerOptions):
     fetched.cleanup();
   }
   // 配備先ではなく一時コンテナで確かめる
-  const name = `${o.smokeNamePrefix ?? 'msf-sandbox-smoke'}-${randomUUID().slice(0, 8)}`;
+  // 名前は固定。worker が落ちて残ったコンテナが一時ポートを塞ぎ続けないよう、先に片付ける
+  const name = o.smokeNamePrefix ?? 'msf-sandbox-smoke';
   try {
+    await o.docker.remove(name).catch(() => undefined);
     await o.docker.run({ name, digest, port: o.smokePort, version: a.sha });
     const result = await o.probe.check(o.smokePort, a.sha);
     return {
@@ -402,8 +404,9 @@ export async function runDeployOnce(o: DeployWorkerOptions): Promise<DeployOutco
     finish = {
       state: 'failed',
       errorCode: 'too_many_attempts',
-      deployedDigest: attempt.previous_digest,
-      deployedSha: attempt.previous_sha,
+      // 途中で落ちた試行の後なので、いま何が動いているかは分からない
+      deployedDigest: null,
+      deployedSha: null,
     };
   } else {
     try {

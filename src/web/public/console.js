@@ -6207,7 +6207,9 @@ const SF = (function () {
         '検証環境への配備',
         kind(job.state === 'staged'),
         job.state === 'staged'
-          ? '配備済み（検証環境）' +
+          ? (rel && rel.environmentDigest && rel.environmentDigest !== rel.imageDigest
+              ? '配備しましたが、いまの検証環境は別の版です（digest ' + dlSha(rel.environmentDigest) + '）'
+              : '配備済み（検証環境）') +
               (deployApproval ? '<br>承認：' + approver(deployApproval) : '') +
               (rel && rel.url ? '<br>' + dlLink(rel.url, rel.url) : '') +
               '<br>health ' +
