@@ -26,7 +26,7 @@ import type {
   RunnerUsage,
 } from '../shared/devline.js';
 import { GitWorkspace } from './git-workspace.js';
-import { makeRedactor } from './secret-scan.js';
+import { knownSecretForms, makeRedactor } from './secret-scan.js';
 
 export { makeRedactor };
 
@@ -430,7 +430,8 @@ export function createDockerClaudeRunner(options: DockerClaudeOptions): DockerCl
   const timeoutMs = options.timeoutMs ?? 30 * 60 * 1000;
   const maxTurns = options.maxTurns ?? { plan: 15, work: 40 };
   const hostUser = options.hostUser ?? { uid: process.getuid?.() ?? 0, gid: process.getgid?.() ?? 0 };
-  const redact = makeRedactor([options.apiKey, options.gitToken]);
+  // 符号化した形（base64 / hex / 逆順）も記録へ出さない
+  const redact = makeRedactor([options.apiKey, options.gitToken, ...knownSecretForms([options.apiKey, options.gitToken])]);
   const workspaces = new Map<string, GitWorkspace>();
   const running = new Map<string, Sandbox>();
   /** 動いている実行を止める関数。`docker run` の間だけある。 */

@@ -990,14 +990,11 @@ export async function handoffOrder(
   depsIn?: DevlineDeps,
 ): Promise<HandoffResult> {
   const facts = { role: actor.role, isAdmin: actor.user.isAdmin };
-  // 契約: 投入は desk / approver、confirm_absent は approver / admin（admin は役割によらない）
+  // 投入は desk / approver。confirm_absent はそのうえで approver / admin（フラグで投入の権限を広げない）
+  if (!canHandoff(facts)) return denyHandoff(input.requestId, actor, correlationId, 'role');
   let confirmAbsent: string | null = null;
   if (input.confirmAbsent) {
     if (!canConfirmAbsent(facts)) return denyHandoff(input.requestId, actor, correlationId, 'confirm_absent');
-  } else if (!canHandoff(facts)) {
-    return denyHandoff(input.requestId, actor, correlationId, 'role');
-  }
-  if (input.confirmAbsent) {
     confirmAbsent = input.confirmAbsent.reason.trim();
     if (confirmAbsent === '') throw Errors.reasonRequired();
   }

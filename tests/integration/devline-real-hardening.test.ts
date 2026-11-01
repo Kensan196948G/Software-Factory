@@ -233,12 +233,38 @@ describe('指摘 1: 差分の中身の検査', () => {
     const view = await h.view(jobId);
     expect(view.stopReason).toBe('policy_violation');
     expect(detailOf(view).violations).toContainEqual({
-      path: 'src/[REDACTED].js',
+      path: '[REDACTED]',
       rule: 'secret_detected',
       detector: 'known-secret',
     });
     expect(pushCount()).toBe(0);
     await expectNoValueRecorded(jobId, [DUMMY_API_KEY]);
+  });
+
+  it.each([
+    ['base64', Buffer.from(DUMMY_API_KEY).toString('base64url')],
+    ['hex', Buffer.from(DUMMY_API_KEY).toString('hex')],
+    ['逆順', [...DUMMY_API_KEY].reverse().join('')],
+  ])('ファイル名に入れた %s の値も記録に残らない', async (_name, encoded) => {
+    const line = makeLine();
+    stub.setScenario({ plan: {}, implement: { files: { [`src/${encoded}.js`]: '1\n' } } });
+    const { jobId } = await realJob();
+    await steps(line, 3);
+    expect((await h.view(jobId)).stopReason).toBe('policy_violation');
+    expect(pushCount()).toBe(0);
+    await expectNoValueRecorded(jobId, [encoded, DUMMY_API_KEY]);
+  });
+
+  it('CLI の要約に入れた base64 の値も記録に残らない', async () => {
+    const line = makeLine();
+    const encoded = Buffer.from(DUMMY_API_KEY).toString('base64url');
+    stub.setScenario({
+      plan: { output: { structured_output: { summary: `k=${encoded}`, needs_human: false, plan_steps: [encoded] } } },
+    });
+    const { jobId } = await realJob();
+    await steps(line, 2);
+    expect((await h.view(jobId)).state).toBe('implementing');
+    await expectNoValueRecorded(jobId, [encoded]);
   });
 
   it.each([
@@ -473,6 +499,15 @@ describe('指摘 4: 古い版と止まった job の実 PR', () => {
     expect(gh.access.filter((a) => a.method === 'PATCH' && a.path.includes('/pulls/')).length).toBe(patches);
     // merge の呼び出しは無い（afterEach でも確かめる）。古い job の状態は pr_ready のまま
     expect((await h.view(jobId)).state).toBe('pr_ready');
+  });
+
+  it('1件実走の入口（onlyJobId）は他の job の PR に触らない', async () => {
+    const line = makeLine();
+    const { id, number } = await prReady(line);
+    await h.reapprove(id, '目的を変えた');
+    const next = await handoffOrder({ requestId: id, orderVersion: null }, h.actor('desk'), 'hard-qa', handoffDeps());
+    await runOnce(workerOf(line, { onlyJobId: next.jobId as string }));
+    expect(gh.pulls.find((p) => p.number === number)?.state).toBe('open');
   });
 
   it('閉じるのに失敗したら間隔を空けてやり直す', async () => {

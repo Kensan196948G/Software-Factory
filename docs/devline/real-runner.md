@@ -59,7 +59,7 @@ SIGINT / SIGTERM（`systemctl stop` を含む）: 動いている AI を止め�
 
 ### 実 PR の後始末
 
-worker が取得の前に確かめる（`prFollowupOf`）。外部呼び出しは handoff の commit の外で、結果は `work_state.prFollowup` と event `pr_followup` に残す。失敗は 1 分以上空けて 10 回まで試す。触る前にマーカーと作成者を確かめ、自分のものでない PR には触らない。merge はしない。
+worker が取得の前に確かめる（`prFollowupOf`）。常駐の worker は全 job を見る。1件実走の入口は自分の job だけを見るので、以前の実走の PR（Sandbox #3 など）には触らない。外部呼び出しは handoff の commit の外で、結果は `work_state.prFollowup` と event `pr_followup` に残す。失敗は 1 分以上空けて 10 回まで試す。触る前にマーカーと作成者を確かめ、自分のものでない PR には触らない。merge はしない。
 
 | job の状態                                                  | PR の扱い                                                    |
 | ----------------------------------------------------------- | ------------------------------------------------------------ |

@@ -131,7 +131,8 @@ export class GitWorkspace {
     this.baseUrl = assertGitBaseUrlAllowed(options.gitBaseUrl, options.nodeEnv);
     const known = [options.token, ...(options.knownSecrets ?? [])];
     this.secretForms = knownSecretForms(known);
-    this.redact = makeRedactor(known);
+    // 符号化した形も伏せる（検出した形は記録にも残さない）
+    this.redact = makeRedactor([...known, ...this.secretForms]);
   }
 
   static async create(options: GitWorkspaceOptions): Promise<GitWorkspace> {
@@ -280,17 +281,22 @@ export class GitWorkspace {
     return {
       ...evaluation,
       // path は AI が決められる。記録やログへ値が出ないように伏せる
-      changedPaths: evaluation.changedPaths.map(this.redact),
-      humanApproval: [...humanApproval].map(this.redact),
-      violations: [...pre, ...evaluation.violations.map((v) => ({ ...v, path: this.redact(v.path) })), ...content],
+      changedPaths: evaluation.changedPaths.map((p) => this.safePath(p)),
+      humanApproval: [...humanApproval].map((p) => this.safePath(p)),
+      violations: [...pre, ...evaluation.violations.map((v) => ({ ...v, path: this.safePath(v.path) })), ...content],
     };
+  }
+
+  /** 記録へ書く path。秘密を含むと検出したものは全体を置きかえる（伏せ字の漏れに頼らない）。 */
+  private safePath(path: string): string {
+    return detectSecret(path, this.secretForms) ? '[REDACTED]' : this.redact(path);
   }
 
   /** 追加の中身を検査する。値はどこにも残さない（検出器の名前と行番号だけ）。 */
   private async scanContent(entries: readonly RawDiffEntry[]): Promise<DiffViolation[]> {
     const violations: DiffViolation[] = [];
     for (const entry of entries) {
-      const safePath = this.redact(entry.path);
+      const safePath = this.safePath(entry.path);
       const inName = detectSecret(entry.path, this.secretForms);
       if (inName) violations.push({ path: safePath, rule: 'secret_detected', detector: inName });
       // 消した側、symlink、submodule は中身を持ち込まない（モードの違反は evaluateDiff が止める）

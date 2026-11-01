@@ -600,6 +600,8 @@ async function followUpPrs(options: WorkerOptions): Promise<void> {
   const line = options.line;
   if (!line) return;
   for (const row of await listPrFollowupCandidates()) {
+    // 1件実走の入口は自分の job だけを扱う。以前の実走の PR には触らない
+    if (options.onlyJobId && row.id !== options.onlyJobId) continue;
     const pr = row.work_state.pr as { number?: unknown } | undefined;
     if (typeof pr?.number !== 'number') continue;
     const action = prFollowupOf({
