@@ -12,7 +12,10 @@ import { parseDevlineTargetRepos } from '../shared/devline.js';
 import type { FakeScenario } from '../shared/devline.js';
 import { createRunner, isFakeScenario } from './fake-runner.js';
 import { runOnce } from './loop.js';
-import { checkRealLineEnv, startRealLine, type RealLine } from './real-line.js';
+import { DEFAULT_SECRETS_PATH, checkRealLineEnv, loadDevlineSecrets, startRealLine, type RealLine } from './real-line.js';
+import { createDeployDocker, createDeployProbe } from './deploy-docker.js';
+import { createDeploySource } from './deploy-source.js';
+import { deployPortsFromEnv, runDeployOnce, type DeployWorkerOptions } from './deploy-worker.js';
 
 const POLL_MS = 5_000;
 
@@ -70,6 +73,33 @@ async function main(): Promise<void> {
   }
   const runner = line ? line.runner : createRunner(decision.runnerKind, decision.scenario);
   const owner = `worker-${hostname()}-${process.pid}-${randomUUID().slice(0, 8)}`;
+  // 検証環境への配備は別のスイッチ。merge の口はここに渡らない
+  let deploy: DeployWorkerOptions | undefined;
+  if (process.env.DEVLINE_DEPLOY_ENABLED === '1') {
+    try {
+      const token = line
+        ? loadDevlineSecrets(process.env.DEVLINE_SECRETS_FILE ?? DEFAULT_SECRETS_PATH, config.nodeEnv).githubToken
+        : (process.env.DEVLINE_GITHUB_TOKEN ?? '');
+      deploy = {
+        owner,
+        docker: createDeployDocker(),
+        probe: createDeployProbe(),
+        source: createDeploySource({
+          gitBaseUrl: process.env.DEVLINE_GIT_BASE_URL ?? 'https://github.com',
+          token,
+          nodeEnv: config.nodeEnv,
+        }),
+        ...deployPortsFromEnv(process.env),
+        clock: () => new Date(),
+      };
+    } catch (err) {
+      console.error(`[worker] 配備の設定を拒否しました: ${(err as Error).message}`);
+      process.exitCode = 1;
+      await line?.close();
+      await closePool();
+      return;
+    }
+  }
   const stop = new AbortController();
   process.once('SIGINT', () => stop.abort());
   process.once('SIGTERM', () => stop.abort());
@@ -95,6 +125,13 @@ async function main(): Promise<void> {
       // 進まなかった工程（CI の結果待ちなど）も待つ。空回りで DB を叩き続けない
       idle = outcome.kind === 'idle' || (outcome.kind === 'stepped' && outcome.to === 'unchanged');
       if (outcome.kind !== 'idle') console.log(`[worker] ${JSON.stringify(outcome)}`);
+      if (deploy) {
+        const deployed = await runDeployOnce(deploy);
+        if (deployed.kind !== 'idle') {
+          idle = false;
+          console.log(`[worker] ${JSON.stringify(deployed)}`);
+        }
+      }
     } catch (err) {
       // lease は期限で切れるので、次の取得で取り直される
       console.error(`[worker] step failed: ${(err as Error).name}`);
