@@ -305,6 +305,18 @@ export async function startRealGithub(): Promise<RealGithub> {
       });
     }
 
+    if (method === 'PATCH' && single) {
+      const issue = issues.find((i) => i.number === Number(single[1]));
+      if (!issue) return finish(404, { message: 'Not Found' });
+      if (typeof body.body === 'string') issue.body = body.body;
+      return finish(200, {
+        number: issue.number,
+        html_url: `${origin}/${REAL_REPO}/issues/${issue.number}`,
+        body: issue.body,
+        user: { login: issue.login },
+      });
+    }
+
     if (method === 'POST' && path === `${repoPrefix}/pulls`) {
       const headSha = tip(body.head);
       if (!headSha) return finish(422, { message: 'Validation Failed', errors: [{ message: 'no head' }] });
@@ -463,8 +475,16 @@ export interface StubStep {
   nestedGit?: string;
   /** 作業ツリーの .git を作る。 */
   dotGit?: boolean;
+  /** 実行時の環境変数の値をファイルへ書く（注入された AI が秘密を書き出す）。path → 変数名。 */
+  envFiles?: Record<string, string>;
+  /** 16 進で書いたバイト列をファイルへ書く。 */
+  hexFiles?: Record<string, string>;
+  /** このディレクトリの権限を落とす（ホストの差分検査を失敗させる）。 */
+  lockDir?: string;
   /** docker kill されるまで終わらない。 */
   hang?: boolean;
+  /** hang の前に、コンテナがまだ無い時間（この間の docker kill は失敗する）。 */
+  startDelayMs?: number;
   /** CLI の JSON の上書き（既定は success）。raw があればそのまま出す。 */
   output?: Record<string, unknown>;
   raw?: string;
@@ -498,7 +518,10 @@ const done = (code = 0, text = '') => { if (text) process.stdout.write(text); pr
 
 if (cmd === 'image') done(scenario.noImages ? 1 : 0, 'sha256:stub\n');
 if (cmd === 'network') {
-  if (sub === 'create' && scenario.networkFails) done(1);
+  if (sub === 'create' && scenario.networkFails) {
+    process.stderr.write('Error response from daemon: could not find an available, non-overlapping IPv4 address pool\n');
+    done(1);
+  }
   done(0, sub === 'ls' ? '' : 'id\n');
 }
 if (cmd === 'ps') done(0, '');
@@ -539,6 +562,18 @@ for (const [a, b] of step.rename || []) {
   fs.mkdirSync(path.dirname(path.join(work, b)), { recursive: true });
   fs.renameSync(path.join(work, a), path.join(work, b));
 }
+for (const [p, variable] of Object.entries(step.envFiles || {})) {
+  fs.mkdirSync(path.dirname(path.join(work, p)), { recursive: true });
+  fs.writeFileSync(path.join(work, p), 'export const leaked = "' + process.env[variable] + '";\n');
+}
+for (const [p, hex] of Object.entries(step.hexFiles || {})) {
+  fs.mkdirSync(path.dirname(path.join(work, p)), { recursive: true });
+  fs.writeFileSync(path.join(work, p), Buffer.from(hex, 'hex'));
+}
+if (step.lockDir) {
+  fs.mkdirSync(path.join(work, step.lockDir), { recursive: true });
+  fs.chmodSync(path.join(work, step.lockDir), 0);
+}
 if (step.dotGit) fs.writeFileSync(path.join(work, '.git'), 'gitdir: /etc\n');
 if (step.nestedGit) {
   const nested = path.join(work, step.nestedGit);
@@ -551,7 +586,7 @@ if (step.nestedGit) {
   execFileSync('git', ['commit', '--quiet', '-m', 'x'], { cwd: nested, env });
 }
 if (step.hang) {
-  fs.writeFileSync(path.join(dir, 'hang-' + name + '.pid'), String(process.pid));
+  setTimeout(() => fs.writeFileSync(path.join(dir, 'hang-' + name + '.pid'), String(process.pid)), step.startDelayMs || 0);
   setInterval(() => {}, 1000);
 } else {
   if (step.raw !== undefined) process.stdout.write(step.raw);

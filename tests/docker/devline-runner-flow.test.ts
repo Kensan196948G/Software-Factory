@@ -10,16 +10,24 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SANDBOX_REPO } from '../../src/shared/devline.js';
-import type { RunnerInput } from '../../src/shared/devline.js';
+import type { RunnerInput, RunnerResult } from '../../src/shared/devline.js';
 import { RUNNER_IMAGE, createDockerClaudeRunner } from '../../src/worker/docker-claude-runner.js';
 import { DUMMY_API_KEY, DUMMY_GH_TOKEN, startRealGithub, type RealGithub } from '../integration/devline-real-harness.js';
 
 const image = `msf-devline-test-fake-claude:${randomBytes(4).toString('hex')}`;
+const imageNoCli = `msf-devline-test-no-cli:${randomBytes(4).toString('hex')}`;
 const budget = { limitJpy: 1000, jpyPerUsd: 160 };
 
 function tryDocker(...args: string[]): string {
   const r = spawnSync('docker', args, { encoding: 'utf8' });
   return `${r.stdout ?? ''}${r.stderr ?? ''}`.trim();
+}
+
+/** 失敗したときに原因が分かる情報（隔離ネットワークの段階、stderr、Docker のネットワークの数）。 */
+function why(result: RunnerResult): string {
+  const networks = tryDocker('network', 'ls', '--quiet', '--filter', 'driver=bridge').split('\n').filter(Boolean).length;
+  const logs = result.artifacts.map((a) => `[${a.name}] ${a.content ?? ''}`).join('\n');
+  return `summary=${result.summary}\nexit=${result.exitCode}\nbridge_networks=${networks}\n${logs}`;
 }
 
 const FAKE_CLAUDE = String.raw`const fs = require('node:fs');
@@ -83,14 +91,14 @@ describe('runner を実 Docker で動かす（claude は偽物）', () => {
     signal: new AbortController().signal,
   });
 
-  const makeRunner = (timeoutMs?: number) =>
+  const makeRunner = (timeoutMs?: number, runnerImage = image) =>
     createDockerClaudeRunner({
       apiKey: DUMMY_API_KEY,
       gitToken: DUMMY_GH_TOKEN,
       gitBaseUrl: gh.gitBaseUrl,
       nodeEnv: 'test',
       budget,
-      runnerImage: image,
+      runnerImage,
       workspaceRoot: root,
       ...(timeoutMs ? { timeoutMs } : {}),
     });
@@ -106,11 +114,14 @@ describe('runner を実 Docker で動かす（claude は偽物）', () => {
       `FROM ${RUNNER_IMAGE}\nCOPY fake.cjs /opt/fake.cjs\nCOPY claude /usr/local/bin/claude\n`,
     );
     execFileSync('docker', ['build', '-q', '-t', image, ctx], { stdio: 'ignore' });
+    writeFileSync(join(ctx, 'Dockerfile'), `FROM ${RUNNER_IMAGE}\nUSER root\nRUN rm -f "$(command -v claude)"\n`);
+    execFileSync('docker', ['build', '-q', '-t', imageNoCli, ctx], { stdio: 'ignore' });
     rmSync(ctx, { recursive: true, force: true });
   });
 
   afterAll(async () => {
     tryDocker('image', 'rm', image);
+    tryDocker('image', 'rm', imageNoCli);
     await gh.close();
     rmSync(root, { recursive: true, force: true });
   });
@@ -119,7 +130,7 @@ describe('runner を実 Docker で動かす（claude は偽物）', () => {
     const runner = makeRunner();
     const run = input(2, 'normal');
     const result = await runner.run(run);
-    expect(result.status, `${result.summary} ${result.artifacts.map((a) => a.content).join(' ')}`).toBe('succeeded');
+    expect(result.status, why(result)).toBe('succeeded');
     expect(result.changedPaths).toEqual(['src/from-container.js']);
     expect(result.serverDiff?.violations).toEqual([]);
     expect(result.usage.costJpy).toBe(2);
@@ -167,10 +178,45 @@ describe('runner を実 Docker で動かす（claude は偽物）', () => {
     // 本当に動き続けていて、時間切れで止まった
     expect(Date.now() - started).toBeGreaterThanOrEqual(3000);
     expect(Date.now() - started).toBeLessThan(60_000);
-    expect(result.status).toBe('failed');
-    expect(result.costEstimated).toBe(true);
-    expect(result.usage.costJpy).toBe(1000);
+    expect(result.status, why(result)).toBe('failed');
+    expect(result.costEstimated, why(result)).toBe(true);
+    expect(result.usage.costJpy, why(result)).toBe(1000);
     await runner.release?.(run);
     expect(tryDocker('ps', '--all', '--quiet', '--filter', 'name=msf-dl-run-')).toBe('');
+  });
+
+  it('中の claude を起動できないと 0 円（実物の docker の exit code で確かめる）', async () => {
+    const runner = makeRunner(undefined, imageNoCli);
+    const run = input(4, 'normal');
+    const result = await runner.run(run);
+    expect(result.status, why(result)).toBe('failed');
+    expect(result.notStarted, why(result)).toBe(true);
+    expect(result.exitCode, why(result)).toBe(127);
+    expect(result.usage.costJpy, why(result)).toBe(0);
+    await runner.release?.(run);
+    expect(tryDocker('ps', '--all', '--quiet', '--filter', 'name=msf-dl-run-')).toBe('');
+  });
+
+  it('docker run の直後の取消でも実物のコンテナを止める', async () => {
+    const runner = makeRunner();
+    const controller = new AbortController();
+    const run: RunnerInput = { ...input(5, 'HANGNOW'), signal: controller.signal };
+    const running = runner.run(run);
+    // 隔離ネットワークの用意が終わって docker run を呼ぶ頃に取り消す（コンテナの作成と競合させる）
+    for (let i = 0; i < 400; i += 1) {
+      if (tryDocker('ps', '--quiet', '--filter', 'name=msf-dl-proxy-') !== '') break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    await new Promise((r) => setTimeout(r, 150));
+    const started = Date.now();
+    controller.abort();
+    const result = await running;
+    expect(Date.now() - started, why(result)).toBeLessThan(30_000);
+    expect(result.status, why(result)).toBe('failed');
+    expect(result.exitCode, why(result)).toBe(137);
+    await runner.release?.(run);
+    expect(tryDocker('ps', '--all', '--quiet', '--filter', 'name=msf-dl-run-')).toBe('');
+    expect(tryDocker('ps', '--all', '--quiet', '--filter', 'name=msf-dl-proxy-')).toBe('');
+    expect(tryDocker('network', 'ls', '--quiet', '--filter', 'name=msf-dl-int-')).toBe('');
   });
 });

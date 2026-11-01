@@ -29,6 +29,10 @@ import {
 } from '../../src/shared/devline.js';
 import type { RunnerInput } from '../../src/shared/devline.js';
 import { evaluateDiff, parseRawDiff, type RawDiffEntry } from '../../src/worker/diff-policy.js';
+import { detectSecret, isBinaryContent, knownSecretForms, scanAddedText } from '../../src/worker/secret-scan.js';
+import { unmatchedJobNames } from '../../src/worker/github-ci-collector.js';
+import { withStopBanner } from '../../src/worker/real-line.js';
+import { prFollowupOf } from '../../src/shared/devline.js';
 import {
   buildClaudeArgs,
   buildDockerRunArgs,
@@ -647,5 +651,105 @@ describe('dry-run の報告', () => {
   });
   it('production は失敗', () => {
     expect(dryRunReport({ NODE_ENV: 'production' }).ok).toBe(false);
+  });
+});
+
+describe('差分の中身の検査（secret-scan）', () => {
+  const VALUE = 'not-a-real-value-0123456789';
+  const known = knownSecretForms([VALUE]);
+  // secret-scan.mjs に引っかからないよう、ここで組み立てる
+  const TOKEN = `ghp_${'a1B2'.repeat(9)}`;
+
+  it('既知の値はそのまま・base64・hex・逆順で見つける。短い値は誤検知になるので使わない', () => {
+    expect(scanAddedText(`x=${VALUE}\n`, null, known)).toEqual([{ detector: 'known-secret', line: 1 }]);
+    for (const form of [
+      Buffer.from(VALUE).toString('base64').replace(/=+$/, ''),
+      Buffer.from(VALUE).toString('hex'),
+      [...VALUE].reverse().join(''),
+    ]) {
+      expect(scanAddedText(`a\n${form}\n`, null, known)).toEqual([{ detector: 'known-secret', line: 2 }]);
+    }
+    expect(knownSecretForms(['short'])).toEqual([]);
+  });
+
+  it('行や文字列の連結に分けても既知の値を見つける（行は特定しない）', () => {
+    const half = VALUE.length / 2;
+    const split = `const a = '${VALUE.slice(0, half)}' +\n  '${VALUE.slice(half)}';\n`;
+    expect(scanAddedText(split, null, known)).toContainEqual({ detector: 'known-secret', line: null });
+  });
+
+  it('追加していない行は見ない（既存の行を動かしただけなら止めない）', () => {
+    const old = `a\n${TOKEN}\nb\n`;
+    expect(scanAddedText(`${TOKEN}\na\nb\n`, old, known)).toEqual([]);
+    expect(scanAddedText(`${old}${TOKEN}\n`, null, known).map((f) => f.detector)).toEqual(['github-token', 'github-token']);
+  });
+
+  it('検出結果に値を入れない', () => {
+    const findings = scanAddedText(`${VALUE}\n${TOKEN}\n`, null, known);
+    expect(JSON.stringify(findings)).not.toContain(VALUE);
+    expect(JSON.stringify(findings)).not.toContain(TOKEN);
+  });
+
+  it.each([
+    [`sk-ant-${'x'.repeat(10)}`, 'anthropic-key'],
+    [`github_pat_${'x'.repeat(12)}`, 'github-pat'],
+    [['-----BEGIN ', 'PRIVATE KEY', '-----'].join(''), 'private-key'],
+    [['-----BEGIN ', 'OPENSSH PRIVATE KEY', '-----'].join(''), 'private-key'],
+    [['-----BEGIN ', 'PGP PRIVATE KEY BLOCK', '-----'].join(''), 'private-key'],
+    [['postgres', '://u:', 'longpassword', '@host/db'].join(''), 'connection-string'],
+    [['Authorization', ': Bearer ', 'abcdefghijklmnop1234'].join(''), 'authorization-header'],
+    [['AKIA', 'ABCDEFGHIJKLMNOP'].join(''), 'aws-access-key'],
+  ])('形で見つける: %s', (text, id) => {
+    expect(detectSecret(text, [])).toBe(id);
+  });
+
+  it('普通の文章は通す', () => {
+    expect(detectSecret('export const formatTitle = (s) => s.trim();', known)).toBeNull();
+  });
+
+  it('バイナリの判定はバイト列だけで決める', () => {
+    expect(isBinaryContent(Buffer.from('日本語 ok\n'))).toBe(false);
+    expect(isBinaryContent(Buffer.from([0x61, 0x00, 0x62]))).toBe(true);
+    expect(isBinaryContent(Buffer.from([0x82, 0xa0]))).toBe(true); // Shift_JIS
+    expect(isBinaryContent(Buffer.alloc(0))).toBe(false);
+  });
+});
+
+describe('実 PR の後始末の判定', () => {
+  const base = { stopReason: null, superseded: false, orderCurrent: true };
+  it.each([
+    [{ ...base, state: 'pr_ready' }, 'none'],
+    [{ ...base, state: 'pr_ready', superseded: true }, 'close'],
+    [{ ...base, state: 'pr_ready', orderCurrent: false }, 'close'],
+    [{ ...base, state: 'verifying' }, 'none'],
+    [{ ...base, state: 'verifying', superseded: true }, 'none'],
+    [{ ...base, state: 'cancelled', stopReason: 'cancel_requested' }, 'close'],
+    [{ ...base, state: 'stopped', stopReason: 'cancel_requested' }, 'mark_stopped'],
+    [{ ...base, state: 'stopped', stopReason: 'session_limit' }, 'mark_stopped'],
+    [{ ...base, state: 'stopped', stopReason: 'ci_incomplete' }, 'mark_stopped'],
+    [{ ...base, state: 'failed', stopReason: 'runner_failure' }, 'mark_stopped'],
+    [{ ...base, state: 'stopped', stopReason: 'budget_limit' }, 'close'],
+    [{ ...base, state: 'stopped', stopReason: 'policy_violation' }, 'close'],
+    [{ ...base, state: 'stopped', stopReason: 'order_superseded', superseded: true }, 'close'],
+    [{ ...base, state: 'closed' }, 'none'],
+  ] as const)('%j → %s', (job, action) => {
+    expect(prFollowupOf(job)).toBe(action);
+  });
+
+  it('止まっている印はマーカーの次に1つだけ。マーカーは1行目のまま', () => {
+    const body = '<!-- marker -->\n\n本文\n';
+    const once = withStopBanner(body, 'session_limit');
+    expect(once.split('\n')[0]).toBe('<!-- marker -->');
+    expect(once).toContain('session_limit');
+    const twice = withStopBanner(once, 'runner_failure');
+    expect(twice.match(/merge しないでください/g)).toHaveLength(1);
+    expect(twice).toContain('runner_failure');
+    expect(twice).not.toContain('session_limit');
+    expect(twice).toContain('本文');
+  });
+
+  it('必須段階でない job の名前を返す', () => {
+    const job = (name: string) => ({ name, status: 'completed', conclusion: 'success' });
+    expect(unmatchedJobNames([job('unit'), job('unit-tests'), job('e2e')])).toEqual(['unit-tests']);
   });
 });

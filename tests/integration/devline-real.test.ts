@@ -592,34 +592,56 @@ describe('独立 CI の収集', () => {
   });
 
   it.each([
-    ['skipped', { e2e: 'skipped' }],
-    ['cancelled', { security: 'cancelled' }],
-    ['missing', { integration: 'missing' }],
-  ])('必須段階の %s は不合格（合格へ進まない）', async (_name, jobs) => {
+    ['skipped', { e2e: 'skipped' }, 'e2e', 'skipped'],
+    ['cancelled', { security: 'cancelled' }, 'security', 'cancelled'],
+    ['missing', { integration: 'missing' }, 'integration', 'missing'],
+  ])('必須段階の %s は合格へ進めず、待たずに理由を付けて止まる', async (_name, jobs, stage, status) => {
     const line = makeLine();
     const { jobId } = await untilVerifying(line);
     const headSha = (await h.view(jobId)).headSha as string;
-    passingRun(headSha, {}, jobs);
+    const run = passingRun(headSha, {}, jobs);
     await runOnce(workerOf(line));
-    const view = await h.view(jobId);
-    expect(view.state).toBe('verifying');
-    expect(view.ciRerunCount).toBe(1);
-    // 同じ run をもう一度読んでも数えない
-    await runOnce(workerOf(line));
-    expect((await h.view(jobId)).ciRerunCount).toBe(1);
-  });
-
-  it('同じ SHA の再実行は既存の上限内（超えたら ci_rerun_limit）', async () => {
-    const line = makeLine();
-    const { jobId } = await untilVerifying(line);
-    const headSha = (await h.view(jobId)).headSha as string;
-    for (let i = 0; i < 3; i += 1) {
-      passingRun(headSha, {}, { unit: 'cancelled' });
-      await runOnce(workerOf(line));
-    }
     const view = await h.view(jobId);
     expect(view.state).toBe('stopped');
-    expect(view.stopReason).toBe('ci_rerun_limit');
+    expect(view.stopReason).toBe('ci_incomplete');
+    expect(view.ciRerunCount).toBe(0);
+    expect(view.stopDetail).toMatchObject({ ciRunId: String(run.id), stages: [{ stage, status }], unmatchedJobs: [] });
+  });
+
+  it('段階名が合わない CI は不一致の名前を理由に出す', async () => {
+    const line = makeLine();
+    const { jobId } = await untilVerifying(line);
+    const headSha = (await h.view(jobId)).headSha as string;
+    const run = passingRun(headSha);
+    run.jobs.find((j) => j.name === 'unit')!.name = 'unit-tests';
+    await runOnce(workerOf(line));
+    const view = await h.view(jobId);
+    expect(view.stopReason).toBe('ci_incomplete');
+    expect(view.stopDetail).toMatchObject({ stages: [{ stage: 'unit', status: 'missing' }], unmatchedJobs: ['unit-tests'] });
+  });
+
+  it('再開できる。CI を再実行していなければ、また待たずに止まる。再実行すれば合格へ進む', async () => {
+    const line = makeLine();
+    const { jobId } = await untilVerifying(line);
+    const headSha = (await h.view(jobId)).headSha as string;
+    const run = passingRun(headSha, {}, { unit: 'cancelled' });
+    await runOnce(workerOf(line));
+    expect((await h.view(jobId)).stopReason).toBe('ci_incomplete');
+
+    const resume = async (): Promise<void> => {
+      const res = await h.api('POST', `/api/jobs/${jobId}/resume`, { reason: 'CI を確かめた' });
+      expect(res.statusCode).toBe(200);
+    };
+    await resume();
+    await runOnce(workerOf(line));
+    expect((await h.view(jobId)).stopReason).toBe('ci_incomplete');
+
+    await resume();
+    // 人が GitHub Actions で再実行した（同じ run の attempt 2）
+    run.run_attempt = 2;
+    run.jobs.find((j) => j.name === 'unit')!.conclusion = 'success';
+    await runOnce(workerOf(line));
+    expect((await h.view(jobId)).state).toBe('pr_ready');
   });
 
   it('run 全体が失敗なら、必須段階が全部 passed でも合格にしない', async () => {
@@ -628,7 +650,10 @@ describe('独立 CI の収集', () => {
     const headSha = (await h.view(jobId)).headSha as string;
     passingRun(headSha, { conclusion: 'failure' });
     await runOnce(workerOf(line));
-    expect((await h.view(jobId)).state).toBe('verifying');
+    const view = await h.view(jobId);
+    expect(view.state).toBe('stopped');
+    expect(view.stopReason).toBe('ci_incomplete');
+    expect(view.stopDetail).toMatchObject({ runConclusion: 'failure' });
   });
 
   it('古い run の成功で新しい run を上書きしない。新しい run が動いている間は待つ', async () => {
@@ -749,7 +774,12 @@ describe('起動の拒否', () => {
     stub.setScenario({});
     const line = await start();
     expect(line.budget.limitJpy).toBe(1000);
-    expect(stub.calls().some((c) => c.argv[0] === 'ps' && c.argv.includes('label=msf.devline=1'))).toBe(true);
+    expect(line.isLockHeld?.()).toBe(true);
+    const sweep = stub.calls().find((c) => c.argv[0] === 'ps');
+    expect(sweep?.argv).toContain('label=msf.devline=1');
+    // 片付けは同じ DB の worker のものだけ
+    expect(sweep?.argv.some((a) => /^label=msf\.devline\.scope=[0-9a-f]{16}$/.test(a))).toBe(true);
+    await line.close();
   });
 });
 
