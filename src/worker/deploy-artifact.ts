@@ -304,18 +304,8 @@ export function tarHasOnlyExpectedTag(tarPath: string): boolean {
   return tarImageId(tarPath) !== null;
 }
 
-/** 中身を持たない種類（Go の archive/tar はこれらの size を読み飛ばさない）。 */
-const TAR_HEADER_ONLY = new Set(['1', '2', '5']);
-const TAR_REGULAR = new Set(['\0', '0']);
 const MAX_TAR_ENTRIES = 200_000;
 const TAR_TAIL_CHUNK = 1024 * 1024;
-
-function tarField(block: Buffer, offset: number, length: number): string {
-  return block
-    .subarray(offset, offset + length)
-    .toString('utf8')
-    .replace(/\0.*$/s, '');
-}
 
 /**
  * 8 進の数値欄。`docker save` の出す形（8 進の数字のあとに NUL か空白）だけを読む。
@@ -342,20 +332,6 @@ function tarChecksumOk(block: Buffer): boolean {
   return stored === unsigned || stored === signed;
 }
 
-/** ヘッダの名前（POSIX ustar の prefix を含む）。GNU の magic の prefix 欄は別の用途なので読まない。 */
-function tarHeaderName(block: Buffer): string {
-  const name = tarField(block, 0, 100);
-  const prefix = tarField(block, 345, 155);
-  return prefix ? `${prefix}/${name}` : name;
-}
-
-/** `..` と絶対パスは null。それ以外は `.` と空の区切りを除いた形。 */
-function tarNormalizeName(name: string): string | null {
-  if (name.startsWith('/') || name.includes('\\')) return null;
-  const parts = name.split('/').filter((p) => p !== '' && p !== '.');
-  return parts.includes('..') ? null : parts.join('/');
-}
-
 /** 終端の 0 ブロックの後は 0 だけ。後ろに項目を隠せないようにする。 */
 function tarTailIsZero(fd: number, from: number, size: number): boolean {
   for (let at = from; at < size; at += TAR_TAIL_CHUNK) {
@@ -364,16 +340,23 @@ function tarTailIsZero(fd: number, from: number, size: number): boolean {
   return true;
 }
 
-const isManifestName = (name: string | null): boolean => name === 'manifest.json';
-
 /**
- * tar 全体のヘッダを走査し、manifest.json の中身をちょうど1つ取り出す。
- * docker load が読むものと食い違う余地があれば null（複数の manifest、拡張ヘッダで manifest に当たる項目、
- * `..` や絶対パスの名前、読み手で境界が変わる項目、壊れたヘッダ）。リンクの指す先は見ない（docker save の層が `../` を使う）。
+ * docker save の OCI レイアウトの名前だけを受ける許可リスト。読み手ごとの解釈の差を追いかけず、
+ * 実物の artifact（ustar、通常ファイルとディレクトリだけ）の形以外をすべて拒否する。
+ * リンク、拡張ヘッダ、prefix、圧縮（先頭の名前で弾かれる）、重複した名前は通らない。
  */
+const TAR_FILE_NAME = /^(manifest\.json|index\.json|oci-layout|repositories|blobs\/sha256\/[0-9a-f]{64})$/;
+const TAR_DIR_NAME = /^(blobs\/|blobs\/sha256\/)$/;
+
+function isZero(block: Buffer, from: number, to: number): boolean {
+  return block.subarray(from, to).every((b) => b === 0);
+}
+
+/** tar 全体のヘッダを走査し、manifest.json の中身をちょうど1つ取り出す。許可リストの外があれば null。 */
 function readOnlyManifest(fd: number, size: number): Buffer | null {
   let at = 0;
   let manifest: Buffer | null = null;
+  const seen = new Set<string>();
   for (let guard = 0; guard < MAX_TAR_ENTRIES; guard += 1) {
     if (at === size) return manifest;
     if (at + 512 > size) return null;
@@ -382,25 +365,32 @@ function readOnlyManifest(fd: number, size: number): Buffer | null {
     if (header.every((b) => b === 0)) {
       return tarTailIsZero(fd, at + 512, size) ? manifest : null;
     }
-    // POSIX ustar だけ。docker save の出力はこの形で、GNU と V7 は読み手で解釈が分かれる
     if (header.subarray(257, 265).toString('latin1') !== 'ustar\x0000') return null;
     if (!tarChecksumOk(header)) return null;
+    // linkname、prefix、その後ろの余白は使わない（STAR などの読み分けの余地を残さない）
+    if (!isZero(header, 157, 257) || !isZero(header, 345, 512)) return null;
     const entrySize = tarOctal(header, 124, 12);
     if (entrySize === null) return null;
     const dataAt = at + 512;
     const nextAt = dataAt + Math.ceil(entrySize / 512) * 512;
     if (nextAt > size) return null;
     const type = String.fromCharCode(header[156] as number);
-    // PAX と GNU の拡張ヘッダは受けない。読み手で名前や境界が変わり、manifest を隠せる
-    if (!TAR_REGULAR.has(type) && !TAR_HEADER_ONLY.has(type)) return null;
-    const effective = tarNormalizeName(tarHeaderName(header));
-    if (effective === null) return null;
-    const directoryLike = effective === '' || tarHeaderName(header).endsWith('/');
-    if ((TAR_HEADER_ONLY.has(type) || directoryLike) && entrySize !== 0) return null;
-    if (isManifestName(effective)) {
-      if (manifest !== null || !TAR_REGULAR.has(type) || directoryLike || entrySize > MAX_MANIFEST_BYTES) return null;
-      manifest = readAt(fd, dataAt, entrySize);
-      if (manifest.length !== entrySize) return null;
+    const nameEnd = header.subarray(0, 100).indexOf(0);
+    if (nameEnd <= 0 || !isZero(header, nameEnd, 100)) return null;
+    const name = header.subarray(0, nameEnd).toString('latin1');
+    if (seen.has(name)) return null;
+    seen.add(name);
+    if (type === '5') {
+      if (!TAR_DIR_NAME.test(name) || entrySize !== 0) return null;
+    } else if (type === '0' || type === '\0') {
+      if (!TAR_FILE_NAME.test(name)) return null;
+      if (name === 'manifest.json') {
+        if (entrySize > MAX_MANIFEST_BYTES) return null;
+        manifest = readAt(fd, dataAt, entrySize);
+        if (manifest.length !== entrySize) return null;
+      }
+    } else {
+      return null;
     }
     at = nextAt;
   }

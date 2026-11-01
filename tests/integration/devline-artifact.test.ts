@@ -63,7 +63,7 @@ function tarOf(files: Record<string, string | Buffer>): Buffer {
 
 const goodTar = (tag = 'sandbox-artifact:ci', extra: Record<string, string> = {}): Buffer =>
   tarOf({
-    'blobs/sha256/x': randomBytes(1300),
+    [`blobs/sha256/${'c'.repeat(64)}`]: randomBytes(1300),
     ...extra,
     'manifest.json': JSON.stringify([{ Config: `blobs/sha256/${IMAGE.slice(7)}`, RepoTags: [tag], Layers: [] }]),
   });
@@ -346,146 +346,82 @@ describe('純関数', () => {
         .join('');
     const passes = (entries: TarEntry[]): boolean => tarHasOnlyExpectedTag(p(tarRaw(entries)));
 
-    it('受ける形: 先頭の ./、prefix の別ディレクトリ、manifest に当たらないリンク', () => {
-      expect(passes([{ name: './manifest.json', data: good }])).toBe(true);
-      expect(
-        passes([
-          { name: 'x/manifest.json', data: evil },
-          { name: 'manifest.json', data: good },
-        ]),
-      ).toBe(true);
-      expect(
-        passes([
-          { name: 'aaa/layer.tar', type: '2' },
-          { name: 'manifest.json', data: good },
-        ]),
-      ).toBe(true);
-    });
+    const FILE = `blobs/sha256/${'a'.repeat(64)}`;
+    const last = { name: 'manifest.json', data: good };
 
-    it('拡張ヘッダ（PAX、GNU）は中身によらず拒否する。読み手で名前や境界が変わるため', () => {
-      const last = { name: 'manifest.json', data: good };
-      for (const type of ['x', 'g', 'L', 'K']) {
-        expect(passes([{ name: 'meta', type, data: pax({ comment: 'x' }) }, { name: 'a', data: 'b' }, last]), type).toBe(false);
-      }
-    });
-
-    it('docker load と解釈が食い違う形を拒否する（size の先頭の NUL、GNU の magic、V7）', () => {
-      const last = { name: 'manifest.json', data: good };
-      // size の先頭を NUL にすると、JS は 0、Go は実サイズと読む
-      const nulSize = tarEntry({ name: 'manifest.json', data: evil });
-      nulSize[124] = 0;
-      let sum = 8 * 32;
-      nulSize.forEach((b, i) => {
-        if (i < 148 || i >= 156) sum += b;
-      });
-      nulSize.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 'latin1');
-      expect(tarHasOnlyExpectedTag(p(Buffer.concat([nulSize, tarRaw([last])])))).toBe(false);
-      // GNU の L で manifest.json、続く PAX で別の名前（読み手で優先が違う）
+    it('受ける形: docker save の OCI レイアウト（ディレクトリ、blob、index、oci-layout、manifest）', () => {
       expect(
         passes([
-          { name: '././@LongLink', type: 'L', data: 'manifest.json\0' },
-          { name: 'x', type: 'x', data: pax({ path: 'zzz' }) },
-          { name: 'y', data: evil },
+          { name: 'blobs/', type: '5' },
+          { name: 'blobs/sha256/', type: '5' },
+          { name: FILE, data: 'x' },
+          { name: 'index.json', data: '{}' },
+          { name: 'oci-layout', data: '{}' },
           last,
         ]),
-      ).toBe(false);
-      expect(passes([{ name: 'a', data: 'b', magic: 'ustar  \0' }, last])).toBe(false);
-      expect(passes([{ name: 'a', data: 'b', magic: '' }, last])).toBe(false);
+      ).toBe(true);
     });
 
-    it('2 つ目の manifest.json を拒否する（前後どちらでも、書き方を変えても）', () => {
-      expect(
-        passes([
-          { name: 'manifest.json', data: good },
-          { name: 'manifest.json', data: evil },
-        ]),
-      ).toBe(false);
-      expect(
-        passes([
-          { name: 'manifest.json', data: evil },
-          { name: 'manifest.json', data: good },
-        ]),
-      ).toBe(false);
-      expect(
-        passes([
-          { name: 'manifest.json', data: good },
-          { name: './manifest.json', data: evil },
-        ]),
-      ).toBe(false);
-      expect(
-        passes([
-          { name: 'manifest.json', data: good },
-          { name: './/./manifest.json', data: evil },
-        ]),
-      ).toBe(false);
-    });
-
-    it('ustar の prefix で作った manifest.json を見落とさない', () => {
-      expect(
-        passes([
-          { name: 'manifest.json', data: good },
-          { name: 'manifest.json', prefix: '.', data: evil },
-        ]),
-      ).toBe(false);
-      expect(
-        passes([
-          { name: 'evil.txt', prefix: '..', data: 'x' },
-          { name: 'manifest.json', data: good },
-        ]),
-      ).toBe(false);
-    });
-
-    it.each(['x', 'L'])('拡張ヘッダ %s で manifest に当たる項目を拒否する', (type) => {
-      const data = type === 'x' ? pax({ path: 'manifest.json' }) : 'manifest.json\0';
-      expect(
-        passes([
-          { name: 'meta', type, data },
-          { name: 'other', data: evil },
-          { name: 'manifest.json', data: good },
-        ]),
-      ).toBe(false);
-      expect(
-        passes([
-          { name: 'manifest.json', data: good },
-          { name: 'meta', type, data },
-          { name: 'other', data: evil },
-        ]),
-      ).toBe(false);
-      // ヘッダの名前が manifest で、拡張ヘッダが別の名前にするものも
-      const other = type === 'x' ? pax({ path: 'other' }) : 'other\0';
-      expect(
-        passes([
-          { name: 'meta', type, data: other },
-          { name: 'manifest.json', data: evil },
-          { name: 'manifest.json', data: good },
-        ]),
-      ).toBe(false);
-    });
-
-    it('.. と絶対パスを拒否する（拡張ヘッダの名前も）', () => {
-      const last = { name: 'manifest.json', data: good };
-      for (const name of ['../evil', 'a/../../evil', '/etc/evil', 'a/..']) {
+    it('許可リストの外の名前を拒否する（別のディレクトリ、./ 付き、.. 、絶対パス）', () => {
+      for (const name of [
+        'x/manifest.json',
+        './manifest.json',
+        '../evil',
+        '/etc/evil',
+        'a/../../evil',
+        'evil.txt',
+        `blobs/sha256/${'A'.repeat(64)}`,
+      ]) {
         expect(passes([{ name, data: 'x' }, last]), name).toBe(false);
       }
     });
 
-    it('読み手で項目の境界が変わるものと壊れた tar を拒否する', () => {
-      const last = { name: 'manifest.json', data: good };
-      // ディレクトリの size は docker の読み手が読み飛ばさない
-      expect(passes([{ name: 'dir/', type: '5', size: 512, data: '' }, last])).toBe(false);
-      expect(passes([{ name: 'manifest.json', type: '2' }, last])).toBe(false);
-      expect(passes([{ name: 'manifest.json', type: '5' }, last])).toBe(false);
-      expect(passes([{ name: 'sparse', type: 'S', data: 'x' }, last])).toBe(false);
-      expect(passes([{ name: 'x', type: 'x', data: pax({ mtime: '1' }) }])).toBe(false);
-      // 終端の後ろの項目
+    it('リンク、拡張ヘッダ（PAX、GNU）、特殊な種類を拒否する', () => {
+      for (const type of ['1', '2', '3', '4', '6', '7', 'x', 'g', 'L', 'K', 'S']) {
+        expect(passes([{ name: FILE, type, data: type === 'x' || type === 'g' ? pax({ comment: 'x' }) : '' }, last]), type).toBe(
+          false,
+        );
+      }
+    });
+
+    it('manifest の重複と、同じ名前の重複を拒否する', () => {
+      expect(passes([last, { name: 'manifest.json', data: evil }])).toBe(false);
+      expect(passes([{ name: FILE, data: 'x' }, { name: FILE, data: 'y' }, last])).toBe(false);
+    });
+
+    it('docker load と解釈が食い違う形を拒否する', () => {
+      // size の先頭を NUL にすると、JS は 0、Go は実サイズと読む
+      const resum = (h: Buffer): Buffer => {
+        let sum = 8 * 32;
+        h.forEach((b, i) => {
+          if (i < 148 || i >= 156) sum += b;
+        });
+        h.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 'latin1');
+        return h;
+      };
+      const nulSize = tarEntry({ name: FILE, data: evil });
+      nulSize[124] = 0;
+      expect(tarHasOnlyExpectedTag(p(Buffer.concat([resum(nulSize), tarRaw([last])])))).toBe(false);
+      // STAR の印と prefix
+      const star = tarEntry({ name: FILE, data: 'x' });
+      star.write('tar\0', 508, 'latin1');
+      expect(tarHasOnlyExpectedTag(p(Buffer.concat([resum(star), tarRaw([last])])))).toBe(false);
+      expect(passes([{ name: 'manifest.json', prefix: '.', data: evil }, last])).toBe(false);
+      // GNU と V7 の magic
+      expect(passes([{ name: FILE, data: 'b', magic: 'ustar  \0' }, last])).toBe(false);
+      expect(passes([{ name: FILE, data: 'b', magic: '' }, last])).toBe(false);
+      // 圧縮の形（先頭が gzip）は名前で弾く
+      expect(tarHasOnlyExpectedTag(p(Buffer.concat([Buffer.from([0x1f, 0x8b, 0x08]), tarRaw([last])])))).toBe(false);
+    });
+
+    it('壊れた tar と終端の後ろの項目を拒否する', () => {
+      expect(passes([{ name: 'blobs/', type: '5', size: 512, data: '' }, last])).toBe(false);
       const hidden = Buffer.concat([tarRaw([last]), tarEntry({ name: 'manifest.json', data: evil }), Buffer.alloc(1024)]);
       expect(tarHasOnlyExpectedTag(p(hidden))).toBe(false);
-      // 壊れた checksum、途中で切れた中身、端数
       const bad = tarRaw([last]);
       bad[0] = 0x4d;
       expect(tarHasOnlyExpectedTag(p(bad))).toBe(false);
       expect(tarHasOnlyExpectedTag(p(tarRaw([last]).subarray(0, 600)))).toBe(false);
-      expect(tarHasOnlyExpectedTag(p(Buffer.concat([tarRaw([last]), Buffer.alloc(10)])))).toBe(true);
       expect(tarHasOnlyExpectedTag(p(Buffer.concat([tarEntry(last), Buffer.alloc(10, 1)])))).toBe(false);
     });
   });
