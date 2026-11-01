@@ -1,9 +1,11 @@
 /**
- * 成果物の作成・検証環境への配備・戻し（release_attempt の行を1件ずつ処理する）。
+ * 成果物の取得・検証環境への配備・戻し（release_attempt の行を1件ずつ処理する）。
+ * attempt の kind='build' は「CI が作った成果物の取得と照合」を指す。このホストではイメージを作らない。
  *
  * - job には lease を置けない（job_no_lease_when_waiting）ので、書き込みは attempt の lease と fence で守る。
  * - merge の口を持たない。PR も承認も扱わない（src/api/devline-release.ts を import しない）。
- * - 配備は承認された digest のイメージをそのまま起動する。ここで作り直さない（仕様 4-9）。
+ * - 配備は承認された digest のイメージをそのまま起動する。作り直さない（仕様 4-9）。
+ * - 成果物は merge の承認で固定した run のものだけ。無ければ止まる（fallback で作らない）。
  * - 失敗したら前の digest へ自動で戻し、失敗として記録する。job は merged のまま。
  */
 import { query, withTransaction } from '../api/db.js';
@@ -11,12 +13,13 @@ import { appendAuditTx } from '../api/audit.js';
 import { insertJobEvent } from '../api/devline-jobs.js';
 import { isOrderCurrent } from '../shared/devline.js';
 import type { JobState } from '../shared/devline.js';
-import { DEPLOY_CONTAINER_NAME, DEPLOY_DEFAULT_PORT, DEPLOY_SMOKE_DEFAULT_PORT } from '../shared/devline-release.js';
+import { DEPLOY_ARTIFACT_TAG, DEPLOY_CONTAINER_NAME } from '../shared/devline-release.js';
 import type { Status } from '../shared/domain.js';
-import type { DeployDocker, DeployProbe } from './deploy-docker.js';
-import type { DeploySource } from './deploy-source.js';
+import type { ImageArtifactProblem, ImageArtifactSource } from './deploy-artifact.js';
+import { DEPLOY_IMAGE_REPO, type DeployDocker, type DeployProbe } from './deploy-docker.js';
 
-const LEASE_SECONDS = 900;
+// 取得（最大 10 分）と読み込み（最大 10 分）より長くする
+const LEASE_SECONDS = 1800;
 const MAX_ATTEMPTS = 3;
 const WORKER_AUDIT = { actorUserId: null, actorName: 'deploy-worker', role: 'system' } as const;
 
@@ -24,28 +27,11 @@ export interface DeployWorkerOptions {
   owner: string;
   docker: DeployDocker;
   probe: DeployProbe;
-  source: DeploySource;
-  port: number;
-  smokePort: number;
+  artifacts: ImageArtifactSource;
   containerName?: string;
   /** 一時コンテナの名前の頭。試験で分ける。 */
   smokeNamePrefix?: string;
-  imageTagPrefix?: string;
   clock: () => Date;
-}
-
-/** 環境変数の既定値。使用中のときは配備の時点で失敗にする。 */
-export function deployPortsFromEnv(env: Record<string, string | undefined>): { port: number; smokePort: number } {
-  const parse = (raw: string | undefined, fallback: number, name: string): number => {
-    if (raw === undefined || raw === '') return fallback;
-    const value = Number(raw);
-    if (!Number.isInteger(value) || value < 1024 || value > 65535) throw new Error(`${name} が正しくありません`);
-    return value;
-  };
-  const port = parse(env.DEVLINE_DEPLOY_PORT, DEPLOY_DEFAULT_PORT, 'DEVLINE_DEPLOY_PORT');
-  const smokePort = parse(env.DEVLINE_DEPLOY_SMOKE_PORT, DEPLOY_SMOKE_DEFAULT_PORT, 'DEVLINE_DEPLOY_SMOKE_PORT');
-  if (port === smokePort) throw new Error('DEVLINE_DEPLOY_PORT と DEVLINE_DEPLOY_SMOKE_PORT は別の値にしてください');
-  return { port, smokePort };
 }
 
 interface AttemptRow {
@@ -72,6 +58,9 @@ interface JobFacts {
   request_deleted: boolean;
   request_order_version: number;
   repo: string;
+  head_sha: string;
+  verified_run_id: string | null;
+  verified_run_attempt: number | null;
   merge_sha: string | null;
   tree_match: boolean | null;
   image_digest: string | null;
@@ -83,7 +72,7 @@ interface JobFacts {
 async function jobFacts(a: AttemptRow): Promise<JobFacts | null> {
   const { rows } = await query<JobFacts>(
     `select j.state, j.superseded_at, j.order_version, q.status as request_status, q.deleted as request_deleted,
-            q.order_version as request_order_version, r.repo, r.merge_sha, r.tree_match, r.image_digest,
+            q.order_version as request_order_version, r.repo, r.head_sha, r.verified_run_id, r.verified_run_attempt, r.merge_sha, r.tree_match, r.image_digest,
             r.deploy_approved_sha, r.deploy_approved_digest, r.environment
        from release r join job j on j.id = r.job_id join request q on q.id = j.request_id
       where r.id = $1`,
@@ -121,6 +110,8 @@ interface Finish {
   url?: string | null;
   errorCode?: string | null;
   autoRollback?: 'restored' | 'nothing_to_restore' | 'failed' | null;
+  /** 取得元。成果物の取得が成功したときだけ。 */
+  source?: { runId: string; runAttempt: number; artifactId: number; tarSha256: string };
 }
 
 export type DeployOutcome =
@@ -167,48 +158,75 @@ async function finishAttempt(
         digest: finish.digest ?? a.digest,
         errorCode: finish.errorCode ?? null,
         autoRollback: finish.autoRollback ?? null,
+        ...(finish.source ? { source: finish.source } : {}),
       },
     });
     return true;
   });
 }
 
-function url(port: number): string {
-  return `http://127.0.0.1:${port}`;
-}
+const ARTIFACT_ERROR: Record<ImageArtifactProblem, string> = {
+  missing: 'artifact_missing',
+  expired: 'artifact_expired',
+  too_large: 'artifact_too_large',
+  mismatch: 'artifact_mismatch',
+  unavailable: 'artifact_unavailable',
+};
 
+/** merge の承認で固定した run の成果物を取得し、照合して読み込む。合わなければ配備の承認へ進めない。 */
 async function runBuild(a: AttemptRow, facts: JobFacts, o: DeployWorkerOptions): Promise<Finish> {
   if (facts.state !== 'merged' || facts.merge_sha !== a.sha || facts.tree_match !== true) {
     return { state: 'failed', errorCode: 'not_buildable' };
   }
-  if (!(await o.docker.portFree(o.smokePort))) return { state: 'failed', errorCode: 'smoke_port_in_use' };
-  let digest: string | undefined;
-  const fetched = await o.source.fetch({ repo: facts.repo, sha: a.sha }).catch(() => null);
-  if (!fetched) return { state: 'failed', errorCode: 'source_fetch_failed' };
+  if (facts.verified_run_id === null || facts.verified_run_attempt === null) {
+    return { state: 'failed', errorCode: 'artifact_missing' };
+  }
+  // 成果物は PR の head に結びつく（merge の SHA ではない）。merge との対応は tree の一致で確かめ済み
+  const fetched = await o.artifacts
+    .fetch({ repo: facts.repo, runId: facts.verified_run_id, runAttempt: facts.verified_run_attempt, headSha: facts.head_sha })
+    .catch(() => ({ ok: false as const, problem: 'unavailable' as const }));
+  if (!fetched.ok) return { state: 'failed', errorCode: ARTIFACT_ERROR[fetched.problem] };
+  const digest = fetched.imageId;
+  const source = {
+    runId: fetched.runId,
+    runAttempt: fetched.runAttempt,
+    artifactId: fetched.artifactId,
+    tarSha256: fetched.tarSha256,
+  };
   try {
-    digest = await o.docker.build({
-      contextDir: fetched.dir,
-      tag: `${o.imageTagPrefix ?? 'msf-sandbox-verify'}:${a.sha}`,
-      sha: a.sha,
-    });
+    let loaded: { ref: string; id: string };
+    try {
+      loaded = await o.docker.loadImage(fetched.tarPath);
+    } catch {
+      return { state: 'failed', errorCode: 'artifact_load_failed' };
+    }
+    // 検査した tar に入っていたタグか。読み込まれたものの ID を見る（同じ ID が手元にあるだけでは通さない）
+    if (loaded.ref !== DEPLOY_ARTIFACT_TAG) return { state: 'failed', errorCode: 'artifact_mismatch' };
+    if (loaded.id !== digest) {
+      await o.docker.discardImage(loaded.ref).catch(() => undefined);
+      return { state: 'failed', errorCode: 'artifact_mismatch' };
+    }
+    await o.docker.adoptImage({ ref: loaded.ref, id: loaded.id, tag: `${DEPLOY_IMAGE_REPO}:${a.sha}` });
   } catch {
-    return { state: 'failed', errorCode: 'build_failed' };
+    return { state: 'failed', errorCode: 'artifact_load_failed' };
   } finally {
     fetched.cleanup();
   }
   // 配備先ではなく一時コンテナで確かめる
-  // 名前は固定。worker が落ちて残ったコンテナが一時ポートを塞ぎ続けないよう、先に片付ける
+  // 名前は固定。worker が落ちて残ったコンテナがネットワークに残り続けないよう、先に片付ける
   const name = o.smokeNamePrefix ?? 'msf-sandbox-smoke';
   try {
     await o.docker.remove(name).catch(() => undefined);
-    await o.docker.run({ name, digest, port: o.smokePort, version: a.sha });
-    const result = await o.probe.check(o.smokePort, a.sha);
+    const { baseUrl } = await o.docker.run({ name, digest, version: a.sha });
+    const result = await o.probe.check(baseUrl, a.sha);
+    const passed = result.health && result.smoke;
     return {
-      state: result.health && result.smoke ? 'succeeded' : 'failed',
+      state: passed ? 'succeeded' : 'failed',
       digest,
       health: result.health,
       smoke: result.smoke,
-      errorCode: result.health && result.smoke ? null : 'artifact_check_failed',
+      errorCode: passed ? null : 'artifact_check_failed',
+      ...(passed ? { source } : {}),
     };
   } catch {
     return { state: 'failed', digest, errorCode: 'artifact_run_failed' };
@@ -218,28 +236,32 @@ async function runBuild(a: AttemptRow, facts: JobFacts, o: DeployWorkerOptions):
 }
 
 /** 前の版を起動して確かめる。前の版が無ければ、失敗したコンテナを消すだけ。 */
-async function restore(a: AttemptRow, o: DeployWorkerOptions, name: string): Promise<Finish['autoRollback']> {
+async function restore(
+  a: AttemptRow,
+  o: DeployWorkerOptions,
+  name: string,
+): Promise<{ result: NonNullable<Finish['autoRollback']>; url: string | null }> {
   await o.docker.remove(name).catch(() => undefined);
-  if (!a.previous_digest || !a.previous_sha) return 'nothing_to_restore';
+  if (!a.previous_digest || !a.previous_sha) return { result: 'nothing_to_restore', url: null };
   try {
-    if (!(await o.docker.hasImage(a.previous_digest))) return 'failed';
-    await o.docker.run({ name, digest: a.previous_digest, port: o.port, version: a.previous_sha });
-    const again = await o.probe.check(o.port, a.previous_sha);
-    if (again.health && again.smoke) return 'restored';
+    if (!(await o.docker.hasImage(a.previous_digest))) return { result: 'failed', url: null };
+    const { baseUrl } = await o.docker.run({ name, digest: a.previous_digest, version: a.previous_sha });
+    const again = await o.probe.check(baseUrl, a.previous_sha);
+    if (again.health && again.smoke) return { result: 'restored', url: baseUrl };
   } catch {
     /* 下で failed にする */
   }
   await o.docker.remove(name).catch(() => undefined);
-  return 'failed';
+  return { result: 'failed', url: null };
 }
 
 function afterRestore(
   a: AttemptRow,
-  restored: Finish['autoRollback'],
-): { deployedDigest: string | null; deployedSha: string | null } {
-  return restored === 'restored'
-    ? { deployedDigest: a.previous_digest, deployedSha: a.previous_sha }
-    : { deployedDigest: null, deployedSha: null };
+  restored: Awaited<ReturnType<typeof restore>>,
+): { deployedDigest: string | null; deployedSha: string | null; autoRollback: Finish['autoRollback']; url: string | null } {
+  return restored.result === 'restored'
+    ? { deployedDigest: a.previous_digest, deployedSha: a.previous_sha, autoRollback: restored.result, url: restored.url }
+    : { deployedDigest: null, deployedSha: null, autoRollback: restored.result, url: null };
 }
 
 async function runDeploy(a: AttemptRow, facts: JobFacts, o: DeployWorkerOptions): Promise<Finish> {
@@ -269,19 +291,17 @@ async function runDeploy(a: AttemptRow, facts: JobFacts, o: DeployWorkerOptions)
   if (!(await o.docker.hasImage(digest))) return { state: 'failed', errorCode: 'image_missing', ...untouched };
   const existing = await o.docker.containerState(name);
   if (existing === 'foreign') return { state: 'failed', errorCode: 'name_in_use', ...untouched };
-  if (existing === 'none' && !(await o.docker.portFree(o.port))) {
-    return { state: 'failed', errorCode: 'port_in_use', ...untouched };
-  }
   await o.docker.remove(name);
+  let baseUrl: string;
   try {
-    await o.docker.run({ name, digest, port: o.port, version: a.sha });
+    ({ baseUrl } = await o.docker.run({ name, digest, version: a.sha }));
   } catch {
     const restored = await restore(a, o, name);
-    return { state: 'failed', errorCode: 'run_failed', autoRollback: restored, ...afterRestore(a, restored) };
+    return { state: 'failed', errorCode: 'run_failed', ...afterRestore(a, restored) };
   }
-  const result = await o.probe.check(o.port, a.sha);
+  const result = await o.probe.check(baseUrl, a.sha);
   if (result.health && result.smoke) {
-    return { state: 'succeeded', deployedDigest: digest, deployedSha: a.sha, health: true, smoke: true, url: url(o.port) };
+    return { state: 'succeeded', deployedDigest: digest, deployedSha: a.sha, health: true, smoke: true, url: baseUrl };
   }
   const restored = await restore(a, o, name);
   return {
@@ -289,7 +309,6 @@ async function runDeploy(a: AttemptRow, facts: JobFacts, o: DeployWorkerOptions)
     errorCode: result.health ? 'smoke_failed' : 'health_failed',
     health: result.health,
     smoke: result.smoke,
-    autoRollback: restored,
     ...afterRestore(a, restored),
   };
 }
@@ -301,19 +320,17 @@ async function runRollback(a: AttemptRow, o: DeployWorkerOptions): Promise<Finis
   if (!(await o.docker.hasImage(digest))) return { state: 'failed', errorCode: 'image_missing', ...untouched };
   const existing = await o.docker.containerState(name);
   if (existing === 'foreign') return { state: 'failed', errorCode: 'name_in_use', ...untouched };
-  if (existing === 'none' && !(await o.docker.portFree(o.port))) {
-    return { state: 'failed', errorCode: 'port_in_use', ...untouched };
-  }
   await o.docker.remove(name);
   let result = { health: false, smoke: false };
+  let baseUrl: string | null = null;
   try {
-    await o.docker.run({ name, digest, port: o.port, version: a.sha });
-    result = await o.probe.check(o.port, a.sha);
+    ({ baseUrl } = await o.docker.run({ name, digest, version: a.sha }));
+    result = await o.probe.check(baseUrl, a.sha);
   } catch {
     /* 下で元の版へ戻す */
   }
   if (result.health && result.smoke) {
-    return { state: 'succeeded', deployedDigest: digest, deployedSha: a.sha, health: true, smoke: true, url: url(o.port) };
+    return { state: 'succeeded', deployedDigest: digest, deployedSha: a.sha, health: true, smoke: true, url: baseUrl };
   }
   // 戻し先が動かない。戻す前の版（previous に入っている）へ戻す
   const restored = await restore(a, o, name);
@@ -322,7 +339,6 @@ async function runRollback(a: AttemptRow, o: DeployWorkerOptions): Promise<Finis
     errorCode: 'rollback_failed',
     health: result.health,
     smoke: result.smoke,
-    autoRollback: restored,
     ...afterRestore(a, restored),
   };
 }
@@ -339,13 +355,26 @@ async function applyResult(
     digest: finish.digest ?? a.digest,
     errorCode: finish.errorCode ?? null,
     autoRollback: finish.autoRollback ?? null,
+    ...(finish.source ? { source: finish.source } : {}),
   };
   if (a.kind === 'build') {
     if (finish.state === 'succeeded') {
       await client.query(
-        `update release set image_digest=$2, artifact_built_at=$3, artifact_health=$4, artifact_smoke=$5, fencing_token=fencing_token+1, updated_at=$3
+        `update release set image_digest=$2, artifact_built_at=$3, artifact_health=$4, artifact_smoke=$5,
+                artifact_run_id=$6, artifact_run_attempt=$7, artifact_id=$8, artifact_tar_sha256=$9,
+                fencing_token=fencing_token+1, updated_at=$3
           where id=$1 and image_digest is null`,
-        [a.release_id, finish.digest, now, finish.health, finish.smoke],
+        [
+          a.release_id,
+          finish.digest,
+          now,
+          finish.health,
+          finish.smoke,
+          finish.source?.runId ?? null,
+          finish.source?.runAttempt ?? null,
+          finish.source?.artifactId ?? null,
+          finish.source?.tarSha256 ?? null,
+        ],
       );
     }
     await insertJobEvent(client, { jobId: a.job_id, at: now, kind: `artifact_${finish.state}`, ...system, detail });

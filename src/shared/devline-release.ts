@@ -9,8 +9,14 @@ import type { JobState, VerificationVerdict } from './devline.js';
 export const DEPLOY_ENVIRONMENT = 'local-verify';
 export const DEPLOY_CONTAINER_NAME = 'msf-sandbox-verify';
 export const DEPLOY_LABEL = 'msf.devline.deploy=1';
-export const DEPLOY_DEFAULT_PORT = 38180;
-export const DEPLOY_SMOKE_DEFAULT_PORT = 38181;
+/** 配備と一時確認のコンテナを置く内部ネットワーク（--internal。外部へ出られない。host からコンテナの IP で届く）。 */
+export const DEPLOY_NETWORK_NAME = 'msf-devline-verify-net';
+export const DEPLOY_CONTAINER_PORT = 8080;
+/** CI の docker save が tar に入れるタグ（Sandbox の ci.yml）。これ以外のタグを持つ tar は読み込まない。 */
+export const DEPLOY_ARTIFACT_TAG = 'sandbox-artifact:ci';
+/** 検査した成果物の artifact の名前と meta の版（`msf.image/v1`）。 */
+export const IMAGE_ARTIFACT_NAME = 'image';
+export const IMAGE_META_SCHEMA = 'msf.image/v1';
 
 export type MergeState = 'none' | 'sending' | 'unknown' | 'rejected' | 'merged';
 
@@ -37,7 +43,8 @@ export type ReleaseRefusal =
   | 'tree_mismatch'
   | 'no_artifact'
   | 'nothing_to_restore'
-  | 'not_current';
+  | 'not_current'
+  | 'no_approval';
 
 export type Refusal = { ok: false; refusal: ReleaseRefusal; message: string };
 const no = (refusal: ReleaseRefusal, message: string): Refusal => ({ ok: false, refusal, message });
@@ -71,8 +78,10 @@ export interface MergeFacts {
 
 export type MergeDecision =
   | Refusal
-  /** send: GitHub へ送る前に PR を読む。unknown / sending の続きも同じ（照合してから必要なら送る）。 */
-  | { ok: true; mode: 'send' | 'reconcile' }
+  /** send: GitHub へ送る前に PR を読む。 */
+  | { ok: true; mode: 'send' }
+  /** unknown / sending の続き。PR を読んで照合する。maySend=false なら、未 merge でも送らない（新しい承認を残さない）。 */
+  | { ok: true; mode: 'reconcile'; maySend: boolean }
   /** すでに merge 済み。押し直しは同じ結果を返す。 */
   | { ok: true; mode: 'already_merged' };
 
@@ -93,8 +102,11 @@ export function decideMerge(f: MergeFacts): MergeDecision {
     return no('expired', '前回の merge で承認が失効しました。注文書の版を上げて作り直してください');
   }
   // 結果不明の merge は、版が変わっていても照合して記録する。実際には merge 済みかもしれない
+  // ただし送ってよいのは、新しい承認の条件を満たすときだけ
   if (f.mergeState === 'unknown' || f.mergeState === 'sending') {
-    return f.hasPr ? { ok: true, mode: 'reconcile' } : no('no_pr', '実 PR の記録がありません');
+    if (!f.hasPr) return no('no_pr', '実 PR の記録がありません');
+    const maySend = !f.superseded && f.orderCurrent && f.verdict === 'passed' && f.acAllConfirmed;
+    return { ok: true, mode: 'reconcile', maySend };
   }
   if (f.superseded) return no('superseded', '新しい版に置きかえられた job は承認できません');
   if (!f.orderCurrent) return no('order_not_current', '注文書が無効になっているため承認できません');
@@ -103,6 +115,66 @@ export function decideMerge(f: MergeFacts): MergeDecision {
   }
   if (!f.hasPr) return no('no_pr', '実 PR の記録がありません');
   return { ok: true, mode: 'send' };
+}
+
+/* ────────────────────────────── merge の承認の記録と失効 ────────────────────────────── */
+
+/** 承認の行の要点（seq の順）。行は追記のみで、取消も行として残る。 */
+export interface MergeApprovalFact {
+  decision: 'approved' | 'revoked';
+  sha: string;
+}
+
+/** 効いている承認か。最後の取消より後にあり、対象の head のものだけ（押した人ごとに複数ありうる）。 */
+export function hasActiveMergeApproval(rows: readonly MergeApprovalFact[], headSha: string | null): boolean {
+  const last = rows[rows.length - 1];
+  return last !== undefined && last.decision === 'approved' && last.sha === headSha;
+}
+
+export type MergeApprovalStatus = 'effective' | 'used' | 'revoked' | 'expired_head' | 'expired_version' | 'revocation';
+
+export interface MergeApprovalContext {
+  jobHeadSha: string | null;
+  merged: boolean;
+  superseded: boolean;
+  orderCurrent: boolean;
+  /** PR の head が変わったなど、merge の送信で失効が分かった。 */
+  headExpired: boolean;
+}
+
+/** 行ごとの見え方（純関数）。古い承認が効いているように見せない。 */
+export function mergeApprovalStatuses(rows: readonly MergeApprovalFact[], ctx: MergeApprovalContext): MergeApprovalStatus[] {
+  let lastRevoke = -1;
+  rows.forEach((r, i) => {
+    if (r.decision === 'revoked') lastRevoke = i;
+  });
+  return rows.map((r, i) => {
+    if (r.decision === 'revoked') return 'revocation';
+    if (i < lastRevoke) return 'revoked';
+    if (r.sha !== ctx.jobHeadSha || ctx.headExpired) return 'expired_head';
+    if (ctx.merged) return 'used';
+    if (ctx.superseded || !ctx.orderCurrent) return 'expired_version';
+    return 'effective';
+  });
+}
+
+export interface RevokeFacts {
+  approver: ApproverFacts;
+  jobState: JobState;
+  requestedHeadSha: string;
+  mergeState: MergeState;
+  sendingFresh: boolean;
+  approvals: readonly MergeApprovalFact[];
+}
+
+/** 取消。GitHub へ送信中は結果を止められないので断る。merge の後は取り消せない（戻しは配備の戻しで行う）。 */
+export function decideRevoke(f: RevokeFacts): { ok: true } | Refusal {
+  const who = approverRefusal(f.approver);
+  if (who) return who;
+  if (f.jobState !== 'pr_ready') return no('state', `いまの状態（${f.jobState}）の job の承認は取り消せません`);
+  if (f.mergeState === 'sending' && f.sendingFresh) return no('in_progress', '別の操作が merge を進めています');
+  if (!hasActiveMergeApproval(f.approvals, f.requestedHeadSha)) return no('no_approval', '取り消せる承認がありません');
+  return { ok: true };
 }
 
 export interface DeployFacts {
@@ -179,6 +251,15 @@ export function smokeMatches(text: string): boolean {
 
 export interface ReleaseApprovalView {
   kind: 'merge' | 'deploy' | 'rollback';
+  decision: 'approved' | 'revoked';
+  /** merge の行だけ。効いているか、なぜ失効したか。 */
+  status: MergeApprovalStatus | null;
+  /** 依頼の起票者または投入した人。 */
+  requesterName: string | null;
+  repo: string | null;
+  prNumber: number | null;
+  verifiedRunId: string | null;
+  verifiedRunAttempt: number | null;
   approverName: string;
   sha: string;
   digest: string | null;
@@ -218,6 +299,11 @@ export interface ReleaseEvidence {
   mergeSha: string | null;
   treeMatch: boolean | null;
   imageDigest: string | null;
+  /** 成果物の取得元（合否の根拠にした CI の run）。 */
+  artifactRunId: string | null;
+  artifactRunAttempt: number | null;
+  artifactId: number | null;
+  artifactTarSha256: string | null;
   artifactBuiltAt: string | null;
   artifactHealth: boolean | null;
   artifactSmoke: boolean | null;
@@ -231,6 +317,8 @@ export interface ReleaseEvidence {
   rolledBackAt: string | null;
   /** 環境にいま載っている digest（別の job の版のこともある）。 */
   environmentDigest: string | null;
+  /** 環境にいま載っている版の URL（host から届く内部ネットワークの IP）。 */
+  environmentUrl: string | null;
   ac: AcResultView[];
   acVerdict: VerificationVerdict['verdict'] | null;
   approvals: ReleaseApprovalView[];

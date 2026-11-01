@@ -2,7 +2,7 @@
 --
 -- additive。表と列の追加だけで、既存の行は変わらない。0011 までを適用済みの DB にそのまま足せる。
 -- job の状態と遷移表は変えない（released / closed はこの経路で使わない）。
--- 戻すときは release_attempt → release_approval → release の順に落とし、app_user.is_agent を落とす。
+-- 戻すときは release_attempt → release_approval → release の順に落とし、app_user.is_agent を落とす（追加の列は表と一緒に消える）。
 -- 0008 と同じく BEGIN/COMMIT を使わず、再適用できる形にする。
 
 -- AI・自動処理の利用者の印。承認の経路は DB のこの列を見て、セッションの申告を信じない
@@ -26,7 +26,7 @@ create table if not exists release (
   head_tree_sha text,
   merge_tree_sha text,
   tree_match boolean,
-  -- 成果物（merge の commit から作ったイメージ。CI の中で作るイメージとは別物）
+  -- 成果物（合否の根拠にした CI の run が残したイメージ。このホストでは作らない。取得元の列は下の alter）
   image_digest text check (image_digest is null or image_digest ~ '^sha256:[0-9a-f]{64}$'),
   artifact_built_at timestamptz,
   artifact_health boolean,
@@ -76,8 +76,6 @@ create table if not exists release_approval (
   constraint release_approval_deploy_bound check (kind <> 'deploy' or (digest is not null and environment is not null)),
   constraint release_approval_rollback_reason check (kind <> 'rollback' or (reason is not null and reason <> ''))
 );
--- 同じ head の merge の承認は1回だけ記録する（二重押下）
-create unique index if not exists release_approval_merge_once on release_approval (job_id, sha) where kind = 'merge';
 create index if not exists release_approval_job_idx on release_approval (job_id, decided_at);
 
 -- 成果物の作成・配備・戻しの試行（行を消さない）。worker はこの行の lease と fence で書く（job には lease を置けない）
@@ -141,3 +139,32 @@ $$ language plpgsql;
 drop trigger if exists release_attempt_no_delete on release_attempt;
 create trigger release_attempt_no_delete before delete on release_attempt
   for each row execute function release_attempt_no_delete();
+
+-- 検査した成果物の配備：合否の根拠にした run を merge の承認で固定し、取得元を残す
+alter table release add column if not exists verified_run_id text;
+alter table release add column if not exists verified_run_attempt integer;
+alter table release add column if not exists artifact_run_id text;
+alter table release add column if not exists artifact_run_attempt integer;
+alter table release add column if not exists artifact_id bigint;
+alter table release add column if not exists artifact_tar_sha256 text
+  check (artifact_tar_sha256 is null or artifact_tar_sha256 ~ '^[0-9a-f]{64}$');
+
+-- 承認の記録：押した人ごと・取消ごとに1行を追記する（行は変えない）。有効かどうかは seq の順に読んで決める
+alter table release_approval add column if not exists seq bigserial;
+alter table release_approval add column if not exists decision text not null default 'approved'
+  check (decision in ('approved','revoked'));
+alter table release_approval add column if not exists requester_user_id uuid references app_user (id) on delete restrict;
+alter table release_approval add column if not exists requester_name text;
+alter table release_approval add column if not exists repo text;
+alter table release_approval add column if not exists pr_number integer;
+alter table release_approval add column if not exists verified_run_id text;
+alter table release_approval add column if not exists verified_run_attempt integer;
+-- 古い形の DB にある「同じ head は1行だけ」を外す（R-11。再度の承認と取消の後の承認を残す）
+drop index if exists release_approval_merge_once;
+alter table release_approval drop constraint if exists release_approval_merge_bound;
+alter table release_approval add constraint release_approval_merge_bound
+  check (kind <> 'merge' or (repo is not null and pr_number is not null)) not valid;
+alter table release_approval drop constraint if exists release_approval_revoke_scope;
+alter table release_approval add constraint release_approval_revoke_scope
+  check (decision = 'approved' or (kind = 'merge' and reason is not null and reason <> '')) not valid;
+create index if not exists release_approval_seq_idx on release_approval (job_id, seq);

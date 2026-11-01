@@ -10,3 +10,4 @@ export const approveDeploySchema = z.strictObject({
   environment: z.string().min(1).max(64),
 });
 export const rollbackSchema = z.strictObject({ reason: z.string().trim().min(1).max(500) });
+export const revokeApprovalSchema = z.strictObject({ headSha: sha, reason: z.string().trim().min(1).max(500) });

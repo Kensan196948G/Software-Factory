@@ -90,24 +90,29 @@ function stop(child: ChildProcess): Promise<void> {
 /* stub の docker。コンテナは作らず、呼び出しだけを覚える。 */
 const containers = new Map<string, DeployRunSpec>();
 const images = new Set<string>();
-let builds = 0;
+let loads = 0;
+/* stub の成果物。CI の run の代わりで、実 GitHub の artifact を使わない。イメージ ID は要求の head から決める。 */
+const imageIdOf = (head: string): string => `sha256:${head.padEnd(64, '0')}`;
 const docker: DeployDocker = {
-  build: async ({ sha }) => {
-    builds += 1;
-    const digest = `sha256:${sha.slice(0, 40).padEnd(64, '0')}`;
-    images.add(digest);
-    return digest;
+  loadImage: async () => {
+    loads += 1;
+    return { ref: 'sandbox-artifact:ci', id: lastImageId };
   },
+  adoptImage: async ({ id }) => {
+    images.add(id);
+  },
+  discardImage: async () => undefined,
   hasImage: async (d) => images.has(d),
   containerState: async (n) => (containers.has(n) ? 'own' : 'none'),
   run: async (spec) => {
     containers.set(spec.name, spec);
+    return { baseUrl: 'http://192.0.2.10:8080' };
   },
   remove: async (n) => {
     containers.delete(n);
   },
-  portFree: async () => true,
 };
+let lastImageId = '';
 let probe: DeployProbe = { check: async () => ({ health: true, smoke: true }) };
 
 const deployOnce = (): ReturnType<typeof runDeployOnce> =>
@@ -115,9 +120,21 @@ const deployOnce = (): ReturnType<typeof runDeployOnce> =>
     owner: 'e2e-stub',
     docker,
     probe,
-    source: { fetch: async () => ({ dir: '/nonexistent', cleanup: () => undefined }) },
-    port: 40101,
-    smokePort: 40102,
+    artifacts: {
+      fetch: async (req) => {
+        lastImageId = imageIdOf(req.headSha);
+        return {
+          ok: true,
+          tarPath: '/nonexistent/image.tar',
+          imageId: lastImageId,
+          runId: req.runId,
+          runAttempt: req.runAttempt,
+          artifactId: 9001,
+          tarSha256: 'e'.repeat(64),
+          cleanup: () => undefined,
+        };
+      },
+    },
     clock: () => new Date(),
   });
 
@@ -372,15 +389,16 @@ test('画面の操作で merge → 成果物 → 配備 → 戻し。完全な S
   // merge だけでは配備されず、成果物ができるまで配備の操作は出ない
   await expect(p.locator('[data-dl-release="approve-deploy"]')).toHaveCount(0);
 
-  // worker（stub）が成果物を作る
-  const buildsBefore = builds;
+  // worker（stub）が CI の成果物を取得して照合する（作らない）
+  const loadsBefore = loads;
   expect(await deployOnce()).toMatchObject({ attemptKind: 'build', state: 'succeeded' });
-  expect(builds).toBe(buildsBefore + 1);
+  expect(loads).toBe(loadsBefore + 1);
   await reloadAs(page, 'approver');
   const p2 = await openDrawer(page, title);
-  const digest = `sha256:${(pull.mergeSha as string).padEnd(64, '0')}`;
+  const digest = imageIdOf(c.headSha);
   await expect(p2.locator('[data-dl-row="artifact"]')).toContainText(digest);
-  await expect(p2.locator('[data-dl-row="artifact"]')).toContainText('CI の中で作るイメージとは別物');
+  await expect(p2.locator('[data-dl-row="artifact"]')).toContainText('CI で検査した成果物そのもの');
+  await expect(p2.locator('[data-dl-row="artifact"]')).toContainText('artifact 9001');
   await expect(p2.locator('[data-dl-row="deploy"]')).toContainText('準備完了・承認待ち');
   await expect(p2).toContainText('local-verify');
 
@@ -388,17 +406,17 @@ test('画面の操作で merge → 成果物 → 配備 → 戻し。完全な S
   await p2.locator('[data-dl-release="approve-deploy"]').click();
   await expect(p2.locator('[data-dl-release-msg]')).toContainText('配備を受け付けました');
   expect(await deployOnce()).toMatchObject({ attemptKind: 'deploy', state: 'succeeded' });
-  expect(builds).toBe(buildsBefore + 1);
+  expect(loads).toBe(loadsBefore + 1);
   expect(containers.get('msf-sandbox-verify')).toMatchObject({ digest, version: pull.mergeSha });
   await reloadAs(page, 'approver');
   const p3 = await openDrawer(page, title);
   await expect(p3.locator('[data-dl-row="deploy"]')).toContainText('配備済み（検証環境）');
-  await expect(p3.locator('[data-dl-row="deploy"]')).toContainText('127.0.0.1 だけで動く検証環境');
+  await expect(p3.locator('[data-dl-row="deploy"]')).toContainText('このホストからだけ届く内部ネットワークの検証環境');
   await expect(p3.locator('[data-dl-row="deploy"]')).not.toContainText('公開');
   await expect(p3.locator('[data-dl-row="deploy"]')).not.toContainText('本番');
-  await expect(p3.locator('[data-dl-row="deploy"]')).toContainText('http://127.0.0.1:40101');
+  await expect(p3.locator('[data-dl-row="deploy"]')).toContainText('http://192.0.2.10:8080');
   await expect(p3.locator('[data-dl-row="job"]')).toContainText('配備済み（検証環境）');
-  await expect(p3.locator('[data-dl-row="ac"]')).toContainText('AC-1');
+  await expect(p3.locator('[data-dl-row="ac-detail"]')).toContainText('AC-1');
   await expect(p3).not.toContainText('公開済み');
 
   // 戻し（理由が必須）
@@ -416,6 +434,60 @@ test('画面の操作で merge → 成果物 → 配備 → 戻し。完全な S
   await expect(p4.locator('[data-dl-row="rollback"]')).toContainText('前の版へ戻しました');
   await expect(p4.locator('[data-dl-row="rollback"]')).toContainText('見つけた不具合');
   await expect(p4.locator('[data-dl-release="rollback"]')).toHaveCount(0);
+
+  // 証跡の縦断（fake GitHub・stub docker）。再読込の後も同じ順で辿れる
+  const rows = await p4.locator('[data-dl-row]').evaluateAll((els) => els.map((e) => e.getAttribute('data-dl-row')));
+  const order = ['issue', 'job', 'ci', 'pr', 'merge', 'artifact', 'deploy', 'rollback'];
+  expect(order.map((k) => rows.indexOf(k)).every((v, i, a) => v >= 0 && (i === 0 || v > (a[i - 1] as number)))).toBe(true);
+  await expect(p4.locator('[data-dl-row="ac-detail"]')).toContainText('AC-1');
+  await expect(p4.locator('[data-dl-row="pr"]')).toContainText(String(c.pr));
+  const approvals = p4.locator('[data-dl-row="merge"] [data-dl-approvals]');
+  await expect(approvals).toContainText('承認：');
+  await expect(approvals).toContainText('申請：');
+  await expect(approvals).toContainText(`${FAKE_REPO} PR #${c.pr}`);
+  await expect(approvals).toContainText(c.headSha);
+  await expect(approvals).toContainText('merge に使用');
+  await expect(p4.locator('[data-dl-row="merge"] [data-dl-control-note]')).toContainText('本番の承認統制を満たしません');
+  await expect(p4.locator('[data-dl-row="merge"]')).toContainText('ローカルの連携先');
+  await expect(p4.locator('[data-dl-row="deploy"] [data-dl-kind]')).toHaveText('fake');
+});
+
+test('受付の「完了」だけでは配備済みと表示しない', async ({ page }) => {
+  const title = `release-done-only-${Date.now()}`;
+  const c = await prReady(page, title);
+  await setApiRole(page, 'approver');
+  for (const to of ['dev', 'verify', 'field', 'release_wait', 'done']) {
+    await transition(page, c.id, to);
+  }
+  expect((await callApi<{ request: { status: string } }>(page, 'GET', `/api/requests/${c.id}`)).request.status).toBe('done');
+  await reloadAs(page, 'approver');
+  const p = await openDrawer(page, title);
+  await expect(p.locator('[data-dl-row="deploy"]')).not.toContainText('配備済み');
+  await expect(p.locator('[data-dl-row="deploy"]')).toContainText('記録はありません');
+  await expect(p.locator('[data-dl-row="artifact"]')).toContainText('記録はありません');
+  await expect(p.locator('[data-dl-row="job"]')).not.toContainText('配備済み');
+});
+
+test('merge の承認を取り消すと失効の記録が残り、再読込の後も出る', async ({ page }) => {
+  const title = `release-revoke-${Date.now()}`;
+  const c = await prReady(page, title);
+  // GitHub 側の拒否で merge が進まない状態（承認の行は残る）
+  fake.pulls.find((x) => x.number === c.pr)!.mergeReply = { status: 405, body: { message: 'not mergeable' } };
+  await reloadAs(page, 'approver');
+  const p = await openDrawer(page, title);
+  await p.locator('[data-dl-release="approve-merge"]').click();
+  await expect(p.locator('[data-dl-release-msg]')).toBeVisible();
+  await expect(p.locator('[data-dl-row="merge"] [data-dl-approvals]')).toContainText('有効');
+  await p.locator('[data-dl-input="revoke-reason"]').fill('作り物の取消理由');
+  await p.locator('[data-dl-release="revoke-approval"]').click();
+  await expect(p.locator('[data-dl-release-msg]')).toContainText('承認を取り消しました');
+  await reloadAs(page, 'approver');
+  const p2 = await openDrawer(page, title);
+  const approvals = p2.locator('[data-dl-row="merge"] [data-dl-approvals]');
+  await expect(approvals).toContainText('取消で失効');
+  await expect(approvals).toContainText('取消の記録');
+  await expect(approvals).toContainText('作り物の取消理由');
+  await expect(p2.locator('[data-dl-release="revoke-approval"]')).toHaveCount(0);
 });
 
 test('配備が health で落ちると前の版へ戻り、失敗として表示する。DevOps の KPI は実の集計', async ({ page }) => {
@@ -429,6 +501,10 @@ test('配備が health で落ちると前の版へ戻り、失敗として表示
   await expect(page.locator('[data-dl-kpi="merge"]')).toHaveText(String(before.mergeWaiting));
   await expect(page.locator('[data-dl-kpi="stopped"]')).toHaveText(String(before.stopped));
   await expect(page.locator('#view')).toContainText('リリース判定待ち（見本）');
+  // 見本の数値を実績に見せない
+  await page.click('button[data-v="secops"]').catch(() => undefined);
+  await expect(page.locator('#view')).toContainText('見本');
+  await page.click('button[data-v="devops"]');
 
   await callApi(page, 'POST', `/api/jobs/${c.jobId}/approve-merge`, { headSha: c.headSha });
   await deployOnce();
@@ -444,7 +520,7 @@ test('配備が health で落ちると前の版へ戻り、失敗として表示
     digest: ev.imageDigest,
     environment: ev.environment,
   });
-  probe = { check: async (_port, sha) => ({ health: sha !== ev.mergeSha, smoke: sha !== ev.mergeSha }) };
+  probe = { check: async (_url, sha) => ({ health: sha !== ev.mergeSha, smoke: sha !== ev.mergeSha }) };
   expect(await deployOnce()).toMatchObject({ attemptKind: 'deploy', state: 'failed', errorCode: 'health_failed' });
   await reloadAs(page, 'approver');
   const p = await openDrawer(page, title);

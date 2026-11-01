@@ -125,21 +125,20 @@ ANTHROPIC_API_KEY=
 DEVLINE_GITHUB_TOKEN=
 ```
 
-| 変数                        | 既定                            | 意味                                                                                  |
-| --------------------------- | ------------------------------- | ------------------------------------------------------------------------------------- |
-| `DEVLINE_WORKER_ENABLED`    | なし                            | `1` で worker が動く                                                                  |
-| `DEVLINE_RUNNER_KIND`       | `fake`                          | `docker-claude` で実 runner                                                           |
-| `DEVLINE_TARGET_REPOS`      | なし（1件実走の入口は Sandbox） | `Kensan196948G/Software-Factory-Sandbox:1440860477`                                   |
-| `DEVLINE_BUDGET_JPY`        | `1000`                          | 1タスクの上限（1000 以下）                                                            |
-| `DEVLINE_JPY_PER_USD`       | `160`                           | 円換算                                                                                |
-| `DEVLINE_SECRETS_FILE`      | 上記の path                     | 資格情報のファイル                                                                    |
-| `DEVLINE_GIT_BASE_URL`      | `https://github.com`            | git の接続先                                                                          |
-| `GITHUB_API_URL`            | `https://api.github.com`        | API の接続先                                                                          |
-| `DEVLINE_CI_POLL_MS`        | なし（15〜30秒）                | 1件実走の入口の CI の問い合わせ間隔                                                   |
-| `DEVLINE_DEPLOY_ENABLED`    | なし                            | `1` で worker が成果物の作成と検証環境への配備を行う                                  |
-| `DEVLINE_DEPLOY_PORT`       | `38180`                         | 配備先のポート（127.0.0.1）。使用中なら失敗する                                       |
-| `DEVLINE_DEPLOY_SMOKE_PORT` | `38181`                         | 一時コンテナのポート。使用中なら失敗する                                              |
-| `DEVLINE_GITHUB_TOKEN`      | なし                            | `DEVLINE_SECRETS_FILE` を置かない場合の merge の資格情報（`GITHUB_TOKEN` は使わない） |
+| 変数                     | 既定                            | 意味                                                                                      |
+| ------------------------ | ------------------------------- | ----------------------------------------------------------------------------------------- |
+| `DEVLINE_WORKER_ENABLED` | なし                            | `1` で worker が動く                                                                      |
+| `DEVLINE_RUNNER_KIND`    | `fake`                          | `docker-claude` で実 runner                                                               |
+| `DEVLINE_TARGET_REPOS`   | なし（1件実走の入口は Sandbox） | `Kensan196948G/Software-Factory-Sandbox:1440860477`                                       |
+| `DEVLINE_BUDGET_JPY`     | `1000`                          | 1タスクの上限（1000 以下）                                                                |
+| `DEVLINE_JPY_PER_USD`    | `160`                           | 円換算                                                                                    |
+| `DEVLINE_SECRETS_FILE`   | 上記の path                     | 資格情報のファイル                                                                        |
+| `DEVLINE_GIT_BASE_URL`   | `https://github.com`            | git の接続先                                                                              |
+| `GITHUB_API_URL`         | `https://api.github.com`        | API の接続先                                                                              |
+| `DEVLINE_CI_POLL_MS`     | なし（15〜30秒）                | 1件実走の入口の CI の問い合わせ間隔                                                       |
+| `DEVLINE_DEPLOY_ENABLED` | なし                            | `1` で worker が成果物の作成と検証環境への配備を行う                                      |
+| `DEVLINE_ARTIFACT_DIR`   | OS の一時領域                   | CI の成果物を展開する場所。tmpfs でない、空きのあるところ（最大で zip 1 GiB + tar 3 GiB） |
+| `DEVLINE_GITHUB_TOKEN`   | なし                            | `DEVLINE_SECRETS_FILE` を置かない場合の merge の資格情報（`GITHUB_TOKEN` は使わない）     |
 
 ## 7. 1件実走の手順（CTO）
 
@@ -278,12 +277,23 @@ CI は artifact `ac-results`（14 章）を残すこと（Sandbox PR #4）。無
 
 1. **merge**: 承認者が画面で「PR を承認して merge する」を押す。サーバが検査し、`DEVLINE_GITHUB_TOKEN` で `sha` を渡して squash で merge する。AI も worker も呼べない。
 2. **同一性**: merge の commit の tree が、CI で検査した head の tree と一致することを確かめる。違えば配備へ進めない（base が動いた場合）。
-3. **成果物**: worker が merge の SHA だけを取り出し（`.git` を残さない）、`docker build` して digest を記録する。一時コンテナ（`msf-sandbox-smoke-*`）で health と smoke を確かめる。CI の中で作るイメージとは別物。
-4. **配備**: 承認者が SHA、digest、環境を見て「検証環境へ配備する」を押す。merge だけでは配備しない。worker がその digest のイメージをそのまま起動する（作り直さない）。
+3. **成果物**: worker は CI で検査した成果物を取得する（このホストで `docker build` しない。fallback も無い）。
+   - 使う run は merge の承認で固定する（`release.verified_run_id` と `verified_run_attempt`。合否の根拠にした `verification` と同じ run）。
+   - 取得は `GET /repos/{repo}/actions/runs/{run}/artifacts?name=image`。artifact の `workflow_run.id` と `head_sha` を照合し、複数あれば止まる。
+   - zip はファイルへストリームで保存し（上限 1 GiB）、`image.tar`（上限 3 GiB）と `image-meta.json` だけを展開する。余分なファイル、zip64、暗号化、CRC の不一致は拒否する。302 の先へトークンを送らない。
+   - meta（`msf.image/v1`）の `repository`、`runId`、`runAttempt`、`headSha` を照合し、`tarSha256` を実際の tar と比べる。tar の `manifest.json` のタグが `sandbox-artifact:ci` だけであることも確かめる（`docker load` が他のタグを上書きしないため）。
+   - `docker load` の出力の ref を `docker image inspect` し、ID が `imageId` と一致することを確かめる。合わなければ `artifact_mismatch` で、配備の承認へ進めない。
+   - 通ったら `msf-sandbox-verify:<merge SHA>` のタグを付け、一時コンテナ（`msf-sandbox-smoke`）で health と smoke を確かめる。`release` に digest（イメージ ID）、run、試行、artifact ID、`tarSha256` を残す。
+   - Sandbox の main に PR #5 が入っていない古い run は artifact が無いので `artifact_missing` で止まる。
+4. **配備**: 承認者が SHA、digest、環境を見て「検証環境へ配備する」を押す。merge だけでは配備しない。worker がそのイメージ ID をそのまま起動する（作り直さない）。
 5. **確認と自動の戻し**: `/healthz` の version が SHA と一致し、`/length?text=abc` が 3 なら `staged`。失敗すれば前の digest へ自動で戻し、失敗として記録する。
 6. **戻し**: 承認者が理由を書いて「前の版へ戻す」を押す。job は `staged` のまま、記録に残す。
 
-コンテナは `msf-sandbox-verify`、ラベル `msf.devline.deploy=1`、`-p 127.0.0.1:<port>:8080`、`--read-only`、`--tmpfs /tmp`、`--cap-drop ALL`、`--security-opt no-new-privileges`、`--memory 256m`、`--pids-limit 128`。同じ名前でラベルの無いコンテナがあれば失敗にし、消さない。`docker build` は merge 済みの Dockerfile をこのホストで実行する（資格情報は渡さない）ので、merge の承認はその実行の承認でもある。
+コンテナは `msf-sandbox-verify`、ラベル `msf.devline.deploy=1`、ネットワーク `msf-devline-verify-net`（`--internal`、`enable_icc=false`、ラベル付き）、`--read-only`、`--tmpfs /tmp`、`--cap-drop ALL`、`--security-opt no-new-privileges`、`--memory 256m`、`--pids-limit 128`。host mount、Docker socket、privileged、公開ポートは無い（`deployRunArgs` を試験で固定）。内部ネットワークでは `-p` が効かないので、このホストからコンテナの IP で確かめる（URL は起動のたびに変わることがあり、画面は最新を出す）。外部へは出られない。同じ名前でラベルの無いコンテナかネットワークがあれば失敗にし、消さない。
+
+イメージにはラベルを足せない（足すと ID が変わる）。自分のものかは `msf-sandbox-verify:` のタグで見分ける。
+
+**承認の記録**: merge の承認は押した人ごとに `release_approval` へ追記する（申請した人、承認者、repo、PR、head、判定、日時、根拠の run）。取消も行で残る。新しい commit、版の更新、取消で古い承認は失効する。承認時と merge の直前の両方で head、検査、AC、版、取消を確かめ、必須検査そのものは GitHub の保護が merge の API で確かめる。**1 ユーザーの MVP なので職務分離を満たさず、本番の承認統制を満たさない**（画面にも明記）。merge の承認と配備の承認は別の行で、配備の承認は SHA、digest、環境に結ぶ。
 
 ### 実環境で CTO が行う手順
 
@@ -293,12 +303,15 @@ Staging の設定（`preview.conf` など）へ足す（値はリポジトリに
 DEVLINE_DEPLOY_ENABLED=1
 DEVLINE_SECRETS_FILE=<資格情報のファイル>      # API と worker の両方
 DEVLINE_TARGET_REPOS=Kensan196948G/Software-Factory-Sandbox:1440860477
+DEVLINE_ARTIFACT_DIR=<tmpfs でない作業場>      # 任意
 ```
 
-1. migration（`0012`）を当て、API と worker を入れ替える。`ss -ltn` で 38180 と 38181 が空いていることを確かめる。
+前提: Sandbox PR #5 が main に入っていること（入っていなければ `artifact_missing` で止まる）。
+
+1. migration（`0012`）を当て、API と worker を入れ替える。
 2. 実 job を `pr_ready` まで進める。画面に完全な SHA と AC が出ることを確かめ、承認者の役割で merge を押す。
-3. Sandbox の main に squash の commit ができ、merge 欄の「内容は検査した head と一致」を確かめる。成果物の欄に digest が出るまで待つ。
-4. 配備を押し、`curl http://127.0.0.1:38180/healthz` の version が merge の SHA と一致することを確かめる。
+3. Sandbox の main に squash の commit ができ、merge 欄の「内容は検査した head と一致」を確かめる。成果物の欄にイメージ ID と取得元（run、試行、artifact、tar）が出るまで待つ。`docker image inspect` の ID と、CI のログの `image-meta.json` の `imageId` が一致することを確かめる（CI と host の Docker のイメージストアが違うと ID が変わり `artifact_mismatch` で止まる）。
+4. 配備を押し、画面の URL（内部ネットワークの IP）で `curl <URL>/healthz` の version が merge の SHA と一致することを確かめる。`docker exec msf-sandbox-verify` から外へ出られないことも確かめる。
 5. 2件目を配備してから「前の版へ戻す」を押し、version が前の SHA に戻ることを確かめる。
 
 未走の間は画面の証跡に fake と出る（ローカルの連携先の PR と merge）。

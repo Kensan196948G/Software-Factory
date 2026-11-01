@@ -17,13 +17,18 @@ import { getJobView, insertJobEvent, isRedOrder, type JobRow } from './devline-j
 import { acIdsOf } from './devline-verification.js';
 import { createGithubPrMergeAdapter, type PrMergeAdapter, type PullMergeFacts } from './pr-adapter.js';
 import type { Actor } from './service.js';
-import { evaluateVerification, isOrderCurrent, parsePrMarker } from '../shared/devline.js';
+import { evaluateVerification, isOrderCurrent, latestVerificationRecord, parsePrMarker } from '../shared/devline.js';
 import type { AllowedRepo, JobView, VerificationRecord, VerificationVerdict } from '../shared/devline.js';
 import {
   DEPLOY_ENVIRONMENT,
   decideDeploy,
   decideMerge,
+  decideRevoke,
   decideRollback,
+  hasActiveMergeApproval,
+  mergeApprovalStatuses,
+  MERGE_EXPIRED_DETAILS,
+  type MergeApprovalFact,
   type MergeState,
   type Refusal,
   type ReleaseEvidence,
@@ -32,8 +37,8 @@ import {
 import type { Status } from '../shared/domain.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** 送信中の印がこれより古ければ、落ちた処理の残りとして照合へ進む。 */
-const MERGE_SENDING_FRESH_MS = 120_000;
+/** 送信中の印がこれより古ければ、落ちた処理の残りとして照合へ進む。読み取り3回と送信（各 30 秒）より長くする。 */
+const MERGE_SENDING_FRESH_MS = 180_000;
 
 export interface ReleaseDeps {
   merge: PrMergeAdapter;
@@ -73,6 +78,12 @@ export interface ReleaseRow {
   repo: string;
   pr_number: number;
   head_sha: string;
+  verified_run_id: string | null;
+  verified_run_attempt: number | null;
+  artifact_run_id: string | null;
+  artifact_run_attempt: number | null;
+  artifact_id: string | null;
+  artifact_tar_sha256: string | null;
   merge_state: MergeState;
   merge_detail: string | null;
   merge_sending_at: Date | null;
@@ -153,9 +164,56 @@ async function orderFacts(client: PoolClient, job: JobRow): Promise<OrderFacts> 
   };
 }
 
-async function verdictOf(client: PoolClient, job: JobRow, acIds: readonly string[]): Promise<VerificationVerdict> {
+async function verdictOf(
+  client: PoolClient,
+  job: JobRow,
+  acIds: readonly string[],
+): Promise<{ verdict: VerificationVerdict; run: { id: string; attempt: number } | null }> {
   const rows = await client.query<VerificationRow>('select * from verification where job_id = $1', [job.id]);
-  return evaluateVerification(rows.rows.map(toRecord), job.head_sha ?? '', acIds);
+  const records = rows.rows.map(toRecord);
+  const latest = latestVerificationRecord(records, job.head_sha ?? '');
+  return {
+    verdict: evaluateVerification(records, job.head_sha ?? '', acIds),
+    run: latest ? { id: latest.ciRunId, attempt: latest.runAttempt } : null,
+  };
+}
+
+interface ApprovalRow extends MergeApprovalFact {
+  seq: string;
+  job_id: string;
+  kind: 'merge' | 'deploy' | 'rollback';
+  approver_user_id: string;
+  approver_name: string;
+  requester_name: string | null;
+  repo: string | null;
+  pr_number: number | null;
+  verified_run_id: string | null;
+  verified_run_attempt: number | null;
+  digest: string | null;
+  environment: string | null;
+  reason: string | null;
+  decided_at: Date;
+}
+
+async function mergeApprovalsOf(client: PoolClient, jobId: string): Promise<ApprovalRow[]> {
+  const { rows } = await client.query<ApprovalRow>(
+    `select * from release_approval where job_id = $1 and kind = 'merge' order by seq`,
+    [jobId],
+  );
+  return rows;
+}
+
+/** 申請した人：投入した人（handoff の created_by）。無ければ依頼の起票者。 */
+async function requesterOf(client: PoolClient, job: JobRow): Promise<{ id: string | null; name: string | null }> {
+  const { rows } = await client.query<{ id: string | null; name: string | null }>(
+    `select u.id, u.display_name as name from app_user u
+      where u.id = coalesce(
+        (select created_by from handoff_intent where request_id = $1 and order_version = $2 and created_by is not null
+          order by created_at desc limit 1),
+        (select created_by from request where id = $1))`,
+    [job.request_id, job.order_version],
+  );
+  return rows[0] ?? { id: null, name: null };
 }
 
 function allAcConfirmed(verdict: VerificationVerdict, acIds: readonly string[]): boolean {
@@ -184,6 +242,7 @@ const REFUSAL_STATUS: Record<Refusal['refusal'], () => ApiError> = {
   verification: () => Errors.approvalRequired('この SHA の検査が合格していません'),
   no_pr: () => Errors.approvalRequired('実 PR の記録がありません'),
   in_progress: () => Errors.conflict('別の操作が進めています。少し待って結果を確かめてください'),
+  no_approval: () => Errors.invalidTransition('取り消せる承認がありません'),
   expired: () => Errors.approvalRequired('承認は失効しました。注文書の版を上げて作り直してください'),
   sha_mismatch: () => Errors.approvalRequired('SHA が記録と違います'),
   digest_mismatch: () => Errors.approvalRequired('digest が記録と違います'),
@@ -246,7 +305,7 @@ export async function approveMerge(
     const job = locked.rows[0];
     if (!job) throw Errors.notFound('ジョブ');
     const facts = await orderFacts(client, job);
-    const verdict = await verdictOf(client, job, facts.acIds);
+    const { verdict, run } = await verdictOf(client, job, facts.acIds);
     const existing = await client.query<ReleaseRow>('select * from release where job_id = $1 for update', [job.id]);
     const release = existing.rows[0];
     const pr = prOf(job);
@@ -272,14 +331,19 @@ export async function approveMerge(
     if (decision.mode === 'already_merged') {
       return { kind: 'already' as const, needsTree: release?.tree_match === null, release: release as ReleaseRow };
     }
-    const row = await upsertRelease(client, job, release, pr as { number: number }, input.headSha, actor.userId, now);
-    const inserted = await client.query(
-      `insert into release_approval (release_id, job_id, kind, approver_user_id, approver_name, role, sha, correlation_id, decided_at)
-       values ($1,$2,'merge',$3,$4,$5,$6,$7,$8)
-       on conflict (job_id, sha) where kind = 'merge' do nothing`,
-      [row.id, job.id, actor.userId, actor.displayName, actor.role, input.headSha, correlationId, now],
-    );
-    if ((inserted.rowCount ?? 0) > 0) {
+    // 照合だけのとき（条件を満たさない結果不明）は、新しい承認を残さず、前の承認者も書きかえない
+    const approving = decision.mode === 'send' || decision.maySend;
+    if (!approving) {
+      const { rows } = await client.query<ReleaseRow>(
+        `update release set merge_state='sending', merge_sending_at=$2, merge_detail=null, fencing_token=fencing_token+1, updated_at=$2
+          where id=$1 returning *`,
+        [(release as ReleaseRow).id, now],
+      );
+      return { kind: 'proceed' as const, mode: 'reconcile' as const, release: rows[0] as ReleaseRow };
+    }
+    const row = await upsertRelease(client, job, release, pr as { number: number }, input.headSha, actor.userId, run, now);
+    const inserted = await appendMergeApproval(client, job, row, input.headSha, actor, run, correlationId, now);
+    if (inserted) {
       await insertJobEvent(client, {
         jobId: job.id,
         at: now,
@@ -288,7 +352,7 @@ export async function approveMerge(
         actorType: 'human',
         actorUserId: actor.userId,
         correlationId,
-        detail: { headSha: input.headSha, prNumber: row.pr_number },
+        detail: { headSha: input.headSha, prNumber: row.pr_number, ciRunId: run?.id ?? null, runAttempt: run?.attempt ?? null },
       });
     }
     await appendAuditTx(client, {
@@ -324,24 +388,89 @@ async function upsertRelease(
   pr: { number: number },
   headSha: string,
   userId: string,
+  run: { id: string; attempt: number } | null,
   now: Date,
 ): Promise<ReleaseRow> {
   if (release) {
     const { rows } = await client.query<ReleaseRow>(
       `update release set merge_state='sending', merge_sending_at=$2, merge_detail=null, fencing_token=fencing_token+1, updated_at=$2,
-              merge_approver_user_id=$3, merge_approved_at=$2, approved_head_sha=$4
+              merge_approver_user_id=$3, merge_approved_at=$2, approved_head_sha=$4, verified_run_id=$5, verified_run_attempt=$6
         where id=$1 returning *`,
-      [release.id, now, userId, headSha],
+      [release.id, now, userId, headSha, run?.id ?? null, run?.attempt ?? null],
     );
     return rows[0] as ReleaseRow;
   }
   const { rows } = await client.query<ReleaseRow>(
     `insert into release (job_id, repo, pr_number, head_sha, merge_state, merge_sending_at, merge_approver_user_id, merge_approved_at,
-                          approved_head_sha, created_at, updated_at)
-     values ($1,$2,$3,$4,'sending',$5,$6,$5,$4,$5,$5) returning *`,
-    [job.id, job.target_repo_id, pr.number, headSha, now, userId],
+                          approved_head_sha, verified_run_id, verified_run_attempt, created_at, updated_at)
+     values ($1,$2,$3,$4,'sending',$5,$6,$5,$4,$7,$8,$5,$5) returning *`,
+    [job.id, job.target_repo_id, pr.number, headSha, now, userId, run?.id ?? null, run?.attempt ?? null],
   );
   return rows[0] as ReleaseRow;
+}
+
+/**
+ * merge の承認を1行追記する。同じ人が同じ head を、間に取消なく押し直したときだけ増やさない（二重押下）。
+ * job の行を握った中で呼ぶ。別の人の押下も、取消の後の押下も残す（R-11）。
+ */
+async function appendMergeApproval(
+  client: PoolClient,
+  job: JobRow,
+  row: ReleaseRow,
+  headSha: string,
+  actor: Actor,
+  run: { id: string; attempt: number } | null,
+  correlationId: string,
+  now: Date,
+): Promise<boolean> {
+  const rows = await mergeApprovalsOf(client, job.id);
+  let start = 0;
+  rows.forEach((r, i) => {
+    if (r.decision === 'revoked') start = i + 1;
+  });
+  if (rows.slice(start).some((r) => r.approver_user_id === actor.userId && r.sha === headSha)) return false;
+  const requester = await requesterOf(client, job);
+  await client.query(
+    `insert into release_approval (release_id, job_id, kind, decision, approver_user_id, approver_name, role, sha, repo, pr_number,
+                                   requester_user_id, requester_name, verified_run_id, verified_run_attempt, correlation_id, decided_at)
+     values ($1,$2,'merge','approved',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+    [
+      row.id,
+      job.id,
+      actor.userId,
+      actor.displayName,
+      actor.role,
+      headSha,
+      row.repo,
+      row.pr_number,
+      requester.id,
+      requester.name,
+      run?.id ?? null,
+      run?.attempt ?? null,
+      correlationId,
+      now,
+    ],
+  );
+  return true;
+}
+
+/**
+ * merge の直前の再確認（DB の記録を読み直す）。approve の後で版・検査・承認が変わっていれば送らない。
+ * 必須検査そのものは GitHub の保護が merge の API で確かめる。
+ */
+async function recheckBeforeSend(release: ReleaseRow, headSha: string): Promise<string | null> {
+  return withTransaction(async (client) => {
+    const { rows } = await client.query<JobRow>('select * from job where id = $1', [release.job_id]);
+    const job = rows[0];
+    if (!job || job.state !== 'pr_ready' || job.head_sha !== headSha) return 'head_changed';
+    const facts = await orderFacts(client, job);
+    if (job.superseded_at !== null || !facts.current) return 'approval_expired';
+    const { verdict, run } = await verdictOf(client, job, facts.acIds);
+    if (!allAcConfirmed(verdict, facts.acIds)) return 'verification_changed';
+    if (!run || run.id !== release.verified_run_id || run.attempt !== release.verified_run_attempt) return 'verification_changed';
+    if (!hasActiveMergeApproval(await mergeApprovalsOf(client, job.id), headSha)) return 'approval_revoked';
+    return null;
+  });
 }
 
 function signalOf(deps: ReleaseDeps): AbortSignal {
@@ -394,6 +523,9 @@ const REJECT_MESSAGE: Record<string, string> = {
   rate_limited: 'GitHub が混み合っています。少し待ってもう一度押してください',
   pr_unreadable: 'PR を読めませんでした。merge は送っていません。もう一度押してください',
   repo_refused: '対象リポジトリが許可されていません',
+  approval_expired: '承認の後で注文書の版が変わりました。merge は送っていません（承認は失効しました）',
+  verification_changed: '承認の後で検査の結果が変わりました。merge は送っていません（承認は失効しました）',
+  approval_revoked: '承認は取り消されています。merge は送っていません',
 };
 
 async function reject(
@@ -441,6 +573,8 @@ async function sendMerge(
   if (own === 'unknown')
     return mode === 'send' ? reject(release, 'pr_unreadable', actor, correlationId, deps) : unknown('pr_unreadable');
   if (own !== 'own') return reject(release, own, actor, correlationId, deps);
+  const stale = await recheckBeforeSend(release, headSha);
+  if (stale) return reject(release, stale, actor, correlationId, deps);
 
   const sent = await deps.merge.mergePull(
     {
@@ -615,19 +749,98 @@ async function retryFailedBuild(release: ReleaseRow, actor: Actor, correlationId
   }
 }
 
+/* ───────────────────────────── merge の承認の取消 ───────────────────────────── */
+
+/** 取消を1行追記する。結果不明の merge は取り消せても事実は変わらないので、状態は unknown のまま照合で確かめる。 */
+export async function revokeMergeApproval(
+  input: { jobId: string; headSha: string; reason: string },
+  actor: Actor,
+  correlationId: string,
+  now: Date,
+): Promise<ReleaseActionResult> {
+  const action = 'job.merge_approval_revoke';
+  if (!UUID_RE.test(input.jobId)) throw Errors.notFound('ジョブ');
+  const refused = await withTransaction(async (client): Promise<Refusal | null> => {
+    const locked = await client.query<JobRow>('select * from job where id = $1 for update', [input.jobId]);
+    const job = locked.rows[0];
+    if (!job) throw Errors.notFound('ジョブ');
+    const existing = await client.query<ReleaseRow>('select * from release where job_id = $1 for update', [job.id]);
+    const release = existing.rows[0];
+    const approvals = await mergeApprovalsOf(client, job.id);
+    const decision = decideRevoke({
+      approver: { role: actor.role, isAgent: await isAgentUser(client, actor.userId) },
+      jobState: job.state,
+      requestedHeadSha: input.headSha,
+      mergeState: release?.merge_state ?? 'none',
+      sendingFresh: !!release?.merge_sending_at && now.getTime() - release.merge_sending_at.getTime() < MERGE_SENDING_FRESH_MS,
+      approvals,
+    });
+    if (!decision.ok) return decision;
+    if (!release) return { ok: false, refusal: 'no_approval', message: '取り消せる承認がありません' };
+    const requester = await requesterOf(client, job);
+    await client.query(
+      `insert into release_approval (release_id, job_id, kind, decision, approver_user_id, approver_name, role, sha, repo, pr_number,
+                                     requester_user_id, requester_name, reason, correlation_id, decided_at)
+       values ($1,$2,'merge','revoked',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [
+        release.id,
+        job.id,
+        actor.userId,
+        actor.displayName,
+        actor.role,
+        input.headSha,
+        release.repo,
+        release.pr_number,
+        requester.id,
+        requester.name,
+        input.reason,
+        correlationId,
+        now,
+      ],
+    );
+    await client.query(
+      `update release set merge_approver_user_id=null, merge_approved_at=null, approved_head_sha=null,
+              fencing_token=fencing_token+1, updated_at=$2 where id=$1`,
+      [release.id, now],
+    );
+    await insertJobEvent(client, {
+      jobId: job.id,
+      at: now,
+      kind: 'merge_approval_revoked',
+      actorType: 'human',
+      actorUserId: actor.userId,
+      correlationId,
+      detail: { headSha: input.headSha },
+    });
+    await appendAuditTx(client, {
+      action,
+      targetType: 'job',
+      targetId: job.id,
+      result: 'success',
+      actorUserId: actor.userId,
+      actorName: actor.displayName,
+      role: actor.role,
+      correlationId,
+      diff: { headSha: input.headSha, mergeState: release.merge_state },
+    });
+    return null;
+  });
+  if (refused) return deny(action, input.jobId, refused, actor, correlationId);
+  return { job: (await getJobView(input.jobId)) as JobView, alreadyDone: false };
+}
+
 /* ───────────────────────────── 配備の承認 ───────────────────────────── */
 
 async function environmentNow(
   client: PoolClient | null,
   environment: string,
-): Promise<{ digest: string | null; sha: string | null }> {
-  const sql = `select deployed_digest, deployed_sha from release_attempt
+): Promise<{ digest: string | null; sha: string | null; url: string | null }> {
+  const sql = `select deployed_digest, deployed_sha, url from release_attempt
                 where environment=$1 and kind in ('deploy','rollback') and state in ('succeeded','failed')
                 order by seq desc limit 1`;
-  const { rows } = client
-    ? await client.query<{ deployed_digest: string | null; deployed_sha: string | null }>(sql, [environment])
-    : await query<{ deployed_digest: string | null; deployed_sha: string | null }>(sql, [environment]);
-  return { digest: rows[0]?.deployed_digest ?? null, sha: rows[0]?.deployed_sha ?? null };
+  type Row = { deployed_digest: string | null; deployed_sha: string | null; url: string | null };
+  const { rows } = client ? await client.query<Row>(sql, [environment]) : await query<Row>(sql, [environment]);
+  return { digest: rows[0]?.deployed_digest ?? null, sha: rows[0]?.deployed_sha ?? null, url: rows[0]?.url ?? null };
 }
 
 function isUniqueViolation(err: unknown): boolean {
@@ -685,8 +898,8 @@ export async function approveDeploy(
       }
       const env = await environmentNow(client, DEPLOY_ENVIRONMENT);
       await client.query(
-        `insert into release_approval (release_id, job_id, kind, approver_user_id, approver_name, role, sha, digest, environment, correlation_id, decided_at)
-         values ($1,$2,'deploy',$3,$4,$5,$6,$7,$8,$9,$10)`,
+        `insert into release_approval (release_id, job_id, kind, approver_user_id, approver_name, role, sha, digest, environment, repo, pr_number, correlation_id, decided_at)
+         values ($1,$2,'deploy',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [
           release.id,
           job.id,
@@ -696,6 +909,8 @@ export async function approveDeploy(
           input.sha,
           input.digest,
           input.environment,
+          release.repo,
+          release.pr_number,
           correlationId,
           now,
         ],
@@ -853,6 +1068,9 @@ const PUBLIC_DETAILS = new Set([
   'http',
   'bad_response',
   'no_merge_sha',
+  'approval_expired',
+  'verification_changed',
+  'approval_revoked',
 ]);
 
 /** 証跡（job ごと）。トークンも応答の本文も持たない。release が無い job も AC だけは返す。 */
@@ -862,16 +1080,7 @@ export async function listReleaseEvidence(requestId: string): Promise<Record<str
   const ids = jobs.rows.map((j) => j.id);
   const [releases, approvals, attempts, verifications, request, env] = await Promise.all([
     query<ReleaseRow>('select * from release where job_id = any($1::uuid[])', [ids]),
-    query<{
-      job_id: string;
-      kind: 'merge' | 'deploy' | 'rollback';
-      approver_name: string;
-      sha: string;
-      digest: string | null;
-      environment: string | null;
-      reason: string | null;
-      decided_at: Date;
-    }>('select * from release_approval where job_id = any($1::uuid[]) order by decided_at, id', [ids]),
+    query<ApprovalRow>('select * from release_approval where job_id = any($1::uuid[]) order by seq', [ids]),
     query<{
       job_id: string;
       kind: 'build' | 'deploy' | 'rollback';
@@ -888,7 +1097,10 @@ export async function listReleaseEvidence(requestId: string): Promise<Record<str
       finished_at: Date | null;
     }>('select * from release_attempt where job_id = any($1::uuid[]) order by seq', [ids]),
     query<VerificationRow & { job_id: string }>('select * from verification where job_id = any($1::uuid[])', [ids]),
-    query<{ criteria: string[] }>('select criteria from request where id = $1', [requestId]),
+    query<{ criteria: string[]; status: Status; deleted: boolean; order_version: number }>(
+      'select criteria, status, deleted, order_version from request where id = $1',
+      [requestId],
+    ),
     environmentNow(null, DEPLOY_ENVIRONMENT),
   ]);
   const acIds = acIdsOf(request.rows[0]?.criteria ?? []);
@@ -906,6 +1118,10 @@ export async function listReleaseEvidence(requestId: string): Promise<Record<str
       mergeSha: r?.merge_sha ?? null,
       treeMatch: r?.tree_match ?? null,
       imageDigest: r?.image_digest ?? null,
+      artifactRunId: r?.artifact_run_id ?? null,
+      artifactRunAttempt: r?.artifact_run_attempt ?? null,
+      artifactId: r?.artifact_id === null || r?.artifact_id === undefined ? null : Number(r.artifact_id),
+      artifactTarSha256: r?.artifact_tar_sha256 ?? null,
       artifactBuiltAt: r?.artifact_built_at?.toISOString() ?? null,
       artifactHealth: r?.artifact_health ?? null,
       artifactSmoke: r?.artifact_smoke ?? null,
@@ -918,6 +1134,7 @@ export async function listReleaseEvidence(requestId: string): Promise<Record<str
       currentDigest: r?.current_digest ?? null,
       rolledBackAt: r?.rolled_back_at?.toISOString() ?? null,
       environmentDigest: env.digest,
+      environmentUrl: env.url,
       ac: verdict
         ? ((verdict as { acEvidence?: { acId: string; mark: string; ciRunId: string | null }[] }).acEvidence?.map((e) => ({
             acId: e.acId,
@@ -926,17 +1143,41 @@ export async function listReleaseEvidence(requestId: string): Promise<Record<str
           })) ?? [])
         : [],
       acVerdict: verdict?.verdict ?? null,
-      approvals: approvals.rows
-        .filter((a) => a.job_id === job.id)
-        .map((a) => ({
+      approvals: (() => {
+        const rows = approvals.rows.filter((a) => a.job_id === job.id);
+        const merges = rows.filter((a) => a.kind === 'merge');
+        const statuses = mergeApprovalStatuses(merges, {
+          jobHeadSha: job.head_sha,
+          merged: r?.merge_state === 'merged',
+          superseded: job.superseded_at !== null,
+          orderCurrent:
+            request.rows[0] !== undefined &&
+            request.rows[0].deleted === false &&
+            isOrderCurrent({
+              requestStatus: request.rows[0].status,
+              requestDeleted: request.rows[0].deleted,
+              requestOrderVersion: request.rows[0].order_version,
+              jobOrderVersion: job.order_version,
+            }),
+          headExpired: r?.merge_state === 'rejected' && MERGE_EXPIRED_DETAILS.includes(r.merge_detail ?? ''),
+        });
+        return rows.map((a) => ({
           kind: a.kind,
+          decision: a.decision,
+          status: a.kind === 'merge' ? (statuses[merges.indexOf(a)] ?? null) : null,
+          requesterName: a.requester_name,
+          repo: a.repo,
+          prNumber: a.pr_number,
+          verifiedRunId: a.verified_run_id,
+          verifiedRunAttempt: a.verified_run_attempt,
           approverName: a.approver_name,
           sha: a.sha,
           digest: a.digest,
           environment: a.environment,
           reason: a.reason,
           decidedAt: a.decided_at.toISOString(),
-        })),
+        }));
+      })(),
       attempts: attempts.rows
         .filter((a) => a.job_id === job.id)
         .map((a) => ({

@@ -1,34 +1,87 @@
 /**
  * 検証環境（このホストのローカル Docker）の操作。AI コンテナは関与しない。
- * 触るのはラベル msf.devline.deploy=1 のコンテナとイメージだけ。他のプロジェクトのものへは命令を出さない。
+ * イメージを作る口は持たない。CI が残した成果物を読み込むだけ（docker build を呼ばない）。
+ * 触るのはラベル msf.devline.deploy=1 のコンテナとネットワーク、自分の名前空間のタグのイメージだけ。
+ * イメージにラベルは足せない（足すと ID が変わる）。自分のものかはタグ（DEPLOY_IMAGE_REPO:）で見分ける。
  * 名前のコンテナがあってもラベルが無ければ消さず、失敗にする。
  */
 import { spawn } from 'node:child_process';
-import { createServer } from 'node:net';
-import { DEPLOY_LABEL, healthMatches, smokeMatches } from '../shared/devline-release.js';
+import {
+  DEPLOY_CONTAINER_PORT,
+  DEPLOY_LABEL,
+  DEPLOY_NETWORK_NAME,
+  healthMatches,
+  smokeMatches,
+} from '../shared/devline-release.js';
+
+/** 読み込んだイメージを残すときのタグの名前空間。 */
+export const DEPLOY_IMAGE_REPO = 'msf-sandbox-verify';
 
 export interface DeployRunSpec {
   name: string;
   digest: string;
-  port: number;
   version: string;
 }
 
 export interface DeployDocker {
-  /** イメージを作り、digest を返す（sha256:...）。 */
-  build(input: { contextDir: string; tag: string; sha: string }): Promise<string>;
+  /** docker load。読み込まれた ref（タグか ID）と、その ref を inspect した ID を返す。 */
+  loadImage(tarPath: string): Promise<{ ref: string; id: string }>;
+  /** 照合に通ったイメージへ自分のタグを付け、読み込み時のタグを外す。 */
+  adoptImage(input: { ref: string; id: string; tag: string }): Promise<void>;
+  /** 照合に落ちたイメージのタグを外す（ref が自分の読み込んだものに限る）。 */
+  discardImage(ref: string): Promise<void>;
   hasImage(digest: string): Promise<boolean>;
   /** ラベル付きのコンテナがあるか。名前があってラベルが無ければ 'foreign'。 */
   containerState(name: string): Promise<'none' | 'own' | 'foreign'>;
-  run(spec: DeployRunSpec): Promise<void>;
+  /** 内部ネットワークで起動し、host から届く URL を返す。ポートは公開しない。 */
+  run(spec: DeployRunSpec): Promise<{ baseUrl: string }>;
   /** ラベル付きのコンテナを止めて消す。無ければ何もしない。 */
   remove(name: string): Promise<void>;
-  portFree(port: number): Promise<boolean>;
 }
 
 export interface DeployProbe {
   /** health（/healthz の version が sha）と smoke（/length?text=abc が 3）。 */
-  check(port: number, sha: string): Promise<{ health: boolean; smoke: boolean }>;
+  check(baseUrl: string, sha: string): Promise<{ health: boolean; smoke: boolean }>;
+}
+
+/**
+ * 起動の引数（純関数。試験で固定する）。host mount・Docker socket・privileged・host network・公開ポートを持たない。
+ * イメージは ID をそのまま渡す（タグを解決しない）。
+ */
+export function deployRunArgs(spec: DeployRunSpec, network: string = DEPLOY_NETWORK_NAME): string[] {
+  return [
+    'run',
+    '-d',
+    '--name',
+    spec.name,
+    '--label',
+    DEPLOY_LABEL,
+    '--network',
+    network,
+    '--read-only',
+    '--tmpfs',
+    '/tmp',
+    '--cap-drop',
+    'ALL',
+    '--security-opt',
+    'no-new-privileges',
+    '--memory',
+    '256m',
+    '--pids-limit',
+    '128',
+    '-e',
+    `APP_VERSION=${spec.version}`,
+    spec.digest,
+  ];
+}
+
+/** `docker load` の出力から読み込まれたものを取り出す。ちょうど1つでなければ null。 */
+export function parseLoadOutput(out: string): string | null {
+  const refs = out
+    .split('\n')
+    .map((l) => /^Loaded image(?: ID)?: (\S+)$/.exec(l.trim())?.[1])
+    .filter((r): r is string => r !== undefined);
+  return refs.length === 1 ? (refs[0] as string) : null;
 }
 
 export class DockerCommandError extends Error {
@@ -68,28 +121,62 @@ function docker(args: string[], timeoutMs: number): Promise<string> {
   });
 }
 
-const BUILD_TIMEOUT_MS = 600_000;
+const LOAD_TIMEOUT_MS = 600_000;
 const COMMAND_TIMEOUT_MS = 60_000;
 
-export function createDeployDocker(): DeployDocker {
-  return {
-    async build({ contextDir, tag, sha }) {
+export function createDeployDocker(options: { network?: string } = {}): DeployDocker {
+  const network = options.network ?? DEPLOY_NETWORK_NAME;
+
+  /** 内部ネットワークを用意する。同じ名前でラベルの無いものには触らず失敗にする。 */
+  async function ensureNetwork(): Promise<void> {
+    const listed = await docker(['network', 'ls', '--filter', `name=^${network}$`, '--format', '{{.Name}}'], COMMAND_TIMEOUT_MS);
+    if (listed.trim() === '') {
       await docker(
-        ['build', '--label', DEPLOY_LABEL, '--label', `msf.devline.sha=${sha}`, '-t', tag, contextDir],
-        BUILD_TIMEOUT_MS,
+        [
+          'network',
+          'create',
+          '--internal',
+          '--opt',
+          'com.docker.network.bridge.enable_icc=false',
+          '--label',
+          DEPLOY_LABEL,
+          network,
+        ],
+        COMMAND_TIMEOUT_MS,
       );
-      const id = await docker(['image', 'inspect', '--format', '{{.Id}}', tag], COMMAND_TIMEOUT_MS);
-      if (!/^sha256:[0-9a-f]{64}$/.test(id)) throw new DockerCommandError('digest を読めませんでした', null);
-      return id;
+      return;
+    }
+    const facts = await docker(
+      ['network', 'inspect', '--format', '{{.Internal}} {{index .Labels "msf.devline.deploy"}}', network],
+      COMMAND_TIMEOUT_MS,
+    );
+    if (facts.trim() !== 'true 1') throw new DockerCommandError('同じ名前の別のネットワークがあります', null);
+  }
+
+  return {
+    async loadImage(tarPath) {
+      const out = await docker(['load', '-q', '-i', tarPath], LOAD_TIMEOUT_MS);
+      const ref = parseLoadOutput(out);
+      if (!ref) throw new DockerCommandError('読み込まれたイメージを特定できませんでした', null);
+      const id = await docker(['image', 'inspect', '--format', '{{.Id}}', ref], COMMAND_TIMEOUT_MS);
+      if (!/^sha256:[0-9a-f]{64}$/.test(id)) throw new DockerCommandError('イメージ ID を読めませんでした', null);
+      return { ref, id };
+    },
+
+    async adoptImage({ ref, id, tag }) {
+      await docker(['tag', id, tag], COMMAND_TIMEOUT_MS);
+      if (ref !== id && ref !== tag) await docker(['image', 'rm', '--no-prune', ref], COMMAND_TIMEOUT_MS);
+    },
+
+    async discardImage(ref) {
+      await docker(['image', 'rm', '--no-prune', ref], COMMAND_TIMEOUT_MS);
     },
 
     async hasImage(digest) {
       try {
-        const label = await docker(
-          ['image', 'inspect', '--format', '{{index .Config.Labels "msf.devline.deploy"}}', digest],
-          COMMAND_TIMEOUT_MS,
-        );
-        return label === '1';
+        const tags = await docker(['image', 'inspect', '--format', '{{json .RepoTags}}', digest], COMMAND_TIMEOUT_MS);
+        const parsed = JSON.parse(tags) as string[] | null;
+        return (parsed ?? []).some((t) => t.startsWith(`${DEPLOY_IMAGE_REPO}:`));
       } catch {
         return false;
       }
@@ -105,34 +192,15 @@ export function createDeployDocker(): DeployDocker {
       return own.trim() === '' ? 'foreign' : 'own';
     },
 
-    async run({ name, digest, port, version }) {
-      await docker(
-        [
-          'run',
-          '-d',
-          '--name',
-          name,
-          '--label',
-          DEPLOY_LABEL,
-          '-p',
-          `127.0.0.1:${port}:8080`,
-          '--read-only',
-          '--tmpfs',
-          '/tmp',
-          '--cap-drop',
-          'ALL',
-          '--security-opt',
-          'no-new-privileges',
-          '--memory',
-          '256m',
-          '--pids-limit',
-          '128',
-          '-e',
-          `APP_VERSION=${version}`,
-          digest,
-        ],
+    async run(spec) {
+      await ensureNetwork();
+      await docker(deployRunArgs(spec, network), COMMAND_TIMEOUT_MS);
+      const ip = await docker(
+        ['inspect', '--format', `{{(index .NetworkSettings.Networks "${network}").IPAddress}}`, spec.name],
         COMMAND_TIMEOUT_MS,
       );
+      if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) throw new DockerCommandError('コンテナの IP を読めませんでした', null);
+      return { baseUrl: `http://${ip}:${DEPLOY_CONTAINER_PORT}` };
     },
 
     async remove(name) {
@@ -140,14 +208,6 @@ export function createDeployDocker(): DeployDocker {
       if (state === 'foreign') throw new DockerCommandError('同じ名前の別のコンテナがあります', null);
       if (state === 'none') return;
       await docker(['rm', '-f', name], COMMAND_TIMEOUT_MS);
-    },
-
-    portFree(port) {
-      return new Promise((resolve) => {
-        const server = createServer();
-        server.once('error', () => resolve(false));
-        server.listen(port, '127.0.0.1', () => server.close(() => resolve(true)));
-      });
     },
   };
 }
@@ -159,8 +219,7 @@ export function createDeployProbe(options: { attempts?: number; intervalMs?: num
   const timeoutMs = options.timeoutMs ?? 3000;
   const signal = (): AbortSignal => AbortSignal.timeout(timeoutMs);
   return {
-    async check(port, sha) {
-      const base = `http://127.0.0.1:${port}`;
+    async check(base, sha) {
       let health = false;
       for (let i = 0; i < attempts && !health; i += 1) {
         if (i > 0) await new Promise((r) => setTimeout(r, intervalMs));

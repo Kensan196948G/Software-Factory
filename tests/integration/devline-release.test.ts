@@ -2,12 +2,15 @@
  * 人の承認 → merge → 検証環境への配備 → 戻し（仕様 4-9、TC-N09）。
  * GitHub は stub の口、docker は stub。実 GitHub・実 Docker・実 AI へは送らない。fake runner で pr_ready まで進める。
  */
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { query } from '../../src/api/db.js';
 import { recordVerification } from '../../src/api/devline-service.js';
 import {
   approveDeploy,
   approveMerge,
+  revokeMergeApproval,
   devlineSummary,
   listReleaseEvidence,
   rollbackRelease,
@@ -15,13 +18,10 @@ import {
 } from '../../src/api/devline-release.js';
 import type { MergeSendOutcome, PrMergeAdapter, PullMergeFacts } from '../../src/api/pr-adapter.js';
 import { buildPrMarker } from '../../src/shared/devline.js';
-import { DEPLOY_ENVIRONMENT } from '../../src/shared/devline-release.js';
+import { DEPLOY_ARTIFACT_TAG, DEPLOY_ENVIRONMENT } from '../../src/shared/devline-release.js';
 import type { DeployDocker, DeployProbe, DeployRunSpec } from '../../src/worker/deploy-docker.js';
 import { runDeployOnce, type DeployWorkerOptions } from '../../src/worker/deploy-worker.js';
-import { createDeploySource } from '../../src/worker/deploy-source.js';
-import { existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { DUMMY_GH_TOKEN, REAL_REPO, startRealGithub } from './devline-real-harness.js';
+import type { ImageArtifactProblem, ImageArtifactRequest } from '../../src/worker/deploy-artifact.js';
 import { FAKE_REPO, FAKE_REPO_ID } from './fake-github-server.js';
 import { stages, useHarness } from './devline-qa-harness.js';
 
@@ -92,42 +92,57 @@ function depsOf(github: StubGithub): ReleaseDeps {
 
 interface StubDocker extends DeployDocker {
   containers: Map<string, DeployRunSpec>;
-  builds: number;
+  loads: number;
   runs: DeployRunSpec[];
   removed: string[];
+  discarded: string[];
   images: Set<string>;
   nextDigest: string;
-  buildFails: boolean;
-  portBusy: boolean;
+  /** 読み込んだ結果の ID。meta の imageId と違う場合の試験に使う。 */
+  loadedId: string | null;
+  loadFails: boolean;
+  /** 取得元の stub の結果。 */
+  artifactProblem: ImageArtifactProblem | null;
+  fetches: ImageArtifactRequest[];
+  cleaned: number;
 }
 
 function stubDocker(): StubDocker {
   const stub: StubDocker = {
     containers: new Map(),
-    builds: 0,
+    loads: 0,
     runs: [],
     removed: [],
+    discarded: [],
     images: new Set(),
     nextDigest: digestOf(1),
-    buildFails: false,
-    portBusy: false,
-    build: async () => {
-      if (stub.buildFails) throw new Error('build');
-      stub.builds += 1;
-      stub.images.add(stub.nextDigest);
-      return stub.nextDigest;
+    loadedId: null,
+    loadFails: false,
+    artifactProblem: null,
+    fetches: [],
+    cleaned: 0,
+    loadImage: async () => {
+      if (stub.loadFails) throw new Error('load');
+      stub.loads += 1;
+      return { ref: DEPLOY_ARTIFACT_TAG, id: stub.loadedId ?? stub.nextDigest };
+    },
+    adoptImage: async ({ id }) => {
+      stub.images.add(id);
+    },
+    discardImage: async (ref) => {
+      stub.discarded.push(ref);
     },
     hasImage: async (d) => stub.images.has(d),
     containerState: async (name) => (stub.containers.has(name) ? 'own' : 'none'),
     run: async (spec) => {
       stub.runs.push(spec);
       stub.containers.set(spec.name, spec);
+      return { baseUrl: 'http://192.0.2.10:8080' };
     },
     remove: async (name) => {
       stub.removed.push(name);
       stub.containers.delete(name);
     },
-    portFree: async () => !stub.portBusy,
   };
   return stub;
 }
@@ -137,9 +152,24 @@ function workerOf(docker: StubDocker, probe: DeployProbe): DeployWorkerOptions {
     owner: 'release-test',
     docker,
     probe,
-    source: { fetch: async () => ({ dir: '/nonexistent', cleanup: () => undefined }) },
-    port: 40001,
-    smokePort: 40002,
+    artifacts: {
+      fetch: async (req) => {
+        docker.fetches.push(req);
+        if (docker.artifactProblem) return { ok: false, problem: docker.artifactProblem };
+        return {
+          ok: true,
+          tarPath: '/nonexistent/image.tar',
+          imageId: docker.nextDigest,
+          runId: req.runId,
+          runAttempt: req.runAttempt,
+          artifactId: 9001,
+          tarSha256: 'e'.repeat(64),
+          cleanup: () => {
+            docker.cleaned += 1;
+          },
+        };
+      },
+    },
     clock: h.clock,
   };
 }
@@ -430,7 +460,6 @@ describe('承認前は動かない（TC-N09）', () => {
     expect(await runDeployOnce(workerOf(docker, okProbe))).toMatchObject({ attemptKind: 'build', state: 'succeeded' });
     // 一時コンテナは配備先の名前を使わず、終わったら消す
     expect(docker.runs).toHaveLength(1);
-    expect(docker.runs[0]).toMatchObject({ port: 40002, version: MERGE_SHA(1), digest: digestOf(1) });
     expect(docker.runs[0]?.name).not.toBe('msf-sandbox-verify');
     expect(docker.containers.size).toBe(0);
     expect(await runDeployOnce(workerOf(docker, okProbe))).toEqual({ kind: 'idle' });
@@ -501,10 +530,9 @@ describe('成果物と配備', () => {
   it('承認された digest をそのまま起動する（作り直さない）。staged へ進み、二重押下は同じ結果', async () => {
     const docker = stubDocker();
     const c = await toStaged(1, docker);
-    expect(docker.builds).toBe(1);
+    expect(docker.loads).toBe(1);
     expect(docker.containers.get('msf-sandbox-verify')).toMatchObject({
       digest: digestOf(1),
-      port: 40001,
       version: MERGE_SHA(1),
     });
     expect(await release(c.jobId)).toMatchObject({
@@ -514,7 +542,7 @@ describe('成果物と配備', () => {
       environment: DEPLOY_ENVIRONMENT,
       health: true,
       smoke: true,
-      url: 'http://127.0.0.1:40001',
+      url: 'http://192.0.2.10:8080',
       current_digest: digestOf(1),
       previous_digest: null,
     });
@@ -560,37 +588,21 @@ describe('成果物と配備', () => {
     expect(await devlineSummary()).toMatchObject({ stopped: 1 });
   });
 
-  it('build の失敗を記録する。承認者の押し直しで作り直す（merge は送らない）', async () => {
+  it('読み込みの失敗を記録する。承認者の押し直しで取り直す（merge は送らない）', async () => {
     const docker = stubDocker();
-    docker.buildFails = true;
+    docker.loadFails = true;
     const c = await toMerged();
-    expect(await runDeployOnce(workerOf(docker, okProbe))).toMatchObject({ state: 'failed', errorCode: 'build_failed' });
+    expect(await runDeployOnce(workerOf(docker, okProbe))).toMatchObject({ state: 'failed', errorCode: 'artifact_load_failed' });
+    expect(docker.cleaned).toBe(1);
     expect(await runDeployOnce(workerOf(docker, okProbe))).toEqual({ kind: 'idle' });
-    docker.buildFails = false;
+    docker.loadFails = false;
     await approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'c', c.deps);
     expect(c.github.calls).toHaveLength(1);
     expect(await runDeployOnce(workerOf(docker, okProbe))).toMatchObject({ attemptKind: 'build', state: 'succeeded' });
     expect(await release(c.jobId)).toMatchObject({ image_digest: digestOf(1) });
-    // digest が決まった後は作らない
+    // digest が決まった後は取り直さない
     await approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'c', c.deps);
     expect(await runDeployOnce(workerOf(docker, okProbe))).toEqual({ kind: 'idle' });
-  });
-
-  it('ポートが使用中なら失敗し、何も動かさない', async () => {
-    const docker = stubDocker();
-    const c = await toMerged();
-    await runDeployOnce(workerOf(docker, okProbe));
-    await approveDeploy(
-      { jobId: c.jobId, sha: MERGE_SHA(1), digest: digestOf(1), environment: DEPLOY_ENVIRONMENT },
-      approver(),
-      'c',
-      h.clock(),
-    );
-    docker.portBusy = true;
-    const runs = docker.runs.length;
-    expect(await runDeployOnce(workerOf(docker, okProbe))).toMatchObject({ state: 'failed', errorCode: 'port_in_use' });
-    expect(docker.runs.length).toBe(runs);
-    expect((await h.view(c.jobId)).state).toBe('merged');
   });
 
   it('配備の health が落ちると前の digest へ自動で戻し、失敗として記録する。job は merged のまま', async () => {
@@ -713,27 +725,283 @@ describe('戻し（FR-41）', () => {
   });
 });
 
-describe('ソースの取り出し（ローカルの git）', () => {
-  it('merge の SHA だけを取り出し、.git を残さない。無い SHA は失敗する。トークンはエラーに載らない', async () => {
-    const gh = await startRealGithub();
-    try {
-      const source = createDeploySource({ gitBaseUrl: gh.gitBaseUrl, token: DUMMY_GH_TOKEN, nodeEnv: 'test' });
-      const got = await source.fetch({ repo: REAL_REPO, sha: gh.baseSha });
-      expect(existsSync(join(got.dir, '.git'))).toBe(false);
-      expect(readdirSync(got.dir)).toContain('package.json');
-      got.cleanup();
-      expect(existsSync(got.dir)).toBe(false);
-      const err = await source.fetch({ repo: REAL_REPO, sha: 'f'.repeat(40) }).then(
-        () => null,
-        (e: Error) => e,
-      );
-      expect(err).toBeInstanceOf(Error);
-      expect(String(err?.message)).not.toContain(DUMMY_GH_TOKEN);
-      await expect(source.fetch({ repo: '../evil', sha: gh.baseSha })).rejects.toThrow();
-      expect(() => createDeploySource({ gitBaseUrl: 'https://github.com', token: 'x', nodeEnv: 'test' })).toThrow();
-    } finally {
-      await gh.close();
+describe('検査した成果物の配備（作り直さない）', () => {
+  it('合否の根拠にした run の成果物を PR の head で取得し、取得元を release に残す', async () => {
+    const docker = stubDocker();
+    const c = await toMerged();
+    const { rows } = await query<{ ci_run_id: string; run_attempt: number }>(
+      'select ci_run_id, run_attempt from verification where job_id=$1 order by run_sequence desc, run_attempt desc limit 1',
+      [c.jobId],
+    );
+    const run = rows[0]!;
+    expect(await runDeployOnce(workerOf(docker, okProbe))).toMatchObject({ attemptKind: 'build', state: 'succeeded' });
+    // 成果物は head に結びつく。merge の SHA では探さない
+    expect(docker.fetches).toEqual([{ repo: FAKE_REPO, runId: run.ci_run_id, runAttempt: run.run_attempt, headSha: c.headSha }]);
+    expect(docker.cleaned).toBe(1);
+    expect(await release(c.jobId)).toMatchObject({
+      image_digest: digestOf(1),
+      verified_run_id: run.ci_run_id,
+      artifact_run_id: run.ci_run_id,
+      artifact_run_attempt: run.run_attempt,
+      artifact_tar_sha256: 'e'.repeat(64),
+    });
+    expect(Number((await release(c.jobId)).artifact_id)).toBe(9001);
+    const ev = (await listReleaseEvidence(c.id))[c.jobId]!;
+    expect(ev).toMatchObject({ artifactRunId: run.ci_run_id, artifactId: 9001, artifactTarSha256: 'e'.repeat(64) });
+  });
+
+  it.each<[ImageArtifactProblem, string]>([
+    ['missing', 'artifact_missing'],
+    ['expired', 'artifact_expired'],
+    ['too_large', 'artifact_too_large'],
+    ['mismatch', 'artifact_mismatch'],
+    ['unavailable', 'artifact_unavailable'],
+  ])('成果物が %s なら止まり、作らず、配備の承認へ進めない', async (problem, errorCode) => {
+    const docker = stubDocker();
+    docker.artifactProblem = problem;
+    const c = await toMerged();
+    expect(await runDeployOnce(workerOf(docker, okProbe))).toMatchObject({ state: 'failed', errorCode });
+    expect(docker.loads).toBe(0);
+    expect(docker.runs).toEqual([]);
+    expect(await release(c.jobId)).toMatchObject({ image_digest: null, artifact_id: null });
+    await expect(
+      approveDeploy(
+        { jobId: c.jobId, sha: MERGE_SHA(1), digest: digestOf(1), environment: DEPLOY_ENVIRONMENT },
+        approver(),
+        'c',
+        h.clock(),
+      ),
+    ).rejects.toMatchObject({ details: { refusal: 'no_artifact' } });
+  });
+
+  it('読み込んだイメージの ID が meta と違えば失敗にし、タグを外す。記録しない', async () => {
+    const docker = stubDocker();
+    docker.loadedId = digestOf(99);
+    const c = await toMerged();
+    expect(await runDeployOnce(workerOf(docker, okProbe))).toMatchObject({ state: 'failed', errorCode: 'artifact_mismatch' });
+    expect(docker.discarded).toEqual([DEPLOY_ARTIFACT_TAG]);
+    expect(docker.images.size).toBe(0);
+    expect(docker.runs).toEqual([]);
+    expect(docker.cleaned).toBe(1);
+    expect(await release(c.jobId)).toMatchObject({ image_digest: null });
+  });
+
+  it('tree が一致しなければ成果物を取りに行かない', async () => {
+    const docker = stubDocker();
+    const c = await prReady();
+    c.github.trees[MERGE_SHA(1)] = 'b'.repeat(40);
+    await approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'c', c.deps);
+    expect(await runDeployOnce(workerOf(docker, okProbe))).toEqual({ kind: 'idle' });
+    expect(docker.fetches).toEqual([]);
+  });
+
+  it('配備の経路に build と clone が無い（コードで固定）', () => {
+    for (const file of ['deploy-worker.ts', 'deploy-docker.ts', 'deploy-artifact.ts']) {
+      const text = readFileSync(join('src/worker', file), 'utf8');
+      expect(text).not.toMatch(/['"]build['"],\s*'--/);
+      expect(text).not.toMatch(/spawn\(\s*'git'/);
+      expect(text).not.toContain('docker.build');
     }
+    expect(existsSync('src/worker/deploy-source.ts')).toBe(false);
+  });
+});
+
+describe('merge の承認の記録と失効', () => {
+  const second = async (): Promise<ReturnType<typeof approver>> => {
+    const email = `second-approver-${Date.now()}@example.test`;
+    const { rows } = await query<{ id: string }>(
+      `insert into app_user (email, display_name, dept_code, password_hash)
+       select $1, '二人目の承認者（作り物）', dept_code, password_hash from app_user where id=$2 returning id`,
+      [email, h.auth.user.id],
+    );
+    return { ...approver(), userId: rows[0]!.id, displayName: '二人目の承認者（作り物）' };
+  };
+  const approvals = async (jobId: string): Promise<any[]> =>
+    (await query(`select * from release_approval where job_id=$1 and kind='merge' order by seq`, [jobId])).rows;
+
+  it('申請した人・承認者・repo・PR・head・判定・日時・検査の run を残す', async () => {
+    const c = await toMerged();
+    const [row] = await approvals(c.jobId);
+    expect(row).toMatchObject({
+      decision: 'approved',
+      approver_user_id: approver().userId,
+      repo: FAKE_REPO,
+      pr_number: c.github.pull.number,
+      sha: c.headSha,
+    });
+    expect(row.requester_user_id).toBeTruthy();
+    expect(row.requester_name).toBeTruthy();
+    expect(row.verified_run_id).toBeTruthy();
+    expect(row.decided_at).toBeInstanceOf(Date);
+    const ev = (await listReleaseEvidence(c.id))[c.jobId]!;
+    expect(ev.approvals[0]).toMatchObject({ kind: 'merge', status: 'used', repo: FAKE_REPO, prNumber: c.github.pull.number });
+    expect(ev.approvals[0]!.requesterName).toBeTruthy();
+  });
+
+  it('R-11: 再度の承認で別の人が押すと追記する。同じ人の押し直しは増やさない', async () => {
+    const c = await prReady();
+    c.github.next = { outcome: 'rejected', cause: 'not_mergeable', httpStatus: 405 };
+    await expect(approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'a', c.deps)).rejects.toThrow();
+    await expect(approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'b', c.deps)).rejects.toThrow();
+    expect(await approvals(c.jobId)).toHaveLength(1);
+    const other = await second();
+    await expect(approveMerge({ jobId: c.jobId, headSha: c.headSha }, other, 'c', c.deps)).rejects.toThrow();
+    const rows = await approvals(c.jobId);
+    expect(rows.map((r) => r.approver_user_id)).toEqual([approver().userId, other.userId]);
+    // 行は追記のみ
+    await expect(query(`update release_approval set approver_name='x' where job_id=$1`, [c.jobId])).rejects.toThrow();
+  });
+
+  it('取消で失効する。取消は行として残り、同じ人の承認し直しも残る。理由を残す', async () => {
+    const c = await prReady();
+    c.github.next = { outcome: 'rejected', cause: 'not_mergeable', httpStatus: 405 };
+    await expect(approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'a', c.deps)).rejects.toThrow();
+    await revokeMergeApproval({ jobId: c.jobId, headSha: c.headSha, reason: '作り物の理由' }, approver(), 'r', h.clock());
+    let ev = (await listReleaseEvidence(c.id))[c.jobId]!;
+    expect(ev.approvals.map((a) => [a.decision, a.status])).toEqual([
+      ['approved', 'revoked'],
+      ['revoked', 'revocation'],
+    ]);
+    expect(await release(c.jobId)).toMatchObject({ approved_head_sha: null, merge_approver_user_id: null });
+    // 二度は取り消せない
+    await expect(
+      revokeMergeApproval({ jobId: c.jobId, headSha: c.headSha, reason: 'x' }, approver(), 'r', h.clock()),
+    ).rejects.toMatchObject({ details: { refusal: 'no_approval' } });
+
+    c.github.next = 'ok';
+    await approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'b', c.deps);
+    ev = (await listReleaseEvidence(c.id))[c.jobId]!;
+    expect(ev.approvals.map((a) => a.status)).toEqual(['revoked', 'revocation', 'used']);
+    expect(c.github.calls.length).toBe(2);
+    await expect(
+      revokeMergeApproval({ jobId: c.jobId, headSha: c.headSha, reason: 'x' }, approver(), 'r', h.clock()),
+    ).rejects.toMatchObject({ details: { refusal: 'state' } });
+  });
+
+  it('取消の API: 権限、AI、送信中を断る', async () => {
+    const c = await prReady();
+    let open = (): void => undefined;
+    c.github.gate = new Promise((r) => {
+      open = r;
+    });
+    const first = approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'a', c.deps);
+    await vi.waitFor(() => expect(c.github.calls).toHaveLength(1));
+    await expect(
+      revokeMergeApproval({ jobId: c.jobId, headSha: c.headSha, reason: 'x' }, approver(), 'r', h.clock()),
+    ).rejects.toMatchObject({ details: { refusal: 'in_progress' } });
+    await expect(
+      revokeMergeApproval({ jobId: c.jobId, headSha: c.headSha, reason: 'x' }, h.actor('desk'), 'r', h.clock()),
+    ).rejects.toMatchObject({ details: { refusal: 'role' } });
+    await query('update app_user set is_agent=true where id=$1', [h.auth.user.id]);
+    await expect(
+      revokeMergeApproval({ jobId: c.jobId, headSha: c.headSha, reason: 'x' }, approver(), 'r', h.clock()),
+    ).rejects.toMatchObject({ details: { refusal: 'agent_actor' } });
+    await query('update app_user set is_agent=false where id=$1', [h.auth.user.id]);
+    open();
+    await first;
+  });
+
+  it('新しい commit で古い承認は失効し、送らない', async () => {
+    const c = await prReady();
+    c.github.next = { outcome: 'rejected', cause: 'not_mergeable', httpStatus: 405 };
+    await expect(approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'a', c.deps)).rejects.toThrow();
+    c.github.next = 'ok';
+    c.github.pull = { ...c.github.pull, headSha: 'e'.repeat(40) };
+    await expect(approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'b', c.deps)).rejects.toMatchObject({
+      details: { detail: 'head_changed' },
+    });
+    expect(c.github.calls).toHaveLength(1);
+    expect((await listReleaseEvidence(c.id))[c.jobId]!.approvals.map((a) => a.status)).toEqual(['expired_head']);
+  });
+
+  it('merge の直前に版の更新・検査の変化を見つけたら送らない', async () => {
+    const c = await prReady();
+    const login = c.github.getActorLogin;
+    // 承認のトランザクションの後、送信の前に版を上げる
+    c.github.getActorLogin = async (signal) => {
+      await query('update request set order_version = order_version + 1 where id=$1', [c.id]);
+      return login(signal);
+    };
+    await expect(approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'a', c.deps)).rejects.toMatchObject({
+      details: { detail: 'approval_expired' },
+    });
+    expect(c.github.calls).toEqual([]);
+    expect((await listReleaseEvidence(c.id))[c.jobId]!.approvals.map((a) => a.status)).toEqual(['expired_version']);
+
+    const d = await prReady(2);
+    const dlogin = d.github.getActorLogin;
+    d.github.getActorLogin = async (signal) => {
+      // 同じ head の新しい run（検査の記録は追記のみ）。根拠の run が変わる
+      await recordVerification(h.delivery(d.jobId, d.headSha, { runSequence: 99, stages: stages({ unit: 'failed' }) }));
+      return dlogin(signal);
+    };
+    await expect(approveMerge({ jobId: d.jobId, headSha: d.headSha }, approver(), 'a', d.deps)).rejects.toMatchObject({
+      details: { detail: expect.stringMatching(/^(verification_changed|head_changed)$/) },
+    });
+    expect(d.github.calls).toEqual([]);
+  });
+
+  it('merge の直前に取消を見つけたら送らない', async () => {
+    const c = await prReady();
+    const login = c.github.getActorLogin;
+    c.github.getActorLogin = async (signal) => {
+      // 送信中の印が古くなった後の取消に当たる（時刻を進めて渡す）
+      await revokeMergeApproval(
+        { jobId: c.jobId, headSha: c.headSha, reason: '作り物' },
+        approver(),
+        'r',
+        new Date(h.clock().getTime() + 600_000),
+      );
+      return login(signal);
+    };
+    await expect(approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'a', c.deps)).rejects.toMatchObject({
+      details: { detail: 'approval_revoked' },
+    });
+    expect(c.github.calls).toEqual([]);
+  });
+
+  it('結果不明のまま版が変わった。merge 済みなら記録するが、未 merge なら送らず、新しい承認も残さない', async () => {
+    const c = await prReady();
+    c.github.next = { outcome: 'unknown', reason: 'network' };
+    await expect(approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'a', c.deps)).rejects.toMatchObject({
+      details: { mergeState: 'unknown' },
+    });
+    expect(c.github.calls).toHaveLength(1);
+    await query('update request set order_version = order_version + 1 where id=$1', [c.id]);
+    const other = await second();
+    await expect(approveMerge({ jobId: c.jobId, headSha: c.headSha }, other, 'b', c.deps)).rejects.toMatchObject({
+      details: { detail: 'approval_expired' },
+    });
+    expect(c.github.calls).toHaveLength(1);
+    expect(await approvals(c.jobId)).toHaveLength(1);
+  });
+
+  it('応答を失っても、同時に押しても merge は1回で、照合で確定する', async () => {
+    const c = await prReady();
+    c.github.next = 'lost';
+    const results = await Promise.allSettled([
+      approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'a', c.deps),
+      approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'b', c.deps),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled').length).toBeGreaterThanOrEqual(1);
+    expect(c.github.calls).toHaveLength(1);
+    expect((await h.view(c.jobId)).state).toBe('merged');
+    expect(await approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'c', c.deps)).toMatchObject({
+      alreadyDone: true,
+    });
+    expect(c.github.calls).toHaveLength(1);
+  });
+
+  it('merge の承認と配備の承認は別の記録で、配備は SHA・digest・環境に結ぶ', async () => {
+    const docker = stubDocker();
+    const c = await toStaged(1, docker);
+    const rows = (
+      await query(`select kind, sha, digest, environment from release_approval where job_id=$1 order by seq`, [c.jobId])
+    ).rows;
+    expect(rows).toEqual([
+      { kind: 'merge', sha: c.headSha, digest: null, environment: null },
+      { kind: 'deploy', sha: MERGE_SHA(1), digest: digestOf(1), environment: DEPLOY_ENVIRONMENT },
+    ]);
   });
 });
 

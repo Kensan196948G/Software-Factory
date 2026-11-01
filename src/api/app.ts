@@ -72,12 +72,13 @@ import {
 import {
   approveDeploy,
   approveMerge,
+  revokeMergeApproval,
   devlineSummary,
   listReleaseEvidence,
   rollbackRelease,
   type ReleaseDeps,
 } from './devline-release.js';
-import { approveDeploySchema, approveMergeSchema, rollbackSchema } from './devline-release-schemas.js';
+import { approveDeploySchema, approveMergeSchema, revokeApprovalSchema, rollbackSchema } from './devline-release-schemas.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -356,6 +357,13 @@ export async function buildApp(
     const { id } = req.params as { id: string };
     const body = approveMergeSchema.parse(req.body);
     return approveMerge({ jobId: id, headSha: body.headSha }, actorOf(ctx.user), correlationId(req), opts.releaseDeps);
+  });
+
+  app.post('/api/jobs/:id/revoke-approval', async (req) => {
+    const ctx = mutate(req);
+    const { id } = req.params as { id: string };
+    const body = revokeApprovalSchema.parse(req.body);
+    return revokeMergeApproval({ jobId: id, ...body }, actorOf(ctx.user), correlationId(req), new Date());
   });
 
   app.post('/api/jobs/:id/approve-deploy', async (req) => {

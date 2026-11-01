@@ -51,14 +51,17 @@
 ### 開発ライン最終段（人の承認 → merge → 検証環境への配備 → 戻し）
 
 - 本番公開の経路は作っていない（SC-02、SC-03 が未決）。job は `staged` で止まり、`released` と `closed` は使わない。
-- 検証は fake GitHub、stub の docker、実 Docker のダミーのイメージの部品試験まで。実 GitHub への merge と Sandbox のイメージの実配備は未走（手順は `docs/devline/real-runner.md` 13 章）。
-- 配備先はこのホストのローカル Docker（127.0.0.1 のみ）。古いイメージを自動で消さない（戻し先に使うため）。
+- 検証は fake GitHub、stub の docker、実 Docker のダミーのイメージの部品試験まで。実 GitHub への merge、実 GitHub の artifact の取得、Sandbox のイメージの実配備は未走（手順は `docs/devline/real-runner.md` 15 章）。
+- 配備先はこのホストのローカル Docker の内部ネットワーク（公開ポートなし。このホストからコンテナの IP で届く。外部へ出られない）。古いイメージを自動で消さない（戻し先に使うため）。
 - 戻せるのは1つ前の digest まで。前の版のイメージが消えていれば `image_missing` で失敗する。
 - 配備の途中で内部エラーになると環境の版を不明として記録し、次の配備は戻し先なしで進む。
 - merge の結果不明は人の押し直しでだけ照合する。worker は GitHub の PR を読まない。
 - PR の head が変わるなどで失効すると、その job は `pr_ready` のまま merge できない。注文書の版を上げて作り直す。
-- 1ユーザーで3役を切り替える MVP では、merge の承認者と依頼者の分離は技術的に保証されない（L-01、L-02）。`app_user.is_agent` の登録も人の運用。
-- 「digest」は `docker build` の結果のイメージ ID（`sha256:...`）。レジストリの digest ではない。CI の中で作るイメージとは別物で、merge の commit からこのホストで作り直している。
+- 1ユーザーで3役を切り替える MVP では、merge の承認者と依頼者の分離は技術的に保証されない（L-01、L-02）。**職務分離を満たさず、本番の承認統制を満たさない**（画面にも明記）。`app_user.is_agent` の登録も人の運用。
+- 承認は `POST /api/jobs/:id/revoke-approval` で取り消せる。GitHub へ送信中は取り消せない。結果不明の merge は取り消しても事実が変わらないので、照合で確かめる。
+- 「digest」は CI の `docker save` と同じイメージ ID（`sha256:...`）。レジストリの digest ではない。配備するのは CI で検査したイメージそのもので、このホストで作り直さない。合否の根拠にした run に artifact `image` が無ければ止まる（Sandbox PR #5 より古い run を含む）。
+- イメージ ID の一致は、CI と host の Docker のイメージストアが同じ形（overlay2 など）であることを前提にする。違えば `artifact_mismatch` で止まる（実 GitHub の artifact では未確認）。
+- artifact の保存期間は 14 日（Sandbox の ci.yml）。過ぎた run は `artifact_expired` で止まる。
 
 ## 3. 環境・運用の制限
 

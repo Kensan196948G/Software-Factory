@@ -5652,6 +5652,7 @@ const SF = (function () {
         relBusy: false,
         relMsg: null,
         relReason: '',
+        relRevokeReason: '',
         msg: null,
         absentOpen: false,
         absentReason: '',
@@ -6022,17 +6023,19 @@ const SF = (function () {
     approval_expired: '承認が失効しました（版が上がったか、記録と違います）',
     image_missing: '成果物のイメージがこのホストにありません',
     name_in_use: '同じ名前の別のコンテナがあります',
-    port_in_use: '配備先のポートが使用中です',
-    smoke_port_in_use: '一時コンテナのポートが使用中です',
     run_failed: 'コンテナを起動できませんでした',
     health_failed: 'health の確認に失敗しました',
     smoke_failed: 'smoke の確認に失敗しました',
     rollback_failed: '戻し先の版が動きませんでした',
-    source_fetch_failed: 'merge 済みの SHA を取得できませんでした',
-    build_failed: 'イメージを作れませんでした',
+    artifact_missing: 'CI の成果物がありません（合否の根拠にした run に artifact image が無い。作り直さず止まります）',
+    artifact_expired: 'CI の成果物の保存期限が切れています',
+    artifact_too_large: 'CI の成果物が大きさの上限を超えています',
+    artifact_mismatch: 'CI の成果物が記録と一致しません（repo・run・試行・head・tar のハッシュ・イメージ ID のどれか）',
+    artifact_unavailable: 'CI の成果物を取得できませんでした（通信の失敗。もう一度押すと取り直します）',
+    artifact_load_failed: 'CI の成果物を読み込めませんでした',
     artifact_check_failed: '一時コンテナでの health / smoke に失敗しました',
     artifact_run_failed: '一時コンテナを起動できませんでした',
-    not_buildable: '成果物を作れる状態ではありません',
+    not_buildable: '成果物を取得できる状態ではありません',
     too_many_attempts: '取り直しの上限に達しました',
     internal_error: '処理を完了できませんでした',
   };
@@ -6050,7 +6053,49 @@ const SF = (function () {
     refused: 'GitHub が merge を拒否しました（権限と保護）',
     rate_limited: 'GitHub が混み合っています',
     pr_unreadable: 'PR を読めませんでした（merge は送っていません）',
+    approval_expired: '承認の後で注文書の版が変わりました（merge は送っていません）',
+    verification_changed: '承認の後で検査の結果が変わりました（merge は送っていません）',
+    approval_revoked: '承認は取り消されています（merge は送っていません）',
   };
+  const DL_APPROVAL_STATUS = {
+    effective: '有効',
+    used: 'merge に使用',
+    revoked: '取消で失効',
+    expired_head: 'head の変更で失効',
+    expired_version: '版の更新で失効',
+    revocation: '取消の記録',
+  };
+  /* merge の承認の記録を1行ずつ。押した人ごと・取消ごとに残る */
+  function dlMergeApprovalRows(rel) {
+    const list = ((rel && rel.approvals) || []).filter((a) => a.kind === 'merge');
+    if (!list.length) return '';
+    return (
+      '<br><small data-dl-approvals>' +
+      list
+        .map(
+          (a) =>
+            E(a.decision === 'revoked' ? '取消' : '承認') +
+            '：' +
+            E(a.approverName) +
+            '（' +
+            E(SF.fmt(a.decidedAt)) +
+            '）　申請：' +
+            E(a.requesterName || '記録なし') +
+            '　' +
+            E(a.repo || '') +
+            ' PR #' +
+            E(String(a.prNumber == null ? '－' : a.prNumber)) +
+            '　head ' +
+            dlSha(a.sha) +
+            (a.verifiedRunId ? '　CI run ' + E(a.verifiedRunId) + ' 試行 ' + E(String(a.verifiedRunAttempt)) : '') +
+            '　状態：' +
+            E(DL_APPROVAL_STATUS[a.status] || '－') +
+            (a.reason ? '　理由：' + E(a.reason) : ''),
+        )
+        .join('<br>') +
+      '</small>'
+    );
+  }
   const dlSha = (v) => (v ? mono(v) : '－');
   function dlLink(url, label) {
     return /^https?:\/\//.test(url || '')
@@ -6112,7 +6157,7 @@ const SF = (function () {
         r,
         job,
         'approve-merge',
-        rel.treeMatch === null ? '内容の一致を読み直す（merge はしません）' : '成果物を作り直す（merge はしません）',
+        rel.treeMatch === null ? '内容の一致を読み直す（merge はしません）' : '成果物を取り直す（merge はしません）',
         '',
       );
     }
@@ -6124,10 +6169,25 @@ const SF = (function () {
     ) {
       const ev = dlOf(r.id).evidence[job.id] || {};
       if (!ev.pr || ev.pr.closed) return '';
+      const merges = ((rel && rel.approvals) || []).filter((a) => a.kind === 'merge');
+      const last = merges[merges.length - 1];
+      const canRevoke = rel && last && last.decision === 'approved' && last.sha === job.headSha && rel.mergeState !== 'sending';
       return (
         '<p class="hint" style="margin:6px 0 0">対象 SHA：' +
         mono(job.headSha) +
         '</p>' +
+        (canRevoke
+          ? '<label class="fl" for="dlrv-' +
+            E(r.id) +
+            '">承認を取り消す理由（必須）</label><textarea id="dlrv-' +
+            E(r.id) +
+            '" data-dl-input="revoke-reason" data-id="' +
+            E(r.id) +
+            '" style="min-height:44px">' +
+            E(dlOf(r.id).relRevokeReason || '') +
+            '</textarea>' +
+            dlReleaseButton(r, job, 'revoke-approval', '承認を取り消す', 'dng')
+          : '') +
         dlReleaseButton(
           r,
           job,
@@ -6158,7 +6218,7 @@ const SF = (function () {
         mono(rel.imageDigest) +
         '<br>環境：' +
         E(rel.environment) +
-        '（このホストのローカル Docker。127.0.0.1 のみ）</p>' +
+        '（このホストのローカル Docker の内部ネットワーク。このホストからだけ届きます）</p>' +
         dlReleaseButton(r, job, 'approve-deploy', '検証環境へ配備する', 'go')
       );
     }
@@ -6224,13 +6284,16 @@ const SF = (function () {
     }
     const approver = (a) => (a ? E(a.approverName) + '（' + E(SF.fmt(a.decidedAt)) + '）' : '');
     return (
-      (ac ? dlRow('ac', '受入条件（AC）', kind(true), ac) : '') +
+      (ac ? dlRow('ac-detail', '受入条件（AC）', kind(true), ac) : '') +
       dlRow(
         'merge',
         '人の承認・merge',
         kind(rel && rel.mergeState === 'merged'),
         merge +
-          (mergeApproval ? '<br>承認：' + approver(mergeApproval) + '　対象 ' + dlSha(mergeApproval.sha) : '') +
+          dlMergeApprovalRows(rel) +
+          (mergeApproval
+            ? '<br><small data-dl-control-note>1 ユーザーの MVP で職務分離を満たしません。この承認は本番の承認統制を満たしません</small>'
+            : '') +
           (isFakeLine && rel && rel.mergeState === 'merged'
             ? '<br><small>ローカルの連携先への merge です（実 GitHub ではありません）</small>'
             : ''),
@@ -6240,13 +6303,23 @@ const SF = (function () {
         '成果物',
         kind(rel && rel.imageDigest),
         rel && rel.imageDigest
-          ? 'digest ' +
+          ? 'イメージ ID ' +
               dlSha(rel.imageDigest) +
-              '<br><small>merge 済みの SHA からこのホストで作ったイメージです（CI の中で作るイメージとは別物）。一時コンテナで health と smoke を確認済み</small>'
+              (rel.artifactRunId
+                ? '<br>取得元：CI run ' +
+                  E(rel.artifactRunId) +
+                  ' 試行 ' +
+                  E(String(rel.artifactRunAttempt)) +
+                  '　artifact ' +
+                  E(String(rel.artifactId)) +
+                  '　tar ' +
+                  dlSha(rel.artifactTarSha256)
+                : '') +
+              '<br><small>CI で検査した成果物そのものです（このホストで作り直していません）。一時コンテナで health と smoke を確認済み</small>'
           : build
             ? build.state === 'failed'
-              ? '作成に失敗：' + E(dlAttemptNote(build))
-              : '作成中'
+              ? '取得に失敗：' + E(dlAttemptNote(build))
+              : '取得中'
             : '記録はありません',
       ) +
       dlRow(
@@ -6258,12 +6331,14 @@ const SF = (function () {
               ? '配備しましたが、いまの検証環境は別の版です（digest ' + dlSha(rel.environmentDigest) + '）'
               : '配備済み（検証環境）') +
               (deployApproval ? '<br>承認：' + approver(deployApproval) : '') +
-              (rel && rel.url ? '<br>' + dlLink(rel.url, rel.url) : '') +
+              (rel && rel.environmentUrl && rel.environmentDigest === rel.imageDigest
+                ? '<br>' + dlLink(rel.environmentUrl, rel.environmentUrl)
+                : '') +
               '<br>health ' +
               (rel && rel.health ? '○' : '×') +
               '　smoke ' +
               (rel && rel.smoke ? '○' : '×') +
-              '<br><small>このホストの 127.0.0.1 だけで動く検証環境です</small>'
+              '<br><small>このホストからだけ届く内部ネットワークの検証環境です</small>'
           : deploy && ['pending', 'running'].includes(deploy.state)
             ? '配備を進めています'
             : deploy && deploy.state === 'failed'
@@ -6307,7 +6382,10 @@ const SF = (function () {
     let body;
     if (action === 'approve-merge') body = { headSha: job.headSha };
     else if (action === 'approve-deploy') body = { sha: rel.mergeSha, digest: rel.imageDigest, environment: rel.environment };
-    else {
+    else if (action === 'revoke-approval') {
+      if (!(s.relRevokeReason || '').trim()) return toast('取り消す理由を書いてください', true);
+      body = { headSha: job.headSha, reason: s.relRevokeReason };
+    } else {
       if (!s.relReason.trim()) return toast('戻す理由を書いてください', true);
       body = { reason: s.relReason };
     }
@@ -6317,13 +6395,16 @@ const SF = (function () {
     try {
       await window.__MSF__.api('POST', '/api/jobs/' + encodeURIComponent(jobId) + '/' + action, body);
       s.relReason = '';
+      s.relRevokeReason = '';
       s.relMsg = {
         t:
           action === 'approve-merge'
-            ? 'merge しました。成果物を作って確かめるまで配備はできません'
+            ? 'merge しました。CI の成果物を取得して確かめるまで配備はできません'
             : action === 'approve-deploy'
               ? '配備を受け付けました。結果を読み込みます'
-              : '戻しを受け付けました。結果を読み込みます',
+              : action === 'revoke-approval'
+                ? '承認を取り消しました。merge するには承認し直してください'
+                : '戻しを受け付けました。結果を読み込みます',
         ng: false,
       };
     } catch (err) {
@@ -6535,6 +6616,7 @@ const SF = (function () {
     if (el.dataset.dlInput === 'reason') s.absentReason = el.value;
     if (el.dataset.dlInput === 'check') s.absentChecked = el.checked;
     if (el.dataset.dlInput === 'rollback-reason') s.relReason = el.value;
+    if (el.dataset.dlInput === 'revoke-reason') s.relRevokeReason = el.value;
     const form = el.closest('[data-dl-form]'),
       go = form && form.querySelector('[data-dl="absent-do"]');
     if (go) go.disabled = !(s.absentChecked && s.absentReason.trim()) || s.busy;

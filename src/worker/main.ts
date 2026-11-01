@@ -14,8 +14,8 @@ import { createRunner, isFakeScenario } from './fake-runner.js';
 import { runOnce } from './loop.js';
 import { DEFAULT_SECRETS_PATH, checkRealLineEnv, loadDevlineSecrets, startRealLine, type RealLine } from './real-line.js';
 import { createDeployDocker, createDeployProbe } from './deploy-docker.js';
-import { createDeploySource } from './deploy-source.js';
-import { deployPortsFromEnv, runDeployOnce, type DeployWorkerOptions } from './deploy-worker.js';
+import { createImageArtifactSource } from './deploy-artifact.js';
+import { runDeployOnce, type DeployWorkerOptions } from './deploy-worker.js';
 
 const POLL_MS = 5_000;
 
@@ -84,12 +84,12 @@ async function main(): Promise<void> {
         owner,
         docker: createDeployDocker(),
         probe: createDeployProbe(),
-        source: createDeploySource({
-          gitBaseUrl: process.env.DEVLINE_GIT_BASE_URL ?? 'https://github.com',
+        artifacts: createImageArtifactSource({
+          apiUrl: config.githubApiUrl,
           token,
           nodeEnv: config.nodeEnv,
+          ...(process.env.DEVLINE_ARTIFACT_DIR ? { workDir: process.env.DEVLINE_ARTIFACT_DIR } : {}),
         }),
-        ...deployPortsFromEnv(process.env),
         clock: () => new Date(),
       };
     } catch (err) {

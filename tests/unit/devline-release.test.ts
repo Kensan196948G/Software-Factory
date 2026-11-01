@@ -64,7 +64,22 @@ const rollback = (over: Partial<RollbackFacts> = {}): RollbackFacts => ({
 describe('失効の規則', () => {
   it('merge: 正常', () => {
     expect(decideMerge(merge())).toEqual({ ok: true, mode: 'send' });
-    expect(decideMerge(merge({ mergeState: 'unknown' }))).toEqual({ ok: true, mode: 'reconcile' });
+    expect(decideMerge(merge({ mergeState: 'unknown' }))).toEqual({ ok: true, mode: 'reconcile', maySend: true });
+    expect(decideMerge(merge({ mergeState: 'unknown', orderCurrent: false }))).toEqual({
+      ok: true,
+      mode: 'reconcile',
+      maySend: false,
+    });
+    expect(decideMerge(merge({ mergeState: 'unknown', superseded: true }))).toEqual({
+      ok: true,
+      mode: 'reconcile',
+      maySend: false,
+    });
+    expect(decideMerge(merge({ mergeState: 'unknown', verdict: 'failed' }))).toEqual({
+      ok: true,
+      mode: 'reconcile',
+      maySend: false,
+    });
     expect(decideMerge(merge({ jobState: 'merged' }))).toEqual({ ok: true, mode: 'already_merged' });
   });
 
