@@ -406,6 +406,24 @@ describe('T-27・T-28: 確定した失敗と混雑', () => {
     expect(h.github.issues).toHaveLength(1);
   });
 
+  it('T-28: x-ratelimit-remaining: 0 の 403 も rate_limited。Retry-After が既定より長ければそれに従う', async () => {
+    const id = await h.approvedRequest();
+    const version = await h.orderVersion(id);
+    const limited = (() => ({ status: 403, headers: { 'x-ratelimit-remaining': '0' }, body: {} })) as FakeResponder;
+    await expect(run(id, version, h.deps({ issueAdapter: h.armedAdapter([limited]) }))).rejects.toMatchObject({
+      code: 'ERR-302',
+    });
+    expect((await h.intents(id))[0].next_attempt_at.getTime()).toBe(h.clock().getTime() + 60_000);
+
+    const id2 = await h.approvedRequest();
+    const version2 = await h.orderVersion(id2);
+    const longWait = (() => ({ status: 429, headers: { 'retry-after': '900' }, body: {} })) as FakeResponder;
+    await expect(run(id2, version2, h.deps({ issueAdapter: h.armedAdapter([longWait]) }))).rejects.toMatchObject({
+      code: 'ERR-302',
+    });
+    expect((await h.intents(id2))[0].next_attempt_at.getTime()).toBe(h.clock().getTime() + 900_000);
+  });
+
   it('T-28: HTTP の API-06 は 429 で返す', async () => {
     const id = await h.approvedRequest();
     const version = await h.orderVersion(id);

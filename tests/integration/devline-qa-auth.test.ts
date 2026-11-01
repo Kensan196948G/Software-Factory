@@ -139,6 +139,28 @@ describe('T-85: cancel / resume の権限', () => {
     ).toBeGreaterThanOrEqual(3);
     expect(h.github.access).toHaveLength(0);
   });
+
+  it('API-06: confirm_absent は役割によらず admin なら通る。admin でない requester は 403', async () => {
+    const id = await h.approvedRequest();
+    const version = await h.orderVersion(id);
+    const adminRequester = await loginWithRoles(h.app, 'qa-admin3@example.com', ['requester'], true);
+    // 投入の記録が無いので通常の投入として進む（権限の判定を通ったことを確かめる）
+    const res = await h.api(
+      'POST',
+      `/api/orders/${id}/handoff`,
+      { orderVersion: version, confirmAbsent: true, reason: '確かめた' },
+      adminRequester,
+    );
+    expect(res.statusCode, res.body).toBe(200);
+    const denied = await h.api(
+      'POST',
+      `/api/orders/${id}/handoff`,
+      { orderVersion: version, confirmAbsent: true, reason: 'x' },
+      requester,
+    );
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().error.code).toBe('ERR-101');
+  });
 });
 
 describe('T-86: 未ログイン・CSRF・JobView', () => {

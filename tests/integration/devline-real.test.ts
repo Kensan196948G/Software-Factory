@@ -864,4 +864,53 @@ describe('1件実走の入口（別プロセス）', () => {
     expect(gh.pulls[0]!.login).toBe(REAL_LOGIN);
     expect(gh.issues).toHaveLength(1);
   });
+
+  it('worker の SIGTERM: 実行中の工程を止めて試行を閉じ、kill を待たずに終わる', async () => {
+    stub.setScenario({ plan: { hang: true } });
+    const { jobId } = await realJob();
+    const secretsPath = writeSecretsFile(mkdtempSync(join(tmpdir(), 'msf-s-')));
+    // node で直接動かす（tsx のラッパーを挟まず、systemd と同じくプロセスへ合図を送る）
+    const child = spawn(process.execPath, ['--import', 'tsx', 'src/worker/main.ts'], {
+      cwd: process.cwd(),
+      env: {
+        PATH: process.env.PATH ?? '',
+        HOME: tmpdir(),
+        USER: process.env.USER ?? '',
+        NODE_ENV: 'test',
+        DATABASE_URL: testDbUrl(),
+        MIGRATION_DATABASE_URL: migrationUrl(),
+        GITHUB_API_URL: gh.apiUrl,
+        DEVLINE_GIT_BASE_URL: gh.gitBaseUrl,
+        DEVLINE_SECRETS_FILE: secretsPath,
+        DEVLINE_WORKER_ENABLED: '1',
+        DEVLINE_RUNNER_KIND: 'docker-claude',
+        DEVLINE_TARGET_REPOS: `${SANDBOX_REPO.name}:${SANDBOX_REPO.repoId}`,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    child.stdout.on('data', (d) => (out += String(d)));
+    child.stderr.on('data', (d) => (out += String(d)));
+    const exited = new Promise<number | null>((done) => child.on('close', (code) => done(code)));
+    for (let i = 0; i < 800 && !readdirSync(stub.dir).some((f) => f.startsWith('hang-')); i += 1) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(
+      readdirSync(stub.dir).some((f) => f.startsWith('hang-')),
+      out,
+    ).toBe(true);
+    const started = Date.now();
+    child.kill('SIGTERM');
+    const code = await exited;
+    expect(code, out).toBe(0);
+    expect(Date.now() - started, out).toBeLessThan(15_000);
+    expect(out).toContain('[worker] stopped');
+    const row = await h.jobRow(jobId);
+    expect(row.state).toBe('planning');
+    expect(row.lease_owner).toBeNull();
+    const attempts = await query<{ outcome: string }>('select outcome from job_attempt where job_id=$1', [jobId]);
+    expect(attempts.rows).toEqual([{ outcome: 'cancelled' }]);
+    expect(out).not.toContain(DUMMY_API_KEY);
+    expect(readdirSync(stub.dir).filter((f) => f.startsWith('hang-'))).toEqual([]);
+  });
 });

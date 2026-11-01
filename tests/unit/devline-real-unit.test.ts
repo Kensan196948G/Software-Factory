@@ -32,7 +32,7 @@ import { evaluateDiff, parseRawDiff, type RawDiffEntry } from '../../src/worker/
 import { detectSecret, isBinaryContent, knownSecretForms, scanAddedText } from '../../src/worker/secret-scan.js';
 import { unmatchedJobNames } from '../../src/worker/github-ci-collector.js';
 import { withStopBanner } from '../../src/worker/real-line.js';
-import { prFollowupOf } from '../../src/shared/devline.js';
+import { classifyIssueResponse, nextRetryAt, prFollowupOf, rateLimitedRetryAt } from '../../src/shared/devline.js';
 import {
   buildClaudeArgs,
   buildDockerRunArgs,
@@ -77,7 +77,15 @@ describe('差分の解析', () => {
     expect(parseRawDiff(raw)).toEqual([
       { srcMode: '100644', dstMode: '100644', srcSha: sha, dstSha: sha, status: 'M', path: 'src/日本語 a.js' },
       { srcMode: '000000', dstMode: '120000', srcSha: '0'.repeat(40), dstSha: sha, status: 'A', path: 'src/link' },
-      { srcMode: '100644', dstMode: '100644', srcSha: sha, dstSha: sha, status: 'R', path: 'src/x.yml', oldPath: '.github/x.yml' },
+      {
+        srcMode: '100644',
+        dstMode: '100644',
+        srcSha: sha,
+        dstSha: sha,
+        status: 'R',
+        path: 'src/x.yml',
+        oldPath: '.github/x.yml',
+      },
     ]);
     expect(parseRawDiff('')).toEqual([]);
   });
@@ -751,5 +759,23 @@ describe('実 PR の後始末の判定', () => {
   it('必須段階でない job の名前を返す', () => {
     const job = (name: string) => ({ name, status: 'completed', conclusion: 'success' });
     expect(unmatchedJobNames([job('unit'), job('unit-tests'), job('e2e')])).toEqual(['unit-tests']);
+  });
+});
+
+describe('混雑の分類と次の試行時刻（#41）', () => {
+  const now = new Date('2026-11-01T00:00:00Z');
+  it('x-ratelimit-remaining: 0 の 403 は rate_limited。ただの 403 は failed', () => {
+    const http = { kind: 'http', status: 403, bodyParsed: false, retryAfterPresent: false } as const;
+    expect(classifyIssueResponse({ ...http, rateLimitExhausted: true })).toBe('rate_limited');
+    expect(classifyIssueResponse({ ...http, rateLimitExhausted: false })).toBe('failed');
+    expect(classifyIssueResponse(http)).toBe('failed');
+  });
+  it('次の試行は max(既定の待ち, Retry-After)。24 時間を上限にする', () => {
+    const byDefault = nextRetryAt(now, 1).getTime();
+    expect(rateLimitedRetryAt(now, 1).getTime()).toBe(byDefault);
+    expect(rateLimitedRetryAt(now, 1, 1).getTime()).toBe(byDefault);
+    expect(rateLimitedRetryAt(now, 1, 3600).getTime()).toBe(now.getTime() + 3600_000);
+    expect(rateLimitedRetryAt(now, 1, 1e12).getTime()).toBe(now.getTime() + 86_400_000);
+    expect(rateLimitedRetryAt(now, 1, -5).getTime()).toBe(byDefault);
   });
 });
