@@ -5,6 +5,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { verifyAuditChain } from '../../src/api/audit.js';
 import { query } from '../../src/api/db.js';
+import { listDevlineTrace } from '../../src/api/devline-jobs.js';
 import { handoffOrder, type DevlineDeps } from '../../src/api/devline-service.js';
 import { createFakeIssueAdapter } from '../../src/api/issue-adapter-fake.js';
 import { handoffToGithub } from '../../src/api/service.js';
@@ -1013,5 +1014,22 @@ describe('T-42: 版はそのままで依頼が無効になった', () => {
     await expect(run(id, version, racing)).rejects.toMatchObject({ code: 'ERR-205' });
     expect(newPosts()).toBe(0);
     expect((await h.intents(id))[0].state).toBe('intent');
+  });
+});
+
+describe('別のリポジトリの結果不明', () => {
+  it('対象を変えた投入は送らず ERR-405。応答と記録で連携先が分かる（読み取りのみ）', async () => {
+    const id = await h.approvedRequest();
+    const { version } = await makeUnknown(id);
+    const other = 'other-owner/other-repo';
+    const deps = h.deps({ targetRepo: other, allowedRepos: [{ name: other, repoId: FAKE_REPO_ID }] });
+    await expect(run(id, version, deps)).rejects.toMatchObject({
+      code: 'ERR-405',
+      details: { handoffState: 'unknown', targetRepo: FAKE_REPO },
+    });
+    expect(newPosts()).toBe(0);
+    const trace = await listDevlineTrace(id);
+    expect(trace.handoffs[0]).toMatchObject({ state: 'unknown', targetRepo: FAKE_REPO });
+    expect(trace).toHaveProperty('currentTargetRepo');
   });
 });

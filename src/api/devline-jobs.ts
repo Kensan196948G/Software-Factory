@@ -23,6 +23,7 @@ import {
   canOperateJob,
   haltTarget,
   acIdsOf,
+  ciResultOf,
   evaluateVerification,
   isOrderCurrent,
   summarizeAc,
@@ -35,6 +36,7 @@ import type {
   JobState,
   HandoffOp,
   HandoffState,
+  CiResult,
   HandoffView,
   JobEvidence,
   JobView,
@@ -292,8 +294,10 @@ function prEvidenceOf(raw: unknown, followup: unknown): JobEvidence['pr'] {
   return { number: pr.number, url: pr.url, source: githubSourceOf(pr.url), ...(closed ? { closed: true } : {}) };
 }
 
-/** job の今の head の受入条件の結果（判定は evaluateVerification と同じ）。検証の記録が無い job は載せない。 */
-async function acEvidenceOf(requestId: string): Promise<Map<string, NonNullable<JobEvidence['ac']>>> {
+/** job の今の head の受入条件と CI の成否（判定は evaluateVerification と同じ）。検証の記録が無い job は載せない。 */
+async function acEvidenceOf(
+  requestId: string,
+): Promise<Map<string, { ac: NonNullable<JobEvidence['ac']>; ciResult: CiResult | null }>> {
   const { rows } = await query<{
     job_id: string;
     head_sha: string | null;
@@ -314,7 +318,7 @@ async function acEvidenceOf(requestId: string): Promise<Map<string, NonNullable<
       where j.request_id = $1`,
     [requestId],
   );
-  const out = new Map<string, NonNullable<JobEvidence['ac']>>();
+  const out = new Map<string, { ac: NonNullable<JobEvidence['ac']>; ciResult: CiResult | null }>();
   for (const jobId of new Set(rows.map((r) => r.job_id))) {
     const own = rows.filter((r) => r.job_id === jobId);
     const first = own[0] as (typeof own)[number];
@@ -329,21 +333,39 @@ async function acEvidenceOf(requestId: string): Promise<Map<string, NonNullable<
       acResults: r.ac_results,
       reportDigest: r.report_digest,
     }));
-    const { acEvidence } = evaluateVerification(records, first.head_sha ?? '', acIdsOf(first.criteria));
+    const verdict = evaluateVerification(records, first.head_sha ?? '', acIdsOf(first.criteria));
+    const { acEvidence } = verdict;
     out.set(jobId, {
-      ...summarizeAc(acEvidence),
-      items: acEvidence.map((a) => ({ acId: a.acId, mark: a.mark, testIds: a.testIds })),
+      ac: {
+        ...summarizeAc(acEvidence),
+        items: acEvidence.map((a) => ({ acId: a.acId, mark: a.mark, testIds: a.testIds })),
+      },
+      ciResult: ciResultOf(verdict),
     });
   }
   return out;
 }
 
-/** 画面の表示用。投入の記録（版の新しい順）と job ごとの証跡の要約を返す。 */
+/**
+ * 今の投入先（画面で「別のリポジトリの結果不明」を区別するため）。選び方は defaultDevlineDeps と同じで、例外は投げない。
+ * 設定から決まらないときは null（画面は別のリポジトリと決めつけない）。
+ */
+function currentTargetRepoOf(): string | null {
+  if (config.devlineRunnerKind === 'docker-claude') {
+    const [only, ...rest] = config.devlineTargetRepos;
+    return only && rest.length === 0 ? only.name : null;
+  }
+  if (config.devlineRunnerKind !== 'fake') return null;
+  return config.githubToken && config.githubRepo ? config.githubRepo : null;
+}
+
+/** 画面の表示用。投入の記録（版の新しい順）、今の投入先、job ごとの証跡の要約を返す。 */
 export async function listDevlineTrace(
   requestId: string,
-): Promise<{ handoffs: HandoffView[]; evidence: Record<string, JobEvidence> }> {
+): Promise<{ handoffs: HandoffView[]; currentTargetRepo: string | null; evidence: Record<string, JobEvidence> }> {
   const intents = await query<{
     order_version: number;
+    target_repo_id: string;
     state: HandoffState;
     op_kind: HandoffOp;
     issue_no: number | null;
@@ -352,12 +374,13 @@ export async function listDevlineTrace(
     next_attempt_at: Date | null;
     updated_at: Date;
   }>(
-    `select order_version, state, op_kind, issue_no, issue_url, attempts, next_attempt_at, updated_at
+    `select order_version, target_repo_id, state, op_kind, issue_no, issue_url, attempts, next_attempt_at, updated_at
        from handoff_intent where request_id = $1 order by order_version desc, created_at desc`,
     [requestId],
   );
   const handoffs = intents.rows.map((i): HandoffView => ({
     orderVersion: i.order_version,
+    targetRepo: i.target_repo_id,
     state: i.state,
     op: i.op_kind,
     issueNo: i.issue_no,
@@ -390,16 +413,18 @@ export async function listDevlineTrace(
   for (const r of rows.rows) {
     // 実 PR・実 CI の項目は記録があるときだけ載せる。fake の job の応答の形は変えない
     const pr = prEvidenceOf(r.pr, r.pr_followup);
+    const ciAc = acOf.get(r.id);
     evidence[r.id] = {
       attempts: r.attempts,
       verificationSources: r.sources,
       hasPrDraft: r.has_pr,
       ...(pr ? { pr } : {}),
       ...(r.sources.includes('github') ? { ciRunUrl: r.ci_url, ciSource: githubSourceOf(r.ci_url) } : {}),
-      ...(acOf.has(r.id) ? { ac: acOf.get(r.id) as NonNullable<JobEvidence['ac']> } : {}),
+      ...(ciAc?.ac ? { ac: ciAc.ac } : {}),
+      ...(ciAc?.ciResult ? { ciResult: ciAc.ciResult } : {}),
     };
   }
-  return { handoffs, evidence };
+  return { handoffs, currentTargetRepo: currentTargetRepoOf(), evidence };
 }
 
 export async function getJobView(jobId: string): Promise<JobView | null> {

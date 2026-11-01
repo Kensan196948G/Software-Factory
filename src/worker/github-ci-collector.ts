@@ -6,7 +6,8 @@
  * 読むのは Actions（Read）と Contents（Read）の範囲。再実行は要求しない。
  *
  * 受入条件の結果は同じ run の artifact `ac-results` だけから読む。読めない（通信の失敗）ときはやり直し、
- * 無い・期限切れ・大きすぎる・形が違う・head が違うときは「証跡の欠落」として記録し、合格にしない。
+ * 無い・期限切れ・大きすぎる・形が違う・repository／run／attempt／head が取得元と違う・AC ID の重複／未知／欠落は
+ * 「証跡の欠落」として記録し、合格にしない。PR 本文や AI の申告からは作らない。
  */
 import { createHash } from 'node:crypto';
 import { assertApiUrlAllowed } from '../api/issue-adapter.js';
@@ -80,15 +81,19 @@ interface WorkflowArtifact {
 
 /** ok: 読めた / problem: 証跡の欠落（記録して止まる）/ retry: 通信の失敗（記録せず次の工程でやり直す）。 */
 type AcRead =
-  { kind: 'ok'; results: AcResult[]; digest: string } | { kind: 'problem'; problem: AcArtifactProblem } | { kind: 'retry' };
+  | { kind: 'ok'; results: AcResult[]; digest: string; problem: 'missing_ac_id' | null }
+  | { kind: 'problem'; problem: AcArtifactProblem }
+  | { kind: 'retry' };
 
-/** run の artifact から使うものを選ぶ（純関数）。同じ run の前の試行のものは使わない。 */
+/** run の artifact から使うものを選ぶ（純関数）。同じ名前の別 run のものと、同じ run の前の試行のものは使わない。 */
 export function selectAcArtifact(
   artifacts: readonly WorkflowArtifact[],
   run: { id: number; head_sha: string; run_started_at?: string | null },
 ): { ok: true; artifact: WorkflowArtifact } | { ok: false; problem: AcArtifactProblem } {
-  const named = artifacts.filter((a) => a.name === AC_ARTIFACT_NAME && a.workflow_run?.id === run.id);
-  if (named.length === 0) return { ok: false, problem: 'missing' };
+  const sameName = artifacts.filter((a) => a.name === AC_ARTIFACT_NAME);
+  if (sameName.length === 0) return { ok: false, problem: 'missing' };
+  const named = sameName.filter((a) => a.workflow_run?.id === run.id);
+  if (named.length === 0) return { ok: false, problem: 'run_mismatch' };
   if (named.some((a) => a.workflow_run?.head_sha !== run.head_sha)) return { ok: false, problem: 'head_mismatch' };
   const startedAt = Date.parse(run.run_started_at ?? '');
   const current = Number.isNaN(startedAt) ? named : named.filter((a) => !(Date.parse(a.created_at ?? '') < startedAt));
@@ -275,7 +280,7 @@ export function createGithubCiCollector(options: GithubCiCollectorOptions): Gith
     }
   }
 
-  async function readAcArtifact(repo: string, run: WorkflowRun): Promise<AcRead> {
+  async function readAcArtifact(repo: string, run: WorkflowRun, acIds: readonly string[]): Promise<AcRead> {
     const params = new URLSearchParams({ name: AC_ARTIFACT_NAME, per_page: '100' });
     const listed = await read<{ artifacts?: WorkflowArtifact[] }>(
       `/repos/${repo}/actions/runs/${run.id}/artifacts?${params.toString()}`,
@@ -290,9 +295,20 @@ export function createGithubCiCollector(options: GithubCiCollectorOptions): Gith
     if (!Buffer.isBuffer(zip)) return { kind: 'problem', problem: zip.problem };
     const raw = readSingleJsonFromZip(zip);
     if (!raw) return { kind: 'problem', problem: 'invalid' };
-    const parsed = parseAcResults(raw, run.head_sha);
+    const parsed = parseAcResults(raw, {
+      repository: repo,
+      runId: run.id,
+      runAttempt: run.run_attempt,
+      headSha: run.head_sha,
+      acIds,
+    });
     if (!parsed.ok) return { kind: 'problem', problem: parsed.problem };
-    return { kind: 'ok', results: parsed.results, digest: createHash('sha256').update(raw).digest('hex') };
+    return {
+      kind: 'ok',
+      results: parsed.results,
+      digest: createHash('sha256').update(raw).digest('hex'),
+      problem: parsed.missingAcIds.length > 0 ? 'missing_ac_id' : null,
+    };
   }
 
   return {
@@ -340,7 +356,7 @@ export function createGithubCiCollector(options: GithubCiCollectorOptions): Gith
       }
       const stages = stagesFromJobs(jobs, headSha, run.conclusion);
       // 通信の失敗では記録しない。delivery は run ごとに1回なので、記録すると欠落のまま固定される
-      const ac = await readAcArtifact(repo, run);
+      const ac = await readAcArtifact(repo, run, ctx.acIds);
       if (ac.kind === 'retry') return null;
       const acResults = ac.kind === 'ok' ? ac.results : [];
       const acDigest = ac.kind === 'ok' ? ac.digest : null;
@@ -362,7 +378,7 @@ export function createGithubCiCollector(options: GithubCiCollectorOptions): Gith
         diagnostics: {
           runConclusion: run.conclusion,
           unmatchedJobs: unmatchedJobNames(jobs),
-          acArtifact: ac.kind === 'ok' ? 'ok' : ac.problem,
+          acArtifact: ac.problem ?? 'ok',
         },
         now: ctx.now,
         correlationId: ctx.correlationId,

@@ -361,14 +361,15 @@ async function assertUpdateTarget(intent: IntentRow, deps: DevlineDeps): Promise
 
 /** 別のリポジトリに結果の分からない投入が残っている依頼は、対象を変えても作らない（作成済みかもしれない）。 */
 async function assertNoUnknownInOtherRepo(requestId: string, repo: string, db: Db = pool): Promise<void> {
-  const { rows } = await query<{ id: string }>(
-    `select id from handoff_intent where request_id=$1 and target_repo_id<>$2 and state in ('sent','unknown') limit 1`,
+  const { rows } = await query<{ target_repo_id: string }>(
+    `select target_repo_id from handoff_intent where request_id=$1 and target_repo_id<>$2 and state in ('sent','unknown') limit 1`,
     [requestId, repo],
     db,
   );
   if (rows[0]) {
     throw new ApiError('ERR-405', '別のリポジトリへの投入の結果が確認できていないため、対象を変えて投入できません', 409, {
       handoffState: 'unknown',
+      targetRepo: rows[0].target_repo_id,
     });
   }
 }

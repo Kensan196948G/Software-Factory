@@ -233,6 +233,8 @@ async function applyVerdict(
                 cause: 'AC 未確認',
                 unconfirmedAcs: verdict.unconfirmedAcs,
                 acMissing: verdict.acMissing,
+                ...(verdict.unknownAcs.length > 0 ? { unknownAcs: verdict.unknownAcs } : {}),
+                ...(verdict.duplicateAcs.length > 0 ? { duplicateAcs: verdict.duplicateAcs } : {}),
                 acArtifact: input.diagnostics?.acArtifact ?? null,
               }
             : {}),

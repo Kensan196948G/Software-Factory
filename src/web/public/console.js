@@ -5613,6 +5613,27 @@ const SF = (function () {
     running: { l: '実行中', c: 'none', m: '…' },
     stopped: { l: '停止', c: 'none', m: '■' },
   };
+  /* CI の成否は必須段階だけで決まる。受入条件の結果（AC の行）と PR 候補の準備完了（job の行）とは別のもの */
+  const DL_CI_RESULT = {
+    success: 'CI 成功（必須段階すべて通過。受入条件は別の行）',
+    failure: 'CI 失敗',
+    incomplete: 'CI 未完了（走り切っていない段階あり）',
+    stale: '今の変更の CI の結果なし（古い SHA の記録のみ）',
+  };
+  const DL_AC_GAP = {
+    missing: 'ac-results がありません',
+    expired: 'ac-results の期限切れ',
+    too_large: 'ac-results が大きすぎます',
+    duplicate: '同じ名前の ac-results が複数あります',
+    invalid: 'ac-results が壊れているか形式が違います',
+    head_mismatch: '別の SHA の結果です',
+    repository_mismatch: '別のリポジトリの結果です',
+    run_mismatch: '別の実行の結果です',
+    attempt_mismatch: '前の試行の結果です',
+    duplicate_ac_id: '同じ AC の結果が複数あります',
+    unknown_ac_id: '注文書に無い AC の結果があります',
+    missing_ac_id: '報告の無い AC があります',
+  };
   const JOB_STATE_LABEL = {
     queued: '待機',
     planning: '計画中',
@@ -5647,6 +5668,7 @@ const SF = (function () {
         failed: false,
         items: [],
         handoffs: [],
+        currentTargetRepo: null,
         evidence: {},
         msg: null,
         absentOpen: false,
@@ -5700,7 +5722,25 @@ const SF = (function () {
     // サーバが新しい版を止めるのは作成だけ。前の版の更新の不明は、次の投入で上書きされる
     return s.handoffs.find((h) => h.op === 'create_issue' && (h.state === 'unknown' || h.state === 'sent')) || null;
   }
+  /* 今の連携先と違うリポジトリの結果不明。サーバは対象を変えた投入と照合を ERR-405 で拒否する。今の連携先が分からなければ決めつけない */
+  function dlOtherRepo(s) {
+    if (!s.currentTargetRepo) return null;
+    return (
+      s.handoffs.find(
+        (h) => (h.state === 'unknown' || h.state === 'sent') && h.targetRepo && h.targetRepo !== s.currentTargetRepo,
+      ) || null
+    );
+  }
   function dlIssueRow(r, s, cur) {
+    const other = dlOtherRepo(s);
+    if (other) {
+      return dlRow(
+        'issue',
+        '注文書の投入',
+        'none',
+        '結果不明・別のリポジトリ（' + E(other.targetRepo) + '）。ここからは照合できません',
+      );
+    }
     if (cur && cur.state === 'succeeded') {
       const verb = cur.op === 'update_issue' ? '更新済み' : '作成済み';
       return dlRow(
@@ -5774,12 +5814,17 @@ const SF = (function () {
     const workKind = stage === 'ok' || job.state === 'verifying' ? 'ok' : stage;
     const ciShown = isDocker && ciKind !== 'fake' && stage === 'running' ? 'running' : ciKind;
     const detail = job.stopDetail || {};
+    const acGap =
+      detail.acArtifact && detail.acArtifact !== 'ok'
+        ? '証跡の欠落（' + (DL_AC_GAP[detail.acArtifact] || '読めない形式') + '）'
+        : '';
     const acStop =
       job.stopReason === 'ci_incomplete' && detail.cause === 'AC 未確認'
         ? 'AC 未確認' +
           (Array.isArray(detail.unconfirmedAcs) && detail.unconfirmedAcs.length
             ? '（' + detail.unconfirmedAcs.join('、') + '）'
-            : '')
+            : '') +
+          (acGap ? '／' + acGap : '')
         : '';
     const note = [
       job.state === 'queued' ? '実行者が動くまで進みません' : '',
@@ -5843,11 +5888,12 @@ const SF = (function () {
               : 'ローカルの連携先の記録のみ（実 GitHub ではありません）'
             : ciKind === 'ok'
               ? srcs.includes('github')
-                ? 'GitHub Actions の記録あり' +
+                ? (DL_CI_RESULT[ev.ciResult] || 'CI の成否は不明') +
+                  '（GitHub Actions の記録）' +
                   (/^https:\/\//.test(ev.ciRunUrl || '')
                     ? '　<a href="' + E(ev.ciRunUrl) + '" target="_blank" rel="noopener noreferrer">実行の記録</a>'
                     : '')
-                : '実 CI の記録あり'
+                : (DL_CI_RESULT[ev.ciResult] || 'CI の成否は不明') + '（実 CI の記録）'
               : '検査の記録はありません',
       ) +
       dlAcRow(ev, isFake || ciKind === 'fake') +
@@ -5892,6 +5938,24 @@ const SF = (function () {
   }
   function dlStatusText(r, s, cur) {
     if (s.busy) return { t: '送信中です。結果が出るまでお待ちください', ng: false };
+    const other = dlOtherRepo(s);
+    if (other) {
+      return {
+        t:
+          '結果不明・別のリポジトリ：' +
+          other.targetRepo +
+          ' への投入（版 ' +
+          other.orderVersion +
+          '）の結果が確認できていません。いまの連携先（' +
+          s.currentTargetRepo +
+          '）からは照合できません。次の手順：' +
+          other.targetRepo +
+          ' に Issue があるかを人が確かめ、管理者が連携先を ' +
+          other.targetRepo +
+          ' に戻してから照合してください',
+        ng: true,
+      };
+    }
     // 版が変わる前の説明（承認し直すと投入できます、など）は残さない
     if (s.msg && (!s.msg.v || s.msg.v === r.__orderVersion)) return s.msg;
     if (cur && cur.state === 'succeeded') {
@@ -5912,6 +5976,8 @@ const SF = (function () {
   }
   function dlButton(r, s, cur) {
     if (cur && cur.state === 'succeeded') return '';
+    // 押してもサーバが ERR-405 で拒否する。案内は状態の行に出す
+    if (dlOtherRepo(s)) return '';
     const pending = !!dlUnresolved(s, cur);
     const v = r.__orderVersion;
     let label = pending
@@ -5948,7 +6014,7 @@ const SF = (function () {
   function dlAbsentHtml(r, s, cur) {
     // 走査が完全で見つからなかったときだけ。サーバも不完全な走査では再作成しない
     const open = dlUnresolved(s, cur);
-    if (!open || open.state !== 'unknown' || !s.msg || s.msg.scanComplete !== true) return '';
+    if (dlOtherRepo(s) || !open || open.state !== 'unknown' || !s.msg || s.msg.scanComplete !== true) return '';
     if (!DL_ABSENT_ROLES.includes(S.role)) {
       return '<p class="hint" style="margin:6px 0 0">作られていないと確定して作り直せるのは、承認者か管理責任者です。</p>';
     }
@@ -6042,6 +6108,7 @@ const SF = (function () {
       if (res) {
         s.items = Array.isArray(res.items) ? res.items : [];
         s.handoffs = Array.isArray(res.handoffs) ? res.handoffs : [];
+        s.currentTargetRepo = res.currentTargetRepo || null;
         s.evidence = res.evidence || {};
       }
       const r = find(id);
@@ -6057,13 +6124,28 @@ const SF = (function () {
     });
     return s.loadP;
   }
+  /* ERR-405 は送信の前の拒否。「作られていない」と言えるのは、記録を読めて、投入の記録に Issue も結果不明も無いときだけ */
+  function dlNotConnected(r, res) {
+    const s = dlOf(r.id);
+    const message = res.message || '';
+    const clean =
+      !!s.loadedAt &&
+      !s.failed &&
+      !(r.__issueNo > 0) &&
+      !(res.details && res.details.handoffState === 'unknown') &&
+      !s.handoffs.some((h) => h.state === 'unknown' || h.state === 'sent' || h.state === 'succeeded' || h.issueNo > 0);
+    return {
+      t: clean
+        ? '開発ライン未接続：' + message + '。Issue は作られていません'
+        : '開発ライン未接続：' + message + '。今回の投入は送っていません。前の投入の結果は下の記録で確かめてください',
+      ng: true,
+    };
+  }
   function dlMessage(r, res) {
     const message = res.message || '';
     switch (res.kind) {
       case 'not_connected':
-        // 別のリポジトリへの投入が結果不明のときは、作られていないとは言えない
-        if (res.details && res.details.handoffState === 'unknown') return { t: '開発ライン未接続：' + message, ng: true };
-        return { t: '開発ライン未接続：' + message + '。Issue は作られていません', ng: true };
+        return dlNotConnected(r, res);
       case 'unknown':
         if (res.details && res.details.scanComplete === true) {
           return {
@@ -6138,6 +6220,8 @@ const SF = (function () {
       s.msg = Object.assign({ v: r.__orderVersion }, dlMessage(r, res));
     }
     await dlLoad(id, true);
+    // 投入の記録を読み直した後で、断定してよいか決める
+    if (!res.ok && res.kind === 'not_connected' && s.msg) s.msg = Object.assign({ v: r.__orderVersion }, dlNotConnected(r, res));
     s.busy = false;
     dlPaint(id);
     dlFocus(id, panel);

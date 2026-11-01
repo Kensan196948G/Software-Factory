@@ -102,13 +102,15 @@ export function buildZip(files: Record<string, string | Buffer>, method: 0 | 8 =
   return Buffer.concat([...locals, cd, eocd]);
 }
 
-/** 既定は AC-1〜AC-10 がすべて passed（注文書に無い番号は判定で無視される）。 */
+/**
+ * 既定は作り物の注文書の AC-1・AC-2 がすべて passed（注文書に無い番号は証跡の欠落になる）。
+ * repository・runId・runAttempt は fake GitHub が配るときに取得元の run の値で埋める。試験で上書きできる（undefined で消せる）。
+ */
 export function acDoc(headSha: string, ac?: unknown[]): unknown {
   return {
     schema: 'msf.ac-results/v1',
     headSha,
-    ac:
-      ac ?? Array.from({ length: 10 }, (_, i) => ({ id: `AC-${i + 1}`, status: 'passed', testIds: [`AC-${i + 1}: fake test`] })),
+    ac: ac ?? Array.from({ length: 2 }, (_, i) => ({ id: `AC-${i + 1}`, status: 'passed', testIds: [`AC-${i + 1}: fake test`] })),
   };
 }
 
@@ -122,6 +124,8 @@ export interface FakeAcArtifact {
   zip?: Buffer;
   expired?: boolean;
   sizeInBytes?: number;
+  /** 一覧の workflow_run.id（同じ名前の別 run）。 */
+  listedRunId?: number;
   /** 一覧の workflow_run.head_sha。 */
   listedHeadSha?: string;
   createdAt?: string;
@@ -467,7 +471,7 @@ export async function startRealGithub(): Promise<RealGithub> {
             size_in_bytes: art.sizeInBytes ?? 512,
             expired: art.expired ?? false,
             created_at: art.createdAt ?? '2099-01-01T00:00:00Z',
-            workflow_run: { id: runId, head_sha: art.listedHeadSha ?? art.head },
+            workflow_run: { id: art.listedRunId ?? runId, head_sha: art.listedHeadSha ?? art.head },
           }
         : null;
       return finish(200, { artifacts: item ? (art?.duplicate ? [item, { ...item, id: runId + 100000 }] : [item]) : [] });
@@ -483,7 +487,13 @@ export async function startRealGithub(): Promise<RealGithub> {
       const art = artifacts.get(Number(blob[1]));
       if (!art) return finish(404, { message: 'Not Found' });
       if (art.blobStatus) return finish(art.blobStatus, {});
-      const zip = art.zip ?? buildZip({ 'ac-results.json': JSON.stringify(art.doc ?? acDoc(art.head)) });
+      const source = {
+        repository: REAL_REPO,
+        runId: String(blob[1]),
+        runAttempt: String(runs.find((r) => r.id === Number(blob[1]))?.run_attempt ?? 1),
+      };
+      const zip =
+        art.zip ?? buildZip({ 'ac-results.json': JSON.stringify({ ...source, ...((art.doc ?? acDoc(art.head)) as object) }) });
       res.writeHead(200, { 'content-type': 'application/zip' });
       res.end(zip);
       return;
