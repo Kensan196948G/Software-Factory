@@ -1,5 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { closePool, query } from '../../src/api/db.js';
@@ -45,6 +48,14 @@ function freePort(): Promise<number> {
   });
 }
 
+/** 試験用の資格情報ファイル（作り物の値。API は投入と同じくファイルから読む）。 */
+function fakeSecretsFile(): string {
+  const file = join(mkdtempSync(join(tmpdir(), 'msf-e2e-secrets-')), 'secrets.env');
+  writeFileSync(file, 'DEVLINE_GITHUB_TOKEN=fake-token-for-local-test\n', { mode: 0o600 });
+  chmodSync(file, 0o600);
+  return file;
+}
+
 async function startApi(): Promise<string> {
   const port = await freePort();
   const url = `http://127.0.0.1:${port}`;
@@ -59,7 +70,7 @@ async function startApi(): Promise<string> {
       GITHUB_API_URL: fake.url,
       GITHUB_TOKEN: 'fake-token-for-local-test',
       GITHUB_REPO: FAKE_REPO,
-      DEVLINE_GITHUB_TOKEN: 'fake-token-for-local-test',
+      DEVLINE_SECRETS_FILE: fakeSecretsFile(),
       PORT: String(port),
       HOST: '127.0.0.1',
       APP_BASE_URL: url,
@@ -408,6 +419,9 @@ test('画面の操作で merge → 成果物 → 配備 → 戻し。完全な S
   expect(await deployOnce()).toMatchObject({ attemptKind: 'deploy', state: 'succeeded' });
   expect(loads).toBe(loadsBefore + 1);
   expect(containers.get('msf-sandbox-verify')).toMatchObject({ digest, version: pull.mergeSha });
+  // 再読込なしで結果が出る（pending / running の間だけ読み直す）。終わったら読み直しの説明は消える
+  await expect(p2.locator('[data-dl-row="deploy"]')).toContainText('配備済み（検証環境）', { timeout: 15_000 });
+  await expect(p2.locator('[data-dl-release-msg]')).toHaveCount(0);
   await reloadAs(page, 'approver');
   const p3 = await openDrawer(page, title);
   await expect(p3.locator('[data-dl-row="deploy"]')).toContainText('配備済み（検証環境）');
@@ -557,7 +571,37 @@ test('merge の結果不明は「照合する」で確定し、作り直さな�
   await expect(p.locator('[data-dl-release-msg]')).toContainText('照合');
   await expect(p.locator('[data-dl-row="merge"]')).toContainText('結果不明');
   const puts = fake.access.filter((a) => a.method === 'PUT').length;
-  await p.locator('[data-dl-release="approve-merge"]').click();
+  await p.locator('[data-dl-release="reconcile-merge"]').click();
   await expect(p.locator('[data-dl-row="merge"]')).toContainText('merge 済み');
   expect(fake.access.filter((a) => a.method === 'PUT').length).toBe(puts);
+});
+
+test('merge の結果不明の照合は読むだけ。未 merge なら承認のボタンへ戻り、押すまで送らない', async ({ page }) => {
+  const title = `release-unmerged-${Date.now()}`;
+  const c = await prReady(page, title);
+  // 送信の応答を失う（merge は届いていない）。直後の読み直しも落とす
+  const responder = (req: { method: string; path: string }): { status: number; destroy: true } | null => {
+    if (req.method === 'PUT' && req.path.endsWith('/merge')) {
+      fake.overrides.unshift(() => ({ status: 0, destroy: true }));
+      return { status: 0, destroy: true };
+    }
+    fake.overrides.unshift(responder);
+    return null;
+  };
+  fake.overrides.push(responder);
+  await reloadAs(page, 'approver');
+  const p = await openDrawer(page, title);
+  await p.locator('[data-dl-release="approve-merge"]').click();
+  await expect(p.locator('[data-dl-row="merge"]')).toContainText('結果不明');
+  const puts = fake.access.filter((a) => a.method === 'PUT').length;
+  await p.locator('[data-dl-release="reconcile-merge"]').click();
+  await expect(p.locator('[data-dl-release-msg]')).toContainText('PR は未 merge でした');
+  await expect(p.locator('[data-dl-row="merge"]')).toContainText('承認待ち');
+  await expect(p.locator('[data-dl-release="reconcile-merge"]')).toHaveCount(0);
+  expect(fake.access.filter((a) => a.method === 'PUT').length).toBe(puts);
+  // 人が押して初めて送る
+  await p.locator('[data-dl-release="approve-merge"]').click();
+  await expect(p.locator('[data-dl-row="merge"]')).toContainText('merge 済み');
+  expect(fake.access.filter((a) => a.method === 'PUT').length).toBe(puts + 1);
+  expect(c.pr).toBeGreaterThan(0);
 });

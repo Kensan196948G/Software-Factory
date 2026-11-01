@@ -26,19 +26,39 @@ const HEAD = 'a'.repeat(40);
 const IMAGE = `sha256:${'b'.repeat(64)}`;
 const TOKEN = 'dummy-not-a-secret';
 
+interface TarEntry {
+  name: string;
+  data?: string | Buffer;
+  type?: string;
+  prefix?: string;
+  magic?: string;
+  /** ヘッダの size を中身と違う値にする。 */
+  size?: number;
+}
+
+/** 1 項目分のブロック。checksum は実物の tar と同じ規則で付ける。 */
+function tarEntry(e: TarEntry): Buffer {
+  const data = Buffer.from(e.data ?? '');
+  const size = e.size ?? data.length;
+  const header = Buffer.alloc(512);
+  header.write(e.name, 0, 100, 'utf8');
+  header.write('0000644\0', 100);
+  header.write(`${size.toString(8).padStart(11, '0')}\0`, 124);
+  header.write(e.type ?? '0', 156, 1, 'latin1');
+  header.write(e.magic ?? 'ustar\x0000', 257, 'latin1');
+  if (e.prefix) header.write(e.prefix, 345, 155, 'utf8');
+  header.fill(0x20, 148, 156);
+  let sum = 0;
+  for (const b of header) sum += b;
+  header.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 'latin1');
+  return Buffer.concat([header, data, Buffer.alloc((512 - (data.length % 512)) % 512)]);
+}
+
+const tarRaw = (entries: TarEntry[]): Buffer => Buffer.concat([...entries.map(tarEntry), Buffer.alloc(1024)]);
+
 /** docker save の形に近い最小の tar（manifest.json だけが読まれる）。 */
 function tarOf(files: Record<string, string | Buffer>): Buffer {
-  const parts: Buffer[] = [];
-  for (const [name, content] of Object.entries(files)) {
-    const data = Buffer.from(content);
-    const header = Buffer.alloc(512);
-    header.write(name, 0, 100, 'utf8');
-    header.write('0000644\0', 100);
-    header.write(`${data.length.toString(8).padStart(11, '0')}\0`, 124);
-    parts.push(header, data, Buffer.alloc((512 - (data.length % 512)) % 512));
-  }
-  parts.push(Buffer.alloc(1024));
-  return Buffer.concat(parts);
+  return tarRaw(Object.entries(files).map(([name, data]) => ({ name, data })));
 }
 
 const goodTar = (tag = 'sandbox-artifact:ci', extra: Record<string, string> = {}): Buffer =>
@@ -305,6 +325,165 @@ describe('純関数', () => {
         p(tarOf({ 'manifest.json': JSON.stringify([{ RepoTags: ['sandbox-artifact:ci', 'victim:latest'] }]) })),
       ),
     ).toBe(false);
+  });
+
+  describe('tar の全体の走査（docker load と読み違えない）', () => {
+    const p = (b: Buffer): string => {
+      const f = join(dir, `${randomBytes(4).toString('hex')}.tar`);
+      writeFileSync(f, b);
+      return f;
+    };
+    const good = JSON.stringify([{ Config: `blobs/sha256/${IMAGE.slice(7)}`, RepoTags: ['sandbox-artifact:ci'], Layers: [] }]);
+    const evil = JSON.stringify([{ Config: `blobs/sha256/${IMAGE.slice(7)}`, RepoTags: ['victim:latest'], Layers: [] }]);
+    const pax = (records: Record<string, string>): string =>
+      Object.entries(records)
+        .map(([k, v]) => {
+          const body = ` ${k}=${v}\n`;
+          let length = body.length + 1;
+          while (`${length}${body}`.length !== length) length = `${length}${body}`.length;
+          return `${length}${body}`;
+        })
+        .join('');
+    const passes = (entries: TarEntry[]): boolean => tarHasOnlyExpectedTag(p(tarRaw(entries)));
+
+    it('受ける形: 先頭の ./、prefix の別ディレクトリ、manifest に当たらない拡張ヘッダ、リンクの ../', () => {
+      expect(passes([{ name: './manifest.json', data: good }])).toBe(true);
+      expect(
+        passes([
+          { name: 'x/manifest.json', data: evil },
+          { name: 'manifest.json', data: good },
+        ]),
+      ).toBe(true);
+      expect(
+        passes([
+          { name: 'PaxHeaders/long', type: 'x', data: pax({ path: `blobs/${'a'.repeat(120)}`, mtime: '1' }) },
+          { name: 'short', data: 'body' },
+          { name: 'pax_global', type: 'g', data: pax({ comment: 'x' }) },
+          { name: '././@LongLink', type: 'L', data: `layers/${'b'.repeat(120)}\0` },
+          { name: 'short2', data: 'body' },
+          { name: 'aaa/layer.tar', type: '2' },
+          { name: 'manifest.json', data: good },
+        ]),
+      ).toBe(true);
+    });
+
+    it('2 つ目の manifest.json を拒否する（前後どちらでも、書き方を変えても）', () => {
+      expect(
+        passes([
+          { name: 'manifest.json', data: good },
+          { name: 'manifest.json', data: evil },
+        ]),
+      ).toBe(false);
+      expect(
+        passes([
+          { name: 'manifest.json', data: evil },
+          { name: 'manifest.json', data: good },
+        ]),
+      ).toBe(false);
+      expect(
+        passes([
+          { name: 'manifest.json', data: good },
+          { name: './manifest.json', data: evil },
+        ]),
+      ).toBe(false);
+      expect(
+        passes([
+          { name: 'manifest.json', data: good },
+          { name: './/./manifest.json', data: evil },
+        ]),
+      ).toBe(false);
+    });
+
+    it('ustar の prefix で作った manifest.json を見落とさない', () => {
+      expect(
+        passes([
+          { name: 'manifest.json', data: good },
+          { name: 'manifest.json', prefix: '.', data: evil },
+        ]),
+      ).toBe(false);
+      expect(
+        passes([
+          { name: 'evil.txt', prefix: '..', data: 'x' },
+          { name: 'manifest.json', data: good },
+        ]),
+      ).toBe(false);
+      // GNU の magic の prefix 欄は名前ではない
+      expect(
+        passes([
+          { name: 'other', prefix: 'ignored', magic: 'ustar  \0', data: 'x' },
+          { name: 'manifest.json', data: good },
+        ]),
+      ).toBe(true);
+    });
+
+    it.each(['x', 'L'])('拡張ヘッダ %s で manifest に当たる項目を拒否する', (type) => {
+      const data = type === 'x' ? pax({ path: 'manifest.json' }) : 'manifest.json\0';
+      expect(
+        passes([
+          { name: 'meta', type, data },
+          { name: 'other', data: evil },
+          { name: 'manifest.json', data: good },
+        ]),
+      ).toBe(false);
+      expect(
+        passes([
+          { name: 'manifest.json', data: good },
+          { name: 'meta', type, data },
+          { name: 'other', data: evil },
+        ]),
+      ).toBe(false);
+      // ヘッダの名前が manifest で、拡張ヘッダが別の名前にするものも
+      const other = type === 'x' ? pax({ path: 'other' }) : 'other\0';
+      expect(
+        passes([
+          { name: 'meta', type, data: other },
+          { name: 'manifest.json', data: evil },
+          { name: 'manifest.json', data: good },
+        ]),
+      ).toBe(false);
+    });
+
+    it('g の path、x と g の size と sparse、形の違う PAX を拒否する', () => {
+      const last = { name: 'manifest.json', data: good };
+      expect(passes([{ name: 'g', type: 'g', data: pax({ path: 'manifest.json' }) }, last])).toBe(false);
+      expect(passes([{ name: 'g', type: 'g', data: pax({ size: '0' }) }, last])).toBe(false);
+      expect(passes([{ name: 'x', type: 'x', data: pax({ size: '0' }) }, { name: 'a', data: 'b' }, last])).toBe(false);
+      expect(passes([{ name: 'x', type: 'x', data: pax({ 'GNU.sparse.major': '1' }) }, { name: 'a', data: 'b' }, last])).toBe(
+        false,
+      );
+      expect(passes([{ name: 'x', type: 'x', data: 'broken' }, { name: 'a', data: 'b' }, last])).toBe(false);
+      // K はリンク名だけ。中身は検査しないが、次の項目の名前は変えない
+      expect(passes([{ name: 'k', type: 'K', data: '../x\0' }, { name: 'link', type: '2' }, last])).toBe(true);
+    });
+
+    it('.. と絶対パスを拒否する（拡張ヘッダの名前も）', () => {
+      const last = { name: 'manifest.json', data: good };
+      for (const name of ['../evil', 'a/../../evil', '/etc/evil', 'a/..']) {
+        expect(passes([{ name, data: 'x' }, last]), name).toBe(false);
+        expect(passes([{ name: 'x', type: 'x', data: pax({ path: name }) }, { name: 'a', data: 'x' }, last]), name).toBe(false);
+        expect(passes([{ name: 'l', type: 'L', data: `${name}\0` }, { name: 'a', data: 'x' }, last]), name).toBe(false);
+      }
+    });
+
+    it('読み手で項目の境界が変わるものと壊れた tar を拒否する', () => {
+      const last = { name: 'manifest.json', data: good };
+      // ディレクトリの size は docker の読み手が読み飛ばさない
+      expect(passes([{ name: 'dir/', type: '5', size: 512, data: '' }, last])).toBe(false);
+      expect(passes([{ name: 'manifest.json', type: '2' }, last])).toBe(false);
+      expect(passes([{ name: 'manifest.json', type: '5' }, last])).toBe(false);
+      expect(passes([{ name: 'sparse', type: 'S', data: 'x' }, last])).toBe(false);
+      expect(passes([{ name: 'x', type: 'x', data: pax({ mtime: '1' }) }])).toBe(false);
+      // 終端の後ろの項目
+      const hidden = Buffer.concat([tarRaw([last]), tarEntry({ name: 'manifest.json', data: evil }), Buffer.alloc(1024)]);
+      expect(tarHasOnlyExpectedTag(p(hidden))).toBe(false);
+      // 壊れた checksum、途中で切れた中身、端数
+      const bad = tarRaw([last]);
+      bad[0] = 0x4d;
+      expect(tarHasOnlyExpectedTag(p(bad))).toBe(false);
+      expect(tarHasOnlyExpectedTag(p(tarRaw([last]).subarray(0, 600)))).toBe(false);
+      expect(tarHasOnlyExpectedTag(p(Buffer.concat([tarRaw([last]), Buffer.alloc(10)])))).toBe(true);
+      expect(tarHasOnlyExpectedTag(p(Buffer.concat([tarEntry(last), Buffer.alloc(10, 1)])))).toBe(false);
+    });
   });
 
   it('起動の引数に host mount・socket・privileged・host network・公開ポートが無い', () => {

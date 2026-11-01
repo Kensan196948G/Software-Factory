@@ -139,7 +139,6 @@ DEVLINE_GITHUB_TOKEN=
 | `DEVLINE_CI_POLL_MS`     | なし（15〜30秒）                | 1件実走の入口の CI の問い合わせ間隔                                                       |
 | `DEVLINE_DEPLOY_ENABLED` | なし                            | `1` で worker が成果物の作成と検証環境への配備を行う                                      |
 | `DEVLINE_ARTIFACT_DIR`   | OS の一時領域                   | CI の成果物を展開する場所。tmpfs でない、空きのあるところ（最大で zip 1 GiB + tar 3 GiB） |
-| `DEVLINE_GITHUB_TOKEN`   | なし                            | `DEVLINE_SECRETS_FILE` を置かない場合の merge の資格情報（`GITHUB_TOKEN` は使わない）     |
 
 ## 7. 1件実走の手順（CTO）
 
@@ -274,19 +273,23 @@ jobs:
 
 契約は `docs/devline/api-contract.md`、判定は `src/shared/devline-release.ts`。「検証環境への配備」は本番公開ではない。工場本体の Staging 更新（`pnpm ops:release`）とも別物。本番公開の経路は作らない（SC-02、SC-03 が未決）。
 
-1. **merge**: 承認者が画面で「PR を承認して merge する」を押す。サーバが検査し、`DEVLINE_GITHUB_TOKEN` で `sha` を渡して squash で merge する。AI も worker も呼べない。
-2. **同一性**: merge の commit の tree が、CI で検査した head の tree と一致することを確かめる。違えば配備へ進めない（base が動いた場合）。
+1. **merge**: 承認者が画面で「PR を承認して merge する」を押す。サーバが検査し、`DEVLINE_SECRETS_FILE` の `DEVLINE_GITHUB_TOKEN`（API はこれだけを読む。環境変数のトークンは使わない）で `sha` を渡して squash で merge する。AI も worker も呼べない。送信の前に compare API で PR の head が base の最新を含むことを確かめ、遅れていれば送らず「base が進みました。AI の修正か更新が必要です」（`base_behind`）で拒否する。読めなければ送らない。
+   結果不明（`unknown`、落ちた `sending`）のボタンは「結果を照合する」で、PR を読むだけ（merge を送らず、承認を作らず、取消も書きかえない）。merge 済みなら記録する。開いていて未 merge なら `none` へ戻し（`not_merged`）、人が「PR を承認して merge する」を押して初めて送る。404、読めない、許可の設定で確かめられないときは `unknown` のまま残す。
+2. **同一性**: merge の commit の tree が、CI で検査した head の tree と一致することを確かめる。違えば配備へ進めない（送信の前の確認と送信の間に base が動いた場合の保険）。
 3. **成果物**: worker は CI で検査した成果物を取得する（このホストで `docker build` しない。fallback も無い）。
    - 使う run は merge の承認で固定する（`release.verified_run_id` と `verified_run_attempt`。合否の根拠にした `verification` と同じ run）。
    - 取得は `GET /repos/{repo}/actions/runs/{run}/artifacts?name=image`。artifact の `workflow_run.id` と `head_sha` を照合し、複数あれば止まる。
    - zip はファイルへストリームで保存し（上限 1 GiB）、`image.tar`（上限 3 GiB）と `image-meta.json` だけを展開する。余分なファイル、zip64、暗号化、CRC の不一致は拒否する。302 の先へトークンを送らない。
-   - meta（`msf.image/v1`）の `repository`、`runId`、`runAttempt`、`headSha` を照合し、`tarSha256` を実際の tar と比べる。tar の `manifest.json` のタグが `sandbox-artifact:ci` だけであることも確かめる（`docker load` が他のタグを上書きしないため）。
+   - meta（`msf.image/v1`）の `repository`、`runId`、`runAttempt`、`headSha` を照合し、`tarSha256` を実際の tar と比べる。tar は全体のヘッダを走査し（POSIX の prefix と PAX / GNU の長い名前を含む）、`manifest.json` がちょうど1つで、タグが `sandbox-artifact:ci` だけであることを確かめる（`docker load` が他のタグを上書きしないため）。複数の manifest、拡張ヘッダで manifest に当たる項目、`..` や絶対パスの名前、PAX の `size` と sparse、中身のある種類の違うヘッダ、壊れた checksum、終端の後ろの項目は `artifact_mismatch` で止まる。リンクの指す先は見ない（`docker save` の層が `../` を使う）。
    - `docker load` の出力の ref を `docker image inspect` し、ID が `imageId` と一致することを確かめる。合わなければ `artifact_mismatch` で、配備の承認へ進めない。
    - 通ったら `msf-sandbox-verify:<merge SHA>` のタグを付け、一時コンテナ（`msf-sandbox-smoke`）で health と smoke を確かめる。`release` に digest（イメージ ID）、run、試行、artifact ID、`tarSha256` を残す。
    - Sandbox の main に PR #5 が入っていない古い run は artifact が無いので `artifact_missing` で止まる。
 4. **配備**: 承認者が SHA、digest、環境を見て「検証環境へ配備する」を押す。merge だけでは配備しない。worker がそのイメージ ID をそのまま起動する（作り直さない）。
-5. **確認と自動の戻し**: `/healthz` の version が SHA と一致し、`/length?text=abc` が 3 なら `staged`。失敗すれば前の digest へ自動で戻し、失敗として記録する。
+5. **確認と自動の戻し**: `/healthz` の version が SHA と一致し、`/length?text=abc` が 3 なら `staged`。失敗すれば前の digest へ自動で戻し、失敗として記録する。配備先に触る前の失敗（イメージが無い、版の失効、docker の確認の例外など）は、環境の版と URL をそのまま引き継ぐ。触った後の例外と取り直しの試行は、いま何が動いているか分からないので不明（空）にする。
 6. **戻し**: 承認者が理由を書いて「前の版へ戻す」を押す。job は `staged` のまま、記録に残す。
+7. **画面の読み直し**: 成果物の取得、配備、戻しの試行が pending / running の間だけ、開いている欄を約 4 秒ごとに読み直す（上限は約 10 分。閉じたら止める）。
+
+worker の止まり方: 配備の工程は AI の工程の例外と別に受ける（`workerTick`）。SIGTERM の後は次の試行を取らず、配備先に触る前なら試行を pending へ戻す。動いている docker の命令は待つ。lease は 120 秒で、動いている間は 30 秒ごとに延ばすので、途中で落ちた試行が環境を塞ぐのは最大 120 秒。残りは `security-residuals.md` の R-10。
 
 コンテナは `msf-sandbox-verify`、ラベル `msf.devline.deploy=1`、ネットワーク `msf-devline-verify-net`（`--internal`、`enable_icc=false`、ラベル付き）、`--read-only`、`--tmpfs /tmp`、`--cap-drop ALL`、`--security-opt no-new-privileges`、`--memory 256m`、`--pids-limit 128`。host mount、Docker socket、privileged、公開ポートは無い（`deployRunArgs` を試験で固定）。内部ネットワークでは `-p` が効かないので、このホストからコンテナの IP で確かめる（URL は起動のたびに変わることがあり、画面は最新を出す）。外部へは出られない。同じ名前でラベルの無いコンテナかネットワークがあれば失敗にし、消さない。
 

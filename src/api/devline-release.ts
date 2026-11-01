@@ -5,13 +5,15 @@
  * - job の遷移表に approved からの戻りが無いので、merge が確定するまで job は pr_ready のまま置く。
  *   承認と送信の途中経過は release と release_approval に残し、確定したら同じトランザクションで
  *   pr_ready → approved → merged と進める（行き止まりの approved を作らない）。
- * - merge の結果不明は作り直さない。押し直しは PR を読んで照合し、merge 済みならそれを記録する。
+ * - merge の結果不明は作り直さない。照合は読み取りだけで、merge も承認の追加もしない。
+ *   merge 済みならそれを記録し、未 merge なら結果不明を解消して、人の新しい押下を待つ。
  * - 外部呼び出しをトランザクションの中で行わない（appendAuditTx が advisory lock を取るため）。
  */
 import type { PoolClient } from 'pg';
 import { config } from './config.js';
 import { query, withTransaction } from './db.js';
 import { appendAudit, appendAuditTx } from './audit.js';
+import { DEFAULT_SECRETS_PATH, RealLineRefused, loadDevlineGithubToken } from './devline-real-config.js';
 import { ApiError, Errors } from './http.js';
 import { getJobView, insertJobEvent, isRedOrder, type JobRow } from './devline-jobs.js';
 import { acIdsOf } from './devline-verification.js';
@@ -37,8 +39,8 @@ import {
 import type { Status } from '../shared/domain.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** 送信中の印がこれより古ければ、落ちた処理の残りとして照合へ進む。読み取り3回と送信（各 30 秒）より長くする。 */
-const MERGE_SENDING_FRESH_MS = 180_000;
+/** 送信中の印がこれより古ければ、落ちた処理の残りとして照合へ進む。読み取り（送信の前に4回、後に3回）と送信（各 30 秒）より長くする。 */
+const MERGE_SENDING_FRESH_MS = 300_000;
 
 export interface ReleaseDeps {
   merge: PrMergeAdapter;
@@ -49,22 +51,16 @@ export interface ReleaseDeps {
 
 /**
  * 既定の依存。資格情報は呼ばれたときに読む。無ければ未接続（fake の成功へ置きかえない）。
- * GITHUB_TOKEN は使わない。DEVLINE_SECRETS_FILE か DEVLINE_GITHUB_TOKEN だけ。
+ * 投入（devline-handoff.ts）と同じ読み方で、GitHub のトークンだけを読む。AI のキーを API のプロセスへ入れない。
  */
-export async function defaultReleaseDeps(): Promise<ReleaseDeps> {
-  let token = process.env.DEVLINE_GITHUB_TOKEN ?? '';
-  const { DEFAULT_SECRETS_PATH, loadDevlineSecrets } = await import('../worker/real-line.js');
-  // worker と同じ既定のファイルを見る（環境変数のトークンがあれば、それを優先しない）
-  const file = process.env.DEVLINE_SECRETS_FILE ?? (token ? undefined : DEFAULT_SECRETS_PATH);
-  if (file) {
-    try {
-      token = loadDevlineSecrets(file, config.nodeEnv).githubToken;
-    } catch {
-      throw new ApiError('ERR-405', '開発ライン未接続：merge に使う資格情報を読めません（管理者に確認してください）', 409);
-    }
+export function defaultReleaseDeps(): ReleaseDeps {
+  let token: string;
+  try {
+    token = loadDevlineGithubToken(config.devlineSecretsFile || DEFAULT_SECRETS_PATH, config.nodeEnv);
+  } catch (err) {
+    const why = err instanceof RealLineRefused ? err.message : '資格情報を読めません';
+    throw new ApiError('ERR-405', `開発ライン未接続：merge に使う資格情報を読めません（${why}）`, 409);
   }
-  if (!token)
-    throw new ApiError('ERR-405', '開発ライン未接続：merge に使う資格情報がありません（管理者に確認してください）', 409);
   return {
     merge: createGithubPrMergeAdapter({ token, apiUrl: config.githubApiUrl, nodeEnv: config.nodeEnv }),
     allowedRepos: config.devlineTargetRepos,
@@ -243,6 +239,7 @@ const REFUSAL_STATUS: Record<Refusal['refusal'], () => ApiError> = {
   no_pr: () => Errors.approvalRequired('実 PR の記録がありません'),
   in_progress: () => Errors.conflict('別の操作が進めています。少し待って結果を確かめてください'),
   no_approval: () => Errors.invalidTransition('取り消せる承認がありません'),
+  not_unknown: () => Errors.conflict('結果不明の merge はありません'),
   expired: () => Errors.approvalRequired('承認は失効しました。注文書の版を上げて作り直してください'),
   sha_mismatch: () => Errors.approvalRequired('SHA が記録と違います'),
   digest_mismatch: () => Errors.approvalRequired('digest が記録と違います'),
@@ -281,7 +278,7 @@ const MERGE_ACTION = 'job.merge_approve';
 /* ───────────────────────────── merge ───────────────────────────── */
 
 export async function approveMerge(
-  input: { jobId: string; headSha: string },
+  input: { jobId: string; headSha: string; reconcileOnly?: boolean },
   actor: Actor,
   correlationId: string,
   depsIn?: ReleaseDeps,
@@ -297,7 +294,7 @@ export async function approveMerge(
       correlationId,
     );
   }
-  const deps = depsIn ?? (await defaultReleaseDeps());
+  const deps = depsIn ?? defaultReleaseDeps();
   const now = deps.now();
 
   const step = await withTransaction(async (client) => {
@@ -331,15 +328,26 @@ export async function approveMerge(
     if (decision.mode === 'already_merged') {
       return { kind: 'already' as const, needsTree: release?.tree_match === null, release: release as ReleaseRow };
     }
-    // 照合だけのとき（条件を満たさない結果不明）は、新しい承認を残さず、前の承認者も書きかえない
-    const approving = decision.mode === 'send' || decision.maySend;
-    if (!approving) {
+    // 照合は読み取りだけ。新しい承認を残さず、前の承認者も取消も書きかえない
+    if (decision.mode === 'reconcile') {
       const { rows } = await client.query<ReleaseRow>(
         `update release set merge_state='sending', merge_sending_at=$2, merge_detail=null, fencing_token=fencing_token+1, updated_at=$2
           where id=$1 returning *`,
         [(release as ReleaseRow).id, now],
       );
-      return { kind: 'proceed' as const, mode: 'reconcile' as const, release: rows[0] as ReleaseRow };
+      return { kind: 'reconcile' as const, release: rows[0] as ReleaseRow };
+    }
+    // 照合のボタンが merge を送ることはない（別のタブで結果不明が解消された後の押下など）
+    if (input.reconcileOnly === true) {
+      return {
+        kind: 'refused' as const,
+        refusal: {
+          ok: false as const,
+          refusal: 'not_unknown' as const,
+          message:
+            '結果不明の merge はありません。読み直して、merge するなら承認のボタンを押してください（merge は送っていません）',
+        },
+      };
     }
     const row = await upsertRelease(client, job, release, pr as { number: number }, input.headSha, actor.userId, run, now);
     const inserted = await appendMergeApproval(client, job, row, input.headSha, actor, run, correlationId, now);
@@ -366,7 +374,7 @@ export async function approveMerge(
       correlationId,
       diff: { headSha: input.headSha, mode: decision.mode, prNumber: row.pr_number },
     });
-    return { kind: 'proceed' as const, mode: decision.mode, release: row };
+    return { kind: 'send' as const, release: row };
   });
 
   if (step.kind === 'refused') return deny(MERGE_ACTION, input.jobId, step.refusal, actor, correlationId);
@@ -378,7 +386,8 @@ export async function approveMerge(
     }
     return { job: (await getJobView(input.jobId)) as JobView, alreadyDone: true, mergeState: 'merged' };
   }
-  return sendMerge(step.release, step.mode, input.headSha, actor, correlationId, deps);
+  if (step.kind === 'reconcile') return reconcileMerge(step.release, input.headSha, actor, correlationId, deps);
+  return sendMerge(step.release, input.headSha, actor, correlationId, deps);
 }
 
 async function upsertRelease(
@@ -526,6 +535,9 @@ const REJECT_MESSAGE: Record<string, string> = {
   approval_expired: '承認の後で注文書の版が変わりました。merge は送っていません（承認は失効しました）',
   verification_changed: '承認の後で検査の結果が変わりました。merge は送っていません（承認は失効しました）',
   approval_revoked: '承認は取り消されています。merge は送っていません',
+  base_behind: 'base が進みました。AI の修正か更新が必要です（merge は送っていません）',
+  not_merged:
+    'PR は未 merge でした。merge は送っていません。merge するなら「PR を承認して merge する」を押してください（新しい判断として扱います）',
 };
 
 async function reject(
@@ -540,9 +552,54 @@ async function reject(
   throw new ApiError('ERR-202', message, 409, { mergeState: 'rejected', detail });
 }
 
-async function sendMerge(
+function mergeUnknownError(): ApiError {
+  return new ApiError(
+    'ERR-304',
+    'merge の結果を確認できませんでした。もう一度押すと PR を読んで照合します（merge は送りません）',
+    502,
+    {
+      mergeState: 'unknown',
+    },
+  );
+}
+
+/** 結果不明を解消する。PR は開いていて未 merge。送らず、次の押下を新しい判断として受ける。 */
+async function markNotMerged(release: ReleaseRow, actor: Actor, correlationId: string, now: Date): Promise<void> {
+  await withTransaction(async (client) => {
+    await client.query(
+      `update release set merge_state='none', merge_detail='not_merged', merge_sending_at=null, fencing_token=fencing_token+1, updated_at=$2
+        where id=$1 and merge_state='sending'`,
+      [release.id, now],
+    );
+    await insertJobEvent(client, {
+      jobId: release.job_id,
+      at: now,
+      kind: 'merge_not_merged',
+      actorType: 'human',
+      actorUserId: actor.userId,
+      correlationId,
+      detail: { headSha: release.head_sha },
+    });
+    await appendAuditTx(client, {
+      action: 'job.merge_result',
+      targetType: 'job',
+      targetId: release.job_id,
+      result: 'success',
+      actorUserId: actor.userId,
+      actorName: actor.displayName,
+      role: actor.role,
+      correlationId,
+      diff: { mergeState: 'none', detail: 'not_merged' },
+    });
+  });
+}
+
+/**
+ * 結果不明の照合。GitHub へは読むだけで、merge を送らない。取消があっても承認を作り直さない。
+ * 確かめられないこと（読めない、404、許可の設定）は unknown のまま残す。実際には merge 済みかもしれない。
+ */
+async function reconcileMerge(
   release: ReleaseRow,
-  mode: 'send' | 'reconcile',
   headSha: string,
   actor: Actor,
   correlationId: string,
@@ -550,29 +607,47 @@ async function sendMerge(
 ): Promise<ReleaseActionResult> {
   const unknown = async (detail: string): Promise<never> => {
     await markMerge(release, 'unknown', detail, actor, correlationId, deps.now());
-    throw new ApiError(
-      'ERR-304',
-      'merge の結果を確認できませんでした。もう一度押すと PR を読んで照合します（作り直しません）',
-      502,
-      {
-        mergeState: 'unknown',
-      },
-    );
+    throw mergeUnknownError();
   };
+  if (!deps.allowedRepos.some((r) => r.name === release.repo)) return unknown('repo_refused');
+  const read = await deps.merge.getPull({ repo: release.repo, number: release.pr_number }, signalOf(deps));
+  if (!read.ok) return unknown('pr_unreadable');
+  const pull = read.value;
+  if (!pull) return unknown('pr_unreadable');
+  if (pull.merged) return confirmMerged(release, pull, actor, correlationId, deps);
+  if (pull.state === 'closed') return reject(release, 'pr_closed', actor, correlationId, deps);
+  if (pull.state !== 'open') return unknown('bad_response');
+  if (pull.headSha !== headSha) return reject(release, 'head_changed', actor, correlationId, deps);
+  await markNotMerged(release, actor, correlationId, deps.now());
+  throw new ApiError('ERR-202', REJECT_MESSAGE.not_merged as string, 409, { mergeState: 'none', detail: 'not_merged' });
+}
 
+async function sendMerge(
+  release: ReleaseRow,
+  headSha: string,
+  actor: Actor,
+  correlationId: string,
+  deps: ReleaseDeps,
+): Promise<ReleaseActionResult> {
   if (!deps.allowedRepos.some((r) => r.name === release.repo)) return reject(release, 'repo_refused', actor, correlationId, deps);
   const read = await deps.merge.getPull({ repo: release.repo, number: release.pr_number }, signalOf(deps));
-  // 照合の途中なら merge 済みかもしれない。初回は送っていないので、未送信と言える
-  if (!read.ok) return mode === 'send' ? reject(release, 'pr_unreadable', actor, correlationId, deps) : unknown('pr_unreadable');
+  // ここまで送っていないので、未送信と言える
+  if (!read.ok) return reject(release, 'pr_unreadable', actor, correlationId, deps);
   const pull = read.value;
   if (!pull) return reject(release, 'pr_closed', actor, correlationId, deps);
   if (pull.merged) return confirmMerged(release, pull, actor, correlationId, deps);
   if (pull.state !== 'open') return reject(release, 'pr_closed', actor, correlationId, deps);
   if (pull.headSha !== headSha) return reject(release, 'head_changed', actor, correlationId, deps);
   const own = await isOwnPull(pull, release, deps);
-  if (own === 'unknown')
-    return mode === 'send' ? reject(release, 'pr_unreadable', actor, correlationId, deps) : unknown('pr_unreadable');
+  if (own === 'unknown') return reject(release, 'pr_unreadable', actor, correlationId, deps);
   if (own !== 'own') return reject(release, own, actor, correlationId, deps);
+  // merge の後の tree の確認では取り返しがつかない。base の最新を含まない head は送らない
+  const compared = await deps.merge.getBehindBy(
+    { repo: release.repo, base: pull.baseRef as string, head: headSha },
+    signalOf(deps),
+  );
+  if (!compared.ok || compared.value === null) return reject(release, 'pr_unreadable', actor, correlationId, deps);
+  if (compared.value > 0) return reject(release, 'base_behind', actor, correlationId, deps);
   const stale = await recheckBeforeSend(release, headSha);
   if (stale) return reject(release, stale, actor, correlationId, deps);
 
@@ -592,7 +667,8 @@ async function sendMerge(
   // 応答を失った。送り直さず読む
   const again = await deps.merge.getPull({ repo: release.repo, number: release.pr_number }, signalOf(deps));
   if (again.ok && again.value?.merged) return confirmMerged(release, again.value, actor, correlationId, deps);
-  return unknown(sent.reason);
+  await markMerge(release, 'unknown', sent.reason, actor, correlationId, deps.now());
+  throw mergeUnknownError();
 }
 
 async function isOwnPull(
@@ -1071,6 +1147,8 @@ const PUBLIC_DETAILS = new Set([
   'approval_expired',
   'verification_changed',
   'approval_revoked',
+  'base_behind',
+  'not_merged',
 ]);
 
 /** 証跡（job ごと）。トークンも応答の本文も持たない。release が無い job も AC だけは返す。 */

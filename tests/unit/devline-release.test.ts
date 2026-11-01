@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createGithubPrMergeAdapter } from '../../src/api/pr-adapter.js';
 import {
   decideDeploy,
@@ -15,6 +15,7 @@ import {
   type MergeFacts,
   type RollbackFacts,
 } from '../../src/shared/devline-release.js';
+import { workerTick } from '../../src/worker/main.js';
 
 const HEAD = 'a'.repeat(40);
 const OTHER = 'b'.repeat(40);
@@ -64,22 +65,10 @@ const rollback = (over: Partial<RollbackFacts> = {}): RollbackFacts => ({
 describe('失効の規則', () => {
   it('merge: 正常', () => {
     expect(decideMerge(merge())).toEqual({ ok: true, mode: 'send' });
-    expect(decideMerge(merge({ mergeState: 'unknown' }))).toEqual({ ok: true, mode: 'reconcile', maySend: true });
-    expect(decideMerge(merge({ mergeState: 'unknown', orderCurrent: false }))).toEqual({
-      ok: true,
-      mode: 'reconcile',
-      maySend: false,
-    });
-    expect(decideMerge(merge({ mergeState: 'unknown', superseded: true }))).toEqual({
-      ok: true,
-      mode: 'reconcile',
-      maySend: false,
-    });
-    expect(decideMerge(merge({ mergeState: 'unknown', verdict: 'failed' }))).toEqual({
-      ok: true,
-      mode: 'reconcile',
-      maySend: false,
-    });
+    // 照合は条件を問わず読むだけ（送るかどうかの分岐を持たない）
+    for (const over of [{}, { orderCurrent: false }, { superseded: true }, { verdict: 'failed' as const }]) {
+      expect(decideMerge(merge({ mergeState: 'unknown', ...over }))).toEqual({ ok: true, mode: 'reconcile' });
+    }
     expect(decideMerge(merge({ jobState: 'merged' }))).toEqual({ ok: true, mode: 'already_merged' });
   });
 
@@ -152,6 +141,47 @@ function walk(dir: string): string[] {
     e.isDirectory() ? walk(join(dir, e.name)) : e.name.endsWith('.ts') ? [join(dir, e.name)] : [],
   );
 }
+
+describe('worker の1回分（配備を飢えさせない）', () => {
+  const quiet = { log: (): void => undefined, logError: (): void => undefined };
+
+  it('runOnce が例外でも配備は動く', async () => {
+    const deploy = vi.fn(async () => ({ kind: 'done', attemptKind: 'deploy', state: 'succeeded', errorCode: null }) as const);
+    const idle = await workerTick({
+      runOnce: async () => {
+        throw new Error('db');
+      },
+      deploy,
+      ...quiet,
+    });
+    expect(deploy).toHaveBeenCalledTimes(1);
+    expect(idle).toBe(false);
+  });
+
+  it('配備の例外は外へ出さず、両方が例外なら待つ側へ倒す。止める合図の後は配備を呼ばない', async () => {
+    const fail = async (): Promise<never> => {
+      throw new Error('x');
+    };
+    expect(await workerTick({ runOnce: fail, deploy: fail, ...quiet })).toBe(true);
+    const stop = new AbortController();
+    stop.abort();
+    const deploy = vi.fn(async () => ({ kind: 'idle' }) as const);
+    await workerTick({ runOnce: fail, deploy, shutdown: stop.signal, ...quiet });
+    expect(deploy).not.toHaveBeenCalled();
+  });
+});
+
+describe('merge の資格情報', () => {
+  it('API は投入と同じ関数で GitHub のトークンだけを読む。worker を import しない', () => {
+    const text = readFileSync(join('src', 'api', 'devline-release.ts'), 'utf8');
+    expect(text).toContain('loadDevlineGithubToken(config.devlineSecretsFile || DEFAULT_SECRETS_PATH, config.nodeEnv)');
+    expect(text).not.toMatch(/worker\//);
+    expect(text).not.toMatch(/\bimport\(/);
+    expect(text).not.toContain('loadDevlineSecrets');
+    expect(text).not.toContain('ANTHROPIC');
+    expect(text).not.toContain('process.env');
+  });
+});
 
 describe('merge の口は人の承認の経路だけ', () => {
   it('src のうち merge の口を作るのは devline-release.ts だけ。worker は承認の経路を import しない', () => {

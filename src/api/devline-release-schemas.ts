@@ -3,7 +3,8 @@ import { z } from 'zod';
 
 const sha = z.string().regex(/^[0-9a-f]{40}$/);
 
-export const approveMergeSchema = z.strictObject({ headSha: sha });
+/** reconcileOnly: 照合のボタン。結果不明でなければ断り、merge を送らない。 */
+export const approveMergeSchema = z.strictObject({ headSha: sha, reconcileOnly: z.literal(true).optional() });
 export const approveDeploySchema = z.strictObject({
   sha,
   digest: z.string().regex(/^sha256:[0-9a-f]{64}$/),

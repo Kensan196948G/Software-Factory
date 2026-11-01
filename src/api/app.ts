@@ -356,7 +356,12 @@ export async function buildApp(
     const ctx = mutate(req);
     const { id } = req.params as { id: string };
     const body = approveMergeSchema.parse(req.body);
-    return approveMerge({ jobId: id, headSha: body.headSha }, actorOf(ctx.user), correlationId(req), opts.releaseDeps);
+    return approveMerge(
+      { jobId: id, headSha: body.headSha, ...(body.reconcileOnly ? { reconcileOnly: true } : {}) },
+      actorOf(ctx.user),
+      correlationId(req),
+      opts.releaseDeps,
+    );
   });
 
   app.post('/api/jobs/:id/revoke-approval', async (req) => {

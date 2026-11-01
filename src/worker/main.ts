@@ -15,7 +15,7 @@ import { runOnce } from './loop.js';
 import { DEFAULT_SECRETS_PATH, checkRealLineEnv, loadDevlineSecrets, startRealLine, type RealLine } from './real-line.js';
 import { createDeployDocker, createDeployProbe } from './deploy-docker.js';
 import { createImageArtifactSource } from './deploy-artifact.js';
-import { runDeployOnce, type DeployWorkerOptions } from './deploy-worker.js';
+import { runDeployOnce, type DeployOutcome, type DeployWorkerOptions } from './deploy-worker.js';
 
 const POLL_MS = 5_000;
 
@@ -46,6 +46,42 @@ export function decideWorkerStart(env: Record<string, string | undefined>): Work
     }
   }
   return { start: true, reason: null, runnerKind, scenario };
+}
+
+/**
+ * 1 回分の工程。runOnce の例外で配備を飢えさせない（別々に受ける）。進まなかったら true を返す（呼び出し側が待つ）。
+ * lease は期限で切れるので、次の取得で取り直される。
+ */
+export async function workerTick(steps: {
+  runOnce: () => Promise<Awaited<ReturnType<typeof runOnce>>>;
+  deploy?: () => Promise<DeployOutcome>;
+  shutdown?: AbortSignal;
+  log?: (line: string) => void;
+  logError?: (line: string) => void;
+}): Promise<boolean> {
+  const log = steps.log ?? ((line) => console.log(line));
+  const logError = steps.logError ?? ((line) => console.error(line));
+  let idle = true;
+  try {
+    const outcome = await steps.runOnce();
+    // 進まなかった工程（CI の結果待ちなど）も待つ。空回りで DB を叩き続けない
+    idle = outcome.kind === 'idle' || (outcome.kind === 'stepped' && outcome.to === 'unchanged');
+    if (outcome.kind !== 'idle') log(`[worker] ${JSON.stringify(outcome)}`);
+  } catch (err) {
+    logError(`[worker] step failed: ${(err as Error).name}`);
+  }
+  if (steps.deploy && !steps.shutdown?.aborted) {
+    try {
+      const deployed = await steps.deploy();
+      if (deployed.kind !== 'idle') {
+        idle = false;
+        log(`[worker] ${JSON.stringify(deployed)}`);
+      }
+    } catch (err) {
+      logError(`[worker] deploy step failed: ${(err as Error).name}`);
+    }
+  }
+  return idle;
 }
 
 async function main(): Promise<void> {
@@ -112,30 +148,19 @@ async function main(): Promise<void> {
       process.exitCode = 1;
       break;
     }
-    let idle = true;
-    try {
-      const outcome = await runOnce({
-        owner,
-        runner,
-        scenario: decision.scenario,
-        clock: () => new Date(),
-        shutdown: stop.signal,
-        ...(line ? { line } : {}),
-      });
-      // 進まなかった工程（CI の結果待ちなど）も待つ。空回りで DB を叩き続けない
-      idle = outcome.kind === 'idle' || (outcome.kind === 'stepped' && outcome.to === 'unchanged');
-      if (outcome.kind !== 'idle') console.log(`[worker] ${JSON.stringify(outcome)}`);
-      if (deploy) {
-        const deployed = await runDeployOnce(deploy);
-        if (deployed.kind !== 'idle') {
-          idle = false;
-          console.log(`[worker] ${JSON.stringify(deployed)}`);
-        }
-      }
-    } catch (err) {
-      // lease は期限で切れるので、次の取得で取り直される
-      console.error(`[worker] step failed: ${(err as Error).name}`);
-    }
+    const idle = await workerTick({
+      runOnce: () =>
+        runOnce({
+          owner,
+          runner,
+          scenario: decision.scenario,
+          clock: () => new Date(),
+          shutdown: stop.signal,
+          ...(line ? { line } : {}),
+        }),
+      ...(deploy ? { deploy: () => runDeployOnce({ ...(deploy as DeployWorkerOptions), shutdown: stop.signal }) } : {}),
+      shutdown: stop.signal,
+    });
     if (idle) await delay(POLL_MS, undefined, { signal: stop.signal }).catch(() => undefined);
   }
   await line?.close();

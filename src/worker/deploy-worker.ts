@@ -18,8 +18,9 @@ import type { Status } from '../shared/domain.js';
 import type { ImageArtifactProblem, ImageArtifactSource } from './deploy-artifact.js';
 import { DEPLOY_IMAGE_REPO, type DeployDocker, type DeployProbe } from './deploy-docker.js';
 
-// 取得（最大 10 分）と読み込み（最大 10 分）より長くする
-const LEASE_SECONDS = 1800;
+// 動いている間は延ばし続ける。落ちた試行が環境を塞ぐのはこの長さまで
+const LEASE_SECONDS = 120;
+const LEASE_RENEW_MS = 30_000;
 const MAX_ATTEMPTS = 3;
 const WORKER_AUDIT = { actorUserId: null, actorName: 'deploy-worker', role: 'system' } as const;
 
@@ -32,6 +33,17 @@ export interface DeployWorkerOptions {
   /** 一時コンテナの名前の頭。試験で分ける。 */
   smokeNamePrefix?: string;
   clock: () => Date;
+  /** 止める合図。次の試行を取らず、配備先に触る前なら試行を pending へ戻す。動いている docker の命令は待つ。 */
+  shutdown?: AbortSignal;
+  /** lease を延ばす間隔。試験で短くする。 */
+  leaseRenewMs?: number;
+}
+
+/** 止める合図で途中をやめた印。失敗として記録しない。 */
+class DeployStopped extends Error {}
+
+function stopIfAsked(o: DeployWorkerOptions): void {
+  if (o.shutdown?.aborted) throw new DeployStopped();
 }
 
 interface AttemptRow {
@@ -108,6 +120,8 @@ interface Finish {
   health?: boolean | null;
   smoke?: boolean | null;
   url?: string | null;
+  /** 環境に触っていない失敗。環境のいまの版と URL をそのまま載せる（runDeployOnce で埋める）。 */
+  keepEnvironment?: boolean;
   errorCode?: string | null;
   autoRollback?: 'restored' | 'nothing_to_restore' | 'failed' | null;
   /** 取得元。成果物の取得が成功したときだけ。 */
@@ -173,6 +187,25 @@ const ARTIFACT_ERROR: Record<ImageArtifactProblem, string> = {
   unavailable: 'artifact_unavailable',
 };
 
+/**
+ * 触らなかった失敗で記録する、環境のいまの版。環境の版は最新の行で決まるので、ここで引き継がないと版も URL も消える。
+ * 取り直しの試行は、前の試行がどこまで触ったか分からないので不明（null）にする。
+ */
+async function environmentBefore(a: AttemptRow): Promise<Pick<Finish, 'deployedDigest' | 'deployedSha' | 'url'>> {
+  if (a.attempts > 1) return { deployedDigest: null, deployedSha: null, url: null };
+  const { rows } = await query<{ deployed_digest: string | null; deployed_sha: string | null; url: string | null }>(
+    `select deployed_digest, deployed_sha, url from release_attempt
+      where environment=$1 and kind in ('deploy','rollback') and state in ('succeeded','failed') and seq < $2
+      order by seq desc limit 1`,
+    [a.environment, a.seq],
+  );
+  return {
+    deployedDigest: rows[0]?.deployed_digest ?? null,
+    deployedSha: rows[0]?.deployed_sha ?? null,
+    url: rows[0]?.url ?? null,
+  };
+}
+
 /** merge の承認で固定した run の成果物を取得し、照合して読み込む。合わなければ配備の承認へ進めない。 */
 async function runBuild(a: AttemptRow, facts: JobFacts, o: DeployWorkerOptions): Promise<Finish> {
   if (facts.state !== 'merged' || facts.merge_sha !== a.sha || facts.tree_match !== true) {
@@ -181,6 +214,7 @@ async function runBuild(a: AttemptRow, facts: JobFacts, o: DeployWorkerOptions):
   if (facts.verified_run_id === null || facts.verified_run_attempt === null) {
     return { state: 'failed', errorCode: 'artifact_missing' };
   }
+  stopIfAsked(o);
   // 成果物は PR の head に結びつく（merge の SHA ではない）。merge との対応は tree の一致で確かめ済み
   const fetched = await o.artifacts
     .fetch({ repo: facts.repo, runId: facts.verified_run_id, runAttempt: facts.verified_run_attempt, headSha: facts.head_sha })
@@ -194,6 +228,7 @@ async function runBuild(a: AttemptRow, facts: JobFacts, o: DeployWorkerOptions):
     tarSha256: fetched.tarSha256,
   };
   try {
+    stopIfAsked(o);
     let loaded: { ref: string; id: string };
     try {
       loaded = await o.docker.loadImage(fetched.tarPath);
@@ -207,11 +242,13 @@ async function runBuild(a: AttemptRow, facts: JobFacts, o: DeployWorkerOptions):
       return { state: 'failed', errorCode: 'artifact_mismatch' };
     }
     await o.docker.adoptImage({ ref: loaded.ref, id: loaded.id, tag: `${DEPLOY_IMAGE_REPO}:${a.sha}` });
-  } catch {
+  } catch (err) {
+    if (err instanceof DeployStopped) throw err;
     return { state: 'failed', errorCode: 'artifact_load_failed' };
   } finally {
     fetched.cleanup();
   }
+  stopIfAsked(o);
   // 配備先ではなく一時コンテナで確かめる
   // 名前は固定。worker が落ちて残ったコンテナがネットワークに残り続けないよう、先に片付ける
   const name = o.smokeNamePrefix ?? 'msf-sandbox-smoke';
@@ -264,10 +301,18 @@ function afterRestore(
     : { deployedDigest: null, deployedSha: null, autoRollback: restored.result, url: null };
 }
 
-async function runDeploy(a: AttemptRow, facts: JobFacts, o: DeployWorkerOptions): Promise<Finish> {
+/** 配備先に触る直前の印。これより前の失敗と例外は、環境の版と URL を変えない。 */
+interface TouchMark {
+  touched: boolean;
+}
+
+function aboutToTouch(o: DeployWorkerOptions, mark: TouchMark): void {
+  stopIfAsked(o);
+  mark.touched = true;
+}
+
+async function runDeploy(a: AttemptRow, facts: JobFacts, o: DeployWorkerOptions, mark: TouchMark): Promise<Finish> {
   const name = o.containerName ?? DEPLOY_CONTAINER_NAME;
-  // 何も動かさずに失敗する場合は、環境の版は前のまま
-  const untouched = { deployedDigest: a.previous_digest, deployedSha: a.previous_sha };
   const current = isOrderCurrent({
     requestStatus: facts.request_status,
     requestDeleted: facts.request_deleted,
@@ -285,12 +330,13 @@ async function runDeploy(a: AttemptRow, facts: JobFacts, o: DeployWorkerOptions)
     facts.deploy_approved_digest !== a.digest ||
     facts.environment !== a.environment
   ) {
-    return { state: 'failed', errorCode: 'approval_expired', ...untouched };
+    return { state: 'failed', errorCode: 'approval_expired', keepEnvironment: true };
   }
   const digest = a.digest as string;
-  if (!(await o.docker.hasImage(digest))) return { state: 'failed', errorCode: 'image_missing', ...untouched };
+  if (!(await o.docker.hasImage(digest))) return { state: 'failed', errorCode: 'image_missing', keepEnvironment: true };
   const existing = await o.docker.containerState(name);
-  if (existing === 'foreign') return { state: 'failed', errorCode: 'name_in_use', ...untouched };
+  if (existing === 'foreign') return { state: 'failed', errorCode: 'name_in_use', keepEnvironment: true };
+  aboutToTouch(o, mark);
   await o.docker.remove(name);
   let baseUrl: string;
   try {
@@ -313,13 +359,13 @@ async function runDeploy(a: AttemptRow, facts: JobFacts, o: DeployWorkerOptions)
   };
 }
 
-async function runRollback(a: AttemptRow, o: DeployWorkerOptions): Promise<Finish> {
+async function runRollback(a: AttemptRow, o: DeployWorkerOptions, mark: TouchMark): Promise<Finish> {
   const name = o.containerName ?? DEPLOY_CONTAINER_NAME;
-  const untouched = { deployedDigest: a.previous_digest, deployedSha: a.previous_sha };
   const digest = a.digest as string;
-  if (!(await o.docker.hasImage(digest))) return { state: 'failed', errorCode: 'image_missing', ...untouched };
+  if (!(await o.docker.hasImage(digest))) return { state: 'failed', errorCode: 'image_missing', keepEnvironment: true };
   const existing = await o.docker.containerState(name);
-  if (existing === 'foreign') return { state: 'failed', errorCode: 'name_in_use', ...untouched };
+  if (existing === 'foreign') return { state: 'failed', errorCode: 'name_in_use', keepEnvironment: true };
+  aboutToTouch(o, mark);
   await o.docker.remove(name);
   let result = { health: false, smoke: false };
   let baseUrl: string | null = null;
@@ -423,8 +469,31 @@ async function applyResult(
   await insertJobEvent(client, { jobId: a.job_id, at: now, kind: `rollback_${finish.state}`, ...system, detail });
 }
 
+/** 止める合図で触らずにやめた試行を pending へ戻す。回数に数えない。 */
+async function releaseAttempt(a: AttemptRow): Promise<void> {
+  await query(
+    `update release_attempt set state='pending', lease_owner=null, lease_expires_at=null, attempts=greatest(attempts-1,0)
+      where id=$1 and fencing_token=$2 and state='running'`,
+    [a.id, a.fencing_token],
+  );
+}
+
+/** 処理の間だけ lease を延ばす。fence が合わなければ何もしない（遅れた書き込みは finishAttempt が捨てる）。 */
+function keepLease(a: AttemptRow, o: DeployWorkerOptions): () => void {
+  const timer = setInterval(() => {
+    void query(
+      `update release_attempt set lease_expires_at=$3::timestamptz + make_interval(secs => $4::double precision)
+        where id=$1 and fencing_token=$2 and state='running'`,
+      [a.id, a.fencing_token, o.clock(), LEASE_SECONDS],
+    ).catch(() => undefined);
+  }, o.leaseRenewMs ?? LEASE_RENEW_MS);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
 /** 1件だけ処理する。なければ idle。例外は失敗の記録に変える（次の取得で詰まらせない）。 */
 export async function runDeployOnce(o: DeployWorkerOptions): Promise<DeployOutcome> {
+  if (o.shutdown?.aborted) return { kind: 'idle' };
   const attempt = await claim(o.owner, o.clock());
   if (!attempt) return { kind: 'idle' };
   let finish: Finish;
@@ -437,18 +506,28 @@ export async function runDeployOnce(o: DeployWorkerOptions): Promise<DeployOutco
       deployedSha: null,
     };
   } else {
+    const stopLease = keepLease(attempt, o);
+    const mark: TouchMark = { touched: false };
     try {
       const facts = await jobFacts(attempt);
-      if (!facts) finish = { state: 'failed', errorCode: 'no_release' };
+      if (!facts) finish = { state: 'failed', errorCode: 'no_release', keepEnvironment: attempt.kind !== 'build' };
       else if (attempt.kind === 'build') finish = await runBuild(attempt, facts, o);
-      else if (attempt.kind === 'deploy') finish = await runDeploy(attempt, facts, o);
-      else finish = await runRollback(attempt, o);
-    } catch {
-      // 内部エラーの本文は記録しない。環境の版は分からないので、前の版のままとは言わない
-      finish = { state: 'failed', errorCode: 'internal_error' };
+      else if (attempt.kind === 'deploy') finish = await runDeploy(attempt, facts, o, mark);
+      else finish = await runRollback(attempt, o, mark);
+    } catch (err) {
+      if (err instanceof DeployStopped) {
+        await releaseAttempt(attempt);
+        return { kind: 'idle' };
+      }
+      // 内部エラーの本文は記録しない。触った後なら環境の版は分からないので、前の版のままとは言わない
+      finish = { state: 'failed', errorCode: 'internal_error', keepEnvironment: attempt.kind !== 'build' && !mark.touched };
+    } finally {
+      stopLease();
     }
   }
+  if (finish.keepEnvironment) finish = { ...finish, ...(await environmentBefore(attempt)) };
+  const closed = finish;
   const now = o.clock();
-  await finishAttempt(attempt, finish, now, (client) => applyResult(attempt, finish, now, client));
-  return { kind: 'done', attemptKind: attempt.kind, state: finish.state, errorCode: finish.errorCode ?? null };
+  await finishAttempt(attempt, closed, now, (client) => applyResult(attempt, closed, now, client));
+  return { kind: 'done', attemptKind: attempt.kind, state: closed.state, errorCode: closed.errorCode ?? null };
 }

@@ -298,10 +298,172 @@ export async function extractImageArtifact(
 
 /**
  * tar の manifest.json を読み、タグがちょうど DEPLOY_ARTIFACT_TAG の1イメージかを確かめる。
- * ヘッダだけを順に読む（中身は読み飛ばす）。読めなければ false。
+ * ヘッダを全部読む（中身は manifest だけ読む）。読めなければ false。
  */
 export function tarHasOnlyExpectedTag(tarPath: string): boolean {
   return tarImageId(tarPath) !== null;
+}
+
+/** 中身を持たない種類（Go の archive/tar はこれらの size を読み飛ばさない）。 */
+const TAR_HEADER_ONLY = new Set(['1', '2', '3', '4', '5', '6']);
+const TAR_REGULAR = new Set(['\0', '0', '7']);
+const TAR_META = new Set(['x', 'g', 'L', 'K']);
+const MAX_TAR_ENTRIES = 200_000;
+const MAX_TAR_META_BYTES = 1024 * 1024;
+const TAR_TAIL_CHUNK = 1024 * 1024;
+
+function tarField(block: Buffer, offset: number, length: number): string {
+  return block
+    .subarray(offset, offset + length)
+    .toString('utf8')
+    .replace(/\0.*$/s, '');
+}
+
+/** 8 進の数値欄。base-256 と形の違うものは読まない（null）。 */
+function tarOctal(block: Buffer, offset: number, length: number): number | null {
+  const text = block
+    .subarray(offset, offset + length)
+    .toString('latin1')
+    .replace(/\0.*$/s, '')
+    .trim();
+  if (!/^[0-7]*$/.test(text)) return null;
+  const value = text === '' ? 0 : Number.parseInt(text, 8);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+/** ヘッダの checksum（Go の reader と同じく符号なし・符号ありの両方を受ける）。 */
+function tarChecksumOk(block: Buffer): boolean {
+  const stored = tarOctal(block, 148, 8);
+  if (stored === null) return false;
+  let unsigned = 8 * 32;
+  let signed = 8 * 32;
+  block.forEach((b, i) => {
+    if (i >= 148 && i < 156) return;
+    unsigned += b;
+    signed += b > 127 ? b - 256 : b;
+  });
+  return stored === unsigned || stored === signed;
+}
+
+/** ヘッダの名前（POSIX ustar の prefix を含む）。GNU の magic の prefix 欄は別の用途なので読まない。 */
+function tarHeaderName(block: Buffer): string {
+  const name = tarField(block, 0, 100);
+  if (block.subarray(257, 263).toString('latin1') !== 'ustar\0') return name;
+  const prefix = tarField(block, 345, 155);
+  return prefix ? `${prefix}/${name}` : name;
+}
+
+/** `..` と絶対パスは null。それ以外は `.` と空の区切りを除いた形。 */
+function tarNormalizeName(name: string): string | null {
+  if (name.startsWith('/') || name.includes('\\')) return null;
+  const parts = name.split('/').filter((p) => p !== '' && p !== '.');
+  return parts.includes('..') ? null : parts.join('/');
+}
+
+/** PAX の記録（`長さ 鍵=値\n`）。形が違えば null。 */
+function parsePaxRecords(raw: Buffer): Map<string, string> | null {
+  const records = new Map<string, string>();
+  let at = 0;
+  while (at < raw.length) {
+    const space = raw.indexOf(0x20, at);
+    if (space < 0) return null;
+    const lengthText = raw.subarray(at, space).toString('latin1');
+    if (!/^[1-9][0-9]*$/.test(lengthText)) return null;
+    const length = Number(lengthText);
+    if (at + length > raw.length || raw[at + length - 1] !== 0x0a) return null;
+    const record = raw.subarray(space + 1, at + length - 1).toString('utf8');
+    const eq = record.indexOf('=');
+    if (eq <= 0) return null;
+    records.set(record.slice(0, eq), record.slice(eq + 1));
+    at += length;
+  }
+  return records;
+}
+
+/** PAX の記録のうち、読み手によって項目の境界か名前が変わるもの。 */
+function paxDesynchronizes(records: Map<string, string>): boolean {
+  return records.has('size') || [...records.keys()].some((k) => k.startsWith('GNU.sparse.'));
+}
+
+/** 終端の 0 ブロックの後は 0 だけ。後ろに項目を隠せないようにする。 */
+function tarTailIsZero(fd: number, from: number, size: number): boolean {
+  for (let at = from; at < size; at += TAR_TAIL_CHUNK) {
+    if (readAt(fd, at, Math.min(TAR_TAIL_CHUNK, size - at)).some((b) => b !== 0)) return false;
+  }
+  return true;
+}
+
+const isManifestName = (name: string | null): boolean => name === 'manifest.json';
+
+/**
+ * tar 全体のヘッダを走査し、manifest.json の中身をちょうど1つ取り出す。
+ * docker load が読むものと食い違う余地があれば null（複数の manifest、拡張ヘッダで manifest に当たる項目、
+ * `..` や絶対パスの名前、読み手で境界が変わる項目、壊れたヘッダ）。リンクの指す先は見ない（docker save の層が `../` を使う）。
+ */
+function readOnlyManifest(fd: number, size: number): Buffer | null {
+  let at = 0;
+  let manifest: Buffer | null = null;
+  // 直前の L / x が次の項目へ渡す名前
+  let pendingName: string | null = null;
+  let pendingMeta = false;
+  for (let guard = 0; guard < MAX_TAR_ENTRIES; guard += 1) {
+    if (at === size) return pendingMeta ? null : manifest;
+    if (at + 512 > size) return null;
+    const header = readAt(fd, at, 512);
+    if (header.length !== 512) return null;
+    if (header.every((b) => b === 0)) {
+      return !pendingMeta && tarTailIsZero(fd, at + 512, size) ? manifest : null;
+    }
+    if (!tarChecksumOk(header)) return null;
+    const entrySize = tarOctal(header, 124, 12);
+    if (entrySize === null) return null;
+    const dataAt = at + 512;
+    const nextAt = dataAt + Math.ceil(entrySize / 512) * 512;
+    if (nextAt > size) return null;
+    const type = String.fromCharCode(header[156] as number);
+    const rawName = tarNormalizeName(tarHeaderName(header));
+    if (rawName === null) return null;
+
+    if (TAR_META.has(type)) {
+      if (entrySize > MAX_TAR_META_BYTES) return null;
+      const data = readAt(fd, dataAt, entrySize);
+      if (data.length !== entrySize) return null;
+      if (type === 'x' || type === 'g') {
+        const records = parsePaxRecords(data);
+        if (!records || paxDesynchronizes(records)) return null;
+        const path = records.get('path');
+        // 全項目へ効く名前は読み手で扱いが違う
+        if (type === 'g' && path !== undefined) return null;
+        if (type === 'x') {
+          pendingMeta = true;
+          if (path !== undefined) pendingName = path;
+        }
+      } else {
+        pendingMeta = true;
+        if (type === 'L') pendingName = data.toString('utf8').replace(/\0.*$/s, '');
+      }
+      at = nextAt;
+      continue;
+    }
+
+    if (!TAR_REGULAR.has(type) && !TAR_HEADER_ONLY.has(type)) return null;
+    const longName = pendingName === null ? null : tarNormalizeName(pendingName);
+    if (pendingName !== null && longName === null) return null;
+    // 拡張ヘッダで manifest に当たる項目は受けない（本物の docker save は短い名前で書く）
+    if (pendingName !== null && (isManifestName(longName) || isManifestName(rawName))) return null;
+    const effective = longName ?? rawName;
+    pendingName = null;
+    pendingMeta = false;
+    const directoryLike = effective === '' || tarHeaderName(header).endsWith('/');
+    if ((TAR_HEADER_ONLY.has(type) || directoryLike) && entrySize !== 0) return null;
+    if (isManifestName(effective)) {
+      if (manifest !== null || !TAR_REGULAR.has(type) || directoryLike || entrySize > MAX_MANIFEST_BYTES) return null;
+      manifest = readAt(fd, dataAt, entrySize);
+      if (manifest.length !== entrySize) return null;
+    }
+    at = nextAt;
+  }
+  return null;
 }
 
 /**
@@ -314,30 +476,18 @@ export function tarHasOnlyExpectedTag(tarPath: string): boolean {
 export function tarImageId(tarPath: string): string | null {
   const fd = openSync(tarPath, 'r');
   try {
-    const size = statSync(tarPath).size;
-    let at = 0;
-    for (let guard = 0; guard < 200_000 && at + 512 <= size; guard += 1) {
-      const header = readAt(fd, at, 512);
-      if (header.every((b) => b === 0)) return null;
-      const name = header.subarray(0, 100).toString('utf8').replace(/\0.*$/s, '');
-      const entrySize = Number.parseInt(header.subarray(124, 136).toString('utf8').replace(/\0.*$/s, '').trim(), 8);
-      if (!Number.isSafeInteger(entrySize) || entrySize < 0) return null;
-      if (name === 'manifest.json' || name === './manifest.json') {
-        if (entrySize > MAX_MANIFEST_BYTES) return null;
-        const manifest = JSON.parse(readAt(fd, at + 512, entrySize).toString('utf8')) as {
-          RepoTags?: unknown;
-          Config?: unknown;
-        }[];
-        if (!Array.isArray(manifest) || manifest.length !== 1) return null;
-        const tags = manifest[0]?.RepoTags;
-        if (!Array.isArray(tags) || tags.length !== 1 || tags[0] !== DEPLOY_ARTIFACT_TAG) return null;
-        const config = manifest[0]?.Config;
-        const hex = typeof config === 'string' ? /^(?:blobs\/sha256\/)?([0-9a-f]{64})(?:\.json)?$/.exec(config)?.[1] : null;
-        return hex ? `sha256:${hex}` : null;
-      }
-      at += 512 + Math.ceil(entrySize / 512) * 512;
-    }
-    return null;
+    const raw = readOnlyManifest(fd, statSync(tarPath).size);
+    if (!raw) return null;
+    const manifest = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw)) as {
+      RepoTags?: unknown;
+      Config?: unknown;
+    }[];
+    if (!Array.isArray(manifest) || manifest.length !== 1) return null;
+    const tags = manifest[0]?.RepoTags;
+    if (!Array.isArray(tags) || tags.length !== 1 || tags[0] !== DEPLOY_ARTIFACT_TAG) return null;
+    const config = manifest[0]?.Config;
+    const hex = typeof config === 'string' ? /^(?:blobs\/sha256\/)?([0-9a-f]{64})(?:\.json)?$/.exec(config)?.[1] : null;
+    return hex ? `sha256:${hex}` : null;
   } catch {
     return null;
   } finally {

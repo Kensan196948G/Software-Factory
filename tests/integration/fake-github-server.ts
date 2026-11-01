@@ -167,6 +167,10 @@ export async function startFakeGithub(): Promise<FakeGithub> {
           return send(res, 200, { merged: true, sha: pull.mergeSha, message: 'merged' });
         }
       }
+      // base の最新を含むか。試験は既定で遅れなし
+      if (method === 'GET' && new RegExp(`^${repoPrefix}/compare/[^/]+\\.\\.\\.[0-9a-f]{40}$`).test(path)) {
+        return send(res, 200, { behind_by: 0, ahead_by: 1, status: 'ahead' });
+      }
       const commitOne = new RegExp(`^${repoPrefix}/git/commits/([0-9a-f]{40})$`).exec(path);
       if (commitOne && method === 'GET') {
         const tree = trees[commitOne[1] as string];

@@ -44,7 +44,8 @@ export type ReleaseRefusal =
   | 'no_artifact'
   | 'nothing_to_restore'
   | 'not_current'
-  | 'no_approval';
+  | 'no_approval'
+  | 'not_unknown';
 
 export type Refusal = { ok: false; refusal: ReleaseRefusal; message: string };
 const no = (refusal: ReleaseRefusal, message: string): Refusal => ({ ok: false, refusal, message });
@@ -80,8 +81,8 @@ export type MergeDecision =
   | Refusal
   /** send: GitHub へ送る前に PR を読む。 */
   | { ok: true; mode: 'send' }
-  /** unknown / sending の続き。PR を読んで照合する。maySend=false なら、未 merge でも送らない（新しい承認を残さない）。 */
-  | { ok: true; mode: 'reconcile'; maySend: boolean }
+  /** unknown / sending の続き。PR を読んで照合するだけ。merge を送らず、新しい承認を残さない。 */
+  | { ok: true; mode: 'reconcile' }
   /** すでに merge 済み。押し直しは同じ結果を返す。 */
   | { ok: true; mode: 'already_merged' };
 
@@ -102,11 +103,10 @@ export function decideMerge(f: MergeFacts): MergeDecision {
     return no('expired', '前回の merge で承認が失効しました。注文書の版を上げて作り直してください');
   }
   // 結果不明の merge は、版が変わっていても照合して記録する。実際には merge 済みかもしれない
-  // ただし送ってよいのは、新しい承認の条件を満たすときだけ
+  // 照合では送らない。未 merge なら結果不明を解消し、次の押下を送信の判定へ通す
   if (f.mergeState === 'unknown' || f.mergeState === 'sending') {
     if (!f.hasPr) return no('no_pr', '実 PR の記録がありません');
-    const maySend = !f.superseded && f.orderCurrent && f.verdict === 'passed' && f.acAllConfirmed;
-    return { ok: true, mode: 'reconcile', maySend };
+    return { ok: true, mode: 'reconcile' };
   }
   if (f.superseded) return no('superseded', '新しい版に置きかえられた job は承認できません');
   if (!f.orderCurrent) return no('order_not_current', '注文書が無効になっているため承認できません');

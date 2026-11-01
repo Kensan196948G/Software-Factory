@@ -209,6 +209,8 @@ export interface PrMergeAdapter {
   getPull(input: { repo: string; number: number }, signal: AbortSignal): Promise<IssueReadResult<PullMergeFacts | null>>;
   /** commit の tree の SHA。無ければ null。 */
   getCommitTree(input: { repo: string; sha: string }, signal: AbortSignal): Promise<IssueReadResult<string | null>>;
+  /** head が base の最新から遅れている commit 数（0 なら base の最新を含む）。無ければ null。 */
+  getBehindBy(input: { repo: string; base: string; head: string }, signal: AbortSignal): Promise<IssueReadResult<number | null>>;
   /** squash で merge する。sha を必ず渡すので、head が変わっていれば GitHub が拒否する。 */
   mergePull(input: { repo: string; number: number; sha: string; title: string }, signal: AbortSignal): Promise<MergeSendOutcome>;
 }
@@ -301,6 +303,14 @@ export function createGithubPrMergeAdapter(options: GithubAdapterOptions): PrMer
       return read(`${repoPath(input.repo)}/git/commits/${input.sha}`, signal, (json) => {
         const tree = (json as { tree?: { sha?: unknown } | null } | null)?.tree?.sha;
         return typeof tree === 'string' && SHA_RE.test(tree) ? tree : undefined;
+      });
+    },
+
+    getBehindBy(input, signal) {
+      if (!SHA_RE.test(input.head)) throw new ApiError('ERR-405', 'SHA の形が正しくありません', 409);
+      return read(`${repoPath(input.repo)}/compare/${encodeURIComponent(input.base)}...${input.head}`, signal, (json) => {
+        const behind = (json as { behind_by?: unknown } | null)?.behind_by;
+        return typeof behind === 'number' && Number.isSafeInteger(behind) && behind >= 0 ? behind : undefined;
       });
     },
 

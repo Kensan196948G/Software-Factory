@@ -6116,6 +6116,7 @@ const SF = (function () {
     not_own: 'この job が作った PR ではありません（失効）',
     base_changed: 'merge 先が既定のブランチではありません（失効）',
     not_mergeable: 'GitHub が merge を受け付けませんでした（必須検査・競合・保護）',
+    base_behind: 'base が進みました。AI の修正か更新が必要です（merge は送っていません）',
     refused: 'GitHub が merge を拒否しました（権限と保護）',
     rate_limited: 'GitHub が混み合っています',
     pr_unreadable: 'PR を読めませんでした（merge は送っていません）',
@@ -6254,15 +6255,9 @@ const SF = (function () {
             '</textarea>' +
             dlReleaseButton(r, job, 'revoke-approval', '承認を取り消す', 'dng')
           : '') +
-        dlReleaseButton(
-          r,
-          job,
-          'approve-merge',
-          rel && (rel.mergeState === 'unknown' || rel.mergeState === 'sending')
-            ? '結果を照合する（作り直しません）'
-            : 'PR を承認して merge する',
-          'go',
-        )
+        (rel && (rel.mergeState === 'unknown' || rel.mergeState === 'sending')
+          ? dlReleaseButton(r, job, 'reconcile-merge', '結果を照合する（merge は送りません）', 'go')
+          : dlReleaseButton(r, job, 'approve-merge', 'PR を承認して merge する', 'go'))
       );
     }
     if (
@@ -6344,7 +6339,12 @@ const SF = (function () {
     } else if (rel && rel.mergeState === 'rejected') {
       merge = E(DL_MERGE_DETAIL[rel.mergeDetail] || 'merge できませんでした');
     } else if (job.state === 'pr_ready') {
-      merge = job.orderCurrent === false || job.supersededAt ? 'この版はいまは無効です' : '準備完了・承認待ち';
+      merge =
+        job.orderCurrent === false || job.supersededAt
+          ? 'この版はいまは無効です'
+          : rel && rel.mergeDetail === 'not_merged'
+            ? '照合の結果、PR は未 merge でした（merge は送っていません）。承認待ち'
+            : '準備完了・承認待ち';
     } else {
       merge = 'まだこの段階ではありません';
     }
@@ -6447,6 +6447,8 @@ const SF = (function () {
     if (!job) return;
     let body;
     if (action === 'approve-merge') body = { headSha: job.headSha };
+    // 照合は読み取りだけ。サーバは結果不明でなければ断り、merge を送らない
+    else if (action === 'reconcile-merge') body = { headSha: job.headSha, reconcileOnly: true };
     else if (action === 'approve-deploy') body = { sha: rel.mergeSha, digest: rel.imageDigest, environment: rel.environment };
     else if (action === 'revoke-approval') {
       if (!(s.relRevokeReason || '').trim()) return toast('取り消す理由を書いてください', true);
@@ -6459,26 +6461,68 @@ const SF = (function () {
     s.relMsg = null;
     dlPaint(id);
     try {
-      await window.__MSF__.api('POST', '/api/jobs/' + encodeURIComponent(jobId) + '/' + action, body);
+      const path = action === 'reconcile-merge' ? 'approve-merge' : action;
+      await window.__MSF__.api('POST', '/api/jobs/' + encodeURIComponent(jobId) + '/' + path, body);
       s.relReason = '';
       s.relRevokeReason = '';
       s.relMsg = {
         t:
-          action === 'approve-merge'
-            ? 'merge しました。CI の成果物を取得して確かめるまで配備はできません'
+          action === 'approve-merge' || action === 'reconcile-merge'
+            ? 'merge を記録しました。CI の成果物を取得して確かめるまで配備はできません'
             : action === 'approve-deploy'
               ? '配備を受け付けました。結果を読み込みます'
               : action === 'revoke-approval'
                 ? '承認を取り消しました。merge するには承認し直してください'
                 : '戻しを受け付けました。結果を読み込みます',
         ng: false,
+        // 結果を読み直している間の説明。試行が終わったら消す
+        watching: action === 'approve-deploy' || action === 'rollback',
       };
+      s.watchCount = 0;
     } catch (err) {
       s.relMsg = { t: (err && err.message) || '処理を完了できませんでした', ng: true };
     }
     s.relBusy = false;
     await dlLoad(id, true);
     dlPaint(id);
+  }
+  /* 成果物の取得・配備・戻しは worker が進める。pending / running の間だけ読み直す（開いている欄だけ。上限つき） */
+  const DL_WATCH_MS = 4000;
+  const DL_WATCH_MAX = 150;
+  function dlActive(s) {
+    return Object.values(s.release || {}).some((rel) =>
+      ((rel && rel.attempts) || []).some((a) => a.state === 'pending' || a.state === 'running'),
+    );
+  }
+  function dlPanelOpen(id) {
+    return $$('[data-dl-panel]').some((el) => el.dataset.dlPanel === id);
+  }
+  function dlWatch(id) {
+    const s = dlOf(id);
+    if (s.watchTimer) return;
+    if (!dlActive(s) || !dlPanelOpen(id)) {
+      s.watchCount = 0;
+      return;
+    }
+    s.watchCount = s.watchCount || 0;
+    if (s.watchCount >= DL_WATCH_MAX) {
+      if (!s.relMsg || s.relMsg.watching) {
+        s.relMsg = { t: '結果の読み直しを止めました。欄を開き直すと読み直します', ng: true };
+        dlPaint(id);
+      }
+      return;
+    }
+    s.watchCount += 1;
+    s.watchTimer = setTimeout(() => {
+      s.watchTimer = null;
+      if (!dlPanelOpen(id)) {
+        s.watchCount = 0;
+        return;
+      }
+      // 操作の最中は読み直さず、次の回へ送る
+      if (s.relBusy || s.busy) return dlWatch(id);
+      void dlLoad(id, true);
+    }, DL_WATCH_MS);
   }
   /* DevOps の KPI（W-09）。集計は1回の要求で読む。読めなければ「－」のまま */
   function dlSummaryLoad() {
@@ -6497,6 +6541,12 @@ const SF = (function () {
   }
   function dlPanel(r) {
     dlLoad(r.id);
+    // 開き直したときも続ける（読み込みが TTL の内で走らない場合）。描画の後に確かめる
+    setTimeout(() => {
+      const s = dlOf(r.id);
+      if ((s.watchCount || 0) >= DL_WATCH_MAX) s.watchCount = 0;
+      dlWatch(r.id);
+    }, 0);
     return '<div class="dlp" data-dl-panel="' + E(r.id) + '">' + dlInner(r) + '</div>';
   }
   function dlPaint(id) {
@@ -6538,7 +6588,9 @@ const SF = (function () {
         s.msg = null;
         if (!(r.__issueNo > 0)) void window.__MSF__.refreshRequest(id);
       }
+      if (s.relMsg && s.relMsg.watching && !dlActive(s)) s.relMsg = null;
       if (!s.busy) dlPaint(id);
+      dlWatch(id);
     });
     return s.loadP;
   }
