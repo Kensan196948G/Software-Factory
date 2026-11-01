@@ -393,7 +393,9 @@ test('画面の操作で merge → 成果物 → 配備 → 戻し。完全な S
   await reloadAs(page, 'approver');
   const p3 = await openDrawer(page, title);
   await expect(p3.locator('[data-dl-row="deploy"]')).toContainText('配備済み（検証環境）');
-  await expect(p3.locator('[data-dl-row="deploy"]')).toContainText('公開ではありません');
+  await expect(p3.locator('[data-dl-row="deploy"]')).toContainText('127.0.0.1 だけで動く検証環境');
+  await expect(p3.locator('[data-dl-row="deploy"]')).not.toContainText('公開');
+  await expect(p3.locator('[data-dl-row="deploy"]')).not.toContainText('本番');
   await expect(p3.locator('[data-dl-row="deploy"]')).toContainText('http://127.0.0.1:40101');
   await expect(p3.locator('[data-dl-row="job"]')).toContainText('配備済み（検証環境）');
   await expect(p3.locator('[data-dl-row="ac"]')).toContainText('AC-1');

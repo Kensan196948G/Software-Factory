@@ -6214,7 +6214,7 @@ const SF = (function () {
               (rel && rel.health ? '○' : '×') +
               '　smoke ' +
               (rel && rel.smoke ? '○' : '×') +
-              '<br><small>検証環境への配備であり、公開ではありません</small>'
+              '<br><small>このホストの 127.0.0.1 だけで動く検証環境です</small>'
           : deploy && ['pending', 'running'].includes(deploy.state)
             ? '配備を進めています'
             : deploy && deploy.state === 'failed'
