@@ -46,7 +46,7 @@ export function decideWorkerStart(env: Record<string, string | undefined>): Work
 }
 
 async function main(): Promise<void> {
-  const decision = decideWorkerStart({ ...process.env, NODE_ENV: config.nodeEnv, APP_ENV: config.appEnv });
+  const decision = decideWorkerStart({ ...process.env, NODE_ENV: config.nodeEnv });
   if (!decision.start) {
     console.error(`[worker] ${decision.reason}`);
     process.exitCode = 1;

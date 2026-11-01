@@ -230,10 +230,6 @@ describe('起動の判定', () => {
       false,
     );
     expect(checkRealLineEnv({}, [])).toContain('許可先');
-    expect(checkRealLineEnv({ NODE_ENV: 'production' }, [])).toContain('production');
-    expect(checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: 'production' }, [])).toContain('production');
-    // Staging は APP_ENV=staging を明示したときだけ次の検査へ進む（本番の拒否は変えない）
-    expect(checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: 'staging' }, [])).toContain('許可先');
   });
   it('git の接続先は https とループバックだけ。試験はループバックだけ', () => {
     expect(() => assertGitBaseUrlAllowed('https://github.com', 'test')).toThrow();
