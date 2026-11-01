@@ -127,12 +127,12 @@ update job j set lease_owner=$owner, lease_expires_at=$now + make_interval(secs 
 2. job を `for update`。その job の全 verification を読み `evaluateVerification(records, job.head_sha, acIds)`。
 3. job の状態が `verifying` で、記録の `head_sha` が `job.head_sha` と一致し、`isOrderCurrent` のときだけ状態を動かす。それ以外は記録だけで `advanced=false`。動かすとき（`incomplete` で状態が同じときも）は上の 4 のとおり fencing を +1 して lease を外す。
 
-| verdict               | 動き                                                                                                         |
-| --------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `passed`              | `pr_ready`。同じトランザクションで PR 候補を作る                                                             |
-| `failed`              | `decideRepair`。許可なら回数を増やして `revising`。不可なら `stopped(same_cause_limit / repair_total_limit)` |
-| `incomplete`          | `isCiRerunAllowed` なら `ci_rerun_count + 1` で `verifying` のまま。不可なら `stopped(ci_rerun_limit)`       |
-| `stale` / `no_result` | 動かさない                                                                                                   |
+| verdict               | 動き                                                                                                                                                                                                  |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `passed`              | `pr_ready`。同じトランザクションで PR 候補を作る                                                                                                                                                      |
+| `failed`              | `decideRepair`。許可なら回数を増やして `revising`。不可なら `stopped(same_cause_limit / repair_total_limit)`                                                                                          |
+| `incomplete`          | `isCiRerunAllowed` なら `ci_rerun_count + 1` で `verifying` のまま。不可なら `stopped(ci_rerun_limit)`。実 CI（`source='github'`）は再実行を要求できないので、すぐ `stopped(ci_incomplete)`（再開可） |
+| `stale` / `no_result` | 動かさない                                                                                                                                                                                            |
 
 fence の無い関数だが、CI は lease の持ち主ではないので状態の条件で守る。production では `source='fake_ci'` を拒否する。
 
@@ -232,31 +232,31 @@ fence の無い関数だが、CI は lease の持ち主ではないので状態�
 
 ### 冪等 handoff
 
-| ID   | 内容                                                                                                                                                              |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| T-20 | 通常の投入で Issue 1つ、intent `succeeded`、`request.issue_no`、job `queued`、本文1行目がマーカー                                                                 |
-| T-21 | 同じ版の再投入で Issue が増えず `created=false`。同じ `jobId`                                                                                                     |
-| T-22 | 並行2投入で Issue は1つ。負けた側は ERR-301 か既存の結果                                                                                                          |
-| T-23 | 外部呼び出しの直前に順序が守られる（fake サーバの受信時点で intent が `sent` で commit 済み）                                                                     |
-| T-24 | 応答喪失（作成後に切断）: `unknown`、ERR-304。再投入で照合して回収し Issue は1つ、`created=false`                                                                 |
-| T-25 | 確定の前に落ちた: `sent` のまま。`sentStaleMs` 前は ERR-301、後は照合で回収                                                                                       |
-| T-26 | 時間切れは API-06 で ERR-303、旧ルートで ERR-304。5xx と 2xx の壊れた本文は `unknown`                                                                             |
-| T-27 | 4xx は `failed`、再投入で再送できる                                                                                                                               |
-| T-28 | 429 は `failed` と `next_attempt_at`。その前の再投入は ERR-302 で fake サーバに届かない                                                                           |
-| T-29 | 見つからない `unknown`: `confirm_absent` なしでは再送せず `unknown` のまま                                                                                        |
-| T-30 | `confirm_absent`: 理由なしは ERR-102、desk は ERR-101、approver で再作成。監査が残る                                                                              |
-| T-31 | 照合がページ送りで2ページ目の Issue を見つける。closed の Issue も見つける。PR は除外                                                                             |
-| T-32 | 照合が `reconcileMaxPages` で切れたら `confirm_absent` があっても再送しない                                                                                       |
-| T-33 | 他人が作った同じマーカーの Issue を一致させない                                                                                                                   |
-| T-34 | search API を呼ばない（fake サーバのアクセス記録で確認）                                                                                                          |
-| T-35 | 再承認した版の投入は同じ Issue を PATCH。Issue は増えない。`request.issue_no` は同じで、intent は版ごと                                                           |
-| T-36 | v1 create が `unknown` のあいだ v2 は作成しない。照合で回収すると v2 は `update_issue`                                                                            |
-| T-37 | v2 の後に v1 を指定した投入は、intent が `failed` / `intent` でも ERR-202 で外部へ送らず、v2 の本文が上書きされない                                               |
-| T-38 | 確定の前に依頼が取り消された: intent は `succeeded`、`request.issue_no` は入る、job は作らず ERR-202                                                              |
-| T-39 | 再承認で古い job が `cancelled` / `stopped(order_superseded)` / `superseded_at` になる                                                                            |
-| T-40 | 旧ルートの応答の形・`issue_no` 済みの動き・ERR-405 / ERR-304・権限が ADR 7章のとおり。狭まる2点が ERR-205                                                         |
-| T-41 | 対象リポジトリが許可リストの外なら ERR-405 で fake サーバに届かない。本文で repo を指定できない                                                                   |
-| T-42 | 同じ版の `failed` の intent があるまま依頼が差戻し・取消になった後、再投入は ERR-205 で外部へ送らない。`unknown` の照合（読み取り）だけは行い、見つかれば記録する |
+| ID   | 内容                                                                                                                                                                                  |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T-20 | 通常の投入で Issue 1つ、intent `succeeded`、`request.issue_no`、job `queued`、本文1行目がマーカー                                                                                     |
+| T-21 | 同じ版の再投入で Issue が増えず `created=false`。同じ `jobId`                                                                                                                         |
+| T-22 | 並行2投入で Issue は1つ。負けた側は ERR-301 か既存の結果                                                                                                                              |
+| T-23 | 外部呼び出しの直前に順序が守られる（fake サーバの受信時点で intent が `sent` で commit 済み）                                                                                         |
+| T-24 | 応答喪失（作成後に切断）: `unknown`、ERR-304。再投入で照合して回収し Issue は1つ、`created=false`                                                                                     |
+| T-25 | 確定の前に落ちた: `sent` のまま。`sentStaleMs` 前は ERR-301、後は照合で回収                                                                                                           |
+| T-26 | 時間切れは API-06 で ERR-303、旧ルートで ERR-304。5xx と 2xx の壊れた本文は `unknown`                                                                                                 |
+| T-27 | 4xx は `failed`、再投入で再送できる                                                                                                                                                   |
+| T-28 | 429 と、Retry-After 付きか `x-ratelimit-remaining: 0` の 403 は `failed` と `next_attempt_at`（既定の待ちと Retry-After の遅い方）。その前の再投入は ERR-302 で fake サーバに届かない |
+| T-29 | 見つからない `unknown`: `confirm_absent` なしでは再送せず `unknown` のまま                                                                                                            |
+| T-30 | `confirm_absent`: 理由なしは ERR-102、desk は ERR-101、approver で再作成。監査が残る                                                                                                  |
+| T-31 | 照合がページ送りで2ページ目の Issue を見つける。closed の Issue も見つける。PR は除外                                                                                                 |
+| T-32 | 照合が `reconcileMaxPages` で切れたら `confirm_absent` があっても再送しない                                                                                                           |
+| T-33 | 他人が作った同じマーカーの Issue を一致させない                                                                                                                                       |
+| T-34 | search API を呼ばない（fake サーバのアクセス記録で確認）                                                                                                                              |
+| T-35 | 再承認した版の投入は同じ Issue を PATCH。Issue は増えない。`request.issue_no` は同じで、intent は版ごと                                                                               |
+| T-36 | v1 create が `unknown` のあいだ v2 は作成しない。照合で回収すると v2 は `update_issue`                                                                                                |
+| T-37 | v2 の後に v1 を指定した投入は、intent が `failed` / `intent` でも ERR-202 で外部へ送らず、v2 の本文が上書きされない                                                                   |
+| T-38 | 確定の前に依頼が取り消された: intent は `succeeded`、`request.issue_no` は入る、job は作らず ERR-202                                                                                  |
+| T-39 | 再承認で古い job が `cancelled` / `stopped(order_superseded)` / `superseded_at` になる                                                                                                |
+| T-40 | 旧ルートの応答の形・`issue_no` 済みの動き・ERR-405 / ERR-304・権限が ADR 7章のとおり。狭まる2点が ERR-205                                                                             |
+| T-41 | 対象リポジトリが許可リストの外なら ERR-405 で fake サーバに届かない。本文で repo を指定できない                                                                                       |
+| T-42 | 同じ版の `failed` の intent があるまま依頼が差戻し・取消になった後、再投入は ERR-205 で外部へ送らない。`unknown` の照合（読み取り）だけは行い、見つかれば記録する                     |
 
 ### job と lease
 
