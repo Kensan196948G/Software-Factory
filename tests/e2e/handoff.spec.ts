@@ -867,7 +867,10 @@ test.describe('見本と実依頼の分離', () => {
     for (const row of ['issue', 'job', 'plan', 'ci', 'pr']) {
       await expect(panel(page).locator(`[data-dl-row="${row}"] [data-dl-kind]`), row).toHaveText('fake');
     }
-    await expect(panel(page).locator('[data-dl-row="release"] [data-dl-kind]')).toHaveText('未接続');
+    // merge・成果物・配備・戻しは、記録が無ければ未接続のまま（準備完了でも実行済みに見せない）
+    for (const row of ['merge', 'artifact', 'deploy', 'rollback']) {
+      await expect(panel(page).locator(`[data-dl-row="${row}"] [data-dl-kind]`), row).toHaveText('未接続');
+    }
     await expect(panel(page)).not.toContainText('実行確認済み');
     expect((await getDetail(page, id)).status, 'job が進んでも受付の状態は動かない').toBe('approved');
   });
