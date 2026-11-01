@@ -612,13 +612,18 @@
       return false; // 取り直せないときは手元のまま（次の保存で 409 になり、そこで取り直す）
     }
     if (!res || !res.request) return false;
+    // 同期が先に進めた版を、遅れて届いた古い応答で戻さない
+    const prev = base.get(res.request.id);
+    if (prev && prev.version > res.request.version) return true;
     base.set(res.request.id, res.request);
     const ui = window.__MSF_UI__;
     const data = ui && ui.data ? ui.data() : null;
     const live = data && Array.isArray(data.items) ? data.items.find((x) => x.id === res.request.id) : null;
     if (live) {
       const before = visibleSignature(live);
-      applyServer(live, res.request);
+      // 投入の待ちの間に利用者が触った項目は残し、続く同期で送る
+      if (prev) mergeServer(live, toConsole(prev), res.request);
+      else applyServer(live, res.request);
       notifyUi(visibleSignature(live) !== before);
     }
     return true;
@@ -632,8 +637,9 @@
     const message = (err && err.message) || '';
     const of = (kind) => ({ ok: false, kind, code, status, message, details });
     if (!status) return of('network');
-    if (details.handoffState === 'unknown') return of('unknown');
+    // 別のリポジトリの結果不明も ERR-405 で返る。ここでは照合できないのでサーバの理由を出す
     if (code === 'ERR-405') return of('not_connected');
+    if (details.handoffState === 'unknown') return of('unknown');
     if (code === 'ERR-205') return of('not_approved');
     if (code === 'ERR-202') return of('stale');
     if (code === 'ERR-301') return of('in_progress');
@@ -649,8 +655,9 @@
    * 投入の確定で request.version が上がるので、応答の後にサーバの依頼を取り直す。
    */
   async function handoff(id, orderVersion, opts) {
-    while (running) await new Promise((r) => setTimeout(r, 50));
+    // 役割の切替を待つ間に同期が始まりうるので、先に待つ。同期の完了の確認から門の設置までは同期的に行う
     await roleSwitch;
+    while (running) await new Promise((r) => setTimeout(r, 50));
     let done = () => undefined;
     const mine = new Promise((r) => {
       done = r;

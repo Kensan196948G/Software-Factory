@@ -157,6 +157,23 @@ fence の無い関数だが、CI は lease の持ち主ではないので状態�
 - `JobView` に `canonical_yaml`、lease の所有者名、`stop_detail` 内の秘密情報を含めない。
 - `HandoffView` と `JobEvidence` は画面の表示用（読み取りのみ）。再読込の後も Issue の URL と結果不明を表示するために足した。`marker` と `last_error` は出さない。`issueSource` はサーバが `GITHUB_API_URL` と URL の host で決める（`api.github.com` と `github.com` のときだけ `github`）。
 - API-06 の応答に `status` / `version` は無い。画面は応答の後に `GET /api/requests/:id` で取り直す（確定で `request.version` が上がるため）。
+
+### 新旧の handoff の契約
+
+どちらも同じ処理（版固定、`handoff_intent`、job の作成）を通る。正は API-06 で、旧ルートは互換のために残す。
+
+| 項目             | API-06 `POST /api/orders/:id/handoff`                                                                                        | 旧 `POST /api/requests/:id/handoff`                         |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `:id`            | 受付番号（`REQ-YYYY-NNNN`）。注文書は独立の ID を持たない（SC-09 の案）                                                      | 受付番号                                                    |
+| 版               | 本文の `orderVersion`。古い版は ERR-202                                                                                      | 指定なし。いまの版を使う                                    |
+| 冪等             | 受付番号＋版＋対象 repo。同じ版の再投入は `created=false`                                                                    | 同じ。`issue_no` 済みなら新しい処理を呼ばず `created=false` |
+| 応答             | `HandoffResult`（`requestId`、`orderVersion`、`issueNo`、`issueUrl`、`jobId`、`jobState`、`contentSha256`、`created`、`op`） | `{ issueNo, issueUrl, created, detail }`                    |
+| 結果不明         | ERR-304 と `details.handoffState`。作り直さず list API で照合する。`confirmAbsent` は走査が完全なときだけ                    | 同じ ERR-304                                                |
+| 版が上がったとき | 同じ Issue を更新し、古い job は `queued` なら取消、実行中なら `stopped(order_superseded)`（ADR 4 章）                       | 同じ                                                        |
+| 権限             | desk / approver                                                                                                              | desk / approver                                             |
+
+旧ルートの変更点は ADR 7 章。
+
 - API-07（`POST /api/jobs/:id/verifications`）は作らない。ルートが存在しないことを試験する。
 - zod は 3 / 4 両対応の書き方に限る: `z.record` は2引数、`error.issues`（`.errors` は使わない）、`z.string().uuid()` は可、`.merge` と `z.nativeEnum` は避ける（`z.enum(JOB_STATES)` を使う）。schema は `src/api/schemas.ts`。`src/shared/devline.ts` に zod を入れない。
 

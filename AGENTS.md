@@ -6,7 +6,7 @@
 ## 1. 目的と範囲
 
 - 目的: みらい建設工業の「受付ステーション」MVP（要望受付 → 信号判定 → 承認 → 注文書YAML → 進捗管理）を、個人利用できる形で動かす。
-- 範囲: `docs/project/01-mvp-scope.md` の In Scope。開発ライン本体（AI実装・CI・PR自動化）、本番環境、Entra ID SSO、通知連携は**対象外**（Issue化してBacklogへ）。
+- 範囲: `docs/project/01-mvp-scope.md` の In Scope。開発ライン本体（AI実装・CI・PR・人の承認後の検証環境への配備と証跡表示）は 2026-11-01 の所有者の指示で対象に加えた（`docs/devline/`）。本番環境、Entra ID SSO、通知連携は**対象外**（Issue化してBacklogへ）。
 - 仕様の正本: `docs/みらいSF 詳細仕様書 V1.0.html`。画面ID（SCR-xx）・状態・エラーコード（ERR-xxx）・データ項目（ENT-xx）を勝手に変えない。変える場合は理由と影響を `docs/` に記録し、承認を得る。
 
 ## 2. 禁止事項（違反したら作業を止める）
@@ -65,5 +65,5 @@ pnpm db:verify
 ## 8. 既知の制限（詳細は `docs/limitations.md`）
 
 - 1ユーザー・3役の切替。自己承認は既定で許可（本番は SSO＋複数ユーザーで禁止）。
-- 添付はメタ情報のみ。通知・Entra ID・AI実装・PR自動化は未実装。
+- 添付はメタ情報のみ。通知・Entra ID は未実装。開発ラインの到達点は `docs/limitations.md` を参照。
 - 数値目標は（案）。MVPの実測後に確定する。
