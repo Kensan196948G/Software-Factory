@@ -787,6 +787,47 @@ describe('指摘 6・7: 費用と原因', () => {
     },
   );
 
+  it('CLI が起動を拒んだ exit 1（出力なし）は未起動: 0 円で再開できる失敗。理由を成果物に残す', async () => {
+    const line = makeLine();
+    stub.setScenario({
+      plan: { raw: '', exit: 1, stderr: 'Claude Code could not start: bubblewrap is required for subprocess env scrubbing.\n' },
+    });
+    const { jobId } = await realJob();
+    await steps(line, 2);
+    const view = await h.view(jobId);
+    expect(view.state).toBe('stopped');
+    expect(view.stopReason).toBe('runner_failure');
+    expect(view.costJpy).toBe(0);
+    expect(detailOf(view)).toMatchObject({ exitCode: 1, notStarted: true });
+    expect((await h.api('POST', `/api/jobs/${jobId}/resume`, { reason: '直した' })).statusCode).toBe(200);
+  });
+
+  it('起動拒否の行の前に docker の警告があっても未起動: 0 円', async () => {
+    const line = makeLine();
+    stub.setScenario({
+      plan: {
+        raw: '',
+        exit: 1,
+        stderr: 'WARNING: Your kernel does not support swap limit capabilities\nClaude Code could not start: x\n',
+      },
+    });
+    const { jobId } = await realJob();
+    await steps(line, 2);
+    const view = await h.view(jobId);
+    expect(view.costJpy).toBe(0);
+    expect(detailOf(view)).toMatchObject({ exitCode: 1, notStarted: true });
+  });
+
+  it('exit 1 の起動拒否の文言でも、標準出力があれば動いた扱いで計上する', async () => {
+    const line = makeLine();
+    stub.setScenario({ plan: { raw: 'not json', exit: 1, stderr: 'Claude Code could not start: x\n' } });
+    const { jobId } = await realJob();
+    await steps(line, 2);
+    const view = await h.view(jobId);
+    expect(view.costJpy).toBe(1000);
+    expect(view.stopReason).toBe('budget_limit');
+  });
+
   it.each([
     ['別の exit で出力なし', { raw: '', exit: 1 }],
     ['exit 125 でも出力があれば動いた扱い', { raw: 'not json', exit: 125 }],
@@ -946,7 +987,10 @@ describe('指摘 9: worker を1台に強制する', () => {
   it('接続を失ったら isHeld が false になり、新しい AI を動かさない', async () => {
     const line = await start();
     const { rows } = await query<{ pid: number }>(
-      `select pid from pg_locks where locktype='advisory' and classid=$1`,
+      // 同じクラスタの他の DB（Staging の worker など）の排他を拾わない。下で接続を切るので必ず絞る
+      `select pid from pg_locks
+        where locktype='advisory' and classid=$1
+          and database = (select oid from pg_database where datname = current_database())`,
       [0x4d5346],
     );
     expect(rows).toHaveLength(1);

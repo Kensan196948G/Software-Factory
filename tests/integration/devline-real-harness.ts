@@ -636,6 +636,7 @@ export interface StubStep {
   output?: Record<string, unknown>;
   raw?: string;
   exit?: number;
+  stderr?: string;
 }
 
 export interface StubScenario {
@@ -696,6 +697,7 @@ const stepName = prompt.includes('今回の工程は計画') ? 'plan' : prompt.i
 const step = scenario[stepName] || {};
 fs.appendFileSync(path.join(dir, 'steps.jsonl'), JSON.stringify({ step: stepName, name, listing: fs.readdirSync(work), hasGit: fs.existsSync(path.join(work, '.git')), hasClaude: fs.existsSync(path.join(work, '.claude')), hasMcp: fs.existsSync(path.join(work, '.mcp.json')), hasClaudeMd: fs.existsSync(path.join(work, 'CLAUDE.md')), previous: fs.existsSync(path.join(work, 'src/feature.js')) }) + '\n');
 
+if (step.stderr) process.stderr.write(step.stderr);
 for (const [p, content] of Object.entries(step.files || {})) {
   fs.mkdirSync(path.dirname(path.join(work, p)), { recursive: true });
   fs.writeFileSync(path.join(work, p), content);

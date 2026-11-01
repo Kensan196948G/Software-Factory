@@ -148,7 +148,6 @@ describe('runner を実 Docker で動かす（claude は偽物）', () => {
     expect(facts.envNames).toEqual([
       'ANTHROPIC_API_KEY',
       'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
-      'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB',
       'DISABLE_AUTOUPDATER',
       'HTTPS_PROXY',
       'HTTP_PROXY',

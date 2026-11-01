@@ -5,12 +5,16 @@
  * - プロキシの許可先（api.anthropic.com）への接続は試さない（単体試験で別のダミーへ確かめている）。
  * - 外部の名前は引かない。DNS の確認は `.invalid` を `--dns 127.0.0.1` のコンテナからだけ引く。
  */
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   PROXY_IMAGE,
   RUNNER_IMAGE,
+  buildClaudeArgs,
   egressNetworkArgs,
   internalNetworkArgs,
   proxyRunArgs,
@@ -24,8 +28,118 @@ const dummy = `msf-dl-test-dummy-${id}`;
 
 const HARDENED = ['--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--read-only', '--tmpfs', '/tmp'];
 
+/** コンテナの中で偽の API を立て、実 CLI に決まった工具の呼び出しをさせる。Anthropic へは送らない。 */
+const OFFLINE_CLI_PROBE = String.raw`import { spawn } from 'node:child_process';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { createServer } from 'node:http';
+const HOOK = JSON.stringify({ hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: 'touch /tmp/HOOK_RAN' }] }] } });
+const steps = process.env.PROBE_PLAN ? [['StructuredOutput', { summary: 'plan', needs_human: false }]] : [
+  ['Edit', { file_path: '/workspace/t.txt', old_string: '', new_string: 'hello\n' }],
+  ['Read', { file_path: '/workspace/t.txt' }],
+  ['Read', { file_path: '/proc/self/environ' }],
+  ['Read', { file_path: '/proc/1/environ' }],
+  ['Edit', { file_path: '/workspace/.claude/settings.json', old_string: '', new_string: HOOK }],
+  ['Read', { file_path: '/workspace/t.txt' }],
+  ['Bash', { command: 'echo RAN', description: 'p' }],
+];
+let tools = null;
+const results = [];
+const sse = (res, events) => {
+  res.writeHead(200, { 'content-type': 'text/event-stream' });
+  for (const e of events) res.write('event: ' + e.type + '\ndata: ' + JSON.stringify(e) + '\n\n');
+  res.end();
+};
+const start = (id) => ({ type: 'message_start', message: { id, type: 'message', role: 'assistant', model: 'stub', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } });
+const finish = (reason) => [{ type: 'content_block_stop', index: 0 }, { type: 'message_delta', delta: { stop_reason: reason, stop_sequence: null }, usage: { output_tokens: 1 } }, { type: 'message_stop' }];
+const server = createServer((req, res) => {
+  let body = '';
+  req.on('data', (d) => (body += d));
+  req.on('end', () => {
+    if (!req.url.includes('/v1/messages') || req.url.includes('count_tokens')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"input_tokens":1}');
+      return;
+    }
+    const j = JSON.parse(body || '{}');
+    if (tools === null && j.tools?.length) tools = j.tools.map((t) => t.name).filter((n) => n !== 'StructuredOutput').sort();
+    const done = (j.messages ?? []).flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((c) => c.type === 'tool_result');
+    results.length = 0;
+    done.forEach((t, i) => results.push({ name: steps[i]?.[0], isError: t.is_error === true, text: (typeof t.content === 'string' ? t.content : JSON.stringify(t.content)).slice(0, 200) }));
+    const step = steps[done.length];
+    if (!step) {
+      sse(res, [start('e'), { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }, { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'done' } }, ...finish('end_turn')]);
+      return;
+    }
+    sse(res, [start('m' + done.length), { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_' + done.length, name: step[0], input: {} } }, { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify(step[1]) } }, ...finish('tool_use')]);
+  });
+});
+server.listen(9099, '127.0.0.1', () => {
+  const [cmd, ...args] = JSON.parse(readFileSync('/probe/args.json', 'utf8'));
+  if (!process.env.PROBE_PLAN) args.splice(args.indexOf('--json-schema'), 2);
+  const child = spawn(cmd, args, { cwd: '/workspace', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ANTHROPIC_API_KEY: 'sk-dummy-not-real', ANTHROPIC_BASE_URL: 'http://127.0.0.1:9099', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' } });
+  let stderr = '';
+  child.stderr.on('data', (d) => (stderr += d));
+  let stdout = '';
+  child.stdout.on('data', (d) => (stdout += d));
+  const killer = setTimeout(() => child.kill('SIGKILL'), 60000);
+  child.on('close', (code) => {
+    clearTimeout(killer);
+    const files = readdirSync('/workspace', { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name).sort();
+    console.log(JSON.stringify({ code, stderr: stderr.slice(0, 400), tools, results, files, content: existsSync('/workspace/t.txt') ? readFileSync('/workspace/t.txt', 'utf8') : null, hookRan: existsSync('/tmp/HOOK_RAN'), cli: stdout.trim().startsWith('{') ? JSON.parse(stdout) : null }));
+    process.exit(0);
+  });
+});
+`;
+
 function docker(...args: string[]): string {
   return execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+
+interface OfflineCliResult {
+  code: number;
+  stderr: string;
+  tools: string[];
+  results: { name: string; isError: boolean; text: string }[];
+  files: string[];
+  content: string | null;
+  hookRan: boolean;
+  cli: { structured_output?: unknown } | null;
+}
+
+/** 実 CLI を本番の引数で動かす（--network none、ダミーのキー。費用なし）。 */
+function runOfflineCli(step: 'plan' | 'implement'): OfflineCliResult {
+  const dir = mkdtempSync(join(tmpdir(), 'msf-dl-cli-'));
+  try {
+    writeFileSync(
+      join(dir, 'args.json'),
+      JSON.stringify(buildClaudeArgs({ prompt: 'probe', step, maxTurns: 40, maxBudgetUsd: 1 })),
+    );
+    writeFileSync(join(dir, 'probe.mjs'), OFFLINE_CLI_PROBE);
+    const out = docker(
+      'run',
+      '--rm',
+      '--network',
+      'none',
+      ...HARDENED,
+      '--tmpfs',
+      '/workspace:rw,uid=1000',
+      '--user',
+      '1000:1000',
+      '--env',
+      'HOME=/tmp/home',
+      ...(step === 'plan' ? ['--env', 'PROBE_PLAN=1'] : []),
+      '--mount',
+      `type=bind,src=${dir},dst=/probe,readonly`,
+      '--workdir',
+      '/workspace',
+      RUNNER_IMAGE,
+      'node',
+      '/probe/probe.mjs',
+    );
+    return JSON.parse(out.slice(out.lastIndexOf('\n') + 1)) as OfflineCliResult;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function tryDocker(...args: string[]): { code: number | null; out: string } {
@@ -140,6 +254,35 @@ describe('runner イメージ', () => {
     );
     expect(probe.out).toContain('1000');
     expect(probe.out).toContain('READONLY');
+  });
+
+  it('実 CLI と偽の API: 実装の工具は Read と Edit だけで、Bash、/proc、hook へ届かず、作業場所に余計なファイルを残さない', () => {
+    const r = runOfflineCli('implement');
+    expect(r.stderr).not.toContain('could not start');
+    expect(r.code).toBe(0);
+    expect(r.tools).toEqual(['Edit', 'Read']);
+    expect(r.results.map((x) => [x.name, x.isError])).toEqual([
+      ['Edit', false],
+      ['Read', false],
+      ['Read', true],
+      ['Read', true],
+      ['Edit', true],
+      ['Read', false],
+      ['Bash', true],
+    ]);
+    expect(JSON.stringify(r.results)).not.toContain('sk-dummy-not-real');
+    expect(r.hookRan).toBe(false);
+    expect(r.files).toEqual(['t.txt']);
+    expect(r.content).toBe('hello\n');
+  });
+
+  it('実 CLI と偽の API: 計画の工具は Read だけで、--json-schema の結果を返せる', () => {
+    const r = runOfflineCli('plan');
+    expect(r.stderr).not.toContain('could not start');
+    expect(r.code).toBe(0);
+    expect(r.tools).toEqual(['Read']);
+    expect(r.cli?.structured_output).toEqual({ summary: 'plan', needs_human: false });
+    expect(r.files).toEqual([]);
   });
 
   it('確認済みのフラグが --help にある（--max-turns は help に出ない）', () => {

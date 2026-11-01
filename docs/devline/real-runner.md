@@ -28,22 +28,22 @@ handoff（Issue）→ queued → planning（AI・読むだけ）→ implementing
 
 ### 止まる場合
 
-| 条件                                                                              | 止まり方                                                                                  |
-| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| 資格情報なし・0600 以外・symlink・他人のファイル                                  | 起動を拒否（fake へ落とさない）                                                           |
-| 許可リスト外・定数の repo 以外・repo ID 不一致・public                            | 起動を拒否。動作中なら `policy_violation`                                                 |
-| `NODE_ENV=production`                                                             | 起動を拒否。投入も ERR-405（Staging の現在の設定がこれにあたる。13 章）                   |
-| artifact は読めて AC の試験が足りない（未確認、`not_run`、未知の ID、重複、欠落） | `revising`（どの AC かを AI へ渡す。同因 2 回・合計 5 回の上限の中で。AI の費用がかかる） |
-| `ac-results` が読めない、取得元が合わない、再開で同じ run を読み直した            | `ci_incomplete`。理由に「AC 未確認」を出す                                                |
-| 別の worker が動いている（advisory lock を取れない）                              | 起動を拒否。コンテナの片付けもしない                                                      |
-| 禁止差分・追加の中身の秘密・バイナリ（4章）                                       | `policy_violation`。commit も push もしない                                               |
-| 既存の試験の変更・削除・移動（前の試行で足した試験を含む）                        | `human_approval_required`。push しない                                                    |
-| 予算の到達・CLI が予算で停止                                                      | `budget_limit`。再開不可                                                                  |
-| workflow が base と別の blob                                                      | `policy_violation`                                                                        |
-| CI の結果が揃わない（skip・cancelled・段階名の不一致・run の不成功）              | 待たずに `ci_incomplete`。理由を `stop_detail` に出す。CI を再実行して再開する            |
-| heartbeat・待ちの例外、worker の排他を失った                                      | AI を止めて片付け、結果を待って費用を数え `runner_failure`                                |
-| CLI を起動できない（`docker run` の 125〜127 で出力なし）                         | 0 円で `runner_failure`（`notStarted`）。再開できる                                       |
-| 隔離ネットワークを用意できない                                                    | 0 円で `runner_failure`。段階と stderr を成果物に残す                                     |
+| 条件                                                                                 | 止まり方                                                                                  |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| 資格情報なし・0600 以外・symlink・他人のファイル                                     | 起動を拒否（fake へ落とさない）                                                           |
+| 許可リスト外・定数の repo 以外・repo ID 不一致・public                               | 起動を拒否。動作中なら `policy_violation`                                                 |
+| `NODE_ENV=production`                                                                | 起動を拒否。投入も ERR-405（Staging の現在の設定がこれにあたる。13 章）                   |
+| artifact は読めて AC の試験が足りない（未確認、`not_run`、未知の ID、重複、欠落）    | `revising`（どの AC かを AI へ渡す。同因 2 回・合計 5 回の上限の中で。AI の費用がかかる） |
+| `ac-results` が読めない、取得元が合わない、再開で同じ run を読み直した               | `ci_incomplete`。理由に「AC 未確認」を出す                                                |
+| 別の worker が動いている（advisory lock を取れない）                                 | 起動を拒否。コンテナの片付けもしない                                                      |
+| 禁止差分・追加の中身の秘密・バイナリ（4章）                                          | `policy_violation`。commit も push もしない                                               |
+| 既存の試験の変更・削除・移動（前の試行で足した試験を含む）                           | `human_approval_required`。push しない                                                    |
+| 予算の到達・CLI が予算で停止                                                         | `budget_limit`。再開不可                                                                  |
+| workflow が base と別の blob                                                         | `policy_violation`                                                                        |
+| CI の結果が揃わない（skip・cancelled・段階名の不一致・run の不成功）                 | 待たずに `ci_incomplete`。理由を `stop_detail` に出す。CI を再実行して再開する            |
+| heartbeat・待ちの例外、worker の排他を失った                                         | AI を止めて片付け、結果を待って費用を数え `runner_failure`                                |
+| CLI を起動できない（`docker run` の 125〜127、または起動を拒んだ exit 1 で出力なし） | 0 円で `runner_failure`（`notStarted`）。再開できる                                       |
+| 隔離ネットワークを用意できない                                                       | 0 円で `runner_failure`。段階と stderr を成果物に残す                                     |
 
 費用の規則（少なく数えない。同じ試行を二重に数えない）:
 
@@ -226,6 +226,26 @@ jobs:
 | 禁止差分や prompt injection に実 AI が当たったときの動作          | 未確認。作り物の素直な注文書 1 件だけ        |
 | GitHub が同じ head の 2 つ目の PR を断る文言（`already exists`）  | 未確認                                       |
 | 堅牢化（`ci_incomplete`、PR の後始末、排他、費用の規則）の実走    | 未走。stub docker と fake GitHub でのみ確認  |
+
+## 9-2. AI のコンテナでは試験もコマンドも実行しない（2026-11-01）
+
+Staging の最初の投入（REQ-2026-0010、job `914b0043`）は、`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` の CLI が bubblewrap を求めて起動せず、1.7 秒で止まった。stderr と使用量から AI の呼び出しは無かったとみられるが、当時は exit 1 を「動いた」扱いにしたので、割り当ての 1,000 円が見積もりとして計上され、`budget_limit` で再開できない。記録は書きかえない。
+
+偽の API とダミーのキーで実 CLI 2.1.316 を確かめた結果:
+
+| 構成                                                   | 結果                                                                                                                                                    |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SCRUB=1、bubblewrap なし                               | 起動しない                                                                                                                                              |
+| SCRUB=1、bubblewrap あり                               | 起動するが Bash は名前空間を作れず失敗（`seccomp=unconfined` でも失敗）。作業場所に空の `.env`、`.npmrc`、lock ファイルなどを残し、差分検査で必ず止まる |
+| SCRUB=0、Bash あり（対照）                             | 子プロセスからキーが見える                                                                                                                              |
+| **採用: SCRUB なし、工具は Read と Edit、Bash は禁止** | 編集は動く。Bash と Agent は提供されず、`/proc/*/environ` の Read と `.claude` への Edit は拒否され、hook は動かず、余計なファイルは残らない            |
+
+- AI が動かせる子プロセスが無いので、SCRUB の役目は無くなる。隔離のフラグは緩めていない。
+- Write、Glob、Grep はこの版では指定しても提供されない。新しいファイルは Edit の空の `old_string` で作る。一覧と検索が無いので、AI は注文書とプロンプトにある path しか読めない。
+- 試験の実行と合否は独立した CI だけが行う。修正の工程で渡すのは失敗した段階の名前だけなので、CI の失敗が直らないまま修正の上限か予算に達する可能性がある。
+- AI が 1 回目に書いた試験が誤っていて CI で落ちると、修正の工程の AI はファイル名を知る手段が無い。名前を当ててその試験を直しても、直前の head と比べて既存の試験の変更になるので `human_approval_required` で止まる。
+- stdout が空で exit 1、stderr に `Claude Code could not start:` で始まる行がある場合は CLI 未起動（0 円、再開可）。
+- `pnpm test:docker` に、実 CLI と偽の API でこの構成を確かめる試験を入れた。実 API での通しは未確認。
 
 ## 10. 既知の制限
 
