@@ -1127,8 +1127,6 @@ export async function handoffToGithub(
   correlationId: string,
   depsIn?: DevlineDeps,
 ): Promise<{ issueNo: number; issueUrl: string; created: boolean; detail: RequestDetail }> {
-  // 新しいルートと同じ解決にする（実 runner の設定なら DEVLINE_GITHUB_TOKEN。足りなければ ERR-405）
-  const deps = depsIn ?? defaultDevlineDeps();
   if (!canHandoff({ role: actor.role, isAdmin: actor.user.isAdmin })) {
     await appendAudit({
       action: 'handoff.intent',
@@ -1168,6 +1166,9 @@ export async function handoffToGithub(
     };
   }
 
+  // 権限と issue_no の確認の後で解決する。実 runner の設定の不足で既存の Issue の表示や権限の拒否を変えない
+  // 新しいルートと同じ解決にする（実 runner の設定なら DEVLINE_GITHUB_TOKEN。足りなければ ERR-405）
+  const deps = depsIn ?? defaultDevlineDeps();
   try {
     const result = await handoffOrder({ requestId: id, orderVersion: null }, actor, correlationId, deps);
     return { issueNo: result.issueNo, issueUrl: result.issueUrl, created: result.created, detail: await getDetail(id, actor) };

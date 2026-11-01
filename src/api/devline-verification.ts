@@ -168,6 +168,9 @@ export async function recordVerification(input: RecordVerificationInput): Promis
   });
 }
 
+/** artifact 自体は読めて、AC の試験の不足や書き方が原因のもの（AI の修正で直る）。 */
+const AI_FIXABLE_AC_PROBLEMS: readonly string[] = ['ok', 'missing_ac_id', 'unknown_ac_id', 'duplicate_ac_id'];
+
 /** CI は lease の持ち主ではないので fencing を +1 して lease を外す。動いている worker の書き込みは捨てられる。 */
 async function applyVerdict(
   client: PoolClient,
@@ -180,6 +183,30 @@ async function applyVerdict(
     await haltLockedJob(client, job, { to: 'stopped', reason, detail, now });
     await logTransition(client, job, 'stopped', { reason, ...detail }, input);
     return { state: 'stopped', advanced: true };
+  };
+
+  /** AI の修正へ戻す（同因と合計の上限の中で）。CI 自体は読めていて、直せるのは AI のとき。 */
+  const repair = async (
+    causeKey: string,
+    ciRunId: string,
+    failure: { failedStages: string[]; failedAcs: string[]; failedTestIds: string[]; note?: string },
+  ): Promise<{ state: JobState; advanced: boolean }> => {
+    const decision = decideRepair({ total: job.repair_count_total, byCause: job.repair_count_by_cause }, causeKey);
+    if (!decision.allow) return stop(decision.stopReason, { causeKey, ciRunId });
+    const byCause = {
+      ...job.repair_count_by_cause,
+      [causeKey]: (job.repair_count_by_cause[causeKey] ?? 0) + 1,
+    };
+    const workState = { ...job.work_state, previousFailure: { causeKey, ...failure, ciRunId } };
+    await client.query(
+      `update job set state='revising', repair_count_total=repair_count_total+1, repair_count_by_cause=$2::jsonb,
+              work_state=$3::jsonb, fencing_token=fencing_token+1, lease_owner=null, lease_expires_at=null, updated_at=$4::timestamptz,
+              ${rollSessionSql('$4')}
+        where id=$1`,
+      [job.id, JSON.stringify(byCause), JSON.stringify(workState), now],
+    );
+    await logTransition(client, job, 'revising', { causeKey, ciRunId }, input);
+    return { state: 'revising', advanced: true };
   };
 
   switch (verdict.verdict) {
@@ -195,34 +222,30 @@ async function applyVerdict(
       await logTransition(client, job, 'pr_ready', { ciRunId: verdict.ciRunId }, input);
       return { state: 'pr_ready', advanced: true };
     }
-    case 'failed': {
-      const decision = decideRepair({ total: job.repair_count_total, byCause: job.repair_count_by_cause }, verdict.causeKey);
-      if (!decision.allow) return stop(decision.stopReason, { causeKey: verdict.causeKey, ciRunId: verdict.ciRunId });
-      const byCause = {
-        ...job.repair_count_by_cause,
-        [verdict.causeKey]: (job.repair_count_by_cause[verdict.causeKey] ?? 0) + 1,
-      };
-      const workState = {
-        ...job.work_state,
-        previousFailure: {
-          causeKey: verdict.causeKey,
-          failedStages: verdict.failedStages,
-          failedTestIds: verdict.failedTestIds,
-          ciRunId: verdict.ciRunId,
-        },
-      };
-      await client.query(
-        `update job set state='revising', repair_count_total=repair_count_total+1, repair_count_by_cause=$2::jsonb, work_state=$3::jsonb,
-                fencing_token=fencing_token+1, lease_owner=null, lease_expires_at=null, updated_at=$4::timestamptz,
-                ${rollSessionSql('$4')}
-          where id=$1`,
-        [job.id, JSON.stringify(byCause), JSON.stringify(workState), now],
-      );
-      await logTransition(client, job, 'revising', { causeKey: verdict.causeKey, ciRunId: verdict.ciRunId }, input);
-      return { state: 'revising', advanced: true };
-    }
+    case 'failed':
+      return repair(verdict.causeKey, verdict.ciRunId, {
+        failedStages: verdict.failedStages,
+        failedAcs: verdict.failedAcs,
+        failedTestIds: verdict.failedTestIds,
+      });
     case 'incomplete': {
       // 実 CI の再実行は人が行う（worker は要求しない）。待っても結果は変わらないので、理由を付けてすぐ止める
+      // 段階は揃い artifact も読めたのに AC の試験が足りない。CI の再実行では直らない（AI が試験を足す）
+      if (
+        input.source === 'github' &&
+        verdict.incompleteStages.length === 0 &&
+        !verdict.acMissing &&
+        verdict.unconfirmedAcs.length > 0 &&
+        AI_FIXABLE_AC_PROBLEMS.includes(input.diagnostics?.acArtifact ?? '')
+      ) {
+        const acs = [...verdict.unconfirmedAcs].sort();
+        return repair(`ac-unconfirmed|${acs.join(',')}`, verdict.ciRunId, {
+          failedStages: [],
+          failedAcs: acs,
+          failedTestIds: [],
+          note: '試験名の先頭を AC 番号にした試験が無いか、結果を確認できません。`test/unit/` の試験名を `AC-n:` で始めてください',
+        });
+      }
       if (input.source === 'github') {
         const statusOf = (stage: string): string =>
           input.stages.filter((s) => s.stage === stage).find((s) => s.status !== 'passed')?.status ?? 'missing';

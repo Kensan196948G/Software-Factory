@@ -240,7 +240,8 @@ export function createGithubCiCollector(options: GithubCiCollectorOptions): Gith
       await res.body?.cancel().catch(() => undefined);
       if (res.status === 404) return { problem: 'missing' };
       if (res.status === 410) return { problem: 'expired' };
-      return 'retry';
+      // 一時的な失敗だけ読み直す。権限の不足などは待っても変わらない
+      return res.status >= 500 || res.status === 429 ? 'retry' : { problem: 'invalid' };
     };
     try {
       const first = await fetch(`${base}/repos/${repo}/actions/artifacts/${id}/zip`, {
@@ -357,7 +358,8 @@ export function createGithubCiCollector(options: GithubCiCollectorOptions): Gith
       const stages = stagesFromJobs(jobs, headSha, run.conclusion);
       // 通信の失敗では記録しない。delivery は run ごとに1回なので、記録すると欠落のまま固定される
       const ac = await readAcArtifact(repo, run, ctx.acIds);
-      if (ac.kind === 'retry') return null;
+      // 段階の失敗が分かっているときは、artifact の読み直しを待たずに修正へ進める
+      if (ac.kind === 'retry' && !stages.some((st) => st.status === 'failed')) return null;
       const acResults = ac.kind === 'ok' ? ac.results : [];
       const acDigest = ac.kind === 'ok' ? ac.digest : null;
       const reportDigest = createHash('sha256')
@@ -378,7 +380,7 @@ export function createGithubCiCollector(options: GithubCiCollectorOptions): Gith
         diagnostics: {
           runConclusion: run.conclusion,
           unmatchedJobs: unmatchedJobNames(jobs),
-          acArtifact: ac.problem ?? 'ok',
+          acArtifact: ac.kind === 'retry' ? 'unavailable' : (ac.problem ?? 'ok'),
         },
         now: ctx.now,
         correlationId: ctx.correlationId,

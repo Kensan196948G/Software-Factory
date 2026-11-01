@@ -203,8 +203,6 @@ jobs:
     # 以下同じ形。build は node --check、unit / integration / e2e は node --test、security は依存なしの確認など
 ```
 
-CI は artifact `ac-results`（14 章）を残すこと（Sandbox PR #4）。形式は Sandbox PR #5 の `repository`、`runId`、`runAttempt` を含むものが必要で、#5 が merge されるまで実 job は `invalid` で止まる。無ければ受入条件は **未確認** になり、`ci_incomplete` で止まる。
-
 推奨: main の保護（GitHub Free の private では使えない場合がある。その場合 PR の merge は人の運用で守る）。Actions は `pull_request` の実行に承認が要らない設定（同じリポジトリの PR なので既定で動く）。
 
 ## 9. 実走で確認できたことと、まだ確認できないこと
