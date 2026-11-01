@@ -33,10 +33,11 @@ const OFFLINE_CLI_PROBE = String.raw`import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { createServer } from 'node:http';
 const HOOK = JSON.stringify({ hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: 'touch /tmp/HOOK_RAN' }] }] } });
-const steps = [
+const steps = process.env.PROBE_PLAN ? [['StructuredOutput', { summary: 'plan', needs_human: false }]] : [
   ['Edit', { file_path: '/workspace/t.txt', old_string: '', new_string: 'hello\n' }],
   ['Read', { file_path: '/workspace/t.txt' }],
   ['Read', { file_path: '/proc/self/environ' }],
+  ['Read', { file_path: '/proc/1/environ' }],
   ['Edit', { file_path: '/workspace/.claude/settings.json', old_string: '', new_string: HOOK }],
   ['Read', { file_path: '/workspace/t.txt' }],
   ['Bash', { command: 'echo RAN', description: 'p' }],
@@ -74,17 +75,17 @@ const server = createServer((req, res) => {
 });
 server.listen(9099, '127.0.0.1', () => {
   const [cmd, ...args] = JSON.parse(readFileSync('/probe/args.json', 'utf8'));
-  const schema = args.indexOf('--json-schema');
-  args.splice(schema, 2);
+  if (!process.env.PROBE_PLAN) args.splice(args.indexOf('--json-schema'), 2);
   const child = spawn(cmd, args, { cwd: '/workspace', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ANTHROPIC_API_KEY: 'sk-dummy-not-real', ANTHROPIC_BASE_URL: 'http://127.0.0.1:9099', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' } });
   let stderr = '';
   child.stderr.on('data', (d) => (stderr += d));
-  child.stdout.resume();
+  let stdout = '';
+  child.stdout.on('data', (d) => (stdout += d));
   const killer = setTimeout(() => child.kill('SIGKILL'), 60000);
   child.on('close', (code) => {
     clearTimeout(killer);
     const files = readdirSync('/workspace', { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name).sort();
-    console.log(JSON.stringify({ code, stderr: stderr.slice(0, 400), tools, results, files, content: existsSync('/workspace/t.txt') ? readFileSync('/workspace/t.txt', 'utf8') : null, hookRan: existsSync('/tmp/HOOK_RAN') }));
+    console.log(JSON.stringify({ code, stderr: stderr.slice(0, 400), tools, results, files, content: existsSync('/workspace/t.txt') ? readFileSync('/workspace/t.txt', 'utf8') : null, hookRan: existsSync('/tmp/HOOK_RAN'), cli: stdout.trim().startsWith('{') ? JSON.parse(stdout) : null }));
     process.exit(0);
   });
 });
@@ -92,6 +93,53 @@ server.listen(9099, '127.0.0.1', () => {
 
 function docker(...args: string[]): string {
   return execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+
+interface OfflineCliResult {
+  code: number;
+  stderr: string;
+  tools: string[];
+  results: { name: string; isError: boolean; text: string }[];
+  files: string[];
+  content: string | null;
+  hookRan: boolean;
+  cli: { structured_output?: unknown } | null;
+}
+
+/** 実 CLI を本番の引数で動かす（--network none、ダミーのキー。費用なし）。 */
+function runOfflineCli(step: 'plan' | 'implement'): OfflineCliResult {
+  const dir = mkdtempSync(join(tmpdir(), 'msf-dl-cli-'));
+  try {
+    writeFileSync(
+      join(dir, 'args.json'),
+      JSON.stringify(buildClaudeArgs({ prompt: 'probe', step, maxTurns: 40, maxBudgetUsd: 1 })),
+    );
+    writeFileSync(join(dir, 'probe.mjs'), OFFLINE_CLI_PROBE);
+    const out = docker(
+      'run',
+      '--rm',
+      '--network',
+      'none',
+      ...HARDENED,
+      '--tmpfs',
+      '/workspace:rw,uid=1000',
+      '--user',
+      '1000:1000',
+      '--env',
+      'HOME=/tmp/home',
+      ...(step === 'plan' ? ['--env', 'PROBE_PLAN=1'] : []),
+      '--mount',
+      `type=bind,src=${dir},dst=/probe,readonly`,
+      '--workdir',
+      '/workspace',
+      RUNNER_IMAGE,
+      'node',
+      '/probe/probe.mjs',
+    );
+    return JSON.parse(out.slice(out.lastIndexOf('\n') + 1)) as OfflineCliResult;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function tryDocker(...args: string[]): { code: number | null; out: string } {
@@ -208,62 +256,33 @@ describe('runner イメージ', () => {
     expect(probe.out).toContain('READONLY');
   });
 
-  it('実 CLI と偽の API: 渡す工具は Read と Edit だけで、Bash、/proc、hook へ届かず、作業場所に余計なファイルを残さない', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'msf-dl-cli-'));
-    try {
-      writeFileSync(
-        join(dir, 'args.json'),
-        JSON.stringify(buildClaudeArgs({ prompt: 'probe', step: 'implement', maxTurns: 40, maxBudgetUsd: 1 })),
-      );
-      writeFileSync(join(dir, 'probe.mjs'), OFFLINE_CLI_PROBE);
-      const out = docker(
-        'run',
-        '--rm',
-        '--network',
-        'none',
-        ...HARDENED,
-        '--tmpfs',
-        '/workspace:rw,uid=1000',
-        '--user',
-        '1000:1000',
-        '--env',
-        'HOME=/tmp/home',
-        '--mount',
-        `type=bind,src=${dir},dst=/probe,readonly`,
-        '--workdir',
-        '/workspace',
-        RUNNER_IMAGE,
-        'node',
-        '/probe/probe.mjs',
-      );
-      const r = JSON.parse(out.slice(out.lastIndexOf('\n') + 1)) as {
-        code: number;
-        stderr: string;
-        tools: string[];
-        results: { name: string; isError: boolean; text: string }[];
-        files: string[];
-        content: string;
-        hookRan: boolean;
-        cost: number;
-      };
-      expect(r.stderr).not.toContain('could not start');
-      expect(r.code).toBe(0);
-      expect(r.tools).toEqual(['Edit', 'Read']);
-      expect(r.results.map((x) => [x.name, x.isError])).toEqual([
-        ['Edit', false],
-        ['Read', false],
-        ['Read', true],
-        ['Edit', true],
-        ['Read', false],
-        ['Bash', true],
-      ]);
-      expect(JSON.stringify(r.results)).not.toContain('sk-dummy-not-real');
-      expect(r.hookRan).toBe(false);
-      expect(r.files).toEqual(['t.txt']);
-      expect(r.content).toBe('hello\n');
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  it('実 CLI と偽の API: 実装の工具は Read と Edit だけで、Bash、/proc、hook へ届かず、作業場所に余計なファイルを残さない', () => {
+    const r = runOfflineCli('implement');
+    expect(r.stderr).not.toContain('could not start');
+    expect(r.code).toBe(0);
+    expect(r.tools).toEqual(['Edit', 'Read']);
+    expect(r.results.map((x) => [x.name, x.isError])).toEqual([
+      ['Edit', false],
+      ['Read', false],
+      ['Read', true],
+      ['Read', true],
+      ['Edit', true],
+      ['Read', false],
+      ['Bash', true],
+    ]);
+    expect(JSON.stringify(r.results)).not.toContain('sk-dummy-not-real');
+    expect(r.hookRan).toBe(false);
+    expect(r.files).toEqual(['t.txt']);
+    expect(r.content).toBe('hello\n');
+  });
+
+  it('実 CLI と偽の API: 計画の工具は Read だけで、--json-schema の結果を返せる', () => {
+    const r = runOfflineCli('plan');
+    expect(r.stderr).not.toContain('could not start');
+    expect(r.code).toBe(0);
+    expect(r.tools).toEqual(['Read']);
+    expect(r.cli?.structured_output).toEqual({ summary: 'plan', needs_human: false });
+    expect(r.files).toEqual([]);
   });
 
   it('確認済みのフラグが --help にある（--max-turns は help に出ない）', () => {

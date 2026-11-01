@@ -121,6 +121,7 @@ export function buildRunnerPrompt(input: RunnerInput, nonce: string = randomByte
   const task: Record<RunnerStep, string[]> = {
     plan: [
       '今回の工程は計画です。ファイルを変更しないでください。読むだけで実装の手順を plan_steps に書いてください。',
+      '使える工具は Read だけです。ファイルの一覧や検索の工具はありません。注文書とこの指示にある path を読んでください。',
       '受入条件を満たせない、または判断が必要なら needs_human を true にして questions に書いてください。',
     ],
     implement: [
