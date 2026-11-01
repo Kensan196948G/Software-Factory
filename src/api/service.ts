@@ -338,15 +338,6 @@ export async function createRequest(
   correlationId: string,
   idempotencyKey?: string,
 ): Promise<RequestDetail> {
-  const deptName = await getDepartmentName(input.deptCode);
-  if (!deptName) throw Errors.notAllowedValue('deptCode');
-  if (input.toolId) {
-    const tool = await one<{ id: string; dept_code: string }>('select id, dept_code from catalog_tool where id = $1', [
-      input.toolId,
-    ]);
-    if (!tool) throw Errors.notAllowedValue('toolId');
-    if (tool.dept_code !== input.deptCode) throw new Error('ERR-013');
-  }
   const payloadHash = JSON.stringify(input);
 
   const result = await withTransaction(async (client) => {
@@ -362,6 +353,17 @@ export async function createRequest(
         }
         if (hit.request_id) return { id: hit.request_id, created: false };
       }
+    }
+
+    // マスタの検証は照合の後。作成の後にマスタが変わっても、同じキーの再送は作成済みの依頼を返す
+    // トランザクションの接続で読む（別の接続を待つと、同時の作成で接続プールが詰まる）
+    const dept = await client.query('select 1 from department where code = $1', [input.deptCode]);
+    if (!dept.rows[0]) throw Errors.notAllowedValue('deptCode');
+    if (input.toolId) {
+      const found = await client.query<{ dept_code: string }>('select dept_code from catalog_tool where id = $1', [input.toolId]);
+      const tool = found.rows[0];
+      if (!tool) throw Errors.notAllowedValue('toolId');
+      if (tool.dept_code !== input.deptCode) throw Errors.comboMismatch('toolId');
     }
 
     let allocated: { id: string; seq: number; year: number };

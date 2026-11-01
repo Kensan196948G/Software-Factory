@@ -9,7 +9,7 @@
 
 /* ───────── 共通の関数 ───────── */
 
-/* 追記のみの表の UPDATE/DELETE を拒否する（audit_log_append_only と同じ方式）。TRUNCATE は対象外。 */
+/* 追記のみの表の UPDATE/DELETE を拒否する（audit_log_append_only と同じ方式）。表全体の一括削除 は対象外。 */
 create or replace function devline_append_only() returns trigger as $$
 begin
   raise exception '% is append-only', tg_table_name;
