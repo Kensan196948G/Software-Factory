@@ -107,7 +107,12 @@ export function assertRunnerAllowed(runner: RunnerAdapter): void {
   if (!IMPLEMENTED_RUNNER_KINDS.includes(runner.capability.kind)) {
     throw new Error(`runner ${runner.capability.kind} は未実装です`);
   }
-  if (config.isProduction && (runner.capability.kind === 'fake' || runner.capability.kind === 'docker-claude')) {
+  const realAllowedHere = runner.capability.kind === 'docker-claude' && config.appEnv === 'staging';
+  if (
+    config.isProduction &&
+    (runner.capability.kind === 'fake' || runner.capability.kind === 'docker-claude') &&
+    !realAllowedHere
+  ) {
     throw new Error(`production では ${runner.capability.kind} runner を動かしません`);
   }
 }
@@ -641,6 +646,8 @@ async function followUpPrs(options: WorkerOptions): Promise<void> {
         ...(outcome === 'retry' ? { nextAt: new Date(now.getTime() + PR_FOLLOWUP_RETRY_MS).toISOString() } : {}),
         // 自分のものではないと分かった PR も、これ以上は触らない
         ...(closed || outcome === 'not_own' ? { closedNumber: String(pr.number) } : {}),
+        // 閉じていない。画面で「閉じました」と見せない
+        ...(outcome === 'not_own' ? { notOwn: true } : {}),
       },
       now,
       `worker-${randomUUID()}`,

@@ -4,11 +4,21 @@
  * 証拠として認める run の条件: head SHA・workflow の path・event・リポジトリ・PR の head が一致すること。
  * workflow ファイルが base と同じ blob でなければ policy_violation で止める（AI が弱めた workflow を受け入れない）。
  * 読むのは Actions（Read）と Contents（Read）の範囲。再実行は要求しない。
+ *
+ * 受入条件の結果は同じ run の artifact `ac-results` だけから読む。読めない（通信の失敗）ときはやり直し、
+ * 無い・期限切れ・大きすぎる・形が違う・head が違うときは「証跡の欠落」として記録し、合格にしない。
  */
 import { createHash } from 'node:crypto';
 import { assertApiUrlAllowed } from '../api/issue-adapter.js';
 import { REAL_RUNNER_POLICY, REQUIRED_STAGES } from '../shared/devline.js';
-import type { RecordVerificationInput, StageResult, StageStatus, StopReason } from '../shared/devline.js';
+import type { AcResult, RecordVerificationInput, StageResult, StageStatus, StopReason } from '../shared/devline.js';
+import {
+  AC_ARTIFACT_MAX_BYTES,
+  AC_ARTIFACT_NAME,
+  parseAcResults,
+  readSingleJsonFromZip,
+  type AcArtifactProblem,
+} from './ac-artifact.js';
 
 export interface CiJobFacts {
   id: string;
@@ -44,6 +54,8 @@ interface WorkflowRun {
   status: string | null;
   conclusion: string | null;
   html_url: string;
+  /** この試行の開始時刻。前の試行の artifact を使わないために見る。 */
+  run_started_at?: string | null;
   head_repository?: { full_name?: string } | null;
   repository?: { full_name?: string } | null;
   pull_requests?: { number?: number }[] | null;
@@ -55,6 +67,38 @@ interface WorkflowJob {
   status: string | null;
   conclusion: string | null;
   html_url?: string | null;
+}
+
+interface WorkflowArtifact {
+  id: number;
+  name: string;
+  size_in_bytes?: number;
+  expired?: boolean;
+  created_at?: string | null;
+  workflow_run?: { id?: number; head_sha?: string } | null;
+}
+
+/** ok: 読めた / problem: 証跡の欠落（記録して止まる）/ retry: 通信の失敗（記録せず次の工程でやり直す）。 */
+type AcRead =
+  { kind: 'ok'; results: AcResult[]; digest: string } | { kind: 'problem'; problem: AcArtifactProblem } | { kind: 'retry' };
+
+/** run の artifact から使うものを選ぶ（純関数）。同じ run の前の試行のものは使わない。 */
+export function selectAcArtifact(
+  artifacts: readonly WorkflowArtifact[],
+  run: { id: number; head_sha: string; run_started_at?: string | null },
+): { ok: true; artifact: WorkflowArtifact } | { ok: false; problem: AcArtifactProblem } {
+  const named = artifacts.filter((a) => a.name === AC_ARTIFACT_NAME && a.workflow_run?.id === run.id);
+  if (named.length === 0) return { ok: false, problem: 'missing' };
+  if (named.some((a) => a.workflow_run?.head_sha !== run.head_sha)) return { ok: false, problem: 'head_mismatch' };
+  const startedAt = Date.parse(run.run_started_at ?? '');
+  const current = Number.isNaN(startedAt) ? named : named.filter((a) => !(Date.parse(a.created_at ?? '') < startedAt));
+  const [artifact, ...rest] = current;
+  if (!artifact) return { ok: false, problem: 'missing' };
+  if (rest.length > 0) return { ok: false, problem: 'duplicate' };
+  if (artifact.expired === true) return { ok: false, problem: 'expired' };
+  if (!Number.isSafeInteger(artifact.id)) return { ok: false, problem: 'invalid' };
+  if ((artifact.size_in_bytes ?? 0) > AC_ARTIFACT_MAX_BYTES) return { ok: false, problem: 'too_large' };
+  return { ok: true, artifact };
 }
 
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -164,6 +208,93 @@ export function createGithubCiCollector(options: GithubCiCollectorOptions): Gith
     return typeof got.sha === 'string' && got.type === 'file' ? got.sha : null;
   };
 
+  /** 上限を超えたら読むのをやめる。content-length は信用しない。 */
+  async function readCapped(res: Response): Promise<Buffer | 'too_large'> {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const reader = res.body?.getReader();
+    if (!reader) return Buffer.alloc(0);
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return Buffer.concat(chunks);
+      size += value.length;
+      if (size > AC_ARTIFACT_MAX_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        return 'too_large';
+      }
+      chunks.push(Buffer.from(value));
+    }
+  }
+
+  /**
+   * zip を取得する。GitHub は署名つきの保管先の URL へ 302 で返すので、1回だけ自分で追う。
+   * 追う先へ token を送らない。追う先は API の接続先と同じ規則（https。試験ではループバックだけ）で確かめる。
+   */
+  async function downloadZip(repo: string, id: number): Promise<Buffer | { problem: AcArtifactProblem } | 'retry'> {
+    const statusProblem = async (res: Response): Promise<{ problem: AcArtifactProblem } | 'retry'> => {
+      await res.body?.cancel().catch(() => undefined);
+      if (res.status === 404) return { problem: 'missing' };
+      if (res.status === 410) return { problem: 'expired' };
+      return 'retry';
+    };
+    try {
+      const first = await fetch(`${base}/repos/${repo}/actions/artifacts/${id}/zip`, {
+        method: 'GET',
+        headers: {
+          authorization: `Bearer ${options.token}`,
+          accept: 'application/vnd.github+json',
+          'user-agent': 'mirai-sf-devline',
+          'x-github-api-version': '2022-11-28',
+        },
+        signal: AbortSignal.timeout(httpTimeoutMs),
+        redirect: 'manual',
+      });
+      let res = first;
+      if (first.status >= 300 && first.status < 400) {
+        await first.body?.cancel().catch(() => undefined);
+        const location = first.headers.get('location');
+        if (!location) return { problem: 'invalid' };
+        let target: URL;
+        try {
+          target = assertApiUrlAllowed(location, options.nodeEnv);
+        } catch {
+          return { problem: 'invalid' };
+        }
+        res = await fetch(target, {
+          method: 'GET',
+          headers: { 'user-agent': 'mirai-sf-devline' },
+          signal: AbortSignal.timeout(httpTimeoutMs),
+          redirect: 'manual',
+        });
+      }
+      if (!res.ok) return await statusProblem(res);
+      const body = await readCapped(res);
+      return body === 'too_large' ? { problem: 'too_large' } : body;
+    } catch {
+      return 'retry';
+    }
+  }
+
+  async function readAcArtifact(repo: string, run: WorkflowRun): Promise<AcRead> {
+    const params = new URLSearchParams({ name: AC_ARTIFACT_NAME, per_page: '100' });
+    const listed = await read<{ artifacts?: WorkflowArtifact[] }>(
+      `/repos/${repo}/actions/runs/${run.id}/artifacts?${params.toString()}`,
+    );
+    if (listed === null) return { kind: 'retry' };
+    if (listed === 'missing') return { kind: 'problem', problem: 'missing' };
+    if (!Array.isArray(listed.artifacts)) return { kind: 'retry' };
+    const selected = selectAcArtifact(listed.artifacts, run);
+    if (!selected.ok) return { kind: 'problem', problem: selected.problem };
+    const zip = await downloadZip(repo, selected.artifact.id);
+    if (zip === 'retry') return { kind: 'retry' };
+    if (!Buffer.isBuffer(zip)) return { kind: 'problem', problem: zip.problem };
+    const raw = readSingleJsonFromZip(zip);
+    if (!raw) return { kind: 'problem', problem: 'invalid' };
+    const parsed = parseAcResults(raw, run.head_sha);
+    if (!parsed.ok) return { kind: 'problem', problem: parsed.problem };
+    return { kind: 'ok', results: parsed.results, digest: createHash('sha256').update(raw).digest('hex') };
+  }
+
   return {
     async collect(job, ctx) {
       const repo = job.target_repo_id;
@@ -208,8 +339,13 @@ export function createGithubCiCollector(options: GithubCiCollectorOptions): Gith
         if (got.jobs.length < 100) break;
       }
       const stages = stagesFromJobs(jobs, headSha, run.conclusion);
+      // 通信の失敗では記録しない。delivery は run ごとに1回なので、記録すると欠落のまま固定される
+      const ac = await readAcArtifact(repo, run);
+      if (ac.kind === 'retry') return null;
+      const acResults = ac.kind === 'ok' ? ac.results : [];
+      const acDigest = ac.kind === 'ok' ? ac.digest : null;
       const reportDigest = createHash('sha256')
-        .update(JSON.stringify({ runId: run.id, attempt: run.run_attempt, headSha, stages }), 'utf8')
+        .update(JSON.stringify({ runId: run.id, attempt: run.run_attempt, headSha, stages, acDigest }), 'utf8')
         .digest('hex');
       return {
         jobId: job.id,
@@ -220,11 +356,14 @@ export function createGithubCiCollector(options: GithubCiCollectorOptions): Gith
         runAttempt: Math.max(1, run.run_attempt),
         headSha,
         stages,
-        // AC と test ID の対応は CI の報告が無いので作らない。結果は「未確認」になる
-        acResults: [],
+        acResults,
         logRef: run.html_url,
         reportDigest,
-        diagnostics: { runConclusion: run.conclusion, unmatchedJobs: unmatchedJobNames(jobs) },
+        diagnostics: {
+          runConclusion: run.conclusion,
+          unmatchedJobs: unmatchedJobNames(jobs),
+          acArtifact: ac.kind === 'ok' ? 'ok' : ac.problem,
+        },
         now: ctx.now,
         correlationId: ctx.correlationId,
       };

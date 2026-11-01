@@ -969,15 +969,28 @@ test.describe('見本と実依頼の分離', () => {
       pr: { number: 12, url: 'https://github.invalid/x/y/pull/12', source: 'github' },
       ciRunUrl: 'https://github.invalid/x/y/actions/runs/1',
       ciSource: 'github',
+      ac: {
+        total: 2,
+        confirmed: 2,
+        failed: 0,
+        unconfirmed: 0,
+        label: '受入条件 全件確認',
+        items: [
+          { acId: 'AC-1', mark: '○', testIds: ['AC-1: t'] },
+          { acId: 'AC-2', mark: '○', testIds: ['AC-2: t'] },
+        ],
+      },
     });
     await openDrawer(page, title);
     const p = panel(page);
-    for (const row of ['job', 'plan', 'ci', 'pr']) {
+    for (const row of ['job', 'plan', 'ci', 'ac', 'pr']) {
       await expect(p.locator(`[data-dl-row="${row}"] [data-dl-kind]`), row).toHaveText('実行確認済み');
     }
     await expect(p.locator('[data-dl-row="plan"]')).toContainText('docker-claude');
     await expect(p.locator('[data-dl-row="plan"]')).toContainText('120 円');
     await expect(p.locator('[data-dl-row="ci"]')).toContainText('GitHub Actions');
+    await expect(p.locator('[data-dl-row="ac"]')).toContainText('受入条件 全件確認（確認 2 / 2）');
+    await expect(p.locator('[data-dl-row="job"]')).toContainText('受入の合格ではありません');
     await expect(p.locator('[data-dl-row="pr"] a')).toHaveText('PR #12');
     await expect(p.locator('[data-dl-row="pr"]')).toContainText('AI は merge しません');
 
@@ -995,6 +1008,95 @@ test.describe('見本と実依頼の分離', () => {
     await expect(panel(page).locator('[data-dl-row="ci"] [data-dl-kind]')).toHaveText('fake');
     await expect(panel(page).locator('[data-dl-row="pr"] [data-dl-kind]')).toHaveText('fake');
     await expect(panel(page).locator('[data-dl-row="ci"]')).toContainText('実 GitHub ではありません');
+  });
+
+  test('実 job は完了していない段階を実行確認済みにしない。AC 未確認は理由を出す（応答は作り物）', async ({ page }) => {
+    await login(page);
+    const title = `実 job 途中 ${Date.now()}`;
+    const id = await createApproved(page, title);
+    const jobId = '44444444-4444-4444-4444-444444444444';
+    const respond = (job: Record<string, unknown>, evidence: Record<string, unknown>): void => {
+      void page.unroute(`**/api/requests/${id}/jobs`);
+      void page.route(`**/api/requests/${id}/jobs`, (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            items: [
+              {
+                id: jobId,
+                requestId: id,
+                orderVersion: 1,
+                runnerKind: 'docker-claude',
+                stopReason: null,
+                orderCurrent: true,
+                costJpy: 10,
+                ...job,
+              },
+            ],
+            handoffs: [],
+            evidence: { [jobId]: evidence },
+          }),
+        }),
+      );
+    };
+    const kind = (row: string) => panel(page).locator(`[data-dl-row="${row}"] [data-dl-kind]`);
+
+    respond({ state: 'queued' }, { attempts: 0, verificationSources: [], hasPrDraft: false });
+    await openDrawer(page, title);
+    await expect(kind('job')).toHaveText('未接続');
+    await expect(panel(page)).not.toContainText('実行確認済み');
+
+    for (const state of ['planning', 'implementing', 'revising']) {
+      respond({ state }, { attempts: 1, verificationSources: [], hasPrDraft: false });
+      await reloadAs(page, 'desk');
+      await openDrawer(page, title);
+      await expect(kind('job'), state).toHaveText('実行中');
+      await expect(kind('plan'), state).toHaveText('実行中');
+      await expect(panel(page), state).not.toContainText('実行確認済み');
+    }
+
+    // 検査待ち: 実装は終わっているが、job と CI は実行中
+    respond({ state: 'verifying' }, { attempts: 2, verificationSources: [], hasPrDraft: false });
+    await reloadAs(page, 'desk');
+    await openDrawer(page, title);
+    await expect(kind('job')).toHaveText('実行中');
+    await expect(kind('ci')).toHaveText('実行中');
+    await expect(kind('ac')).toHaveText('未接続');
+
+    respond(
+      {
+        state: 'stopped',
+        stopReason: 'ci_incomplete',
+        stopDetail: { cause: 'AC 未確認', unconfirmedAcs: ['AC-2'] },
+      },
+      {
+        attempts: 2,
+        verificationSources: ['github'],
+        hasPrDraft: false,
+        ciRunUrl: 'https://github.invalid/x/y/actions/runs/1',
+        ciSource: 'github',
+        ac: {
+          total: 2,
+          confirmed: 1,
+          failed: 0,
+          unconfirmed: 1,
+          label: '受入条件 未確認あり',
+          items: [
+            { acId: 'AC-1', mark: '○', testIds: ['AC-1: t'] },
+            { acId: 'AC-2', mark: '未確認', testIds: [] },
+          ],
+        },
+      },
+    );
+    await reloadAs(page, 'desk');
+    await openDrawer(page, title);
+    await expect(kind('job')).toHaveText('停止');
+    await expect(kind('plan')).toHaveText('停止');
+    await expect(kind('ac')).toHaveText('未接続');
+    await expect(panel(page).locator('[data-dl-row="job"]')).toContainText('AC 未確認（AC-2）');
+    await expect(panel(page).locator('[data-dl-row="ac"]')).toContainText('受入条件 未確認あり（確認 1 / 2）');
+    await expect(panel(page).locator('[data-dl-row="ac"]')).not.toContainText('全件確認');
   });
 
   test('jobs を読めないときは未接続と表示する', async ({ page }) => {

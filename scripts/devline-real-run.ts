@@ -168,7 +168,14 @@ async function realRun(env: NodeJS.ProcessEnv): Promise<boolean> {
     return false;
   }
   // 工場の Staging や通常の DB で実走しない
-  const dbName = new URL(env.DATABASE_URL ?? 'postgresql://invalid/').pathname.replace(/^\//, '');
+  // 読めない URL の例外には接続文字列が載るので、外へ出さない
+  const dbName = (() => {
+    try {
+      return new URL(env.DATABASE_URL ?? 'postgresql://invalid/').pathname.replace(/^\//, '');
+    } catch {
+      return '';
+    }
+  })();
   if (!/_(dev|test|devline)$/.test(dbName)) {
     stages['設定の検査'] = '失敗';
     details['設定の検査'] = 'DATABASE_URL は _dev / _test / _devline で終わる DB にしてください';

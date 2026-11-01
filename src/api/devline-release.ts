@@ -48,9 +48,10 @@ export interface ReleaseDeps {
  */
 export async function defaultReleaseDeps(): Promise<ReleaseDeps> {
   let token = process.env.DEVLINE_GITHUB_TOKEN ?? '';
-  const file = process.env.DEVLINE_SECRETS_FILE;
+  const { DEFAULT_SECRETS_PATH, loadDevlineSecrets } = await import('../worker/real-line.js');
+  // worker と同じ既定のファイルを見る（環境変数のトークンがあれば、それを優先しない）
+  const file = process.env.DEVLINE_SECRETS_FILE ?? (token ? undefined : DEFAULT_SECRETS_PATH);
   if (file) {
-    const { loadDevlineSecrets } = await import('../worker/real-line.js');
     try {
       token = loadDevlineSecrets(file, config.nodeEnv).githubToken;
     } catch {

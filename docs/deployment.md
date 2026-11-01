@@ -244,3 +244,33 @@ journalctl --user -u mirai-sf-backup -u mirai-sf-restore-drill -u mirai-sf-remin
 | `MIRAI_SF_RESTART_HOOK`          | なし（`systemctl --user restart`） | 再起動の代わりに実行するファイル    |
 
 `MIRAI_SF_HOME` を差し替えると、`MIRAI_SF_ENV_FILE` と（`--no-restart` でなければ）`MIRAI_SF_RESTART_HOOK` も必須になる。実DB・実サービスを誤って触らないための確認。
+
+### 9-6. 開発ライン worker（雛形。導入は CTO）
+
+画面の投入から実 job を動かす worker。詳細は `docs/devline/real-runner.md` 13 章。
+
+**前提の未解決**: `preview.conf` は `NODE_ENV=production` で、この値では docker-claude の投入（ERR-405）も worker も拒否される。Staging で動かすには、この拒否をどう扱うかを先に決める。
+
+```bash
+# 1. イメージ（版は docs/devline/real-runner.md 7 章と同じ）
+docker build -f deploy/devline/Dockerfile.runner -t msf-devline-runner:2.1.316 deploy/devline
+docker build -f deploy/devline/Dockerfile.proxy  -t msf-devline-egress-proxy:v1 deploy/devline
+
+# 2. 資格情報（0600。値を画面やシェルの履歴に出さない）。ANTHROPIC_API_KEY と DEVLINE_GITHUB_TOKEN
+install -m 600 /dev/null ~/.config/mirai-sf/devline-secrets.env
+
+# 3. preview.conf へ追記（API と worker の両方が読む）
+#    DEVLINE_WORKER_ENABLED=1
+#    DEVLINE_RUNNER_KIND=docker-claude
+#    DEVLINE_TARGET_REPOS=Kensan196948G/Software-Factory-Sandbox:1440860477
+#    DEVLINE_SECRETS_FILE=<資格情報の絶対 path>
+
+# 4. ユニット（current のリリースを参照する）
+cp deploy/systemd/mirai-sf-worker.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user restart mirai-sf-api.service
+systemctl --user enable --now mirai-sf-worker.service
+journalctl --user -u mirai-sf-worker.service -n 50
+```
+
+起動を拒否すると（資格情報なし、イメージなし、公開リポジトリなど）exit 1 で終わり、理由をログに出す。fake へ落とさない。繰り返し失敗するとユニットは止まる。リリースの切替（`pnpm ops:release`）は API だけを再起動するので、worker は手で再起動する。止める: `systemctl --user disable --now mirai-sf-worker.service`（動いている AI は止まり、job は次の起動で同じ工程からやり直す）。

@@ -97,6 +97,13 @@ export function sanitizeOrderYamlForRunner(yaml: string): string {
     .join('\n');
 }
 
+/** 受入条件と試験の対応は CI が試験名から報告する。形が違うと未確認になり、PR 候補にならない。 */
+const AC_TEST_RULES = [
+  '新しい試験は test/unit/ に新しいファイルとして追加し、`node --test` で確かめてください。',
+  '受入条件の試験は、試験名の先頭を `AC-n:`（n は注文書の acceptance_criteria の番号。1 から数える。meta の acceptance_criteria_ids と同じ）にしてください。例: `AC-1: 空文字なら 0 を返す`。',
+  'acceptance_criteria_ids のすべてに少なくとも1つ試験を書いてください。',
+];
+
 /** プロンプト。注文書はデータとして区切る。区切りの文字列は毎回変わるので、本文からは閉じられない。 */
 export function buildRunnerPrompt(input: RunnerInput, nonce: string = randomBytes(12).toString('hex')): string {
   const envelope = input.order.envelope;
@@ -115,12 +122,12 @@ export function buildRunnerPrompt(input: RunnerInput, nonce: string = randomByte
     ],
     implement: [
       '今回の工程は実装です。注文書の scope の範囲だけを、この作業ディレクトリの中で実装してください。',
-      '新しい試験は test/ に新しいファイルとして追加し、`node --test` で確かめてください。',
+      ...AC_TEST_RULES,
     ],
     revise: [
       '今回の工程は修正です。自動検査で失敗した段階を直してください。',
       `失敗した段階: ${JSON.stringify(input.previousFailure ?? null)}`,
-      '`node --test` で確かめてください。',
+      ...AC_TEST_RULES,
     ],
   };
   const prompt = [
@@ -251,6 +258,9 @@ export function buildDockerRunArgs(input: {
     'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
     '--env',
     'DISABLE_AUTOUPDATER=1',
+    // AI が動かす試験などの子プロセスへ API キーを渡さない（CLI の予算の上限を迂回させない）
+    '--env',
+    'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1',
     input.image,
     // worker が落ちてもコンテナが動き続けないように、中でも時間を切る
     'timeout',

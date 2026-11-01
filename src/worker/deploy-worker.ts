@@ -6,7 +6,6 @@
  * - 配備は承認された digest のイメージをそのまま起動する。ここで作り直さない（仕様 4-9）。
  * - 失敗したら前の digest へ自動で戻し、失敗として記録する。job は merged のまま。
  */
-import { randomUUID } from 'node:crypto';
 import { query, withTransaction } from '../api/db.js';
 import { appendAuditTx } from '../api/audit.js';
 import { insertJobEvent } from '../api/devline-jobs.js';
