@@ -287,7 +287,8 @@ function githubSourceOf(url: string | null): 'github' | 'fake' {
 function prEvidenceOf(raw: unknown, followup: unknown): JobEvidence['pr'] {
   const pr = raw as { number?: unknown; url?: unknown } | null;
   if (!pr || typeof pr.number !== 'number' || typeof pr.url !== 'string') return null;
-  const closed = (followup as { closedNumber?: unknown } | null)?.closedNumber === String(pr.number);
+  const state = followup as { closedNumber?: unknown; notOwn?: unknown } | null;
+  const closed = state?.closedNumber === String(pr.number) && state?.notOwn !== true;
   return { number: pr.number, url: pr.url, source: githubSourceOf(pr.url), ...(closed ? { closed: true } : {}) };
 }
 

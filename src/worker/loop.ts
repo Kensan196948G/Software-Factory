@@ -646,6 +646,8 @@ async function followUpPrs(options: WorkerOptions): Promise<void> {
         ...(outcome === 'retry' ? { nextAt: new Date(now.getTime() + PR_FOLLOWUP_RETRY_MS).toISOString() } : {}),
         // 自分のものではないと分かった PR も、これ以上は触らない
         ...(closed || outcome === 'not_own' ? { closedNumber: String(pr.number) } : {}),
+        // 閉じていない。画面で「閉じました」と見せない
+        ...(outcome === 'not_own' ? { notOwn: true } : {}),
       },
       now,
       `worker-${randomUUID()}`,
