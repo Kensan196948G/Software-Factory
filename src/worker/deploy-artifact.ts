@@ -301,28 +301,45 @@ export async function extractImageArtifact(
  * ヘッダだけを順に読む（中身は読み飛ばす）。読めなければ false。
  */
 export function tarHasOnlyExpectedTag(tarPath: string): boolean {
+  return tarImageId(tarPath) !== null;
+}
+
+/**
+ * tar の中身から host の Docker が付けるイメージ ID（config の digest）を読む。
+ * CI の `imageId` は使えない: containerd store の Docker は manifest の digest を ID にするので、
+ * overlay2 の host とは同じイメージでも値が違う（2026-11-01 に実物の artifact で確認）。
+ * tar 自体は `tarSha256` で固定しているので、中身の config の digest を load 後の ID と照合する。
+ * タグがちょうど DEPLOY_ARTIFACT_TAG の1イメージでなければ null。
+ */
+export function tarImageId(tarPath: string): string | null {
   const fd = openSync(tarPath, 'r');
   try {
     const size = statSync(tarPath).size;
     let at = 0;
     for (let guard = 0; guard < 200_000 && at + 512 <= size; guard += 1) {
       const header = readAt(fd, at, 512);
-      if (header.every((b) => b === 0)) return false;
+      if (header.every((b) => b === 0)) return null;
       const name = header.subarray(0, 100).toString('utf8').replace(/\0.*$/s, '');
       const entrySize = Number.parseInt(header.subarray(124, 136).toString('utf8').replace(/\0.*$/s, '').trim(), 8);
-      if (!Number.isSafeInteger(entrySize) || entrySize < 0) return false;
+      if (!Number.isSafeInteger(entrySize) || entrySize < 0) return null;
       if (name === 'manifest.json' || name === './manifest.json') {
-        if (entrySize > MAX_MANIFEST_BYTES) return false;
-        const manifest = JSON.parse(readAt(fd, at + 512, entrySize).toString('utf8')) as { RepoTags?: unknown }[];
-        if (!Array.isArray(manifest) || manifest.length !== 1) return false;
+        if (entrySize > MAX_MANIFEST_BYTES) return null;
+        const manifest = JSON.parse(readAt(fd, at + 512, entrySize).toString('utf8')) as {
+          RepoTags?: unknown;
+          Config?: unknown;
+        }[];
+        if (!Array.isArray(manifest) || manifest.length !== 1) return null;
         const tags = manifest[0]?.RepoTags;
-        return Array.isArray(tags) && tags.length === 1 && tags[0] === DEPLOY_ARTIFACT_TAG;
+        if (!Array.isArray(tags) || tags.length !== 1 || tags[0] !== DEPLOY_ARTIFACT_TAG) return null;
+        const config = manifest[0]?.Config;
+        const hex = typeof config === 'string' ? /^(?:blobs\/sha256\/)?([0-9a-f]{64})(?:\.json)?$/.exec(config)?.[1] : null;
+        return hex ? `sha256:${hex}` : null;
       }
       at += 512 + Math.ceil(entrySize / 512) * 512;
     }
-    return false;
+    return null;
   } catch {
-    return false;
+    return null;
   } finally {
     closeSync(fd);
   }
@@ -453,14 +470,15 @@ export function createImageArtifactSource(options: ImageArtifactSourceOptions): 
           cleanup();
           return extracted;
         }
-        if (!imageMetaMatches(extracted.meta, req) || !tarHasOnlyExpectedTag(extracted.tarPath)) {
+        const hostImageId = imageMetaMatches(extracted.meta, req) ? tarImageId(extracted.tarPath) : null;
+        if (!hostImageId) {
           cleanup();
           return { ok: false, problem: 'mismatch' };
         }
         return {
           ok: true,
           tarPath: extracted.tarPath,
-          imageId: extracted.meta.imageId,
+          imageId: hostImageId,
           runId: req.runId,
           runAttempt: req.runAttempt,
           artifactId: selected.id,

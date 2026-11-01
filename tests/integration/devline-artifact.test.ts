@@ -45,7 +45,7 @@ const goodTar = (tag = 'sandbox-artifact:ci', extra: Record<string, string> = {}
   tarOf({
     'blobs/sha256/x': randomBytes(1300),
     ...extra,
-    'manifest.json': JSON.stringify([{ Config: 'blobs/sha256/x', RepoTags: [tag], Layers: [] }]),
+    'manifest.json': JSON.stringify([{ Config: `blobs/sha256/${IMAGE.slice(7)}`, RepoTags: [tag], Layers: [] }]),
   });
 
 const metaOf = (tar: Buffer, over: Record<string, unknown> = {}): string =>
