@@ -561,6 +561,72 @@ test.describe('開発ラインへ投入', () => {
     await expect(panel(page).locator('[data-dl-row="job-old"]')).toContainText('中止');
   });
 
+  test('前の版の結果不明は新しい版でも照合でき、見つからなければ確定して作り直せる', async ({ page }) => {
+    await login(page);
+    const title = `前の版の不明 ${Date.now()}`;
+    const id = await createApproved(page, title);
+    await openDrawer(page, title);
+    dropWithoutCreate();
+    await handoffBtn(page).click();
+    await expect(statusLine(page)).toContainText('結果不明・要照合');
+
+    // 再承認で版を上げる
+    const cur = await getDetail(page, id);
+    await setApiRole(page, 'desk');
+    await callApi(page, 'PATCH', `/api/requests/${id}`, {
+      ...inputOf(title),
+      problem: '版を上げる（作り物）',
+      version: cur.version,
+    });
+    await setApiRole(page, 'approver');
+    if ((await getDetail(page, id)).status !== 'approved') await transition(page, id, 'approved', { signal: 'g' });
+    await reloadAs(page, 'approver');
+    await openDrawer(page, title);
+    await expect(statusLine(page)).toContainText('結果不明・要照合');
+    await expect(panel(page).locator('[data-dl-row="issue"]')).toContainText('結果不明');
+    await expect(handoffBtn(page)).toContainText('照合する');
+    const before = creates();
+    await handoffBtn(page).click();
+    await expect(statusLine(page)).toContainText('見つかりませんでした');
+    expect(creates(), '照合だけで再送しない').toBe(before);
+    await panel(page).locator('[data-dl="absent-open"]').click();
+    const form = panel(page).locator('[data-dl-form]');
+    await form.locator('textarea').fill('GitHub の一覧を人が確かめた（作り物）');
+    await form.locator('input[type=checkbox]').check();
+    await form.locator('[data-dl="absent-do"]').click();
+    await expect(panel(page).locator('[data-dl-row="issue"] a')).toBeVisible();
+    expect(creates()).toBe(before + 1);
+  });
+
+  test('投入の待ちの間に書いたコメントを失わない', async ({ page }) => {
+    await login(page);
+    const title = `投入中の編集 ${Date.now()}`;
+    const id = await createApproved(page, title);
+    await openDrawer(page, title);
+    let release = (): void => undefined;
+    const held = new Promise<void>((r) => (release = r));
+    await page.route(/\/api\/orders\/[^/]+\/handoff$/, async (route) => {
+      await held;
+      return route.fallback();
+    });
+    await handoffBtn(page).click();
+    await page.evaluate((rid) => {
+      const w = window as unknown as {
+        __MSF__: { persist: (d: unknown) => Promise<unknown> };
+        __MSF_UI__: { data: () => { items: { id: string; comments?: unknown[] }[] } };
+      };
+      const data = w.__MSF_UI__.data();
+      const item = data.items.find((x) => x.id === rid)!;
+      (item.comments ??= []).push({ at: new Date().toISOString(), by: '作り物', text: '投入中のコメント' });
+      void w.__MSF__.persist(data);
+    }, id);
+    release();
+    await expect(panel(page).locator('[data-dl-row="issue"] a')).toBeVisible();
+    await expect
+      .poll(async () => ((await getDetail(page, id)) as unknown as { comments: { text: string }[] }).comments.map((c) => c.text))
+      .toContain('投入中のコメント');
+  });
+
   test('許可リストが空: 「開発ライン未接続」と表示し、外部へ送らず、Issue ができたように見せない', async ({ page }) => {
     await login(page, baseNoAllow);
     const title = `未接続 ${Date.now()}`;

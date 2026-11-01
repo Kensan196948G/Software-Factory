@@ -5690,6 +5690,11 @@ const SF = (function () {
       ? '<a href="' + E(h.issueUrl) + '" target="_blank" rel="noopener noreferrer">' + label + '</a>'
       : label;
   }
+  /* 結果が確定していない投入。前の版の作成が残っていると、新しい版は投入できない */
+  function dlUnresolved(s, cur) {
+    if (cur && (cur.state === 'unknown' || cur.state === 'sent')) return cur;
+    return s.handoffs.find((h) => h.state === 'unknown' || h.state === 'sent') || null;
+  }
   function dlIssueRow(r, s, cur) {
     if (cur && cur.state === 'succeeded') {
       const verb = cur.op === 'update_issue' ? '更新済み' : '作成済み';
@@ -5700,6 +5705,8 @@ const SF = (function () {
         dlIssueLink(cur) + '　版 ' + E(cur.orderVersion) + '（' + verb + '）',
       );
     }
+    // 結果が確定していなければ、前の版の成功より先に伝える
+    if (dlUnresolved(s, cur)) return dlRow('issue', '注文書の投入', 'none', '結果不明・要照合');
     const older = s.handoffs.find((h) => h.state === 'succeeded');
     if (older) {
       return dlRow(
@@ -5709,8 +5716,6 @@ const SF = (function () {
         dlIssueLink(older) + '　版 ' + E(older.orderVersion) + ' のまま（いまの版 ' + E(r.__orderVersion) + ' は未反映）',
       );
     }
-    if (cur && (cur.state === 'unknown' || cur.state === 'sent'))
-      return dlRow('issue', '注文書の投入', 'none', '結果不明・要照合');
     if (r.__issueNo > 0) {
       return dlRow('issue', '注文書の投入', 'none', 'Issue #' + E(r.__issueNo) + '（受付の記録のみ。投入の証跡はありません）');
     }
@@ -5810,14 +5815,15 @@ const SF = (function () {
   }
   function dlStatusText(r, s, cur) {
     if (s.busy) return { t: '送信中です。結果が出るまでお待ちください', ng: false };
-    if (s.msg) return s.msg;
+    // 版が変わる前の説明（承認し直すと投入できます、など）は残さない
+    if (s.msg && (!s.msg.v || s.msg.v === r.__orderVersion)) return s.msg;
     if (cur && cur.state === 'succeeded') {
       return {
         t: '投入済みです（Issue #' + cur.issueNo + '・版 ' + cur.orderVersion + '）。受付の状態はボードで人が進めます',
         ng: false,
       };
     }
-    if (cur && (cur.state === 'unknown' || cur.state === 'sent')) {
+    if (dlUnresolved(s, cur)) {
       return {
         t: '結果不明・要照合：Issue が作られたか確認できていません。「照合する」を押すと一覧から探します（再送はしません）',
         ng: true,
@@ -5829,7 +5835,7 @@ const SF = (function () {
   }
   function dlButton(r, s, cur) {
     if (cur && cur.state === 'succeeded') return '';
-    const pending = cur && (cur.state === 'unknown' || cur.state === 'sent');
+    const pending = !!dlUnresolved(s, cur);
     const v = r.__orderVersion;
     let label = pending
       ? '照合する（再送しません）'
@@ -5841,7 +5847,7 @@ const SF = (function () {
     if (!DL_HANDOFF_ROLES.includes(S.role)) why = '投入できるのは受付担当か承認者です';
     else if (!v) why = '承認済みになってから投入します';
     else if (!pending && r.status !== 'approved' && !cur)
-      why = '承認済みの状態でだけ投入できます（いまは「' + SF.statusOf(r.status).l + '」）';
+      why = '承認済みの状態でだけ投入できます（いまは「' + SF.statusOf(r.status).l + '」。投入の前に進めた依頼は、承認待ちへ戻して承認し直します）';
     else if (!pending && !DL_LIVE_STATUS.includes(r.status)) why = '承認が取り消されているので投入できません';
     const off = s.busy || (s.loading && !s.loadedAt) || !!why;
     return (
@@ -5861,7 +5867,8 @@ const SF = (function () {
   }
   function dlAbsentHtml(r, s, cur) {
     // 走査が完全で見つからなかったときだけ。サーバも不完全な走査では再作成しない
-    if (!cur || cur.state !== 'unknown' || !s.msg || s.msg.scanComplete !== true) return '';
+    const open = dlUnresolved(s, cur);
+    if (!open || open.state !== 'unknown' || !s.msg || s.msg.scanComplete !== true) return '';
     if (!DL_ABSENT_ROLES.includes(S.role)) {
       return '<p class="hint" style="margin:6px 0 0">作られていないと確定して作り直せるのは、承認者か管理責任者です。</p>';
     }
@@ -5959,6 +5966,8 @@ const SF = (function () {
       }
       const r = find(id);
       const cur = r ? dlCurrent(r, s) : null;
+      // 「別の操作の進行中」の説明は、結果が出たら残さない
+      if (s.msg && s.msg.follow && cur && ['unknown', 'failed'].includes(cur.state)) s.msg = null;
       if (cur && cur.state === 'succeeded') {
         // 別のタブや通信断の裏で確定していた。古い失敗の表示を残さない
         s.msg = null;
@@ -6044,7 +6053,7 @@ const SF = (function () {
       s.absentReason = '';
       s.absentChecked = false;
     } else {
-      s.msg = dlMessage(r, res);
+      s.msg = Object.assign({ v: r.__orderVersion }, dlMessage(r, res));
     }
     await dlLoad(id, true);
     s.busy = false;
@@ -7086,7 +7095,7 @@ const SF = (function () {
           .filter(
             (r) =>
               !SF.ENDED.includes(r.status) &&
-              (r.status === 'approved' || r.__issueNo > 0 || (o.pipes[r.id] && o.pipes[r.id].step < 12)),
+              (DL_LIVE_STATUS.includes(r.status) || r.__issueNo > 0 || (o.pipes[r.id] && o.pipes[r.id].step < 12)),
           )
           .map((r) => ({ r, p: o.pipes[r.id] || null }))
       : Object.keys(o.pipes)
@@ -7511,12 +7520,13 @@ const SF = (function () {
       kcard('開発ラインに流れている依頼', act.length, 'i-git', '件') +
       kcard(
         '止まっている（エスカレーション）',
-        act.filter((x) => !window.__MSF__ && x.p.esc).length,
+        // 接続時は実の集計がまだないので、0 件と見せない（W-09）
+        window.__MSF__ ? '－' : act.filter((x) => x.p.esc).length,
         'i-alert',
         '件',
         act.some((x) => !window.__MSF__ && x.p.esc) ? 'ng' : '',
       ) +
-      kcard('マージ判断待ち', act.filter((x) => !window.__MSF__ && x.p.step === 9).length, 'i-stamp', '件') +
+      kcard('マージ判断待ち', window.__MSF__ ? '－' : act.filter((x) => x.p.step === 9).length, 'i-stamp', '件') +
       kcard('リリース判定待ち', relWait.length, 'i-rocket', '件') +
       kcard('本番デプロイ（30日）', prod.filter((d) => d.result !== 'ロールバック').length, 'i-gauge', '回') +
       '</div>' +
