@@ -195,23 +195,38 @@ describe('実 CI の経路（fake GitHub・stub docker）', () => {
       'ok',
       ['AC-2'],
     ],
-  ])('%s は ci_incomplete で止まり、理由に「AC 未確認」を出す。pr_ready にしない', async (_name, ac, problem, unconfirmed) => {
-    const line = makeLine();
-    const { id, jobId, headSha } = await untilVerifying(line);
-    addRun(headSha, ac(headSha));
-    await runOnce(workerOf(line));
-    const view = await h.view(jobId);
-    expect(view.state).toBe('stopped');
-    expect(view.stopReason).toBe('ci_incomplete');
-    const detail = stopDetail(view);
-    expect(detail.cause).toBe('AC 未確認');
-    expect(detail.acArtifact).toBe(problem);
-    expect(detail.unconfirmedAcs).toEqual(unconfirmed);
-    expect(await h.count(`from job_artifact where job_id=$1 and kind='pr_body_draft'`, [jobId])).toBe(0);
-    const trace = (await h.api('GET', `/api/requests/${id}/jobs`)).json();
-    expect(trace.evidence[jobId].ac.label).toBe('受入条件 未確認あり');
-    expect(gh.blobAccess.every((a) => a.authorization === undefined)).toBe(true);
-  });
+  ])(
+    '%s は pr_ready にしない（AC の試験の不足は修正へ、証跡の欠落は ci_incomplete で止める）',
+    async (_name, ac, problem, unconfirmed) => {
+      const line = makeLine();
+      const { id, jobId, headSha } = await untilVerifying(line);
+      addRun(headSha, ac(headSha));
+      await runOnce(workerOf(line));
+      const view = await h.view(jobId);
+      if (['ok', 'missing_ac_id', 'unknown_ac_id', 'duplicate_ac_id'].includes(problem)) {
+        // CI の再実行では直らないので、どの AC かを伝えて AI の修正へ戻す
+        expect(view.state).toBe('revising');
+        expect(view.repairCountTotal).toBe(1);
+        const state = await query<{ work_state: { previousFailure: { failedAcs: string[]; note: string } } }>(
+          'select work_state from job where id=$1',
+          [jobId],
+        );
+        expect(state.rows[0]?.work_state.previousFailure.failedAcs).toEqual(unconfirmed);
+        expect(state.rows[0]?.work_state.previousFailure.note).toContain('AC-n');
+      } else {
+        expect(view.state).toBe('stopped');
+        expect(view.stopReason).toBe('ci_incomplete');
+        const detail = stopDetail(view);
+        expect(detail.cause).toBe('AC 未確認');
+        expect(detail.acArtifact).toBe(problem);
+        expect(detail.unconfirmedAcs).toEqual(unconfirmed);
+      }
+      expect(await h.count(`from job_artifact where job_id=$1 and kind='pr_body_draft'`, [jobId])).toBe(0);
+      const trace = (await h.api('GET', `/api/requests/${id}/jobs`)).json();
+      expect(trace.evidence[jobId].ac.label).toBe('受入条件 未確認あり');
+      expect(gh.blobAccess.every((a) => a.authorization === undefined)).toBe(true);
+    },
+  );
 
   it('PR 本文に合格と書いてあっても、artifact が無ければ合格にしない（根拠は CI の記録だけ）', async () => {
     const line = makeLine();

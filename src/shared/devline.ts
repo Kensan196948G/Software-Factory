@@ -977,6 +977,9 @@ export type VerificationVerdict =
       verdict: 'failed';
       ciRunId: string;
       failedStages: string[];
+      /** 走り切っていない必須段階（AC だけ失敗しても CI 成功と言わないため）。 */
+      incompleteStages: string[];
+      failedAcs: string[];
       failedTestIds: string[];
       causeKey: string;
       acEvidence: AcEvidence[];
@@ -1078,8 +1081,11 @@ export function evaluateVerification(
       verdict: 'failed',
       ciRunId: latest.ciRunId,
       failedStages: [...failedStages],
+      incompleteStages: [...incompleteStages],
+      failedAcs: failedAcs.map((a) => a.acId),
       failedTestIds: uniqueTests,
-      causeKey: failureCauseKey(failedStages, uniqueTests),
+      // test ID の無い AC の失敗も、AC ごとに別の原因として数える
+      causeKey: failureCauseKey(failedStages, uniqueTests.length > 0 ? uniqueTests : failedAcs.map((a) => a.acId)),
       acEvidence,
     };
   }
@@ -1166,7 +1172,13 @@ export interface RunnerInput {
   policyVersion: string;
   baseSha: string;
   /** revise のときの直前の失敗（CI の結果から作る）。 */
-  previousFailure?: { causeKey: string; failedStages: readonly string[]; failedTestIds: readonly string[] } | null;
+  previousFailure?: {
+    failedAcs?: readonly string[];
+    note?: string;
+    causeKey: string;
+    failedStages: readonly string[];
+    failedTestIds: readonly string[];
+  } | null;
   /** 時刻は引数で渡す。runner は壁時計で判断しない。 */
   deadlineAt: string;
   signal: AbortSignal;
@@ -1360,7 +1372,8 @@ export function ciResultOf(verdict: VerificationVerdict): CiResult | null {
     case 'passed':
       return 'success';
     case 'failed':
-      return verdict.failedStages.length > 0 ? 'failure' : 'success';
+      if (verdict.failedStages.length > 0) return 'failure';
+      return verdict.incompleteStages.length > 0 ? 'incomplete' : 'success';
     case 'incomplete':
       return verdict.incompleteStages.length > 0 ? 'incomplete' : 'success';
     case 'stale':

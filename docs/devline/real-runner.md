@@ -28,21 +28,22 @@ handoff（Issue）→ queued → planning（AI・読むだけ）→ implementing
 
 ### 止まる場合
 
-| 条件                                                                 | 止まり方                                                                       |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| 資格情報なし・0600 以外・symlink・他人のファイル                     | 起動を拒否（fake へ落とさない）                                                |
-| 許可リスト外・定数の repo 以外・repo ID 不一致・public               | 起動を拒否。動作中なら `policy_violation`                                      |
-| `NODE_ENV=production`（`APP_ENV=staging` を明示したときを除く）      | 起動を拒否。投入も ERR-405（Staging の現在の設定がこれにあたる。13 章）        |
-| AC の未確認・欠落・`not_run`、`ac-results` が読めない                | `ci_incomplete`。理由に「AC 未確認」を出す。`pr_ready` にしない                |
-| 別の worker が動いている（advisory lock を取れない）                 | 起動を拒否。コンテナの片付けもしない                                           |
-| 禁止差分・追加の中身の秘密・バイナリ（4章）                          | `policy_violation`。commit も push もしない                                    |
-| 既存の試験の変更・削除・移動（前の試行で足した試験を含む）           | `human_approval_required`。push しない                                         |
-| 予算の到達・CLI が予算で停止                                         | `budget_limit`。再開不可                                                       |
-| workflow が base と別の blob                                         | `policy_violation`                                                             |
-| CI の結果が揃わない（skip・cancelled・段階名の不一致・run の不成功） | 待たずに `ci_incomplete`。理由を `stop_detail` に出す。CI を再実行して再開する |
-| heartbeat・待ちの例外、worker の排他を失った                         | AI を止めて片付け、結果を待って費用を数え `runner_failure`                     |
-| CLI を起動できない（`docker run` の 125〜127 で出力なし）            | 0 円で `runner_failure`（`notStarted`）。再開できる                            |
-| 隔離ネットワークを用意できない                                       | 0 円で `runner_failure`。段階と stderr を成果物に残す                          |
+| 条件                                                                              | 止まり方                                                                                  |
+| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| 資格情報なし・0600 以外・symlink・他人のファイル                                  | 起動を拒否（fake へ落とさない）                                                           |
+| 許可リスト外・定数の repo 以外・repo ID 不一致・public                            | 起動を拒否。動作中なら `policy_violation`                                                 |
+| `NODE_ENV=production`                                                             | 起動を拒否。投入も ERR-405（Staging の現在の設定がこれにあたる。13 章）                   |
+| artifact は読めて AC の試験が足りない（未確認、`not_run`、未知の ID、重複、欠落） | `revising`（どの AC かを AI へ渡す。同因 2 回・合計 5 回の上限の中で。AI の費用がかかる） |
+| `ac-results` が読めない、取得元が合わない、再開で同じ run を読み直した            | `ci_incomplete`。理由に「AC 未確認」を出す                                                |
+| 別の worker が動いている（advisory lock を取れない）                              | 起動を拒否。コンテナの片付けもしない                                                      |
+| 禁止差分・追加の中身の秘密・バイナリ（4章）                                       | `policy_violation`。commit も push もしない                                               |
+| 既存の試験の変更・削除・移動（前の試行で足した試験を含む）                        | `human_approval_required`。push しない                                                    |
+| 予算の到達・CLI が予算で停止                                                      | `budget_limit`。再開不可                                                                  |
+| workflow が base と別の blob                                                      | `policy_violation`                                                                        |
+| CI の結果が揃わない（skip・cancelled・段階名の不一致・run の不成功）              | 待たずに `ci_incomplete`。理由を `stop_detail` に出す。CI を再実行して再開する            |
+| heartbeat・待ちの例外、worker の排他を失った                                      | AI を止めて片付け、結果を待って費用を数え `runner_failure`                                |
+| CLI を起動できない（`docker run` の 125〜127 で出力なし）                         | 0 円で `runner_failure`（`notStarted`）。再開できる                                       |
+| 隔離ネットワークを用意できない                                                    | 0 円で `runner_failure`。段階と stderr を成果物に残す                                     |
 
 費用の規則（少なく数えない。同じ試行を二重に数えない）:
 
@@ -206,8 +207,6 @@ jobs:
     # 以下同じ形。build は node --check、unit / integration / e2e は node --test、security は依存なしの確認など
 ```
 
-CI は artifact `ac-results`（14 章）を残すこと（Sandbox PR #4）。形式は Sandbox PR #5 の `repository`、`runId`、`runAttempt` を含むものが必要で、#5 が merge されるまで実 job は `invalid` で止まる。無ければ受入条件は **未確認** になり、`ci_incomplete` で止まる。
-
 推奨: main の保護（GitHub Free の private では使えない場合がある。その場合 PR の merge は人の運用で守る）。Actions は `pull_request` の実行に承認が要らない設定（同じリポジトリの PR なので既定で動く）。
 
 ## 9. 実走で確認できたことと、まだ確認できないこと
@@ -355,7 +354,7 @@ CI は同じ run に artifact `ac-results` を残す。zip の中の `.json` は
 - 同じ AC の重複と注文書に無い AC は、報告全体を信用しない。全件を未確認にして `incomplete`（`failed` が含まれていても修正へ進めない）。`verdict` の `duplicateAcs` と `unknownAcs` に ID を載せる。
 - 「失敗した job だけ再実行」では `ac-results` が前の試行のままなので、`attempt_mismatch` か `missing` で止まる。CI 全体を再実行する。
 - PR 本文、AI の申告、runner の結果からは合格を作らない。
-- 実 CI の `incomplete` は `stopped(ci_incomplete)`。`stop_detail` に `cause: 'AC 未確認'`、`unconfirmedAcs`、`acArtifact`（下表）を載せる。
+- 段階が揃い artifact も読めて AC の試験だけが足りないときは `revising`（再実行では直らないため）。それ以外の実 CI の `incomplete` は `stopped(ci_incomplete)`。`stop_detail` に `cause: 'AC 未確認'`、`unconfirmedAcs`、`acArtifact`（下表）を載せる。
 
 | `acArtifact`          | 意味                                                                          |
 | --------------------- | ----------------------------------------------------------------------------- |

@@ -284,3 +284,23 @@ describe('runner のプロンプト', () => {
     expect(prompt).toContain('あなたの申告は合格の根拠になりません');
   });
 });
+
+describe('ciResultOf: AC だけの失敗でも、走り切っていない段階があれば CI 成功と言わない', () => {
+  const base = {
+    verdict: 'failed' as const,
+    ciRunId: 'r',
+    failedAcs: ['AC-1'],
+    failedTestIds: [],
+    causeKey: 'x',
+    acEvidence: [],
+  };
+  it('段階の失敗は failure', () => {
+    expect(ciResultOf({ ...base, failedStages: ['unit'], incompleteStages: [] })).toBe('failure');
+  });
+  it('未完了の段階があれば incomplete', () => {
+    expect(ciResultOf({ ...base, failedStages: [], incompleteStages: ['e2e'] })).toBe('incomplete');
+  });
+  it('全段階が通っていれば success', () => {
+    expect(ciResultOf({ ...base, failedStages: [], incompleteStages: [] })).toBe('success');
+  });
+});
