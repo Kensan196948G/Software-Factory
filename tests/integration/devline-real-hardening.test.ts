@@ -802,6 +802,22 @@ describe('指摘 6・7: 費用と原因', () => {
     expect((await h.api('POST', `/api/jobs/${jobId}/resume`, { reason: '直した' })).statusCode).toBe(200);
   });
 
+  it('起動拒否の行の前に docker の警告があっても未起動: 0 円', async () => {
+    const line = makeLine();
+    stub.setScenario({
+      plan: {
+        raw: '',
+        exit: 1,
+        stderr: 'WARNING: Your kernel does not support swap limit capabilities\nClaude Code could not start: x\n',
+      },
+    });
+    const { jobId } = await realJob();
+    await steps(line, 2);
+    const view = await h.view(jobId);
+    expect(view.costJpy).toBe(0);
+    expect(detailOf(view)).toMatchObject({ exitCode: 1, notStarted: true });
+  });
+
   it('exit 1 の起動拒否の文言でも、標準出力があれば動いた扱いで計上する', async () => {
     const line = makeLine();
     stub.setScenario({ plan: { raw: 'not json', exit: 1, stderr: 'Claude Code could not start: x\n' } });

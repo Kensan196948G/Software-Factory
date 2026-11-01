@@ -6,7 +6,7 @@
  * - 通信は `--internal` のネットワークと許可先だけを通すプロキシ（deploy/devline/egress-proxy.mjs）に限る。
  * - 結果の合否はここで決めない。changedPaths はホストの git 差分から算出し、AI の申告を使わない。
  * - 費用: 結果を受け取れなかった実行は、渡した上限をまるごと計上する（少なく数えない）。
- *   ただし CLI が起動していないと確実に分かるとき（docker run の 125〜127 で出力なし）は 0 円。
+ *   ただし CLI が起動していないと確実に分かるとき（docker run の 125〜127、または起動を拒んだ exit 1 で、どちらも出力なし）は 0 円。
  *   実測がある実行は、後の検査が失敗しても実測を保つ。
  * - 取消と時間切れは、コンテナが作られる前でも失わない。`docker run` が終わるまで kill を繰り返す。
  */
@@ -30,7 +30,7 @@ import { knownSecretForms, makeRedactor } from './secret-scan.js';
 
 export { makeRedactor };
 
-export const RUNNER_IMAGE = 'msf-devline-runner:2.1.316-2';
+export const RUNNER_IMAGE = 'msf-devline-runner:2.1.316';
 export const PROXY_IMAGE = 'msf-devline-egress-proxy:v1';
 const LABEL = 'msf.devline=1';
 const SCOPE_LABEL = 'msf.devline.scope';
@@ -46,8 +46,8 @@ const KILL_RETRY_MS = 250;
  * 出力が無いこのコードは CLI が動いていない（API を呼んでいない）。signal や null は判断に使わない。
  */
 const NOT_STARTED_EXIT_CODES: ReadonlySet<number> = new Set([125, 126, 127]);
-/** CLI が API を呼ぶ前に起動を拒んだときの stderr の先頭。exit 1 なので終了コードだけでは見分けられない。 */
-const CLI_REFUSED_TO_START = /^\s*Claude Code could not start:/;
+/** CLI が API を呼ぶ前に起動を拒んだときの stderr の行（前に docker の警告が付くことがある）。exit 1 なので終了コードだけでは見分けられない。 */
+const CLI_REFUSED_TO_START = /^\s*Claude Code could not start:/m;
 
 export interface DockerClaudeOptions {
   apiKey: string;
@@ -101,7 +101,8 @@ export function sanitizeOrderYamlForRunner(yaml: string): string {
 
 /** 受入条件と試験の対応は CI が試験名から報告する。形が違うと未確認になり、PR 候補にならない。 */
 const AC_TEST_RULES = [
-  '新しい試験は test/unit/ に新しいファイルとして追加してください。このコンテナでは実行できません。実行と合否の判定は CI が行います。',
+  '使える工具は Read と Edit だけです。新しいファイルは Edit の old_string を空にして作ります。ファイルの一覧や検索の工具はありません。',
+  '新しい試験は test/unit/ に新しいファイルとして追加し、`node --test` で動く `node:test` の形で書いてください。このコンテナでは実行できません。実行と合否の判定は CI が行います。',
   '受入条件の試験は、試験名の先頭を `AC-n:`（n は注文書の acceptance_criteria の番号。1 から数える。meta の acceptance_criteria_ids と同じ）にしてください。例: `AC-1: 空文字なら 0 を返す`。',
   'acceptance_criteria_ids のすべてに少なくとも1つ試験を書いてください。',
 ];
@@ -163,17 +164,17 @@ export function buildRunnerPrompt(input: RunnerInput, nonce: string = randomByte
 /* ──────────────── コンテナの引数 ──────────────── */
 
 /**
- * Bash を渡さない。`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` の Bash は bubblewrap を使うが、このコンテナの隔離
- * （cap-drop、seccomp、AppArmor）の下では名前空間を作れず必ず失敗する。隔離を緩めず、試験は独立した CI で確かめる。
+ * AI に渡す工具は、この CLI の版で実際に提供される Read と Edit だけ（Write、Glob、Grep は指定しても提供されない）。
+ * Bash を渡さないので、AI が動かせる子プロセスは無い。試験の実行と合否は独立した CI が行う。
+ * `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` は使わない。bubblewrap を要求し、この隔離の下では Bash が動かず、
+ * 作業場所に空の `.env` などを残して差分検査で必ず止まる（real-runner.md 9-2 章）。
  */
-export const ALLOWED_TOOLS_WORK = 'Read,Edit,Write,Glob,Grep';
-export const TOOLS_WORK = 'Read,Edit,Write,Glob,Grep';
+export const TOOLS_WORK = 'Read,Edit';
 /** 計画の工程は読むだけ。 */
-const TOOLS_PLAN = 'Read,Glob,Grep';
+const TOOLS_PLAN = 'Read';
 
 export function buildClaudeArgs(input: { prompt: string; step: RunnerStep; maxTurns: number; maxBudgetUsd: number }): string[] {
   const tools = input.step === 'plan' ? TOOLS_PLAN : TOOLS_WORK;
-  const allowed = input.step === 'plan' ? TOOLS_PLAN : ALLOWED_TOOLS_WORK;
   return [
     'claude',
     '--bare',
@@ -194,8 +195,9 @@ export function buildClaudeArgs(input: { prompt: string; step: RunnerStep; maxTu
     '--tools',
     tools,
     '--allowedTools',
-    allowed,
+    tools,
     '--disallowedTools',
+    'Bash',
     'WebFetch',
     'WebSearch',
     'mcp__*',
@@ -264,9 +266,6 @@ export function buildDockerRunArgs(input: {
     'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
     '--env',
     'DISABLE_AUTOUPDATER=1',
-    // AI が動かす試験などの子プロセスへ API キーを渡さない（CLI の予算の上限を迂回させない）
-    '--env',
-    'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1',
     input.image,
     // worker が落ちてもコンテナが動き続けないように、中でも時間を切る
     'timeout',
