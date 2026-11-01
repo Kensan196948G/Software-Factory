@@ -206,7 +206,7 @@ jobs:
     # 以下同じ形。build は node --check、unit / integration / e2e は node --test、security は依存なしの確認など
 ```
 
-CI は artifact `ac-results`（14 章）を残すこと（Sandbox PR #4）。無ければ受入条件は **未確認** になり、`ci_incomplete` で止まる。
+CI は artifact `ac-results`（14 章）を残すこと（Sandbox PR #4）。形式は Sandbox PR #5 の `repository`、`runId`、`runAttempt` を含むものが必要で、#5 が merge されるまで実 job は `invalid` で止まる。無ければ受入条件は **未確認** になり、`ci_incomplete` で止まる。
 
 推奨: main の保護（GitHub Free の private では使えない場合がある。その場合 PR の merge は人の運用で守る）。Actions は `pull_request` の実行に承認が要らない設定（同じリポジトリの PR なので既定で動く）。
 
@@ -332,7 +332,7 @@ API のプロセスは `DEVLINE_GITHUB_TOKEN` だけを読む。`ANTHROPIC_API_K
 
 画面の表示は `job.runnerKind` と証跡で決まる。実 job の「ジョブ」「計画・実装」「自動検査」は、完了していない段階で「実行中」、停止系で「停止」と出し、「実行確認済み」にしない。fake GitHub の結果は `fake` と出す。
 
-**Staging**: `NODE_ENV=production` で動くので、`APP_ENV=staging` を明示したときだけ実 runner を許す（所有者の決定、2026-11-01）。本番の拒否は変えない。
+**Staging は Approval PR で扱う**: `scripts/setup-preview.mjs` は Staging を `NODE_ENV=production`（`APP_ENV=staging`）にする。`checkRealLineEnv`、`assertRunnerAllowed` は `NODE_ENV=production` の docker-claude を `APP_ENV` に関係なく拒否するので、今の設定のままでは Staging の投入は ERR-405 になり、worker は起動しない。この拒否を緩める変更はこのブランチに含めず、別の Approval PR で扱う。
 
 ## 14. 受入条件の証跡（`ac-results`）
 
@@ -341,24 +341,39 @@ CI は同じ run に artifact `ac-results` を残す。zip の中の `.json` は
 ```json
 {
   "schema": "msf.ac-results/v1",
+  "repository": "<owner/name>",
+  "runId": "<run の ID>",
+  "runAttempt": "<run の attempt>",
   "headSha": "<run の head SHA>",
   "ac": [{ "id": "AC-1", "status": "passed", "testIds": ["AC-1: 空文字なら 0 を返す"] }]
 }
 ```
 
 - `status` は `passed` / `failed` / `not_run`。
-- 判定: 全件 `passed`（test ID あり）のときだけ合格。`failed` は `failed`（修正へ）。未確認・欠落・`not_run`・test ID なし・同じ AC の重複は `incomplete`。条件が 0 件の注文書も `incomplete`。fake CI の経路も同じ判定。
+- `repository`、`runId`、`runAttempt`、`headSha` がすべて取得元の run と一致するときだけ読む（Sandbox PR #5 の形式。`runId` と `runAttempt` は環境変数から書かれるので文字列で届く）。これらの無い古い形式は、どの run の結果か分からないので `invalid`。artifact の一覧の `workflow_run.id` と `workflow_run.head_sha` も照合する。
+- 判定: 全件 `passed`（test ID あり）のときだけ合格。`failed` は `failed`（修正へ）。未確認・欠落・`not_run`・test ID なしは、その AC を `incomplete`。条件が 0 件の注文書も `incomplete`。fake CI の経路も同じ判定。
+- 同じ AC の重複と注文書に無い AC は、報告全体を信用しない。全件を未確認にして `incomplete`（`failed` が含まれていても修正へ進めない）。`verdict` の `duplicateAcs` と `unknownAcs` に ID を載せる。
+- 「失敗した job だけ再実行」では `ac-results` が前の試行のままなので、`attempt_mismatch` か `missing` で止まる。CI 全体を再実行する。
+- PR 本文、AI の申告、runner の結果からは合格を作らない。
 - 実 CI の `incomplete` は `stopped(ci_incomplete)`。`stop_detail` に `cause: 'AC 未確認'`、`unconfirmedAcs`、`acArtifact`（下表）を載せる。
 
-| `acArtifact`    | 意味                                                                      |
-| --------------- | ------------------------------------------------------------------------- |
-| `ok`            | 読めた（中身に未確認がある）                                              |
-| `missing`       | 同じ run に無い。前の試行のものは使わない                                 |
-| `expired`       | 期限切れ                                                                  |
-| `too_large`     | 1 MiB を超える（一覧の大きさ、受信の途中、展開後のどれか）                |
-| `duplicate`     | 同じ試行に同じ名前が 2 つ                                                 |
-| `head_mismatch` | 一覧の `workflow_run.head_sha` か JSON の `headSha` が run の head と違う |
-| `invalid`       | zip や JSON の形が違う、リダイレクト先が許可されない                      |
+| `acArtifact`          | 意味                                                                          |
+| --------------------- | ----------------------------------------------------------------------------- |
+| `ok`                  | 読めた（中身に `not_run` などの未確認がある）                                 |
+| `missing`             | 同じ run に無い。前の試行のものは使わない                                     |
+| `expired`             | 期限切れ                                                                      |
+| `too_large`           | 1 MiB を超える（一覧の大きさ、受信の途中、展開後のどれか）                    |
+| `duplicate`           | 同じ試行に同じ名前が 2 つ                                                     |
+| `head_mismatch`       | 一覧の `workflow_run.head_sha` か JSON の `headSha` が run の head と違う     |
+| `invalid`             | zip や JSON の形が違う、古い形式、リダイレクト先が許可されない                |
+| `repository_mismatch` | JSON の `repository` が取得元と違う                                           |
+| `run_mismatch`        | 一覧の `workflow_run.id` か JSON の `runId` が run と違う（同じ名前の別 run） |
+| `attempt_mismatch`    | JSON の `runAttempt` が run の attempt と違う（前の試行の結果）               |
+| `duplicate_ac_id`     | 同じ AC ID が複数ある。全件を読まない                                         |
+| `unknown_ac_id`       | 注文書に無い AC ID がある。全件を読まない                                     |
+| `missing_ac_id`       | 注文書の AC ID が報告に無い。報告のある分は読み、無い分は未確認               |
+
+画面は `acArtifact` が `ok` 以外のとき、ジョブの行に「証跡の欠落（理由）」を出す。
 
 通信の失敗（接続エラーと 5xx）は欠落にしない。記録せず次の工程で読み直す（`delivery` は run ごとに 1 回なので、記録すると固定される）。読めないままなら `session_limit` で止まる。
 

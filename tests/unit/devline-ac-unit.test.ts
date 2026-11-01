@@ -4,7 +4,7 @@
 import { deflateRawSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { buildZip } from '../integration/devline-real-harness.js';
-import { REQUIRED_STAGES, evaluateVerification, summarizeAc } from '../../src/shared/devline.js';
+import { REQUIRED_STAGES, ciResultOf, evaluateVerification, summarizeAc } from '../../src/shared/devline.js';
 import type { AcResult, RunnerInput, VerificationRecord } from '../../src/shared/devline.js';
 import { AC_ARTIFACT_MAX_BYTES, parseAcResults, readSingleJsonFromZip } from '../../src/worker/ac-artifact.js';
 import { buildRunnerPrompt } from '../../src/worker/docker-claude-runner.js';
@@ -35,6 +35,9 @@ describe('evaluateVerification: 受入条件', () => {
     ['not_run', [ok('AC-1'), { acId: 'AC-2', status: 'not_run', testIds: ['x'] }]],
     ['test ID なしの passed', [ok('AC-1'), { acId: 'AC-2', status: 'passed', testIds: [] }]],
     ['同じ AC の重複は曖昧なので未確認', [ok('AC-1'), ok('AC-2'), ok('AC-2')]],
+    ['注文書に無い AC は報告を信用しない', [ok('AC-1'), ok('AC-2'), ok('AC-3')]],
+    ['重複の中に failed があっても修正へ進めない', [ok('AC-1'), ok('AC-2'), { acId: 'AC-2', status: 'failed', testIds: ['t'] }]],
+    ['未知の AC が failed でも修正へ進めない', [ok('AC-1'), ok('AC-2'), { acId: 'AC-9', status: 'failed', testIds: ['t'] }]],
   ])('%s は incomplete で、段階が揃っていても合格にしない', (_name, acs) => {
     const v = evaluateVerification([record(acs)], HEAD, ['AC-1', 'AC-2']);
     expect(v.verdict).toBe('incomplete');
@@ -43,12 +46,45 @@ describe('evaluateVerification: 受入条件', () => {
     expect(v.unconfirmedAcs.length).toBeGreaterThan(0);
   });
 
-  it('failed は failed（重複の中に failed があっても）', () => {
+  it('failed は failed', () => {
     expect(evaluateVerification([record([{ acId: 'AC-1', status: 'failed', testIds: ['t'] }])], HEAD, ['AC-1']).verdict).toBe(
       'failed',
     );
-    const dup = [ok('AC-1'), { acId: 'AC-1', status: 'failed' as const, testIds: ['t'] }];
-    expect(evaluateVerification([record(dup)], HEAD, ['AC-1']).verdict).toBe('failed');
+  });
+
+  it('未知の AC や重複があれば全件「未確認」で、報告の中の ○ を残さない', () => {
+    const unknown = evaluateVerification([record([ok('AC-1'), ok('AC-2'), ok('AC-3')])], HEAD, ['AC-1', 'AC-2']);
+    expect(unknown).toMatchObject({
+      verdict: 'incomplete',
+      unknownAcs: ['AC-3'],
+      duplicateAcs: [],
+      unconfirmedAcs: ['AC-1', 'AC-2'],
+    });
+    expect(summarizeAc(unknown.acEvidence).label).toBe('受入条件 未確認あり');
+    const dup = evaluateVerification([record([ok('AC-1'), ok('AC-2'), ok('AC-2')])], HEAD, ['AC-1', 'AC-2']);
+    expect(dup).toMatchObject({
+      verdict: 'incomplete',
+      unknownAcs: [],
+      duplicateAcs: ['AC-2'],
+      unconfirmedAcs: ['AC-1', 'AC-2'],
+    });
+    expect(dup.acEvidence.every((a) => a.testIds.length === 0)).toBe(true);
+  });
+
+  it('CI の成否は必須段階だけで決まり、AC の結果を混ぜない', () => {
+    const verdictOf = (acs: AcResult[], over: Partial<VerificationRecord> = {}) =>
+      evaluateVerification([record(acs, over)], HEAD, ['AC-1']);
+    expect(ciResultOf(verdictOf([ok('AC-1')]))).toBe('success');
+    expect(ciResultOf(verdictOf([]))).toBe('success'); // AC は未確認。CI は成功
+    expect(ciResultOf(verdictOf([{ acId: 'AC-1', status: 'failed', testIds: ['t'] }]))).toBe('success');
+    const failedStage = REQUIRED_STAGES.map((stage, i) => ({
+      stage,
+      status: i === 0 ? ('failed' as const) : ('passed' as const),
+    }));
+    expect(ciResultOf(verdictOf([ok('AC-1')], { stages: failedStage }))).toBe('failure');
+    expect(ciResultOf(verdictOf([ok('AC-1')], { stages: [] }))).toBe('incomplete');
+    expect(ciResultOf(verdictOf([ok('AC-1')], { headSha: 'e'.repeat(40) }))).toBe('stale');
+    expect(ciResultOf(evaluateVerification([], HEAD, ['AC-1']))).toBeNull();
   });
 
   it('条件が0件の注文書は確かめたものが無いので合格にしない', () => {
@@ -118,21 +154,59 @@ describe('parseAcResults', () => {
     Buffer.from(
       JSON.stringify({
         schema: 'msf.ac-results/v1',
+        repository: 'o/r',
+        runId: '7',
+        runAttempt: '2',
         headSha: HEAD,
         ac: [{ id: 'AC-1', status: 'passed', testIds: ['AC-1: t'] }],
         ...over,
       }),
     );
+  const expected = { repository: 'o/r', runId: 7, runAttempt: 2, headSha: HEAD, acIds: ['AC-1'] };
 
   it('正しい形を読む', () => {
-    expect(parseAcResults(doc(), HEAD)).toEqual({
+    expect(parseAcResults(doc(), expected)).toEqual({
       ok: true,
       results: [{ acId: 'AC-1', status: 'passed', testIds: ['AC-1: t'] }],
+      missingAcIds: [],
     });
+    // 数値で届いても同じ値なら読む
+    expect(parseAcResults(doc({ runId: 7, runAttempt: 2 }), expected).ok).toBe(true);
   });
 
-  it('head が違えば使わない', () => {
-    expect(parseAcResults(doc({ headSha: 'b'.repeat(40) }), HEAD)).toEqual({ ok: false, problem: 'head_mismatch' });
+  it.each<[string, Record<string, unknown>, string]>([
+    ['古い SHA', { headSha: 'b'.repeat(40) }, 'head_mismatch'],
+    ['head が null', { headSha: null }, 'head_mismatch'],
+    ['別のリポジトリ', { repository: 'o/other' }, 'repository_mismatch'],
+    ['別の run', { runId: '8' }, 'run_mismatch'],
+    ['別の attempt', { runAttempt: '1' }, 'attempt_mismatch'],
+    [
+      '同じ AC の重複',
+      {
+        ac: [
+          { id: 'AC-1', status: 'passed', testIds: ['t'] },
+          { id: 'AC-1', status: 'passed', testIds: ['t'] },
+        ],
+      },
+      'duplicate_ac_id',
+    ],
+    [
+      '注文書に無い AC',
+      {
+        ac: [
+          { id: 'AC-1', status: 'passed', testIds: ['t'] },
+          { id: 'AC-2', status: 'passed', testIds: ['t'] },
+        ],
+      },
+      'unknown_ac_id',
+    ],
+  ])('%s は全体を読まない', (_name, over, problem) => {
+    expect(parseAcResults(doc(over), expected)).toEqual({ ok: false, problem });
+  });
+
+  it('注文書の AC が報告に無ければ欠落を返す（報告のある分は読む）', () => {
+    expect(parseAcResults(doc(), { ...expected, acIds: ['AC-1', 'AC-2'] })).toMatchObject({ ok: true, missingAcIds: ['AC-2'] });
+    expect(parseAcResults(doc({ ac: [] }), expected)).toMatchObject({ ok: true, results: [], missingAcIds: ['AC-1'] });
   });
 
   it.each<[string, Record<string, unknown>]>([
@@ -143,13 +217,19 @@ describe('parseAcResults', () => {
     ['testIds の型', { ac: [{ id: 'AC-1', status: 'passed', testIds: [1] }] }],
     ['testIds が空文字', { ac: [{ id: 'AC-1', status: 'passed', testIds: [' '] }] }],
     ['多すぎる', { ac: Array.from({ length: 201 }, () => ({ id: 'AC-1', status: 'passed', testIds: ['t'] })) }],
+    ['repository が無い古い形式', { repository: undefined }],
+    ['runId が無い古い形式', { runId: undefined }],
+    ['runAttempt が無い古い形式', { runAttempt: undefined }],
+    ['runId が null', { runId: null }],
+    ['runId の形', { runId: '7abc' }],
+    ['runAttempt の形', { runAttempt: '0' }],
   ])('%s は全体を読まない', (_name, over) => {
-    expect(parseAcResults(doc(over), HEAD)).toEqual({ ok: false, problem: 'invalid' });
+    expect(parseAcResults(doc(over), expected)).toEqual({ ok: false, problem: 'invalid' });
   });
 
   it('JSON でない・不正な UTF-8 は読まない', () => {
-    expect(parseAcResults(Buffer.from('{'), HEAD).ok).toBe(false);
-    expect(parseAcResults(Buffer.from([0xff, 0xfe]), HEAD).ok).toBe(false);
+    expect(parseAcResults(Buffer.from('{'), expected).ok).toBe(false);
+    expect(parseAcResults(Buffer.from([0xff, 0xfe]), expected).ok).toBe(false);
   });
 });
 
@@ -167,10 +247,16 @@ describe('selectAcArtifact', () => {
   it('同じ run・同じ head の1件を選ぶ', () => {
     expect(selectAcArtifact([art()], run).ok).toBe(true);
   });
+  it('同じ名前の別の run が混ざっていても、取得元の run のものだけを選ぶ', () => {
+    const other = art({ id: 99, workflow_run: { id: 8, head_sha: 'b'.repeat(40) } });
+    expect(selectAcArtifact([other, art()], run)).toMatchObject({ ok: true, artifact: { id: 1 } });
+  });
   it.each<[string, unknown[], string]>([
     ['無い', [], 'missing'],
     ['別の名前', [art({ name: 'other' })], 'missing'],
-    ['別の run', [art({ workflow_run: { id: 8, head_sha: HEAD } })], 'missing'],
+    ['同じ名前の別の run', [art({ workflow_run: { id: 8, head_sha: HEAD } })], 'run_mismatch'],
+    ['workflow_run が無い', [art({ workflow_run: null })], 'run_mismatch'],
+    ['workflow_run の head が無い', [art({ workflow_run: { id: 7 } })], 'head_mismatch'],
     ['別の head', [art({ workflow_run: { id: 7, head_sha: 'b'.repeat(40) } })], 'head_mismatch'],
     ['前の試行のもの', [art({ created_at: '2026-11-01T00:59:59Z' })], 'missing'],
     ['同じ試行に2つ', [art(), art({ id: 2 })], 'duplicate'],

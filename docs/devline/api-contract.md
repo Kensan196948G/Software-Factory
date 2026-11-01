@@ -134,7 +134,26 @@ update job j set lease_owner=$owner, lease_expires_at=$now + make_interval(secs 
 | `incomplete`          | 段階の未完に加えて、AC の未確認・欠落・`not_run`、AC が 0 件の場合。`isCiRerunAllowed` なら `ci_rerun_count + 1` で `verifying` のまま。不可なら `stopped(ci_rerun_limit)`。実 CI（`source='github'`）は再実行を要求できないので、すぐ `stopped(ci_incomplete)`（再開可。AC なら `stop_detail.cause='AC 未確認'`） |
 | `stale` / `no_result` | 動かさない                                                                                                                                                                                                                                                                                                         |
 
-`pr_ready` は PR 候補の準備完了で、受入の合格ではない。`GET /api/requests/:id/jobs` の `evidence[jobId].ac` は今の head の AC の集計（`label` は「受入条件 全件確認 / 未確認あり / 不合格あり」）で、検証の記録があるときだけ載る。
+`evaluateVerification` の verdict の意味:
+
+| verdict      | 意味                                                                                                                                                             | 意味しないこと                                |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `passed`     | head の最新の記録で、必須段階が全部 passed、かつ AC が全件 ○                                                                                                     | 受入の合格ではない。合否と merge の判断は人   |
+| `failed`     | 必須段階の失敗か AC の ×（修正の対象）                                                                                                                           | `failedStages` が空なら CI は成功している     |
+| `incomplete` | 段階が走り切っていない、AC に未確認がある、AC が 0 件。報告に注文書に無い AC（`unknownAcs`）か同じ AC の重複（`duplicateAcs`）があれば全件未確認（× も作らない） | `incompleteStages` が空なら CI は成功している |
+| `stale`      | head の結果が無く、古い SHA の結果だけがある                                                                                                                     |                                               |
+| `no_result`  | 結果がまだ無い                                                                                                                                                   |                                               |
+
+言葉を分ける（画面・PR 本文・API で混ぜない）:
+
+| 言葉              | 決まり方                                                             | API の項目                           |
+| ----------------- | -------------------------------------------------------------------- | ------------------------------------ |
+| CI 成功           | 今の head の最新の記録で必須段階が全部 passed。AC の結果は混ぜない   | `evidence[jobId].ciResult='success'` |
+| 受入条件 全件確認 | CI の `ac-results` で AC が全件 ○。AI の申告と PR 本文は根拠にしない | `evidence[jobId].ac.label`           |
+| PR 候補の準備完了 | CI 成功かつ受入条件 全件確認で、人の確認待ち                         | `JobView.state='pr_ready'`           |
+| 受入の合格        | 人の判断。システムは出さない                                         | なし                                 |
+
+`GET /api/requests/:id/jobs` の `evidence[jobId].ac` は今の head の AC の集計（`label` は「受入条件 全件確認 / 未確認あり / 不合格あり」）で、`ciResult` は今の head の CI の成否（`success` / `failure` / `incomplete` / `stale`）。どちらも検証の記録があるときだけ載る。
 
 投入の runner は `DEVLINE_RUNNER_KIND`（サーバの設定）だけで決まる。`docker-claude` なら job の `runner_kind='docker-claude'`、Issue は `DEVLINE_GITHUB_TOKEN`。資格情報や対象が足りなければ ERR-405 で、fake へ落とさない（`docs/devline/real-runner.md` 13 章）。
 
@@ -148,18 +167,19 @@ fence の無い関数だが、CI は lease の持ち主ではないので状態�
 
 すべて既存の `auth()` / `mutate()`（CSRF）を使い、`auth.ts` は変更しない。エラーは既存の `{error:{code,message,details,correlationId}}`。
 
-| ID     | メソッド・パス                   | 本文                                                                | 応答                                                                                                  | 権限                                                  |
-| ------ | -------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| API-06 | `POST /api/orders/:id/handoff`   | `{ orderVersion: int≥1, confirmAbsent?: boolean, reason?: string }` | `HandoffResult`                                                                                       | desk / approver（confirm_absent は approver / admin） |
-| 既存   | `POST /api/requests/:id/handoff` | なし                                                                | `{issueNo, issueUrl, created, detail}`                                                                | desk / approver                                       |
-| 新規   | `GET /api/jobs/:id`              | －                                                                  | `{ job: JobView }`                                                                                    | ログイン済み                                          |
-| 新規   | `GET /api/requests/:id/jobs`     | －                                                                  | `{ items: JobView[], handoffs: HandoffView[], evidence: Record<jobId, JobEvidence> }`（版の新しい順） | ログイン済み                                          |
-| 新規   | `POST /api/jobs/:id/cancel`      | `{ reason: string, expectedState?: JobState }`                      | `{ job: JobView }`                                                                                    | desk / approver / admin                               |
-| 新規   | `POST /api/jobs/:id/resume`      | `{ reason: string, expectedState?: JobState }`                      | `{ job: JobView }`                                                                                    | desk / approver / admin                               |
+| ID     | メソッド・パス                   | 本文                                                                | 応答                                                                                                                                     | 権限                                                  |
+| ------ | -------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| API-06 | `POST /api/orders/:id/handoff`   | `{ orderVersion: int≥1, confirmAbsent?: boolean, reason?: string }` | `HandoffResult`                                                                                                                          | desk / approver（confirm_absent は approver / admin） |
+| 既存   | `POST /api/requests/:id/handoff` | なし                                                                | `{issueNo, issueUrl, created, detail}`                                                                                                   | desk / approver                                       |
+| 新規   | `GET /api/jobs/:id`              | －                                                                  | `{ job: JobView }`                                                                                                                       | ログイン済み                                          |
+| 新規   | `GET /api/requests/:id/jobs`     | －                                                                  | `{ items: JobView[], handoffs: HandoffView[], currentTargetRepo: string \| null, evidence: Record<jobId, JobEvidence> }`（版の新しい順） | ログイン済み                                          |
+| 新規   | `POST /api/jobs/:id/cancel`      | `{ reason: string, expectedState?: JobState }`                      | `{ job: JobView }`                                                                                                                       | desk / approver / admin                               |
+| 新規   | `POST /api/jobs/:id/resume`      | `{ reason: string, expectedState?: JobState }`                      | `{ job: JobView }`                                                                                                                       | desk / approver / admin                               |
 
 - API-06 の `:id` は受付番号。注文書に別の ID は無い。
 - `JobView` に `canonical_yaml`、lease の所有者名、`stop_detail` 内の秘密情報を含めない。
 - `HandoffView` と `JobEvidence` は画面の表示用（読み取りのみ）。再読込の後も Issue の URL と結果不明を表示するために足した。`marker` と `last_error` は出さない。`issueSource` はサーバが `GITHUB_API_URL` と URL の host で決める（`api.github.com` と `github.com` のときだけ `github`）。
+- `HandoffView.targetRepo` はその投入の連携先、応答の `currentTargetRepo` は今の投入先（設定から決まらなければ null）。どちらも読み取りのみ。別のリポジトリに結果不明の投入があると API-06 は ERR-405（`details: { handoffState: 'unknown', targetRepo }`）で拒否するので、画面は「照合する」を出さず、対象と理由と次の手順を出す。`currentTargetRepo` が null なら別のリポジトリと決めつけない。
 - API-06 の応答に `status` / `version` は無い。画面は応答の後に `GET /api/requests/:id` で取り直す（確定で `request.version` が上がるため）。
 
 ### 新旧の handoff の契約

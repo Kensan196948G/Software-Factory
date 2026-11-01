@@ -149,7 +149,45 @@ describe('実 CI の経路（fake GitHub・stub docker）', () => {
     ['一覧の head が違う', () => ({ listedHeadSha: 'b'.repeat(40) }), 'head_mismatch', ['AC-1', 'AC-2']],
     ['リダイレクト先が外部', () => ({ location: 'https://evil.invalid/x.zip' }), 'invalid', ['AC-1', 'AC-2']],
     ['保管先が 404', () => ({ blobStatus: 404 }), 'missing', ['AC-1', 'AC-2']],
-    ['1件欠落', (head) => ({ doc: acDoc(head, [fakeOkAcs[0]]) }), 'ok', ['AC-2']],
+    ['1件欠落', (head) => ({ doc: acDoc(head, [fakeOkAcs[0]]) }), 'missing_ac_id', ['AC-2']],
+    ['全件欠落', (head) => ({ doc: acDoc(head, []) }), 'missing_ac_id', ['AC-1', 'AC-2']],
+    [
+      'repository なしの古い形式',
+      (head) => ({ doc: { ...(acDoc(head, fakeOkAcs) as object), repository: undefined } }),
+      'invalid',
+      ['AC-1', 'AC-2'],
+    ],
+    [
+      '別のリポジトリの文書',
+      (head) => ({ doc: { ...(acDoc(head, fakeOkAcs) as object), repository: 'other/repo' } }),
+      'repository_mismatch',
+      ['AC-1', 'AC-2'],
+    ],
+    [
+      '別の run の文書',
+      (head) => ({ doc: { ...(acDoc(head, fakeOkAcs) as object), runId: '1' } }),
+      'run_mismatch',
+      ['AC-1', 'AC-2'],
+    ],
+    [
+      '前の attempt の文書',
+      (head) => ({ doc: { ...(acDoc(head, fakeOkAcs) as object), runAttempt: '2' } }),
+      'attempt_mismatch',
+      ['AC-1', 'AC-2'],
+    ],
+    ['一覧の run が違う', () => ({ listedRunId: 1 }), 'run_mismatch', ['AC-1', 'AC-2']],
+    [
+      '同じ AC ID の重複',
+      (head) => ({ doc: acDoc(head, [fakeOkAcs[0], fakeOkAcs[1], fakeOkAcs[1]]) }),
+      'duplicate_ac_id',
+      ['AC-1', 'AC-2'],
+    ],
+    [
+      '注文書に無い AC ID',
+      (head) => ({ doc: acDoc(head, [...fakeOkAcs, { id: 'AC-3', status: 'passed', testIds: ['AC-3: fake'] }]) }),
+      'unknown_ac_id',
+      ['AC-1', 'AC-2'],
+    ],
     ['not_run', (head) => ({ doc: acDoc(head, [fakeOkAcs[0], { id: 'AC-2', status: 'not_run', testIds: [] }]) }), 'ok', ['AC-2']],
     [
       'test ID なしの passed',
@@ -173,6 +211,29 @@ describe('実 CI の経路（fake GitHub・stub docker）', () => {
     const trace = (await h.api('GET', `/api/requests/${id}/jobs`)).json();
     expect(trace.evidence[jobId].ac.label).toBe('受入条件 未確認あり');
     expect(gh.blobAccess.every((a) => a.authorization === undefined)).toBe(true);
+  });
+
+  it('PR 本文に合格と書いてあっても、artifact が無ければ合格にしない（根拠は CI の記録だけ）', async () => {
+    const line = makeLine();
+    const { id, jobId, headSha } = await untilVerifying(line);
+    const pull = gh.pulls.find((p) => p.headSha === headSha);
+    expect(pull).toBeDefined();
+    // AI や第三者が PR 本文へ書いた申告
+    if (pull)
+      pull.body = `${pull.body ?? ''}\n受入条件 全件確認（確認 2 / 2）\nAC-1 ○\nAC-2 ○\n{"acResults":[{"acId":"AC-1","status":"passed"}]}`;
+    addRun(headSha, { none: true });
+    await runOnce(workerOf(line));
+    const view = await h.view(jobId);
+    expect(view.state).toBe('stopped');
+    expect(view.stopReason).toBe('ci_incomplete');
+    expect(stopDetail(view).acArtifact).toBe('missing');
+    expect(await h.count(`from job_artifact where job_id=$1 and kind='pr_body_draft'`, [jobId])).toBe(0);
+    const trace = (await h.api('GET', `/api/requests/${id}/jobs`)).json();
+    expect(trace.evidence[jobId].ac).toMatchObject({ confirmed: 0, label: '受入条件 未確認あり' });
+    // CI の成否は成功のまま。受入条件とは別の項目
+    expect(trace.evidence[jobId].ciResult).toBe('success');
+    expect(trace.handoffs[0].targetRepo).toBe(REAL_REPO);
+    expect(trace).toHaveProperty('currentTargetRepo');
   });
 
   it('AC の failed は修正へ進む（revising）', async () => {

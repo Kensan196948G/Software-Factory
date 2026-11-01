@@ -107,12 +107,7 @@ export function assertRunnerAllowed(runner: RunnerAdapter): void {
   if (!IMPLEMENTED_RUNNER_KINDS.includes(runner.capability.kind)) {
     throw new Error(`runner ${runner.capability.kind} は未実装です`);
   }
-  const realAllowedHere = runner.capability.kind === 'docker-claude' && config.appEnv === 'staging';
-  if (
-    config.isProduction &&
-    (runner.capability.kind === 'fake' || runner.capability.kind === 'docker-claude') &&
-    !realAllowedHere
-  ) {
+  if (config.isProduction && (runner.capability.kind === 'fake' || runner.capability.kind === 'docker-claude')) {
     throw new Error(`production では ${runner.capability.kind} runner を動かしません`);
   }
 }

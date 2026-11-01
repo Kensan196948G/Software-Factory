@@ -21,7 +21,27 @@ const LOCAL_SIG = 0x04034b50;
 const EOCD_SIZE = 22;
 
 /** 証跡が無い理由。画面と stop_detail に載せる（値は載せない）。 */
-export type AcArtifactProblem = 'missing' | 'expired' | 'too_large' | 'duplicate' | 'head_mismatch' | 'invalid';
+export type AcArtifactProblem =
+  | 'missing'
+  | 'expired'
+  | 'too_large'
+  /** 同じ名前の artifact が同じ試行に複数ある。 */
+  | 'duplicate'
+  | 'invalid'
+  /** 文書または一覧の head が取得元の run と違う（古い SHA）。 */
+  | 'head_mismatch'
+  /** 文書のリポジトリが取得元と違う。 */
+  | 'repository_mismatch'
+  /** 文書または一覧の run が取得元と違う（同じ名前の別 run）。 */
+  | 'run_mismatch'
+  /** 文書の attempt が取得元と違う（前の試行の結果）。 */
+  | 'attempt_mismatch'
+  /** 同じ AC ID が文書に複数ある。 */
+  | 'duplicate_ac_id'
+  /** 注文書に無い AC ID が文書にある。 */
+  | 'unknown_ac_id'
+  /** 注文書の AC ID が文書に無い。 */
+  | 'missing_ac_id';
 
 /** zip の中の .json をちょうど1つ取り出す。形が合わなければ null。 */
 export function readSingleJsonFromZip(zip: Buffer, maxBytes: number = AC_ARTIFACT_MAX_BYTES): Buffer | null {
@@ -81,10 +101,48 @@ export function readSingleJsonFromZip(zip: Buffer, maxBytes: number = AC_ARTIFAC
 const AC_ID_RE = /^AC-[1-9]\d*$/;
 const AC_STATUSES: readonly AcResult['status'][] = ['passed', 'failed', 'not_run'];
 
-export type AcParseResult = { ok: true; results: AcResult[] } | { ok: false; problem: 'invalid' | 'head_mismatch' };
+/** 取得元の run と注文書から分かる、文書にあるべき値。 */
+export interface AcResultsExpected {
+  repository: string;
+  runId: number;
+  runAttempt: number;
+  headSha: string;
+  /** 注文書の AC ID。 */
+  acIds: readonly string[];
+}
 
-/** `msf.ac-results/v1` を確かめる。1つでも形が合わなければ全体を読まない（部分的に信用しない）。 */
-export function parseAcResults(raw: Buffer, headSha: string): AcParseResult {
+export type AcParseResult =
+  /** missingAcIds は報告の無い AC。報告のある分は読むが、無い分は判定で未確認になる。 */
+  | { ok: true; results: AcResult[]; missingAcIds: string[] }
+  | {
+      ok: false;
+      problem: Extract<
+        AcArtifactProblem,
+        | 'invalid'
+        | 'head_mismatch'
+        | 'repository_mismatch'
+        | 'run_mismatch'
+        | 'attempt_mismatch'
+        | 'duplicate_ac_id'
+        | 'unknown_ac_id'
+      >;
+    };
+
+/** Actions の環境変数から書かれるので文字列で届く。数字だけの文字列と安全な整数を認め、それ以外は形の違反。 */
+function runNumberOf(value: unknown): number | null {
+  if (typeof value === 'string' && /^[1-9]\d*$/.test(value)) {
+    const n = Number(value);
+    return Number.isSafeInteger(n) ? n : null;
+  }
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+/**
+ * `msf.ac-results/v1` を確かめる。1つでも形が合わなければ全体を読まない（部分的に信用しない）。
+ * repository・runId・runAttempt・headSha がすべて取得元の run と一致するときだけ読む。
+ * これらの無い古い形式は、どの run の結果か分からないので invalid。
+ */
+export function parseAcResults(raw: Buffer, expected: AcResultsExpected): AcParseResult {
   const invalid: AcParseResult = { ok: false, problem: 'invalid' };
   let doc: unknown;
   try {
@@ -93,9 +151,15 @@ export function parseAcResults(raw: Buffer, headSha: string): AcParseResult {
     return invalid;
   }
   if (typeof doc !== 'object' || doc === null) return invalid;
-  const { schema, headSha: reportedHead, ac } = doc as { schema?: unknown; headSha?: unknown; ac?: unknown };
+  const { schema, repository, runId, runAttempt, headSha: reportedHead, ac } = doc as Record<string, unknown>;
   if (schema !== AC_RESULTS_SCHEMA || !Array.isArray(ac) || ac.length > MAX_AC_ENTRIES) return invalid;
-  if (reportedHead !== headSha) return { ok: false, problem: 'head_mismatch' };
+  const reportedRun = runNumberOf(runId);
+  const reportedAttempt = runNumberOf(runAttempt);
+  if (typeof repository !== 'string' || reportedRun === null || reportedAttempt === null) return invalid;
+  if (repository !== expected.repository) return { ok: false, problem: 'repository_mismatch' };
+  if (reportedRun !== expected.runId) return { ok: false, problem: 'run_mismatch' };
+  if (reportedAttempt !== expected.runAttempt) return { ok: false, problem: 'attempt_mismatch' };
+  if (reportedHead !== expected.headSha) return { ok: false, problem: 'head_mismatch' };
   const results: AcResult[] = [];
   for (const item of ac as unknown[]) {
     if (typeof item !== 'object' || item === null) return invalid;
@@ -106,5 +170,8 @@ export function parseAcResults(raw: Buffer, headSha: string): AcParseResult {
     if (!testIds.every((t) => typeof t === 'string' && t.trim() !== '' && t.length <= MAX_TEST_ID_CHARS)) return invalid;
     results.push({ acId: id, status: status as AcResult['status'], testIds: testIds as string[] });
   }
-  return { ok: true, results };
+  const reported = results.map((r) => r.acId);
+  if (new Set(reported).size !== reported.length) return { ok: false, problem: 'duplicate_ac_id' };
+  if (reported.some((id) => !expected.acIds.includes(id))) return { ok: false, problem: 'unknown_ac_id' };
+  return { ok: true, results, missingAcIds: expected.acIds.filter((id) => !reported.includes(id)) };
 }
