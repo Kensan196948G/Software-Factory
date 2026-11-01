@@ -346,7 +346,7 @@ describe('純関数', () => {
         .join('');
     const passes = (entries: TarEntry[]): boolean => tarHasOnlyExpectedTag(p(tarRaw(entries)));
 
-    it('受ける形: 先頭の ./、prefix の別ディレクトリ、manifest に当たらない拡張ヘッダ、リンクの ../', () => {
+    it('受ける形: 先頭の ./、prefix の別ディレクトリ、manifest に当たらないリンク', () => {
       expect(passes([{ name: './manifest.json', data: good }])).toBe(true);
       expect(
         passes([
@@ -356,15 +356,41 @@ describe('純関数', () => {
       ).toBe(true);
       expect(
         passes([
-          { name: 'PaxHeaders/long', type: 'x', data: pax({ path: `blobs/${'a'.repeat(120)}`, mtime: '1' }) },
-          { name: 'short', data: 'body' },
-          { name: 'pax_global', type: 'g', data: pax({ comment: 'x' }) },
-          { name: '././@LongLink', type: 'L', data: `layers/${'b'.repeat(120)}\0` },
-          { name: 'short2', data: 'body' },
           { name: 'aaa/layer.tar', type: '2' },
           { name: 'manifest.json', data: good },
         ]),
       ).toBe(true);
+    });
+
+    it('拡張ヘッダ（PAX、GNU）は中身によらず拒否する。読み手で名前や境界が変わるため', () => {
+      const last = { name: 'manifest.json', data: good };
+      for (const type of ['x', 'g', 'L', 'K']) {
+        expect(passes([{ name: 'meta', type, data: pax({ comment: 'x' }) }, { name: 'a', data: 'b' }, last]), type).toBe(false);
+      }
+    });
+
+    it('docker load と解釈が食い違う形を拒否する（size の先頭の NUL、GNU の magic、V7）', () => {
+      const last = { name: 'manifest.json', data: good };
+      // size の先頭を NUL にすると、JS は 0、Go は実サイズと読む
+      const nulSize = tarEntry({ name: 'manifest.json', data: evil });
+      nulSize[124] = 0;
+      let sum = 8 * 32;
+      nulSize.forEach((b, i) => {
+        if (i < 148 || i >= 156) sum += b;
+      });
+      nulSize.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 'latin1');
+      expect(tarHasOnlyExpectedTag(p(Buffer.concat([nulSize, tarRaw([last])])))).toBe(false);
+      // GNU の L で manifest.json、続く PAX で別の名前（読み手で優先が違う）
+      expect(
+        passes([
+          { name: '././@LongLink', type: 'L', data: 'manifest.json\0' },
+          { name: 'x', type: 'x', data: pax({ path: 'zzz' }) },
+          { name: 'y', data: evil },
+          last,
+        ]),
+      ).toBe(false);
+      expect(passes([{ name: 'a', data: 'b', magic: 'ustar  \0' }, last])).toBe(false);
+      expect(passes([{ name: 'a', data: 'b', magic: '' }, last])).toBe(false);
     });
 
     it('2 つ目の manifest.json を拒否する（前後どちらでも、書き方を変えても）', () => {
@@ -407,13 +433,6 @@ describe('純関数', () => {
           { name: 'manifest.json', data: good },
         ]),
       ).toBe(false);
-      // GNU の magic の prefix 欄は名前ではない
-      expect(
-        passes([
-          { name: 'other', prefix: 'ignored', magic: 'ustar  \0', data: 'x' },
-          { name: 'manifest.json', data: good },
-        ]),
-      ).toBe(true);
     });
 
     it.each(['x', 'L'])('拡張ヘッダ %s で manifest に当たる項目を拒否する', (type) => {
@@ -443,25 +462,10 @@ describe('純関数', () => {
       ).toBe(false);
     });
 
-    it('g の path、x と g の size と sparse、形の違う PAX を拒否する', () => {
-      const last = { name: 'manifest.json', data: good };
-      expect(passes([{ name: 'g', type: 'g', data: pax({ path: 'manifest.json' }) }, last])).toBe(false);
-      expect(passes([{ name: 'g', type: 'g', data: pax({ size: '0' }) }, last])).toBe(false);
-      expect(passes([{ name: 'x', type: 'x', data: pax({ size: '0' }) }, { name: 'a', data: 'b' }, last])).toBe(false);
-      expect(passes([{ name: 'x', type: 'x', data: pax({ 'GNU.sparse.major': '1' }) }, { name: 'a', data: 'b' }, last])).toBe(
-        false,
-      );
-      expect(passes([{ name: 'x', type: 'x', data: 'broken' }, { name: 'a', data: 'b' }, last])).toBe(false);
-      // K はリンク名だけ。中身は検査しないが、次の項目の名前は変えない
-      expect(passes([{ name: 'k', type: 'K', data: '../x\0' }, { name: 'link', type: '2' }, last])).toBe(true);
-    });
-
     it('.. と絶対パスを拒否する（拡張ヘッダの名前も）', () => {
       const last = { name: 'manifest.json', data: good };
       for (const name of ['../evil', 'a/../../evil', '/etc/evil', 'a/..']) {
         expect(passes([{ name, data: 'x' }, last]), name).toBe(false);
-        expect(passes([{ name: 'x', type: 'x', data: pax({ path: name }) }, { name: 'a', data: 'x' }, last]), name).toBe(false);
-        expect(passes([{ name: 'l', type: 'L', data: `${name}\0` }, { name: 'a', data: 'x' }, last]), name).toBe(false);
       }
     });
 

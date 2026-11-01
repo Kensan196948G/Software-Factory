@@ -6230,12 +6230,13 @@ const SF = (function () {
     }
     if (
       job.state === 'pr_ready' &&
-      valid &&
+      // 結果不明の merge は、版が変わっても照合して記録できるようにする
+      (valid || (rel && ['unknown', 'sending'].includes(rel.mergeState))) &&
       job.headSha &&
       (!rel || rel.mergeState !== 'rejected' || !/^(head_changed|pr_closed|not_own|base_changed)$/.test(rel.mergeDetail || ''))
     ) {
       const ev = dlOf(r.id).evidence[job.id] || {};
-      if (!ev.pr || ev.pr.closed) return '';
+      if (!ev.pr || (ev.pr.closed && !(rel && ['unknown', 'sending'].includes(rel.mergeState)))) return '';
       const merges = ((rel && rel.approvals) || []).filter((a) => a.kind === 'merge');
       const last = merges[merges.length - 1];
       const canRevoke = rel && last && last.decision === 'approved' && last.sha === job.headSha && rel.mergeState !== 'sending';

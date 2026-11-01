@@ -48,6 +48,26 @@ export interface DeployProbe {
  * 起動の引数（純関数。試験で固定する）。host mount・Docker socket・privileged・host network・公開ポートを持たない。
  * イメージは ID をそのまま渡す（タグを解決しない）。
  */
+/** 検査の応答は小さい。配備するコンテナが巨大な本文を返しても worker のメモリを使わせない。 */
+async function readTextCapped(res: Response, maxBytes = 64 * 1024): Promise<string> {
+  const declared = Number(res.headers.get('content-length') ?? 0);
+  if (declared > maxBytes || !res.body) throw new Error('response too large');
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new Error('response too large');
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 export function deployRunArgs(spec: DeployRunSpec, network: string = DEPLOY_NETWORK_NAME): string[] {
   return [
     'run',
@@ -225,7 +245,7 @@ export function createDeployProbe(options: { attempts?: number; intervalMs?: num
         if (i > 0) await new Promise((r) => setTimeout(r, intervalMs));
         try {
           const res = await fetch(`${base}/healthz`, { signal: signal(), redirect: 'manual' });
-          health = res.ok && healthMatches(await res.json(), sha);
+          health = res.ok && healthMatches(JSON.parse(await readTextCapped(res)), sha);
         } catch {
           health = false;
         }
@@ -233,7 +253,7 @@ export function createDeployProbe(options: { attempts?: number; intervalMs?: num
       if (!health) return { health: false, smoke: false };
       try {
         const res = await fetch(`${base}/length?text=abc`, { signal: signal(), redirect: 'manual' });
-        return { health, smoke: res.ok && smokeMatches(await res.text()) };
+        return { health, smoke: res.ok && smokeMatches(await readTextCapped(res)) };
       } catch {
         return { health, smoke: false };
       }

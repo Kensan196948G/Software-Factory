@@ -305,11 +305,9 @@ export function tarHasOnlyExpectedTag(tarPath: string): boolean {
 }
 
 /** 中身を持たない種類（Go の archive/tar はこれらの size を読み飛ばさない）。 */
-const TAR_HEADER_ONLY = new Set(['1', '2', '3', '4', '5', '6']);
-const TAR_REGULAR = new Set(['\0', '0', '7']);
-const TAR_META = new Set(['x', 'g', 'L', 'K']);
+const TAR_HEADER_ONLY = new Set(['1', '2', '5']);
+const TAR_REGULAR = new Set(['\0', '0']);
 const MAX_TAR_ENTRIES = 200_000;
-const MAX_TAR_META_BYTES = 1024 * 1024;
 const TAR_TAIL_CHUNK = 1024 * 1024;
 
 function tarField(block: Buffer, offset: number, length: number): string {
@@ -319,15 +317,14 @@ function tarField(block: Buffer, offset: number, length: number): string {
     .replace(/\0.*$/s, '');
 }
 
-/** 8 進の数値欄。base-256 と形の違うものは読まない（null）。 */
+/**
+ * 8 進の数値欄。`docker save` の出す形（8 進の数字のあとに NUL か空白）だけを読む。
+ * 先頭の NUL や base-256 は読み手で値が変わるので受けない（null）。
+ */
 function tarOctal(block: Buffer, offset: number, length: number): number | null {
-  const text = block
-    .subarray(offset, offset + length)
-    .toString('latin1')
-    .replace(/\0.*$/s, '')
-    .trim();
-  if (!/^[0-7]*$/.test(text)) return null;
-  const value = text === '' ? 0 : Number.parseInt(text, 8);
+  const text = block.subarray(offset, offset + length).toString('latin1');
+  if (!/^[0-7]+[\0 ]*$/.test(text)) return null;
+  const value = Number.parseInt(text, 8);
   return Number.isSafeInteger(value) ? value : null;
 }
 
@@ -348,7 +345,6 @@ function tarChecksumOk(block: Buffer): boolean {
 /** ヘッダの名前（POSIX ustar の prefix を含む）。GNU の magic の prefix 欄は別の用途なので読まない。 */
 function tarHeaderName(block: Buffer): string {
   const name = tarField(block, 0, 100);
-  if (block.subarray(257, 263).toString('latin1') !== 'ustar\0') return name;
   const prefix = tarField(block, 345, 155);
   return prefix ? `${prefix}/${name}` : name;
 }
@@ -358,31 +354,6 @@ function tarNormalizeName(name: string): string | null {
   if (name.startsWith('/') || name.includes('\\')) return null;
   const parts = name.split('/').filter((p) => p !== '' && p !== '.');
   return parts.includes('..') ? null : parts.join('/');
-}
-
-/** PAX の記録（`長さ 鍵=値\n`）。形が違えば null。 */
-function parsePaxRecords(raw: Buffer): Map<string, string> | null {
-  const records = new Map<string, string>();
-  let at = 0;
-  while (at < raw.length) {
-    const space = raw.indexOf(0x20, at);
-    if (space < 0) return null;
-    const lengthText = raw.subarray(at, space).toString('latin1');
-    if (!/^[1-9][0-9]*$/.test(lengthText)) return null;
-    const length = Number(lengthText);
-    if (at + length > raw.length || raw[at + length - 1] !== 0x0a) return null;
-    const record = raw.subarray(space + 1, at + length - 1).toString('utf8');
-    const eq = record.indexOf('=');
-    if (eq <= 0) return null;
-    records.set(record.slice(0, eq), record.slice(eq + 1));
-    at += length;
-  }
-  return records;
-}
-
-/** PAX の記録のうち、読み手によって項目の境界か名前が変わるもの。 */
-function paxDesynchronizes(records: Map<string, string>): boolean {
-  return records.has('size') || [...records.keys()].some((k) => k.startsWith('GNU.sparse.'));
 }
 
 /** 終端の 0 ブロックの後は 0 だけ。後ろに項目を隠せないようにする。 */
@@ -403,17 +374,16 @@ const isManifestName = (name: string | null): boolean => name === 'manifest.json
 function readOnlyManifest(fd: number, size: number): Buffer | null {
   let at = 0;
   let manifest: Buffer | null = null;
-  // 直前の L / x が次の項目へ渡す名前
-  let pendingName: string | null = null;
-  let pendingMeta = false;
   for (let guard = 0; guard < MAX_TAR_ENTRIES; guard += 1) {
-    if (at === size) return pendingMeta ? null : manifest;
+    if (at === size) return manifest;
     if (at + 512 > size) return null;
     const header = readAt(fd, at, 512);
     if (header.length !== 512) return null;
     if (header.every((b) => b === 0)) {
-      return !pendingMeta && tarTailIsZero(fd, at + 512, size) ? manifest : null;
+      return tarTailIsZero(fd, at + 512, size) ? manifest : null;
     }
+    // POSIX ustar だけ。docker save の出力はこの形で、GNU と V7 は読み手で解釈が分かれる
+    if (header.subarray(257, 265).toString('latin1') !== 'ustar\x0000') return null;
     if (!tarChecksumOk(header)) return null;
     const entrySize = tarOctal(header, 124, 12);
     if (entrySize === null) return null;
@@ -421,39 +391,10 @@ function readOnlyManifest(fd: number, size: number): Buffer | null {
     const nextAt = dataAt + Math.ceil(entrySize / 512) * 512;
     if (nextAt > size) return null;
     const type = String.fromCharCode(header[156] as number);
-    const rawName = tarNormalizeName(tarHeaderName(header));
-    if (rawName === null) return null;
-
-    if (TAR_META.has(type)) {
-      if (entrySize > MAX_TAR_META_BYTES) return null;
-      const data = readAt(fd, dataAt, entrySize);
-      if (data.length !== entrySize) return null;
-      if (type === 'x' || type === 'g') {
-        const records = parsePaxRecords(data);
-        if (!records || paxDesynchronizes(records)) return null;
-        const path = records.get('path');
-        // 全項目へ効く名前は読み手で扱いが違う
-        if (type === 'g' && path !== undefined) return null;
-        if (type === 'x') {
-          pendingMeta = true;
-          if (path !== undefined) pendingName = path;
-        }
-      } else {
-        pendingMeta = true;
-        if (type === 'L') pendingName = data.toString('utf8').replace(/\0.*$/s, '');
-      }
-      at = nextAt;
-      continue;
-    }
-
+    // PAX と GNU の拡張ヘッダは受けない。読み手で名前や境界が変わり、manifest を隠せる
     if (!TAR_REGULAR.has(type) && !TAR_HEADER_ONLY.has(type)) return null;
-    const longName = pendingName === null ? null : tarNormalizeName(pendingName);
-    if (pendingName !== null && longName === null) return null;
-    // 拡張ヘッダで manifest に当たる項目は受けない（本物の docker save は短い名前で書く）
-    if (pendingName !== null && (isManifestName(longName) || isManifestName(rawName))) return null;
-    const effective = longName ?? rawName;
-    pendingName = null;
-    pendingMeta = false;
+    const effective = tarNormalizeName(tarHeaderName(header));
+    if (effective === null) return null;
     const directoryLike = effective === '' || tarHeaderName(header).endsWith('/');
     if ((TAR_HEADER_ONLY.has(type) || directoryLike) && entrySize !== 0) return null;
     if (isManifestName(effective)) {
