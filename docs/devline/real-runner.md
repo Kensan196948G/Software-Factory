@@ -299,6 +299,7 @@ Staging の最初の投入（REQ-2026-0010、job `914b0043`）は、`CLAUDE_CODE
 3. **成果物**: worker は CI で検査した成果物を取得する（このホストで `docker build` しない。fallback も無い）。
    - 使う run は merge の承認で固定する（`release.verified_run_id` と `verified_run_attempt`。合否の根拠にした `verification` と同じ run）。
    - 取得は `GET /repos/{repo}/actions/runs/{run}/artifacts?name=image`。artifact の `workflow_run.id` と `head_sha` を照合し、複数あれば止まる。
+   - 取得の時間の上限は 30 分（`DOWNLOAD_TIMEOUT_MS`）。超えると `artifact_unavailable` で、承認者が「PR を承認して merge する」を押し直すと取り直す（merge はやり直さない）。
    - zip はファイルへストリームで保存し（上限 1 GiB）、`image.tar`（上限 3 GiB）と `image-meta.json` だけを展開する。余分なファイル、zip64、暗号化、CRC の不一致は拒否する。302 の先へトークンを送らない。
    - meta（`msf.image/v1`）の `repository`、`runId`、`runAttempt`、`headSha` を照合し、`tarSha256` を実際の tar と比べる。tar は全体のヘッダを走査し（POSIX の prefix と PAX / GNU の長い名前を含む）、`manifest.json` がちょうど1つで、タグが `sandbox-artifact:ci` だけであることを確かめる（`docker load` が他のタグを上書きしないため）。複数の manifest、拡張ヘッダで manifest に当たる項目、`..` や絶対パスの名前、PAX の `size` と sparse、中身のある種類の違うヘッダ、壊れた checksum、終端の後ろの項目は `artifact_mismatch` で止まる。リンクの指す先は見ない（`docker save` の層が `../` を使う）。
    - `docker load` の出力の ref を `docker image inspect` し、ID が `imageId` と一致することを確かめる。合わなければ `artifact_mismatch` で、配備の承認へ進めない。
