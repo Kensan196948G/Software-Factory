@@ -108,6 +108,14 @@ export function stagesFromJobs(jobs: readonly WorkflowJob[], headSha: string, ru
   return stages;
 }
 
+/** 必須段階の名前に合わない job（純関数）。段階名の不一致を止める理由に載せる。 */
+export function unmatchedJobNames(jobs: readonly WorkflowJob[]): string[] {
+  return jobs
+    .map((job) => String(job.name).slice(0, 100))
+    .filter((name) => !(REQUIRED_STAGES as readonly string[]).includes(name))
+    .slice(0, 50);
+}
+
 export function createGithubCiCollector(options: GithubCiCollectorOptions): GithubCiCollector {
   const base = assertApiUrlAllowed(options.apiUrl, options.nodeEnv).toString().replace(/\/$/, '');
   const minInterval = options.minPollIntervalMs ?? 30_000;
@@ -216,6 +224,7 @@ export function createGithubCiCollector(options: GithubCiCollectorOptions): Gith
         acResults: [],
         logRef: run.html_url,
         reportDigest,
+        diagnostics: { runConclusion: run.conclusion, unmatchedJobs: unmatchedJobNames(jobs) },
         now: ctx.now,
         correlationId: ctx.correlationId,
       };

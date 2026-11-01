@@ -109,7 +109,30 @@ export async function recordVerification(input: RecordVerificationInput): Promis
     const rows = await client.query<VerificationRow>('select * from verification where job_id = $1', [input.jobId]);
     const verdict = evaluateVerification(rows.rows.map(toRecord), job.head_sha ?? '', acIdsOf(request?.criteria ?? []));
 
-    if (!recorded) return { status: 'duplicate', verdict, jobState: job.state, advanced: false };
+    const current =
+      request !== undefined &&
+      isOrderCurrent({
+        requestStatus: request.status,
+        requestDeleted: request.deleted,
+        requestOrderVersion: request.order_version,
+        jobOrderVersion: job.order_version,
+      });
+    // 順不同で届いた古い配信では動かさない。合否も再実行の回数も、その SHA の最新の記録だけが決める
+    const newest = rows.rows
+      .filter((r) => r.head_sha === input.headSha)
+      .some(
+        (r) => r.run_sequence > input.runSequence || (r.run_sequence === input.runSequence && r.run_attempt > input.runAttempt),
+      );
+    const applicable = job.state === 'verifying' && input.headSha === job.head_sha && current && !newest;
+
+    if (!recorded) {
+      // 実 CI は再実行を要求できない。再開の後に同じ run しか無ければ、待たずにもう一度止める
+      if (applicable && input.source === 'github' && verdict.verdict === 'incomplete') {
+        const moved = await applyVerdict(client, job, verdict, input);
+        return { status: 'duplicate', verdict, jobState: moved.state, advanced: moved.advanced };
+      }
+      return { status: 'duplicate', verdict, jobState: job.state, advanced: false };
+    }
 
     await appendAuditTx(client, {
       action: 'verification.record',
@@ -121,24 +144,7 @@ export async function recordVerification(input: RecordVerificationInput): Promis
       diff: { deliveryId: input.deliveryId, ciRunId: input.ciRunId, headSha: input.headSha, verdict: verdict.verdict },
     });
 
-    const current =
-      request !== undefined &&
-      isOrderCurrent({
-        requestStatus: request.status,
-        requestDeleted: request.deleted,
-        requestOrderVersion: request.order_version,
-        jobOrderVersion: job.order_version,
-      });
-    if (job.state !== 'verifying' || input.headSha !== job.head_sha || !current) {
-      return { status: 'recorded', verdict, jobState: job.state, advanced: false };
-    }
-    // 順不同で届いた古い配信では動かさない。合否も再実行の回数も、その SHA の最新の記録だけが決める
-    const newest = rows.rows
-      .filter((r) => r.head_sha === input.headSha)
-      .some(
-        (r) => r.run_sequence > input.runSequence || (r.run_sequence === input.runSequence && r.run_attempt > input.runAttempt),
-      );
-    if (newest) return { status: 'recorded', verdict, jobState: job.state, advanced: false };
+    if (!applicable) return { status: 'recorded', verdict, jobState: job.state, advanced: false };
     // 赤信号は worker の前でも合格へ進めない
     if (await isRedOrder(client, job.snapshot_id)) {
       await haltLockedJob(client, job, {
@@ -209,6 +215,19 @@ async function applyVerdict(
       return { state: 'revising', advanced: true };
     }
     case 'incomplete': {
+      // 実 CI の再実行は人が行う（worker は要求しない）。待っても結果は変わらないので、理由を付けてすぐ止める
+      if (input.source === 'github') {
+        const statusOf = (stage: string): string =>
+          input.stages.filter((s) => s.stage === stage).find((s) => s.status !== 'passed')?.status ?? 'missing';
+        return stop('ci_incomplete', {
+          ciRunId: verdict.ciRunId,
+          logRef: input.logRef ?? null,
+          runConclusion: input.diagnostics?.runConclusion ?? null,
+          stages: verdict.incompleteStages.map((stage) => ({ stage, status: statusOf(stage) })),
+          unmatchedJobs: input.diagnostics?.unmatchedJobs ?? [],
+          nextStep: 'GitHub Actions で CI を再実行してから再開する',
+        });
+      }
       if (!isCiRerunAllowed(job.ci_rerun_count)) {
         return stop('ci_rerun_limit', { incompleteStages: verdict.incompleteStages, ciRunId: verdict.ciRunId });
       }

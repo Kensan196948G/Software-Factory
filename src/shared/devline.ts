@@ -135,6 +135,26 @@ export const NON_RESUMABLE_STOP_REASONS: readonly StopReason[] = [
   'runner_rejected',
 ];
 
+/**
+ * 実 PR の後始末（純関数）。AI の候補 PR を、merge してよいように見える形で残さない。
+ * - 古い版・無効な注文書・cancelled・再開できない停止 → 閉じる（人は読めるし開き直せる）
+ * - 再開できる停止 → 開いたまま「止まっている」印を付ける（再開して pr_ready に戻れば本文が更新される）
+ * - それ以外 → 何もしない
+ */
+export type PrFollowup = 'close' | 'mark_stopped' | 'none';
+
+export function prFollowupOf(job: {
+  state: JobState;
+  stopReason: StopReason | null;
+  superseded: boolean;
+  orderCurrent: boolean;
+}): PrFollowup {
+  if (job.state === 'pr_ready') return job.superseded || !job.orderCurrent ? 'close' : 'none';
+  if (!JOB_HALTED_STATES.includes(job.state)) return 'none';
+  if (job.state === 'cancelled' || job.superseded || !job.orderCurrent) return 'close';
+  return job.stopReason !== null && NON_RESUMABLE_STOP_REASONS.includes(job.stopReason) ? 'close' : 'mark_stopped';
+}
+
 export type ResumeDecision = { ok: true; to: JobState } | { ok: false; code: 'ERR-201'; reason: string };
 
 /** 再開の可否（純関数）。注文書がまだ有効かは呼び出し側が isOrderCurrent で別に確かめる（無効なら ERR-202）。 */
@@ -1269,7 +1289,7 @@ export interface JobEvidence {
   verificationSources: VerificationSource[];
   hasPrDraft: boolean;
   /** 実 PR（docker-claude）。fake のときや作っていないときは null。 */
-  pr?: { number: number; url: string; source: 'github' | 'fake' } | null;
+  pr?: { number: number; url: string; source: 'github' | 'fake'; closed?: boolean } | null;
   /** source='github' の検証の run URL（新しいものから1件）。 */
   ciRunUrl?: string | null;
   /** source='github' の記録が github.com のものか。 */
@@ -1288,6 +1308,8 @@ export interface RecordVerificationInput {
   acResults: readonly AcResult[];
   logRef?: string | null;
   reportDigest?: string | null;
+  /** 実 CI の補足（記録はせず、止めるときの理由に載せる）。 */
+  diagnostics?: { runConclusion: string | null; unmatchedJobs: readonly string[] };
   now: Date;
   correlationId: string;
 }

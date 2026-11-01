@@ -76,6 +76,12 @@ async function main(): Promise<void> {
   console.log(`[worker] started runner=${decision.runnerKind} isolation=${runner.capability.isolation}`);
 
   while (!stop.signal.aborted) {
+    if (line?.isLockHeld?.() === false) {
+      // 別の worker が動き出せる状態。新しい AI を動かさず、終わる（監視の側で起動し直す）
+      console.error('[worker] 排他を失ったので止まります');
+      process.exitCode = 1;
+      break;
+    }
     let idle = true;
     try {
       const outcome = await runOnce({
@@ -94,6 +100,7 @@ async function main(): Promise<void> {
     }
     if (idle) await delay(POLL_MS, undefined, { signal: stop.signal }).catch(() => undefined);
   }
+  await line?.close();
   await closePool();
   console.log('[worker] stopped');
 }

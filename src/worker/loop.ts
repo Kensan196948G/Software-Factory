@@ -10,7 +10,6 @@ import { config } from '../api/config.js';
 import { pool, query } from '../api/db.js';
 import {
   acIdsOf,
-  addRunnerCost,
   appendJobEvent,
   claimNextJob,
   closeAttempt,
@@ -18,10 +17,13 @@ import {
   haltJob,
   heartbeat,
   isRedOrder,
+  listPrFollowupCandidates,
+  recordPrFollowup,
   recordVerification,
   releaseLease,
   remainingWorkFor,
   renderDraftPrBody,
+  settleOrphanAttempts,
   sha256Hex,
   startAttempt,
   transitionJob,
@@ -39,6 +41,9 @@ import {
   haltTarget,
   isOrderCurrent,
   isRepoAllowed,
+  maxBudgetUsd,
+  prFollowupOf,
+  usdToJpyCeil,
 } from '../shared/devline.js';
 import type {
   AllowedRepo,
@@ -74,7 +79,7 @@ export interface WorkerOptions {
   ) => RecordVerificationInput | null | Promise<CiCollectResult>;
   leaseSeconds?: number;
   /** 実 runner のとき: 予算・push・PR・実 CI。無ければ fake の経路のまま。 */
-  line?: Pick<RealLine, 'budget' | 'preflight' | 'publish' | 'updatePrBody' | 'closeSupersededPr'> & {
+  line?: Pick<RealLine, 'budget' | 'preflight' | 'publish' | 'updatePrBody' | 'closeSupersededPr' | 'followUpPr' | 'isLockHeld'> & {
     ci: Pick<RealLine['ci'], 'collect'>;
   };
   /** この job だけを取る（1件実走の入口）。 */
@@ -124,7 +129,9 @@ type RunOutcome =
   | { kind: 'result'; result: RunnerResult }
   | { kind: 'error' }
   | { kind: 'lost'; late: RunnerResult | null }
-  | { kind: 'limit'; reason: 'session_limit' | 'continuous_limit'; late: RunnerResult | null };
+  | { kind: 'limit'; reason: 'session_limit' | 'continuous_limit'; late: RunnerResult | null }
+  /** heartbeat や待ちが例外で失敗した。見張れない AI は動かし続けない。 */
+  | { kind: 'watch_failed'; cause: string; late: RunnerResult | null };
 
 /** 実費がかかる runner は止めた後の結果も待つ。遅れた結果の費用を数え落とさないため。 */
 async function settleLate(runner: RunnerAdapter, run: Promise<RunOutcome>): Promise<RunnerResult | null> {
@@ -156,18 +163,29 @@ async function runWatched(
     controller.abort();
     await options.runner.cancel({ jobId: job.id, attemptNo: input.attemptNo }).catch(() => undefined);
   };
+  const watchFailed = async (cause: string): Promise<RunOutcome> => {
+    await cancelRun();
+    return { kind: 'watch_failed', cause, late: await settleLate(options.runner, run) };
+  };
   for (;;) {
     const waiter = new AbortController();
     const ticked = tick(waiter.signal).then(
       () => 'tick' as const,
-      () => 'never' as const,
+      () => (waiter.signal.aborted ? ('never' as const) : ('tick_failed' as const)),
     );
-    const winner = await Promise.race([run, ticked.then((v) => (v === 'tick' ? v : new Promise<never>(() => undefined)))]);
+    const winner = await Promise.race([run, ticked.then((v) => (v === 'never' ? new Promise<never>(() => undefined) : v))]);
     waiter.abort();
+    if (winner === 'tick_failed') return watchFailed('tick_failed');
     if (winner !== 'tick') return winner;
 
     const now = options.clock();
-    const beat = await heartbeat(lease, now, options.leaseSeconds);
+    if (options.line?.isLockHeld?.() === false) return watchFailed('worker_lock_lost');
+    let beat: Awaited<ReturnType<typeof heartbeat>>;
+    try {
+      beat = await heartbeat(lease, now, options.leaseSeconds);
+    } catch {
+      return watchFailed('heartbeat_failed');
+    }
     if (!beat.applied) {
       await cancelRun();
       return { kind: 'lost', late: await settleLate(options.runner, run) };
@@ -209,7 +227,15 @@ async function runStep(options: WorkerOptions, job: JobRow, lease: JobLease, cor
     if (!pre.ok) return stopped(pre.stop === 'policy' ? 'policy_violation' : 'runner_failure', { rule: pre.rule });
   }
 
-  const started = await startAttempt(lease, { step, runnerKind: options.runner.capability.kind, now: options.clock() });
+  // 結果を受け取れなかったときに計上する割り当て。runner の --max-budget-usd と同じ計算
+  const budgetNow = options.line?.budget ?? null;
+  const allotmentJpy = budgetNow ? usdToJpyCeil(maxBudgetUsd(budgetNow, job.cost_jpy) ?? 0, budgetNow.jpyPerUsd) : 0;
+  const started = await startAttempt(lease, {
+    step,
+    runnerKind: options.runner.capability.kind,
+    now: options.clock(),
+    allotmentJpy,
+  });
   if (!started.applied) return { kind: 'lost', jobId: job.id, from };
   const { attemptId, attemptNo } = started.value;
 
@@ -244,22 +270,29 @@ async function runStep(options: WorkerOptions, job: JobRow, lease: JobLease, cor
     const now = options.clock();
     if (outcome.kind === 'lost') {
       // 取消や取り直しで fence が切れた。attempt を閉じるだけで job は動かさない
-      await closeAttempt(attemptId, 'discarded', now);
-      await addRunnerCost(job.id, costOf(outcome.late), now, {
-        attemptId,
-        cause: 'lost',
-        estimated: outcome.late?.costEstimated,
+      await closeAttempt(attemptId, 'discarded', now, {
+        jobId: job.id,
+        costJpy: costOf(outcome.late),
+        detail: { cause: 'lost', estimated: outcome.late?.costEstimated },
       });
       return { kind: 'lost', jobId: job.id, from };
     }
     if (outcome.kind === 'limit') {
-      await closeAttempt(attemptId, 'timed_out', now);
-      await addRunnerCost(job.id, costOf(outcome.late), now, {
-        attemptId,
-        cause: 'limit',
-        estimated: outcome.late?.costEstimated,
+      await closeAttempt(attemptId, 'timed_out', now, {
+        jobId: job.id,
+        costJpy: costOf(outcome.late),
+        detail: { cause: 'limit', estimated: outcome.late?.costEstimated },
       });
       return stopped(outcome.reason, { step });
+    }
+    if (outcome.kind === 'watch_failed') {
+      // DB が戻っていなければここで例外になる。試行は開いたままで、次の取得で割り当てが計上される
+      await closeAttempt(attemptId, 'failed', now, {
+        jobId: job.id,
+        costJpy: costOf(outcome.late),
+        detail: { cause: outcome.cause, estimated: outcome.late?.costEstimated },
+      });
+      return stopped('runner_failure', { step, cause: outcome.cause });
     }
     if (outcome.kind === 'error') {
       await closeAttempt(attemptId, 'failed', now);
@@ -269,17 +302,17 @@ async function runStep(options: WorkerOptions, job: JobRow, lease: JobLease, cor
     // 型は申告にすぎないので実行時に確かめる。読めない結果は記録も信用もしない（費用だけは数える）
     const result = parseRunnerResult(outcome.result);
     if (!result) {
-      await closeAttempt(attemptId, 'rejected', now);
-      await addRunnerCost(job.id, costOf(outcome.result), now, { attemptId, cause: 'invalid_result' });
+      await closeAttempt(attemptId, 'rejected', now, {
+        jobId: job.id,
+        costJpy: costOf(outcome.result),
+        detail: { cause: 'invalid_result' },
+      });
       return stopped('runner_failure', { step, cause: 'invalid_result' }, agentActor(options.runner));
     }
-    const finished = await finishAttempt(lease, attemptId, result, now);
-    if (!finished.applied) {
-      if (options.runner.capability.costAccounting === 'metered') {
-        await addRunnerCost(job.id, result.usage.costJpy, now, { attemptId, cause: 'late_result' });
-      }
-      return { kind: 'lost', jobId: job.id, from };
-    }
+    const finished = await finishAttempt(lease, attemptId, result, now, {
+      chargeLate: options.runner.capability.costAccounting === 'metered',
+    });
+    if (!finished.applied) return { kind: 'lost', jobId: job.id, from };
 
     const agent = agentActor(options.runner);
     // policy の検査を最初に行う。注文書の本文や runner の申告では変わらない
@@ -396,7 +429,22 @@ async function runStep(options: WorkerOptions, job: JobRow, lease: JobLease, cor
       detail: { attemptId },
       patch: step === 'plan' ? { plan: result.plan ?? null } : { headSha: result.headSha, ciRerunCount: 0, workState },
     });
-    if (!written.applied) return { kind: 'lost', jobId: job.id, from };
+    if (!written.applied) {
+      // push の直後に取消や新しい版で fence が切れた。この PR はどこにも記録されないので、ここで閉じる
+      const stranded = workState.pr as { number: number } | undefined;
+      if (stranded && options.line) {
+        const closed = await options.line
+          .closeSupersededPr({ repo: job.target_repo_id, number: stranded.number, jobId: job.id })
+          .catch(() => false);
+        await appendJobEvent(job.id, {
+          at: options.clock(),
+          kind: 'pr_stranded',
+          correlationId,
+          detail: { number: stranded.number, closed },
+        });
+      }
+      return { kind: 'lost', jobId: job.id, from };
+    }
     await releaseLease(written.value as JobLease, options.clock());
     return { kind: 'stepped', jobId: job.id, from, to };
   } finally {
@@ -500,9 +548,69 @@ async function verifyStep(options: WorkerOptions, job: JobRow, lease: JobLease, 
   return { kind: 'stepped', jobId: job.id, from: 'verifying', to: recorded.advanced ? recorded.jobState : 'unchanged' };
 }
 
+const PR_FOLLOWUP_MAX_TRIES = 10;
+const PR_FOLLOWUP_RETRY_MS = 60_000;
+
+/**
+ * 止まった job・古い版の job の実 PR の後始末（prFollowupOf）。外部呼び出しなのでトランザクションの外で行う。
+ * 失敗しても工程を止めない。結果は job の印と event に残し、間隔を空けて上限まで試す。
+ */
+async function followUpPrs(options: WorkerOptions): Promise<void> {
+  const line = options.line;
+  if (!line) return;
+  for (const row of await listPrFollowupCandidates()) {
+    const pr = row.work_state.pr as { number?: unknown } | undefined;
+    if (typeof pr?.number !== 'number') continue;
+    const action = prFollowupOf({
+      state: row.state,
+      stopReason: row.stop_reason,
+      superseded: row.superseded_at !== null,
+      orderCurrent: isOrderCurrent({
+        requestStatus: row.request_status,
+        requestDeleted: row.request_deleted,
+        requestOrderVersion: row.request_order_version,
+        jobOrderVersion: row.order_version,
+      }),
+    });
+    if (action === 'none') continue;
+    const now = options.clock();
+    const key = `${pr.number}:${action}:${(row.stopped_at ?? row.superseded_at)?.toISOString() ?? 'order'}`;
+    const prior = row.work_state.prFollowup as { key?: unknown; done?: unknown; tries?: unknown; nextAt?: unknown } | undefined;
+    const sameKey = prior?.key === key;
+    const tries = sameKey && typeof prior?.tries === 'number' ? prior.tries : 0;
+    if (sameKey && prior?.done === true) continue;
+    if (tries >= PR_FOLLOWUP_MAX_TRIES) continue;
+    if (sameKey && typeof prior?.nextAt === 'string' && now.getTime() < Date.parse(prior.nextAt)) continue;
+
+    const outcome = await line
+      .followUpPr({ action, repo: row.target_repo_id, number: pr.number, jobId: row.id, stopReason: row.stop_reason })
+      .catch(() => 'retry' as const);
+    const closed = action === 'close' && outcome === 'done';
+    await recordPrFollowup(
+      row,
+      {
+        key,
+        number: pr.number,
+        action,
+        outcome,
+        done: outcome !== 'retry',
+        tries: tries + 1,
+        ...(outcome === 'retry' ? { nextAt: new Date(now.getTime() + PR_FOLLOWUP_RETRY_MS).toISOString() } : {}),
+        // 自分のものではないと分かった PR も、これ以上は触らない
+        ...(closed || outcome === 'not_own' ? { closedNumber: String(pr.number) } : {}),
+      },
+      now,
+      `worker-${randomUUID()}`,
+    );
+  }
+}
+
 /** 1つ取って1工程だけ進める。何も取れなければ idle。 */
 export async function runOnce(options: WorkerOptions): Promise<StepOutcome> {
   assertRunnerAllowed(options.runner);
+  // 排他を失った worker は新しい AI を動かさない（呼び出し側で止める）
+  if (options.line?.isLockHeld?.() === false) throw new Error('worker の排他を失いました');
+  if (options.line) await followUpPrs(options).catch(() => undefined);
   const realWorker = options.runner.capability.kind === 'docker-claude';
   const claimed = await claimNextJob({
     owner: options.owner,
@@ -513,10 +621,13 @@ export async function runOnce(options: WorkerOptions): Promise<StepOutcome> {
     ...(options.onlyJobId ? { jobId: options.onlyJobId } : {}),
   });
   if (!claimed) return { kind: 'idle' };
-  const { job } = claimed;
   let lease = claimed.lease;
   const correlationId = `worker-${randomUUID()}`;
   const halt = (reason: StopReason, detail: unknown) => haltStep(options, lease, reason, detail, correlationId);
+  // 落ちた worker の試行を閉じて費用を数える。どの工程へ進むか・止まるかより先に行う
+  const settled = await settleOrphanAttempts(lease, options.clock());
+  if (!settled.applied) return { kind: 'lost', jobId: claimed.job.id, from: claimed.job.state };
+  const job: JobRow = { ...claimed.job, cost_jpy: claimed.job.cost_jpy + settled.value.chargedJpy };
 
   if (job.lease_reclaim_count > DEVLINE_POLICY.maxLeaseReclaims) {
     return halt('lease_lost_repeatedly', { reclaimCount: job.lease_reclaim_count });

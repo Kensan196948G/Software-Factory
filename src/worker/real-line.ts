@@ -106,6 +106,8 @@ export interface PublishInput {
   body: string;
 }
 
+export type PrFollowupOutcome = 'done' | 'retry' | 'not_own';
+
 export type PublishResult =
   | { ok: true; branch: string; pr: { number: number; url: string; source: 'github' | 'fake' } }
   | { ok: false; cause: 'push_rejected' | 'pr_unknown' | 'pr_failed' | 'no_workspace' | 'repo_refused'; httpStatus?: number };
@@ -126,6 +128,18 @@ export interface RealLine {
   }): Promise<boolean>;
   /** 差しかえられた PR を閉じる。マーカーと作成者が合うものだけ。merge はしない。 */
   closeSupersededPr(input: { repo: string; number: number; jobId: string }): Promise<boolean>;
+  /** 止まった job・古い版の job の PR の後始末。マーカーと作成者が合うものだけ。merge はしない。 */
+  followUpPr(input: {
+    action: 'close' | 'mark_stopped';
+    repo: string;
+    number: number;
+    jobId: string;
+    stopReason: string | null;
+  }): Promise<PrFollowupOutcome>;
+  /** worker の排他を持っているか。createRealLine で直接作ったもの（試験）には無い。 */
+  isLockHeld?: () => boolean;
+  /** worker の排他を返す。終了時に DB の接続を閉じる前に呼ぶ。 */
+  close(): Promise<void>;
 }
 
 export interface RealLineOptions {
@@ -139,9 +153,23 @@ export interface RealLineOptions {
   timeoutMs?: number;
   httpTimeoutMs?: number;
   minPollIntervalMs?: number;
+  /** 片付けの範囲（docker のラベル）。 */
+  scope?: string;
 }
 
 const PR_BODY_LIMIT = 60_000;
+const STOP_BANNER_TAG = '<!-- msf-devline-stopped -->';
+
+/**
+ * 本文に「止まっている」印を付ける（純関数）。1行目のマーカーの次に置き、何度付けても1つ。
+ * 再開して pr_ready に戻ると本文全体が更新されて消える。
+ */
+export function withStopBanner(body: string, stopReason: string | null): string {
+  const lines = body.split('\n').filter((line) => !line.startsWith(STOP_BANNER_TAG));
+  const reason = stopReason === null ? '' : `（理由: ${stopReason}）`;
+  const banner = `${STOP_BANNER_TAG}**このジョブは止まっています${reason}。検査が終わっていないので merge しないでください。**`;
+  return trimBody([lines[0] ?? '', '', banner, ...lines.slice(1)].join('\n'));
+}
 
 /**
  * 実 runner の起動。資格情報を読むのは worker の実行時（ここ）だけ。
@@ -160,26 +188,37 @@ export async function startRealLine(input: {
   const refused = checkRealLineEnv({ ...input.env, NODE_ENV: input.nodeEnv }, input.allowedRepos);
   if (refused) throw new RealLineRefused(refused);
   const secrets = loadDevlineSecrets(input.secretsPath ?? input.env.DEVLINE_SECRETS_FILE ?? DEFAULT_SECRETS_PATH, input.nodeEnv);
-  const line = createRealLine({
-    secrets,
-    env: input.env,
-    allowedRepos: input.allowedRepos,
-    nodeEnv: input.nodeEnv,
-    apiUrl: input.apiUrl,
-    gitBaseUrl: input.env.DEVLINE_GIT_BASE_URL ?? 'https://github.com',
-    ...(input.workspaceRoot ? { workspaceRoot: input.workspaceRoot } : {}),
-    ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
-    ...(input.minPollIntervalMs === undefined ? {} : { minPollIntervalMs: input.minPollIntervalMs }),
-  });
-  if (!(await line.runner.checkImages())) {
-    throw new RealLineRefused('実 runner のイメージがありません（docs/devline/real-runner.md の手順で作ってください）');
+  // db.js の読み込みは config を読むので、資格情報の確認までと dry-run では読み込まない
+  const { acquireWorkerLock } = await import('./worker-lock.js');
+  const lock = await acquireWorkerLock();
+  if (!lock) throw new RealLineRefused('別の worker が動いています。起動を拒否します（コンテナの片付けもしません）');
+  try {
+    const line = createRealLine({
+      secrets,
+      env: input.env,
+      allowedRepos: input.allowedRepos,
+      nodeEnv: input.nodeEnv,
+      apiUrl: input.apiUrl,
+      gitBaseUrl: input.env.DEVLINE_GIT_BASE_URL ?? 'https://github.com',
+      scope: lock.scope,
+      ...(input.workspaceRoot ? { workspaceRoot: input.workspaceRoot } : {}),
+      ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
+      ...(input.minPollIntervalMs === undefined ? {} : { minPollIntervalMs: input.minPollIntervalMs }),
+    });
+    if (!(await line.runner.checkImages())) {
+      throw new RealLineRefused('実 runner のイメージがありません（docs/devline/real-runner.md の手順で作ってください）');
+    }
+    for (const repo of input.allowedRepos) {
+      const pre = await line.preflight(repo.name);
+      if (!pre.ok) throw new RealLineRefused(`対象リポジトリを使えません（${pre.rule}）`);
+    }
+    // 排他を取った後でだけ片付ける。動いている他の worker のコンテナを止めない
+    await line.runner.sweepOrphans();
+    return { ...line, isLockHeld: lock.isHeld, close: lock.release };
+  } catch (err) {
+    await lock.release();
+    throw err;
   }
-  for (const repo of input.allowedRepos) {
-    const pre = await line.preflight(repo.name);
-    if (!pre.ok) throw new RealLineRefused(`対象リポジトリを使えません（${pre.rule}）`);
-  }
-  await line.runner.sweepOrphans();
-  return line;
 }
 
 function trimBody(body: string): string {
@@ -241,6 +280,7 @@ export function createRealLine(options: RealLineOptions): RealLine {
     gitBaseUrl: options.gitBaseUrl,
     nodeEnv: options.nodeEnv,
     budget,
+    ...(options.scope ? { scope: options.scope } : {}),
     ...(options.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
     ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
   });
@@ -318,24 +358,45 @@ export function createRealLine(options: RealLineOptions): RealLine {
     },
 
     async closeSupersededPr(input) {
-      if (!(await isOwnPull(issues, input, signal))) return false;
+      if ((await ownPull(issues, input, signal)).kind !== 'own') return false;
       const result = await prs.closePull({ repo: input.repo, number: input.number }, signal());
       return result.outcome === 'succeeded';
+    },
+
+    async followUpPr(input) {
+      const own = await ownPull(issues, input, signal);
+      if (own.kind === 'unknown') return 'retry';
+      if (own.kind === 'not_own') return 'not_own';
+      const result =
+        input.action === 'close'
+          ? await prs.closePull({ repo: input.repo, number: input.number }, signal())
+          : await prs.updatePullBody(
+              { repo: input.repo, number: input.number, body: withStopBanner(own.body, input.stopReason) },
+              signal(),
+            );
+      return result.outcome === 'succeeded' ? 'done' : 'retry';
+    },
+
+    async close() {
+      // createRealLine で直接作ったものは排他を持たない
     },
   };
 }
 
-/** 閉じる前に PR を読み、この job が作ったものか確かめる。 */
-async function isOwnPull(
+/** 触る前に PR を読み、この job が作ったものか確かめる。読めないときと、違うと分かったときを分ける。 */
+async function ownPull(
   issues: IssueAdapter,
   input: { repo: string; number: number; jobId: string },
   signal: () => AbortSignal,
-): Promise<boolean> {
+): Promise<{ kind: 'own'; body: string } | { kind: 'not_own' } | { kind: 'unknown' }> {
   const issue = await issues.getIssue(input.repo, input.number, signal());
-  if (!issue.ok || !issue.value || !issue.value.isPullRequest) return false;
+  if (!issue.ok) return { kind: 'unknown' };
+  if (!issue.value || !issue.value.isPullRequest) return { kind: 'not_own' };
   const actor = await issues.getActorLogin(signal());
-  if (!actor.ok || issue.value.authorLogin !== actor.value) return false;
-  return parsePrMarker(issue.value.body)?.jobId === input.jobId;
+  if (!actor.ok) return { kind: 'unknown' };
+  if (issue.value.authorLogin !== actor.value) return { kind: 'not_own' };
+  const body = issue.value.body ?? '';
+  return parsePrMarker(body)?.jobId === input.jobId ? { kind: 'own', body } : { kind: 'not_own' };
 }
 
 async function readDefaultBranch(options: RealLineOptions, repo: string, signal: AbortSignal): Promise<string | null> {

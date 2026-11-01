@@ -196,6 +196,7 @@ async function realRun(env: NodeJS.ProcessEnv): Promise<boolean> {
   process.once('SIGTERM', () => stop.abort());
 
   const pollMs = env.DEVLINE_CI_POLL_MS ? Number(env.DEVLINE_CI_POLL_MS) : null;
+  let closeLine: (() => Promise<void>) | null = null;
   try {
     const secretsPath = env.DEVLINE_SECRETS_FILE ?? DEFAULT_SECRETS_PATH;
     const secrets = loadDevlineSecrets(secretsPath, config.nodeEnv);
@@ -208,6 +209,7 @@ async function realRun(env: NodeJS.ProcessEnv): Promise<boolean> {
       secretsPath,
       ...(pollMs === null ? {} : { minPollIntervalMs: pollMs }),
     });
+    closeLine = line.close;
     stages['runner イメージの確認'] = '実行確認済み';
     stages['対象リポジトリの確認（ID・private）'] = '実行確認済み';
 
@@ -280,6 +282,7 @@ async function realRun(env: NodeJS.ProcessEnv): Promise<boolean> {
     let view = await getJobView(handed.jobId);
     while (view && !['pr_ready', 'stopped', 'failed', 'cancelled'].includes(view.state)) {
       if (stop.signal.aborted || Date.now() > deadline) break;
+      if (line.isLockHeld?.() === false) throw new Error('worker の排他を失いました');
       const outcome = await runOnce(options);
       view = await getJobView(handed.jobId);
       console.log(`[real-run] ${JSON.stringify(outcome)} 費用 ${view?.costJpy ?? '?'} 円`);
@@ -323,6 +326,7 @@ async function realRun(env: NodeJS.ProcessEnv): Promise<boolean> {
     report();
     return false;
   } finally {
+    await closeLine?.();
     await closePool();
   }
 }
