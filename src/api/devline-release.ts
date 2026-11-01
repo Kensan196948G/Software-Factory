@@ -13,7 +13,7 @@ import { config } from './config.js';
 import { query, withTransaction } from './db.js';
 import { appendAudit, appendAuditTx } from './audit.js';
 import { ApiError, Errors } from './http.js';
-import { getJobView, insertJobEvent, type JobRow } from './devline-jobs.js';
+import { getJobView, insertJobEvent, isRedOrder, type JobRow } from './devline-jobs.js';
 import { acIdsOf } from './devline-verification.js';
 import { createGithubPrMergeAdapter, type PrMergeAdapter, type PullMergeFacts } from './pr-adapter.js';
 import type { Actor } from './service.js';
@@ -136,8 +136,11 @@ async function orderFacts(client: PoolClient, job: JobRow): Promise<OrderFacts> 
     [job.request_id],
   );
   const req = rows[0];
+  // 赤信号の注文書は人が範囲を変えて承認し直すまで進めない（BR-03）
+  const red = await isRedOrder(client, job.snapshot_id);
   return {
     current:
+      !red &&
       req !== undefined &&
       isOrderCurrent({
         requestStatus: req.status,
@@ -305,6 +308,8 @@ export async function approveMerge(
   if (step.kind === 'already') {
     if (step.needsTree && step.release.merge_sha) {
       await settleTree(step.release, deps, correlationId);
+    } else {
+      await retryFailedBuild(step.release, actor, correlationId, now);
     }
     return { job: (await getJobView(input.jobId)) as JobView, alreadyDone: true, mergeState: 'merged' };
   }
@@ -575,6 +580,38 @@ async function settleTree(release: ReleaseRow, deps: ReleaseDeps, correlationId:
       await enqueueBuild(client, release, release.merge_sha as string, correlationId, now);
     }
   });
+}
+
+/**
+ * 成果物の作成に失敗したままなら、承認者の押し直しで作り直す。
+ * digest が決まる前の話で、配備の「作り直さない」とは別。digest が決まった後は作らない。
+ */
+async function retryFailedBuild(release: ReleaseRow, actor: Actor, correlationId: string, now: Date): Promise<void> {
+  if (release.tree_match !== true || release.image_digest !== null || release.merge_sha === null) return;
+  const mergeSha = release.merge_sha;
+  try {
+    await withTransaction(async (client) => {
+      const { rows } = await client.query<{ state: string }>(
+        `select state from release_attempt where release_id=$1 and kind='build' order by seq desc limit 1`,
+        [release.id],
+      );
+      if (rows[0]?.state !== 'failed') return;
+      await enqueueBuild(client, release, mergeSha, correlationId, now);
+      await appendAuditTx(client, {
+        action: 'job.artifact_retry',
+        targetType: 'job',
+        targetId: release.job_id,
+        result: 'success',
+        actorUserId: actor.userId,
+        actorName: actor.displayName,
+        role: actor.role,
+        correlationId,
+        diff: { sha: mergeSha },
+      });
+    });
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err;
+  }
 }
 
 /* ───────────────────────────── 配備の承認 ───────────────────────────── */

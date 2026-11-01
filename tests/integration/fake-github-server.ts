@@ -31,8 +31,22 @@ export interface FakeReply {
   destroy?: boolean;
 }
 
+/** merge の経路の試験用の PR。tree は commit の SHA ごとの tree の SHA。 */
+export interface FakeGithubPull {
+  number: number;
+  head: string;
+  body: string;
+  state: 'open' | 'closed';
+  merged: boolean;
+  mergeSha: string | null;
+  /** 次の merge の応答を変える（既定は成功）。 */
+  mergeReply?: FakeReply | null;
+}
+
 export interface FakeGithub {
   url: string;
+  pulls: FakeGithubPull[];
+  trees: Record<string, string>;
   access: FakeAccess[];
   issues: FakeGithubIssue[];
   /** 順番に1回ずつ使う上書き。null を返すと通常の処理へ。 */
@@ -54,6 +68,9 @@ export async function startFakeGithub(): Promise<FakeGithub> {
   const access: FakeAccess[] = [];
   const issues: FakeGithubIssue[] = [];
   const overrides: FakeResponder[] = [];
+  const pulls: FakeGithubPull[] = [];
+  const trees: Record<string, string> = {};
+  let mergeCounter = 0;
   let nextNumber = 100;
   let baseUrl = '';
   const state: { onWrite: FakeGithub['onWrite']; repoPrivate: boolean } = { onWrite: null, repoPrivate: true };
@@ -118,6 +135,43 @@ export async function startFakeGithub(): Promise<FakeGithub> {
           return send(res, 200, issue);
         }
       }
+      const pullOne = new RegExp(`^${repoPrefix}/pulls/(\\d+)(/merge)?$`).exec(path);
+      if (pullOne) {
+        const pull = pulls.find((p) => p.number === Number(pullOne[1]));
+        if (!pull) return send(res, 404, { message: 'Not Found' });
+        const json = {
+          number: pull.number,
+          html_url: `${baseUrl}/${FAKE_REPO}/pull/${pull.number}`,
+          body: pull.body,
+          state: pull.state,
+          merged: pull.merged,
+          merge_commit_sha: pull.mergeSha,
+          user: { login: FAKE_LOGIN },
+          head: { sha: pull.head, ref: `msf/${pull.number}`, repo: { full_name: FAKE_REPO } },
+          base: { ref: 'main' },
+        };
+        if (!pullOne[2] && method === 'GET') return send(res, 200, json);
+        if (pullOne[2] && method === 'PUT') {
+          if (pull.mergeReply) {
+            const reply = pull.mergeReply;
+            pull.mergeReply = null;
+            return send(res, reply.status, reply.body ?? {});
+          }
+          if (body?.sha !== pull.head) return send(res, 409, { message: 'Head branch was modified' });
+          if (body?.merge_method !== 'squash') return send(res, 405, { message: 'squash only' });
+          mergeCounter += 1;
+          pull.merged = true;
+          pull.state = 'closed';
+          pull.mergeSha = String(mergeCounter).padStart(40, '7');
+          trees[pull.mergeSha] = trees[pull.head] ?? 'e'.repeat(40);
+          return send(res, 200, { merged: true, sha: pull.mergeSha, message: 'merged' });
+        }
+      }
+      const commitOne = new RegExp(`^${repoPrefix}/git/commits/([0-9a-f]{40})$`).exec(path);
+      if (commitOne && method === 'GET') {
+        const tree = trees[commitOne[1] as string];
+        return tree ? send(res, 200, { sha: commitOne[1], tree: { sha: tree } }) : send(res, 404, { message: 'Not Found' });
+      }
       if (method === 'GET' && path === `${repoPrefix}/issues`) {
         const page = Number(url.searchParams.get('page') ?? 1);
         const perPage = Number(url.searchParams.get('per_page') ?? 30);
@@ -135,6 +189,8 @@ export async function startFakeGithub(): Promise<FakeGithub> {
 
   return {
     url: baseUrl,
+    pulls,
+    trees,
     access,
     issues,
     overrides,

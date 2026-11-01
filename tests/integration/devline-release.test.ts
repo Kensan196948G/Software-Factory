@@ -18,6 +18,10 @@ import { buildPrMarker } from '../../src/shared/devline.js';
 import { DEPLOY_ENVIRONMENT } from '../../src/shared/devline-release.js';
 import type { DeployDocker, DeployProbe, DeployRunSpec } from '../../src/worker/deploy-docker.js';
 import { runDeployOnce, type DeployWorkerOptions } from '../../src/worker/deploy-worker.js';
+import { createDeploySource } from '../../src/worker/deploy-source.js';
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { DUMMY_GH_TOKEN, REAL_REPO, startRealGithub } from './devline-real-harness.js';
 import { FAKE_REPO, FAKE_REPO_ID } from './fake-github-server.js';
 import { stages, useHarness } from './devline-qa-harness.js';
 
@@ -556,11 +560,20 @@ describe('成果物と配備', () => {
     expect(await devlineSummary()).toMatchObject({ stopped: 1 });
   });
 
-  it('build の失敗を記録する', async () => {
+  it('build の失敗を記録する。承認者の押し直しで作り直す（merge は送らない）', async () => {
     const docker = stubDocker();
     docker.buildFails = true;
-    await toMerged();
+    const c = await toMerged();
     expect(await runDeployOnce(workerOf(docker, okProbe))).toMatchObject({ state: 'failed', errorCode: 'build_failed' });
+    expect(await runDeployOnce(workerOf(docker, okProbe))).toEqual({ kind: 'idle' });
+    docker.buildFails = false;
+    await approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'c', c.deps);
+    expect(c.github.calls).toHaveLength(1);
+    expect(await runDeployOnce(workerOf(docker, okProbe))).toMatchObject({ attemptKind: 'build', state: 'succeeded' });
+    expect(await release(c.jobId)).toMatchObject({ image_digest: digestOf(1) });
+    // digest が決まった後は作らない
+    await approveMerge({ jobId: c.jobId, headSha: c.headSha }, approver(), 'c', c.deps);
+    expect(await runDeployOnce(workerOf(docker, okProbe))).toEqual({ kind: 'idle' });
   });
 
   it('ポートが使用中なら失敗し、何も動かさない', async () => {
@@ -697,6 +710,30 @@ describe('戻し（FR-41）', () => {
     expect(await runDeployOnce(workerOf(docker, failOld))).toMatchObject({ state: 'failed', errorCode: 'rollback_failed' });
     expect(docker.containers.get('msf-sandbox-verify')).toMatchObject({ digest: digestOf(2) });
     expect((await attempts(c.jobId)).at(-1)).toMatchObject({ auto_rollback: 'restored', deployed_digest: digestOf(2) });
+  });
+});
+
+describe('ソースの取り出し（ローカルの git）', () => {
+  it('merge の SHA だけを取り出し、.git を残さない。無い SHA は失敗する。トークンはエラーに載らない', async () => {
+    const gh = await startRealGithub();
+    try {
+      const source = createDeploySource({ gitBaseUrl: gh.gitBaseUrl, token: DUMMY_GH_TOKEN, nodeEnv: 'test' });
+      const got = await source.fetch({ repo: REAL_REPO, sha: gh.baseSha });
+      expect(existsSync(join(got.dir, '.git'))).toBe(false);
+      expect(readdirSync(got.dir)).toContain('package.json');
+      got.cleanup();
+      expect(existsSync(got.dir)).toBe(false);
+      const err = await source.fetch({ repo: REAL_REPO, sha: 'f'.repeat(40) }).then(
+        () => null,
+        (e: Error) => e,
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect(String(err?.message)).not.toContain(DUMMY_GH_TOKEN);
+      await expect(source.fetch({ repo: '../evil', sha: gh.baseSha })).rejects.toThrow();
+      expect(() => createDeploySource({ gitBaseUrl: 'https://github.com', token: 'x', nodeEnv: 'test' })).toThrow();
+    } finally {
+      await gh.close();
+    }
   });
 });
 
