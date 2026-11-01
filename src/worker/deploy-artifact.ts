@@ -63,6 +63,11 @@ export const IMAGE_ARTIFACT_LIMITS: ImageArtifactLimits = {
   maxTarBytes: 3 * 1024 * 1024 * 1024,
 };
 const MAX_META_BYTES = 16 * 1024;
+/**
+ * 成果物の取得の上限。このホストから取得先への実測は 78〜139 kB/s で、80 MB に 10〜17 分かかる
+ * （2026-11-01、REQ-2026-0011）。10 分では正常な取得が打ち切られた。
+ */
+export const DOWNLOAD_TIMEOUT_MS = 30 * 60_000;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_CENTRAL_DIRECTORY = 16 * 1024;
 const TAR_NAME = 'image.tar';
@@ -447,7 +452,7 @@ export function createImageArtifactSource(options: ImageArtifactSourceOptions): 
   const base = assertApiUrlAllowed(options.apiUrl, options.nodeEnv).toString().replace(/\/$/, '');
   const limits = options.limits ?? IMAGE_ARTIFACT_LIMITS;
   const httpTimeoutMs = options.httpTimeoutMs ?? 30_000;
-  const downloadTimeoutMs = options.downloadTimeoutMs ?? 600_000;
+  const downloadTimeoutMs = options.downloadTimeoutMs ?? DOWNLOAD_TIMEOUT_MS;
   const headers = {
     authorization: `Bearer ${options.token}`,
     accept: 'application/vnd.github+json',
