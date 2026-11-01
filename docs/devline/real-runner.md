@@ -32,7 +32,7 @@ handoff（Issue）→ queued → planning（AI・読むだけ）→ implementing
 | -------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | 資格情報なし・0600 以外・symlink・他人のファイル                     | 起動を拒否（fake へ落とさない）                                                |
 | 許可リスト外・定数の repo 以外・repo ID 不一致・public               | 起動を拒否。動作中なら `policy_violation`                                      |
-| `NODE_ENV=production`（`APP_ENV=staging` を明示したときを除く）    | 起動を拒否。投入も ERR-405（Staging の現在の設定がこれにあたる。13 章）        |
+| `NODE_ENV=production`（`APP_ENV=staging` を明示したときを除く）      | 起動を拒否。投入も ERR-405（Staging の現在の設定がこれにあたる。13 章）        |
 | AC の未確認・欠落・`not_run`、`ac-results` が読めない                | `ci_incomplete`。理由に「AC 未確認」を出す。`pr_ready` にしない                |
 | 別の worker が動いている（advisory lock を取れない）                 | 起動を拒否。コンテナの片付けもしない                                           |
 | 禁止差分・追加の中身の秘密・バイナリ（4章）                          | `policy_violation`。commit も push もしない                                    |
@@ -272,8 +272,7 @@ CI は artifact `ac-results`（14 章）を残すこと（Sandbox PR #4）。無
 - Docker の試験は失敗時に段階・stderr・ブリッジの数を出す。次に起きたら原因が分かる。
 - `vitest.docker.config.ts` をファイル順の実行にして、同時に作るネットワークを減らす。
 
-<<<<<<< HEAD
-## 13. 人の承認 → merge → 検証環境への配備 → 戻し
+## 15. 人の承認 → merge → 検証環境への配備 → 戻し
 
 契約は `docs/devline/api-contract.md`、判定は `src/shared/devline-release.ts`。「検証環境への配備」は本番公開ではない。工場本体の Staging 更新（`pnpm ops:release`）とも別物。本番公開の経路は作らない（SC-02、SC-03 が未決）。
 
@@ -303,7 +302,7 @@ DEVLINE_TARGET_REPOS=Kensan196948G/Software-Factory-Sandbox:1440860477
 5. 2件目を配備してから「前の版へ戻す」を押し、version が前の SHA に戻ることを確かめる。
 
 未走の間は画面の証跡に fake と出る（ローカルの連携先の PR と merge）。
-=======
+
 ## 13. 画面の投入から実 job へ
 
 runner の種別・対象・トークンはサーバの設定だけで決まる。ブラウザからは指定できない（`orderHandoffSchema` は知らない項目を捨てる。試験で固定）。
@@ -320,7 +319,7 @@ API のプロセスは `DEVLINE_GITHUB_TOKEN` だけを読む。`ANTHROPIC_API_K
 
 画面の表示は `job.runnerKind` と証跡で決まる。実 job の「ジョブ」「計画・実装」「自動検査」は、完了していない段階で「実行中」、停止系で「停止」と出し、「実行確認済み」にしない。fake GitHub の結果は `fake` と出す。
 
-**Staging の未解決（CTO の判断が要る）**: `scripts/setup-preview.mjs` は Staging を `NODE_ENV=production`（`APP_ENV=staging`）にする。`checkRealLineEnv`、`assertRunnerAllowed` は `NODE_ENV=production` の docker-claude を拒否するので、今の設定のままでは Staging の投入は ERR-405 になり、worker は起動しない。この拒否は安全のための制約なので、この変更では緩めていない。
+**Staging**: `NODE_ENV=production` で動くので、`APP_ENV=staging` を明示したときだけ実 runner を許す（所有者の決定、2026-11-01）。本番の拒否は変えない。
 
 ## 14. 受入条件の証跡（`ac-results`）
 
@@ -355,4 +354,3 @@ CI は同じ run に artifact `ac-results` を残す。zip の中の `.json` は
 runner のプロンプトは、試験を `test/unit/` に置き、試験名の先頭を `AC-n:` にするよう伝える。試験を書くのは AI なので、**試験が AC を本当に確かめているかは機械では分からない**。人が PR で確かめる（`docs/limitations.md`）。
 
 migration 0009 の DB ガード（`devline_has_passing_verification`）は `stages` だけを見る。AC の判定はサービス層（`evaluateVerification`）にあり、DB の最後の砦には入っていない。
->>>>>>> auto/devline-gui-real
