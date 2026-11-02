@@ -3,6 +3,7 @@ import cookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { versionAssets } from './asset-version.js';
 import { config } from './config.js';
 import { ApiError, Errors, applySecurityHeaders, correlationId, sendError } from './http.js';
 import { ZodError } from 'zod';
@@ -608,7 +609,7 @@ export async function buildApp(
 
   function renderAppHtml(ctx: AuthContext, boot: unknown): string | null {
     if (!existsSync(appHtmlPath)) return null;
-    const template = readFileSync(appHtmlPath, 'utf8');
+    const template = versionAssets(readFileSync(appHtmlPath, 'utf8'), config.commitSha);
     const json = JSON.stringify(boot).replace(/</g, '\\u003c');
     return template.replace('<!--MSF_BOOT-->', `<script type="application/json" id="msf-boot">${json}</script>`);
   }
@@ -660,7 +661,7 @@ export async function buildApp(
 
   /* ───────── static assets（index は上のルートで配信） ───────── */
   if (opts.serveStatic !== false && existsSync(webDist)) {
-    // 反映した版をすぐ届ける。max-age=0 だと Cloudflare が 4 時間に引き上げ、ブラウザが古い画面を動かし続ける
+    // Cloudflare のエッジに毎回確認させる。ブラウザ向けは 4 時間に書き換えられるので、URL の版（versionAssets）で更新する
     await app.register(fastifyStatic, {
       root: webDist,
       prefix: '/',

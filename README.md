@@ -144,15 +144,15 @@ flowchart LR
 
 ## ✅ 検証（実測）
 
-単体、結合、E2E の数は PR #53 の CI の結果です。Docker は CI に入っていません。
+単体、結合、E2E の数は PR #54 の CI の結果です。Docker は CI に入っていません。
 
 | チェック                   | 結果                                     | コマンド                       |
 | -------------------------- | ---------------------------------------- | ------------------------------ |
 | 型チェック                 | ✅ PASS                                  | `pnpm typecheck`               |
 | Lint                       | ✅ PASS（警告0）                         | `pnpm lint`                    |
-| 単体テスト                 | ✅ 529 / 529                             | `pnpm test:unit`               |
+| 単体テスト                 | ✅ 531 / 531                             | `pnpm test:unit`               |
 | 結合テスト（実PostgreSQL） | ✅ 670 / 670                             | `pnpm test:integration`        |
-| E2E（コンソールUI）        | ✅ 116 合格・1 skip（資格情報が要る1件） | `pnpm test:e2e`                |
+| E2E（コンソールUI）        | ✅ 117 合格・1 skip（資格情報が要る1件） | `pnpm test:e2e`                |
 | ビルド                     | ✅ PASS                                  | `pnpm build`                   |
 | 秘密情報スキャン           | ✅ PASS                                  | `node scripts/secret-scan.mjs` |
 | DB整合性                   | ✅ PASS                                  | `pnpm db:verify`               |
