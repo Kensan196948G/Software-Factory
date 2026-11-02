@@ -1,7 +1,7 @@
 # 開発ライン 実 AI ランナーと実 PR（docker-claude）
 
-状態: 実装済み。**1件実走の確認済み**（2026-11-01、11 章）。作り物の注文書で `pr_ready` まで到達した（AC 証跡の取り込みより前の記録）。本番と実データには使っていない。
-既定は fake のまま。`DEVLINE_RUNNER_KIND=docker-claude` のときだけ動く。画面の投入も同じ設定で実 job を作る（13 章。fake GitHub と stub docker でのみ確認、実走は未実施）。
+状態: 実装済み。**Staging の画面起点で、作り物 2 件を配備と戻しまで実走済み**（2026-11-01〜02、16 章）。最初のスクリプト起点の記録は 11 章。本番と実データには使っていない。
+既定は fake のまま。`DEVLINE_RUNNER_KIND=docker-claude` のときだけ動く。画面の投入も同じ設定で実 job を作る（13 章、実走の記録は 16 章）。
 
 ## 1. 所有者の決定
 
@@ -225,7 +225,7 @@ jobs:
 | `--bare` が clone 先の設定を無視するか                            | 未確認。作業場から除くので依存しない         |
 | 禁止差分や prompt injection に実 AI が当たったときの動作          | 未確認。作り物の素直な注文書 1 件だけ        |
 | GitHub が同じ head の 2 つ目の PR を断る文言（`already exists`）  | 未確認                                       |
-| 堅牢化（`ci_incomplete`、PR の後始末、排他、費用の規則）の実走    | 未走。stub docker と fake GitHub でのみ確認  |
+| 堅牢化の異常系（`ci_incomplete`、PR の後始末、排他）の実走        | 未走。stub docker と fake GitHub でのみ確認  |
 
 ## 9-2. AI のコンテナでは試験もコマンドも実行しない（2026-11-01）
 
@@ -299,7 +299,7 @@ Staging の最初の投入（REQ-2026-0010、job `914b0043`）は、`CLAUDE_CODE
 3. **成果物**: worker は CI で検査した成果物を取得する（このホストで `docker build` しない。fallback も無い）。
    - 使う run は merge の承認で固定する（`release.verified_run_id` と `verified_run_attempt`。合否の根拠にした `verification` と同じ run）。
    - 取得は `GET /repos/{repo}/actions/runs/{run}/artifacts?name=image`。artifact の `workflow_run.id` と `head_sha` を照合し、複数あれば止まる。
-   - 取得の時間の上限は 30 分（`DOWNLOAD_TIMEOUT_MS`）。超えると `artifact_unavailable` で、承認者が「PR を承認して merge する」を押し直すと取り直す（merge はやり直さない）。
+   - 取得の時間の上限は 30 分（`DOWNLOAD_TIMEOUT_MS`）。超えると `artifact_unavailable` で、承認者が「成果物を取り直す（merge はしません）」を押すと取り直す（merge はやり直さない）。
    - zip はファイルへストリームで保存し（上限 1 GiB）、`image.tar`（上限 3 GiB）と `image-meta.json` だけを展開する。余分なファイル、zip64、暗号化、CRC の不一致は拒否する。302 の先へトークンを送らない。
    - meta（`msf.image/v1`）の `repository`、`runId`、`runAttempt`、`headSha` を照合し、`tarSha256` を実際の tar と比べる。tar は全体のヘッダを走査し（POSIX の prefix と PAX / GNU の長い名前を含む）、`manifest.json` がちょうど1つで、タグが `sandbox-artifact:ci` だけであることを確かめる（`docker load` が他のタグを上書きしないため）。複数の manifest、拡張ヘッダで manifest に当たる項目、`..` や絶対パスの名前、PAX の `size` と sparse、中身のある種類の違うヘッダ、壊れた checksum、終端の後ろの項目は `artifact_mismatch` で止まる。リンクの指す先は見ない（`docker save` の層が `../` を使う）。
    - `docker load` の出力の ref を `docker image inspect` し、ID が `imageId` と一致することを確かめる。合わなければ `artifact_mismatch` で、配備の承認へ進めない。
@@ -337,7 +337,7 @@ DEVLINE_ARTIFACT_DIR=<tmpfs でない作業場>      # 任意
 4. 配備を押し、画面の URL（内部ネットワークの IP）で `curl <URL>/healthz` の version が merge の SHA と一致することを確かめる。`docker exec msf-sandbox-verify` から外へ出られないことも確かめる。
 5. 2件目を配備してから「前の版へ戻す」を押し、version が前の SHA に戻ることを確かめる。
 
-未走の間は画面の証跡に fake と出る（ローカルの連携先の PR と merge）。
+実走の記録は 16 章。fake の job では画面の証跡に fake と出る（ローカルの連携先の PR と merge）。
 
 ## 13. 画面の投入から実 job へ
 
@@ -405,3 +405,45 @@ CI は同じ run に artifact `ac-results` を残す。zip の中の `.json` は
 runner のプロンプトは、試験を `test/unit/` に置き、試験名の先頭を `AC-n:` にするよう伝える。試験を書くのは AI なので、**試験が AC を本当に確かめているかは機械では分からない**。人が PR で確かめる（`docs/limitations.md`）。
 
 migration 0009 の DB ガード（`devline_has_passing_verification`）は `stages` だけを見る。AC の判定はサービス層（`evaluateVerification`）にあり、DB の最後の砦には入っていない。
+
+## 16. 画面起点の通し試験の記録（2026-11-01〜02）
+
+Staging の画面から作り物を登録した。承認、merge、配備、戻しのボタンはすべて所有者が押した。AI も CTO も代行していない。
+
+| 項目       | 1 件目                                                                    | 2 件目                                                                    |
+| ---------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 依頼       | REQ-2026-0011 版 1（`countWords`）                                        | REQ-2026-0012 版 1（`countLines`）                                        |
+| job        | `de4f0826-6d62-4cb1-8549-8c500b3ba307`                                    | `834c168d-16e7-48bc-bda2-af4bebd2153a`                                    |
+| 実 Issue   | Sandbox #7                                                                | Sandbox #9                                                                |
+| 実 PR      | Sandbox #8                                                                | Sandbox #10                                                               |
+| head       | `7210add5edbeba9e55f93fad543bdec2a714c034`                                | `c3413240f2e6eaf24e061b19fa5f45ababde06e2`                                |
+| 独立 CI    | run 41309388568 試行 1、6 段階 success                                    | run 41372699137 試行 1、6 段階 success                                    |
+| AC         | 2/2 合格（artifact 13085030877）                                          | 2/2 合格（artifact 13110270718）                                          |
+| merge 承認 | 2026-11-01 22:08:41                                                       | 2026-11-02 10:32:14                                                       |
+| merge      | `6b698632cd3a75761f5c1a31a3d0a774530b3ba4`                                | `4675d365dd5146963c3e11895e3c8ddad9c77ac3`                                |
+| 内容の一致 | head と merge の tree が一致                                              | head と merge の tree が一致                                              |
+| 成果物     | artifact 13084423701                                                      | artifact 13109537188                                                      |
+| digest     | `sha256:11a232f4b063de4ba8bbf0e597b511a0ae9a11c037daf31c2b84692d6a707c92` | `sha256:0127d881d7fb8fd0493c809890fcabf924e1b7472f340b55645facf335184349` |
+| tar        | `4ceafa0a808a9e837366febe49e7452cdca890846433140ce3704693eedc4d56`        | `c14bca9e05033ff37ddb6b60dc14a255de179307027404362bd67c214d8feaf6`        |
+| 取得の時間 | 9 分 9 秒（初回は 10 分の上限で失敗）                                     | 8 分 12 秒                                                                |
+| 配備の承認 | 2026-11-02 10:15:17                                                       | 2026-11-02 10:44:44                                                       |
+| 配備の確認 | version 一致、health と smoke が合格                                      | version 一致、health と smoke が合格                                      |
+| 費用の記録 | 14 円（CLI の申告の換算）                                                 | 15 円（CLI の申告の換算）                                                 |
+
+戻し: 2026-11-02 10:56:41 に承認者が理由つきで承認し、10:56:48 に完了した。`/healthz` の version は 2 件目から `6b698632…` に戻り、コンテナ内に `countLines` が無いことも確かめた。2 件目の画面は「配備しましたが、いまの検証環境は別の版です」と「前の版へ戻しました」を出す。
+
+配備中のコンテナの中から `1.1.1.1:443` と GitHub の IP へ接続すると `ENETUNREACH`、名前解決は `EAI_AGAIN` で、外へ出られないことを確かめた。
+
+通し試験の途中で見つけて直したもの:
+
+- CLI が bubblewrap なしで起動せず、起動前の失敗が費用に計上された（REQ-2026-0010。記録は 1,000 円のまま残した。PR #48）。
+- 成果物の取得が 10 分の上限を超えた（PR #49 で 30 分に）。
+- 再読み込みすると「操作する人」の表示が依頼者になり、実際の役割とずれた（この章を足した PR で修正）。
+
+環境の変更: `mirai-sf-tunnel` を `protocol: http2` にした。QUIC で POST が詰まり 524 になったことへの回避で、根本原因は確定していない。
+
+確認できていないこと:
+
+- 実 AI が修正をやり直す経路、予算到達の停止、禁止差分や prompt injection への動作。2 件とも修正は 0 回だった。
+- 費用と Anthropic Console の請求の照合。
+- `/length` より先の、依頼で作った機能の配備後の動作。配備の smoke は `/length` だけで、依頼の機能は CI と手元の確認だけ。
