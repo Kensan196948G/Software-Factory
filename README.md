@@ -144,7 +144,7 @@ flowchart LR
 
 ## ✅ 検証（実測）
 
-単体、結合、E2E の数は PR #54 の CI の結果です。Docker は CI に入っていません。
+単体、結合、E2E の数は PR #54 の CI の結果です。Docker は PR #51 の CI の結果で、必須検査ではありません。
 
 | チェック                   | 結果                                     | コマンド                       |
 | -------------------------- | ---------------------------------------- | ------------------------------ |
@@ -157,7 +157,7 @@ flowchart LR
 | 秘密情報スキャン           | ✅ PASS                                  | `node scripts/secret-scan.mjs` |
 | DB整合性                   | ✅ PASS                                  | `pnpm db:verify`               |
 | CI（GitHub Actions）       | ✅ success                               | PRごと・main                   |
-| 実 Docker の隔離の試験     | ✅ 21 / 21（CI 外、PR #48 の時点で実行） | `pnpm test:docker`             |
+| 実 Docker の隔離の試験     | ✅ 21 / 21（PR #51 の CI）               | `pnpm test:docker`             |
 
 ---
 
