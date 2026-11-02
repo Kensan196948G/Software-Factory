@@ -230,6 +230,11 @@ describe('起動の判定', () => {
       false,
     );
     expect(checkRealLineEnv({}, [])).toContain('許可先');
+    // 本番の拒否は変えない。Staging は APP_ENV=staging を明示したときだけ次の検査へ進む
+    expect(checkRealLineEnv({ NODE_ENV: 'production' }, [])).toContain('production');
+    expect(checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: 'production' }, [])).toContain('production');
+    expect(checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: '' }, [])).toContain('production');
+    expect(checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: 'staging' }, [])).toContain('許可先');
   });
   it('git の接続先は https とループバックだけ。試験はループバックだけ', () => {
     expect(() => assertGitBaseUrlAllowed('https://github.com', 'test')).toThrow();
@@ -290,9 +295,10 @@ describe('CLI の呼び出しと結果', () => {
     expect(value('--max-budget-usd')).toBe('6.25');
     expect(value('--permission-mode')).toBe('dontAsk');
     expect(value('--permission-prompts')).toBe('none');
-    expect(value('--tools')).toBe('Read,Edit,Write,Glob,Grep,Bash');
-    expect(value('--allowedTools')).toBe('Read,Edit,Write,Glob,Grep,Bash(node --test*)');
+    expect(value('--tools')).toBe('Read,Edit');
+    expect(value('--allowedTools')).toBe('Read,Edit');
     expect(args.slice(args.indexOf('--disallowedTools') + 1)).toEqual([
+      'Bash',
       'WebFetch',
       'WebSearch',
       'mcp__*',
@@ -303,8 +309,9 @@ describe('CLI の呼び出しと結果', () => {
   });
   it('計画の工程は読むだけ', () => {
     const plan = buildClaudeArgs({ prompt: 'P', step: 'plan', maxTurns: 5, maxBudgetUsd: 1 });
-    expect(plan[plan.indexOf('--tools') + 1]).toBe('Read,Glob,Grep');
-    expect(plan.join(' ')).not.toContain('Bash');
+    expect(plan[plan.indexOf('--tools') + 1]).toBe('Read');
+    expect(plan[plan.indexOf('--allowedTools') + 1]).toBe('Read');
+    expect(plan[plan.indexOf('--disallowedTools') + 1]).toBe('Bash');
   });
   it('docker の引数: 値を載せず、ホームや .ssh をマウントしない', () => {
     const argv = buildDockerRunArgs({
@@ -339,7 +346,6 @@ describe('CLI の呼び出しと結果', () => {
       'HTTP_PROXY=http://p:3128',
       'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
       'DISABLE_AUTOUPDATER=1',
-      'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1',
     ]);
     expect(argv.filter((a) => a === '--mount' || a === '-v' || a === '--volume')).toEqual(['--mount']);
     expect(argv.slice(argv.indexOf('img') + 1, argv.indexOf('img') + 4)).toEqual(['timeout', '--signal=KILL', '100']);

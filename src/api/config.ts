@@ -43,6 +43,10 @@ export interface AppConfig {
    * GITHUB_REPO を暗黙の許可先にしない（注文書 YAML に依頼者欄・承認者欄が載るため）。
    */
   devlineTargetRepos: readonly AllowedRepo[];
+  /** 投入で作る job の runner（DEVLINE_RUNNER_KIND）。サーバの設定だけで決め、画面から指定させない。 */
+  devlineRunnerKind: string;
+  /** 実 runner の資格情報のファイル（DEVLINE_SECRETS_FILE）。空なら既定の path。 */
+  devlineSecretsFile: string;
   /** 承認依頼メールの送信経路。off=送らない / file=ローカルの送信BOX / sendmail=ローカルMTA */
   mailMode: 'off' | 'file' | 'sendmail' | 'smtp';
   mailFrom: string;
@@ -147,6 +151,8 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
     githubRepo: pick(file, 'GITHUB_REPO') ?? 'Kensan196948G/Software-Factory',
     githubApiUrl: pick(file, 'GITHUB_API_URL') ?? 'https://api.github.com',
     devlineTargetRepos: parseDevlineTargetRepos(pick(file, 'DEVLINE_TARGET_REPOS')),
+    devlineRunnerKind: pick(file, 'DEVLINE_RUNNER_KIND') ?? 'fake',
+    devlineSecretsFile: pick(file, 'DEVLINE_SECRETS_FILE') ?? '',
     mailMode: mailModeOf(pick(file, 'MAIL_MODE'), isProduction),
     mailFrom: pick(file, 'MAIL_FROM') ?? 'no-reply@mirai-sf.local',
     mailApprovalTo: (pick(file, 'MAIL_APPROVAL_TO') ?? '').trim(),

@@ -398,15 +398,15 @@ describe('T-79: AC の証跡', () => {
     expect(line).toContain(digest);
   });
 
-  it('test ID の無い passed と報告の無い AC は「未確認」で PR 候補に残り、○ にしない', async () => {
+  it('test ID の無い passed と報告の無い AC は「未確認」で、PR 候補にせず再実行へ回す', async () => {
     const { jobId, headSha } = await verifying();
-    await recordVerification(h.delivery(jobId, headSha, { acResults: [{ acId: 'AC-1', testIds: [], status: 'passed' }] }));
-    const body = await prBody(jobId);
-    const ac1 = body.split('\n').find((l) => l.startsWith('| AC-1 ')) as string;
-    const ac2 = body.split('\n').find((l) => l.startsWith('| AC-2 ')) as string;
-    expect(ac1).toContain('未確認');
-    expect(ac1).not.toContain('○');
-    expect(ac2).toContain('未確認');
+    const result = await recordVerification(
+      h.delivery(jobId, headSha, { acResults: [{ acId: 'AC-1', testIds: [], status: 'passed' }] }),
+    );
+    expect(result.verdict.verdict).toBe('incomplete');
+    expect(result.verdict.acEvidence.map((a) => a.mark)).toEqual(['未確認', '未確認']);
+    expect(result.jobState).toBe('verifying');
+    expect(await h.count(`from job_artifact where job_id=$1 and kind='pr_body_draft'`, [jobId])).toBe(0);
   });
 
   it('全段階 passed でも failed の AC は不合格で、修正へ回る', async () => {
