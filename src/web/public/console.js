@@ -2728,6 +2728,8 @@ const SF = (function () {
 
   /* ---- shell ---- */
   $('#role').innerHTML = SF.ROLES.map((r) => '<option value="' + r.k + '">' + E(r.name) + '（' + E(r.l) + '）</option>').join('');
+  // 読み込み直しても、表示と実際の役割をそろえる（そろえないと先頭の依頼者と出る）
+  $('#role').value = S.role;
   $('#role').addEventListener('change', (e) => {
     // 送信の途中で役割を変えると、残りの工程が別の役割で実行される
     if (S.submitting) {
