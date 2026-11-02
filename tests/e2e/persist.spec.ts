@@ -2251,6 +2251,17 @@ test.describe('UI 保存の結果待ち', () => {
     expect((await getDetail(page, created.id)).title).toBe(theirs);
   });
 
+  test('読み込み直しても、操作する人の表示は実際の役割のまま', async ({ page }) => {
+    await login(page);
+    await setApiRole(page, 'approver');
+    await page.reload();
+    await expect(page.locator('#role')).toHaveValue('approver');
+    await setUiRole(page, 'desk');
+    await page.reload();
+    await expect(page.locator('#role')).toHaveValue('desk');
+    await setApiRole(page, 'requester');
+  });
+
   test('送信中は役割を切り替えられない', async ({ page }) => {
     await login(page);
     const title = `送信中の役割 ${Date.now()}`;
