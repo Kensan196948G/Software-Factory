@@ -2728,6 +2728,8 @@ const SF = (function () {
 
   /* ---- shell ---- */
   $('#role').innerHTML = SF.ROLES.map((r) => '<option value="' + r.k + '">' + E(r.name) + '（' + E(r.l) + '）</option>').join('');
+  // 読み込み直しても、表示と実際の役割をそろえる（そろえないと先頭の依頼者と出る）
+  $('#role').value = S.role;
   $('#role').addEventListener('change', (e) => {
     // 送信の途中で役割を変えると、残りの工程が別の役割で実行される
     if (S.submitting) {
@@ -5610,6 +5612,29 @@ const SF = (function () {
     fake: { l: 'fake', c: 'fake', m: '△' },
     none: { l: '未接続', c: 'none', m: '－' },
     sample: { l: '見本', c: 'sample', m: '◇' },
+    running: { l: '実行中', c: 'none', m: '…' },
+    stopped: { l: '停止', c: 'none', m: '■' },
+  };
+  /* CI の成否は必須段階だけで決まる。受入条件の結果（AC の行）と PR 候補の準備完了（job の行）とは別のもの */
+  const DL_CI_RESULT = {
+    success: 'CI 成功（必須段階すべて通過。受入条件は別の行）',
+    failure: 'CI 失敗',
+    incomplete: 'CI 未完了（走り切っていない段階あり）',
+    stale: '今の変更の CI の結果なし（古い SHA の記録のみ）',
+  };
+  const DL_AC_GAP = {
+    missing: 'ac-results がありません',
+    expired: 'ac-results の期限切れ',
+    too_large: 'ac-results が大きすぎます',
+    duplicate: '同じ名前の ac-results が複数あります',
+    invalid: 'ac-results が壊れているか形式が違います',
+    head_mismatch: '別の SHA の結果です',
+    repository_mismatch: '別のリポジトリの結果です',
+    run_mismatch: '別の実行の結果です',
+    attempt_mismatch: '前の試行の結果です',
+    duplicate_ac_id: '同じ AC の結果が複数あります',
+    unknown_ac_id: '注文書に無い AC の結果があります',
+    missing_ac_id: '報告の無い AC があります',
   };
   const JOB_STATE_LABEL = {
     queued: '待機',
@@ -5617,17 +5642,19 @@ const SF = (function () {
     implementing: '実装中',
     verifying: 'CIで検証中',
     revising: '修正中',
-    pr_ready: 'PR候補まで完了・人の確認待ち',
+    pr_ready: 'PR候補の準備完了・人の確認待ち（受入の合格ではありません）',
     reviewing: '人が確認中',
-    approved: '承認',
-    merged: 'マージ',
-    staged: 'ステージング',
+    approved: '承認済み・merge 待ち',
+    merged: 'merge 済み・配備の承認待ち',
+    staged: '配備済み（検証環境）',
     released: '公開',
     closed: '終了',
     stopped: '停止',
     failed: '失敗',
     cancelled: '中止',
   };
+  const DL_RUNNING_STATES = ['planning', 'implementing', 'verifying', 'revising'];
+  const DL_STOPPED_STATES = ['stopped', 'failed', 'cancelled'];
   const DL_LIVE_STATUS = ['approved', 'dev', 'verify', 'field', 'release_wait', 'done'];
   const DL_HANDOFF_ROLES = ['desk', 'approver', 'admin'];
   const DL_ABSENT_ROLES = ['approver', 'admin'];
@@ -5643,7 +5670,13 @@ const SF = (function () {
         failed: false,
         items: [],
         handoffs: [],
+        currentTargetRepo: null,
         evidence: {},
+        release: {},
+        relBusy: false,
+        relMsg: null,
+        relReason: '',
+        relRevokeReason: '',
         msg: null,
         absentOpen: false,
         absentReason: '',
@@ -5696,7 +5729,25 @@ const SF = (function () {
     // サーバが新しい版を止めるのは作成だけ。前の版の更新の不明は、次の投入で上書きされる
     return s.handoffs.find((h) => h.op === 'create_issue' && (h.state === 'unknown' || h.state === 'sent')) || null;
   }
+  /* 今の連携先と違うリポジトリの結果不明。サーバは対象を変えた投入と照合を ERR-405 で拒否する。今の連携先が分からなければ決めつけない */
+  function dlOtherRepo(s) {
+    if (!s.currentTargetRepo) return null;
+    return (
+      s.handoffs.find(
+        (h) => (h.state === 'unknown' || h.state === 'sent') && h.targetRepo && h.targetRepo !== s.currentTargetRepo,
+      ) || null
+    );
+  }
   function dlIssueRow(r, s, cur) {
+    const other = dlOtherRepo(s);
+    if (other) {
+      return dlRow(
+        'issue',
+        '注文書の投入',
+        'none',
+        '結果不明・別のリポジトリ（' + E(other.targetRepo) + '）。ここからは照合できません',
+      );
+    }
     if (cur && cur.state === 'succeeded') {
       const verb = cur.op === 'update_issue' ? '更新済み' : '作成済み';
       return dlRow(
@@ -5722,6 +5773,24 @@ const SF = (function () {
     }
     return dlRow('issue', '注文書の投入', 'none', 'Issue はまだありません');
   }
+  /* 受入条件。判定はサーバ（CI の ac-results の記録だけ）。「全件確認」以外を実行確認済みにしない */
+  function dlAcRow(ev, isFake) {
+    const ac = ev.ac;
+    if (!ac) return dlRow('ac', '受入条件', 'none', '受入条件の記録はありません');
+    const open = (ac.items || []).filter((a) => a.mark !== '○').map((a) => a.acId + ' ' + a.mark);
+    return dlRow(
+      'ac',
+      '受入条件',
+      isFake ? 'fake' : ac.label === '受入条件 全件確認' ? 'ok' : 'none',
+      E(ac.label) +
+        '（確認 ' +
+        E(ac.confirmed) +
+        ' / ' +
+        E(ac.total) +
+        '）' +
+        (open.length ? '<br><small>' + E(open.join('、')) + '</small>' : ''),
+    );
+  }
   function dlJobRows(s) {
     const job = s.items[0];
     if (!job) {
@@ -5729,6 +5798,7 @@ const SF = (function () {
         dlRow('job', 'ジョブ', 'none', s.failed ? '読み込めませんでした' : 'ジョブはありません') +
         dlRow('plan', '計画・実装', 'none', '実行の記録はありません') +
         dlRow('ci', '自動検査（CI）', 'none', '検査の記録はありません') +
+        dlRow('ac', '受入条件', 'none', '受入条件の記録はありません') +
         dlRow('pr', 'PR', 'none', 'PR の記録はありません')
       );
     }
@@ -5740,16 +5810,40 @@ const SF = (function () {
     const ciKind = !srcs.length ? 'none' : srcs.includes('fake_ci') || ev.ciSource === 'fake' ? 'fake' : 'ok';
     const isDocker = job.runnerKind === 'docker-claude';
     const realPr = ev.pr || null;
+    // 実 job は完了していない段階を「実行確認済み」にしない
+    const stage = DL_STOPPED_STATES.includes(job.state)
+      ? 'stopped'
+      : DL_RUNNING_STATES.includes(job.state)
+        ? 'running'
+        : job.state === 'queued'
+          ? 'none'
+          : 'ok';
+    const workKind = stage === 'ok' || job.state === 'verifying' ? 'ok' : stage;
+    const ciShown = isDocker && ciKind !== 'fake' && stage === 'running' ? 'running' : ciKind;
+    const detail = job.stopDetail || {};
+    const acGap =
+      detail.acArtifact && detail.acArtifact !== 'ok'
+        ? '証跡の欠落（' + (DL_AC_GAP[detail.acArtifact] || '読めない形式') + '）'
+        : '';
+    const acStop =
+      job.stopReason === 'ci_incomplete' && detail.cause === 'AC 未確認'
+        ? 'AC 未確認' +
+          (Array.isArray(detail.unconfirmedAcs) && detail.unconfirmedAcs.length
+            ? '（' + detail.unconfirmedAcs.join('、') + '）'
+            : '') +
+          (acGap ? '／' + acGap : '')
+        : '';
     const note = [
       job.state === 'queued' ? '実行者が動くまで進みません' : '',
       job.stopReason ? '理由：' + job.stopReason : '',
+      acStop,
       job.orderCurrent === false ? 'この版はいまは無効です' : '',
     ].filter(Boolean);
     return (
       dlRow(
         'job',
         'ジョブ',
-        isFake ? 'fake' : ran ? 'ok' : 'none',
+        isFake ? 'fake' : isDocker ? stage : ran ? 'ok' : 'none',
         mono(job.id) +
           '　版 ' +
           E(job.orderVersion) +
@@ -5774,7 +5868,7 @@ const SF = (function () {
       dlRow(
         'plan',
         '計画・実装',
-        ran ? (isFake ? 'fake' : 'ok') : 'none',
+        ran ? (isFake ? 'fake' : isDocker ? workKind : 'ok') : 'none',
         ran
           ? '実行 ' +
               E(ev.attempts) +
@@ -5790,20 +5884,26 @@ const SF = (function () {
       dlRow(
         'ci',
         '自動検査（CI）',
-        ciKind,
-        ciKind === 'fake'
-          ? srcs.includes('fake_ci')
-            ? 'fake CI の記録のみ（実 CI ではありません）'
-            : 'ローカルの連携先の記録のみ（実 GitHub ではありません）'
-          : ciKind === 'ok'
-            ? srcs.includes('github')
-              ? 'GitHub Actions の記録あり' +
-                (/^https:\/\//.test(ev.ciRunUrl || '')
-                  ? '　<a href="' + E(ev.ciRunUrl) + '" target="_blank" rel="noopener noreferrer">実行の記録</a>'
-                  : '')
-              : '実 CI の記録あり'
-            : '検査の記録はありません',
+        ciShown,
+        ciShown === 'running'
+          ? srcs.length
+            ? '前回の検査の記録あり。今の変更の結果を待っています'
+            : '検査の結果を待っています'
+          : ciKind === 'fake'
+            ? srcs.includes('fake_ci')
+              ? 'fake CI の記録のみ（実 CI ではありません）'
+              : 'ローカルの連携先の記録のみ（実 GitHub ではありません）'
+            : ciKind === 'ok'
+              ? srcs.includes('github')
+                ? (DL_CI_RESULT[ev.ciResult] || 'CI の成否は不明') +
+                  '（GitHub Actions の記録）' +
+                  (/^https:\/\//.test(ev.ciRunUrl || '')
+                    ? '　<a href="' + E(ev.ciRunUrl) + '" target="_blank" rel="noopener noreferrer">実行の記録</a>'
+                    : '')
+                : (DL_CI_RESULT[ev.ciResult] || 'CI の成否は不明') + '（実 CI の記録）'
+              : '検査の記録はありません',
       ) +
+      dlAcRow(ev, isFake || ciKind === 'fake') +
       dlRow(
         'pr',
         'PR',
@@ -5845,6 +5945,24 @@ const SF = (function () {
   }
   function dlStatusText(r, s, cur) {
     if (s.busy) return { t: '送信中です。結果が出るまでお待ちください', ng: false };
+    const other = dlOtherRepo(s);
+    if (other) {
+      return {
+        t:
+          '結果不明・別のリポジトリ：' +
+          other.targetRepo +
+          ' への投入（版 ' +
+          other.orderVersion +
+          '）の結果が確認できていません。いまの連携先（' +
+          s.currentTargetRepo +
+          '）からは照合できません。次の手順：' +
+          other.targetRepo +
+          ' に Issue があるかを人が確かめ、管理者が連携先を ' +
+          other.targetRepo +
+          ' に戻してから照合してください',
+        ng: true,
+      };
+    }
     // 版が変わる前の説明（承認し直すと投入できます、など）は残さない
     if (s.msg && (!s.msg.v || s.msg.v === r.__orderVersion)) return s.msg;
     if (cur && cur.state === 'succeeded') {
@@ -5865,6 +5983,8 @@ const SF = (function () {
   }
   function dlButton(r, s, cur) {
     if (cur && cur.state === 'succeeded') return '';
+    // 押してもサーバが ERR-405 で拒否する。案内は状態の行に出す
+    if (dlOtherRepo(s)) return '';
     const pending = !!dlUnresolved(s, cur);
     const v = r.__orderVersion;
     let label = pending
@@ -5901,7 +6021,7 @@ const SF = (function () {
   function dlAbsentHtml(r, s, cur) {
     // 走査が完全で見つからなかったときだけ。サーバも不完全な走査では再作成しない
     const open = dlUnresolved(s, cur);
-    if (!open || open.state !== 'unknown' || !s.msg || s.msg.scanComplete !== true) return '';
+    if (dlOtherRepo(s) || !open || open.state !== 'unknown' || !s.msg || s.msg.scanComplete !== true) return '';
     if (!DL_ABSENT_ROLES.includes(S.role)) {
       return '<p class="hint" style="margin:6px 0 0">作られていないと確定して作り直せるのは、承認者か管理責任者です。</p>';
     }
@@ -5960,13 +6080,476 @@ const SF = (function () {
       '<ul class="dlrows">' +
       dlIssueRow(r, s, cur) +
       dlJobRows(s) +
-      dlRow('release', 'マージ・配備・公開', 'none', 'この段階は開発ラインに接続していません') +
+      dlReleaseRows(r, s) +
       dlSampleRow(r) +
       '</ul>'
     );
   }
+  /* ───── 人の承認 → merge → 検証環境への配備 → 戻しと証跡（接続時のみ）。文字はすべて E() を通す ───── */
+  const DL_RELEASE_ROLE = 'approver';
+  const DL_ATTEMPT_ERROR = {
+    approval_expired: '承認が失効しました（版が上がったか、記録と違います）',
+    image_missing: '成果物のイメージがこのホストにありません',
+    name_in_use: '同じ名前の別のコンテナがあります',
+    run_failed: 'コンテナを起動できませんでした',
+    health_failed: 'health の確認に失敗しました',
+    smoke_failed: 'smoke の確認に失敗しました',
+    rollback_failed: '戻し先の版が動きませんでした',
+    artifact_missing: 'CI の成果物がありません（合否の根拠にした run に artifact image が無い。作り直さず止まります）',
+    artifact_expired: 'CI の成果物の保存期限が切れています',
+    artifact_too_large: 'CI の成果物が大きさの上限を超えています',
+    artifact_mismatch: 'CI の成果物が記録と一致しません（repo・run・試行・head・tar のハッシュ・イメージ ID のどれか）',
+    artifact_unavailable: 'CI の成果物を取得できませんでした（通信の失敗。もう一度押すと取り直します）',
+    artifact_load_failed: 'CI の成果物を読み込めませんでした',
+    artifact_check_failed: '一時コンテナでの health / smoke に失敗しました',
+    artifact_run_failed: '一時コンテナを起動できませんでした',
+    not_buildable: '成果物を取得できる状態ではありません',
+    too_many_attempts: '取り直しの上限に達しました',
+    internal_error: '処理を完了できませんでした',
+  };
+  const DL_AUTO_ROLLBACK = {
+    restored: '前の版へ自動で戻しました',
+    nothing_to_restore: '前の版がないので、失敗したコンテナを消しました',
+    failed: '前の版へ戻せませんでした（環境を確かめてください）',
+  };
+  const DL_MERGE_DETAIL = {
+    head_changed: 'PR の head が承認した SHA から変わりました（失効）',
+    pr_closed: 'PR が閉じられています（失効）',
+    not_own: 'この job が作った PR ではありません（失効）',
+    base_changed: 'merge 先が既定のブランチではありません（失効）',
+    not_mergeable: 'GitHub が merge を受け付けませんでした（必須検査・競合・保護）',
+    base_behind: 'base が進みました。AI の修正か更新が必要です（merge は送っていません）',
+    refused: 'GitHub が merge を拒否しました（権限と保護）',
+    rate_limited: 'GitHub が混み合っています',
+    pr_unreadable: 'PR を読めませんでした（merge は送っていません）',
+    approval_expired: '承認の後で注文書の版が変わりました（merge は送っていません）',
+    verification_changed: '承認の後で検査の結果が変わりました（merge は送っていません）',
+    approval_revoked: '承認は取り消されています（merge は送っていません）',
+  };
+  const DL_APPROVAL_STATUS = {
+    effective: '有効',
+    used: 'merge に使用',
+    revoked: '取消で失効',
+    expired_head: 'head の変更で失効',
+    expired_version: '版の更新で失効',
+    revocation: '取消の記録',
+  };
+  /* merge の承認の記録を1行ずつ。押した人ごと・取消ごとに残る */
+  function dlMergeApprovalRows(rel) {
+    const list = ((rel && rel.approvals) || []).filter((a) => a.kind === 'merge');
+    if (!list.length) return '';
+    return (
+      '<br><small data-dl-approvals>' +
+      list
+        .map(
+          (a) =>
+            E(a.decision === 'revoked' ? '取消' : '承認') +
+            '：' +
+            E(a.approverName) +
+            '（' +
+            E(SF.fmt(a.decidedAt)) +
+            '）　申請：' +
+            E(a.requesterName || '記録なし') +
+            '　' +
+            E(a.repo || '') +
+            ' PR #' +
+            E(String(a.prNumber == null ? '－' : a.prNumber)) +
+            '　head ' +
+            dlSha(a.sha) +
+            (a.verifiedRunId ? '　CI run ' + E(a.verifiedRunId) + ' 試行 ' + E(String(a.verifiedRunAttempt)) : '') +
+            '　状態：' +
+            E(DL_APPROVAL_STATUS[a.status] || '－') +
+            (a.reason ? '　理由：' + E(a.reason) : ''),
+        )
+        .join('<br>') +
+      '</small>'
+    );
+  }
+  const dlSha = (v) => (v ? mono(v) : '－');
+  function dlLink(url, label) {
+    return /^https?:\/\//.test(url || '')
+      ? '<a href="' + E(url) + '" target="_blank" rel="noopener noreferrer">' + E(label) + '</a>'
+      : E(label);
+  }
+  function dlLast(rel, kinds) {
+    const list = (rel && rel.attempts) || [];
+    for (let i = list.length - 1; i >= 0; i -= 1) if (kinds.includes(list[i].kind)) return list[i];
+    return null;
+  }
+  function dlApproval(rel, kind) {
+    const list = ((rel && rel.approvals) || []).filter((a) => a.kind === kind);
+    return list[list.length - 1] || null;
+  }
+  function dlAttemptNote(a) {
+    if (!a) return '';
+    return [
+      a.errorCode ? DL_ATTEMPT_ERROR[a.errorCode] || '失敗しました' : '',
+      a.autoRollback ? DL_AUTO_ROLLBACK[a.autoRollback] || '' : '',
+    ]
+      .filter(Boolean)
+      .join('／');
+  }
+  function dlReleaseButton(r, job, action, label, cls) {
+    const s = dlOf(r.id);
+    return (
+      '<div class="dlact"><button type="button" class="btn sm ' +
+      cls +
+      '" data-dl-release="' +
+      action +
+      '" data-id="' +
+      E(r.id) +
+      '" data-job="' +
+      E(job.id) +
+      '"' +
+      (s.relBusy ? ' disabled aria-disabled="true"' : '') +
+      '>' +
+      ico(action === 'rollback' ? 'i-undo' : 'i-stamp') +
+      E(s.relBusy ? '送信中…' : label) +
+      '</button></div>'
+    );
+  }
+  /* 操作の欄。承認者の役割だけに出す。ボタンは対象の完全 SHA と digest と環境を並べて見せる */
+  function dlReleaseActions(r, job, rel) {
+    if (S.role !== DL_RELEASE_ROLE) return '';
+    const merged = job.state === 'merged';
+    const valid = job.orderCurrent !== false && !job.supersededAt;
+    const lastBuild = dlLast(rel, ['build']);
+    // merge 後の読み直しと、失敗した成果物の作り直しは同じ操作（merge は送りません）
+    if (
+      merged &&
+      job.headSha &&
+      rel &&
+      !rel.imageDigest &&
+      (rel.treeMatch === null || (lastBuild && lastBuild.state === 'failed'))
+    ) {
+      return dlReleaseButton(
+        r,
+        job,
+        'approve-merge',
+        rel.treeMatch === null ? '内容の一致を読み直す（merge はしません）' : '成果物を取り直す（merge はしません）',
+        '',
+      );
+    }
+    if (
+      job.state === 'pr_ready' &&
+      // 結果不明の merge は、版が変わっても照合して記録できるようにする
+      (valid || (rel && ['unknown', 'sending'].includes(rel.mergeState))) &&
+      job.headSha &&
+      (!rel || rel.mergeState !== 'rejected' || !/^(head_changed|pr_closed|not_own|base_changed)$/.test(rel.mergeDetail || ''))
+    ) {
+      const ev = dlOf(r.id).evidence[job.id] || {};
+      if (!ev.pr || (ev.pr.closed && !(rel && ['unknown', 'sending'].includes(rel.mergeState)))) return '';
+      const merges = ((rel && rel.approvals) || []).filter((a) => a.kind === 'merge');
+      const last = merges[merges.length - 1];
+      const canRevoke = rel && last && last.decision === 'approved' && last.sha === job.headSha && rel.mergeState !== 'sending';
+      return (
+        '<p class="hint" style="margin:6px 0 0">対象 SHA：' +
+        mono(job.headSha) +
+        '</p>' +
+        (canRevoke
+          ? '<label class="fl" for="dlrv-' +
+            E(r.id) +
+            '">承認を取り消す理由（必須）</label><textarea id="dlrv-' +
+            E(r.id) +
+            '" data-dl-input="revoke-reason" data-id="' +
+            E(r.id) +
+            '" style="min-height:44px">' +
+            E(dlOf(r.id).relRevokeReason || '') +
+            '</textarea>' +
+            dlReleaseButton(r, job, 'revoke-approval', '承認を取り消す', 'dng')
+          : '') +
+        (rel && (rel.mergeState === 'unknown' || rel.mergeState === 'sending')
+          ? dlReleaseButton(r, job, 'reconcile-merge', '結果を照合する（merge は送りません）', 'go')
+          : dlReleaseButton(r, job, 'approve-merge', 'PR を承認して merge する', 'go'))
+      );
+    }
+    if (
+      merged &&
+      valid &&
+      rel &&
+      rel.imageDigest &&
+      rel.mergeSha &&
+      rel.treeMatch === true &&
+      rel.artifactHealth &&
+      rel.artifactSmoke
+    ) {
+      const busy = (rel.attempts || []).some((a) => a.kind === 'deploy' && ['pending', 'running'].includes(a.state));
+      if (busy) return '';
+      return (
+        '<p class="hint" style="margin:6px 0 0">SHA：' +
+        mono(rel.mergeSha) +
+        '<br>digest：' +
+        mono(rel.imageDigest) +
+        '<br>環境：' +
+        E(rel.environment) +
+        '（このホストのローカル Docker の内部ネットワーク。このホストからだけ届きます）</p>' +
+        dlReleaseButton(r, job, 'approve-deploy', '検証環境へ配備する', 'go')
+      );
+    }
+    if (job.state === 'staged' && rel && rel.previousDigest && rel.environmentDigest === rel.imageDigest) {
+      const s = dlOf(r.id);
+      const busy = (rel.attempts || []).some((a) => a.kind === 'rollback' && ['pending', 'running'].includes(a.state));
+      if (busy) return '';
+      return (
+        '<p class="hint" style="margin:6px 0 0">戻し先 digest：' +
+        mono(rel.previousDigest) +
+        '</p><label class="fl" for="dlrb-' +
+        E(r.id) +
+        '">戻す理由（必須）</label><textarea id="dlrb-' +
+        E(r.id) +
+        '" data-dl-input="rollback-reason" data-id="' +
+        E(r.id) +
+        '" style="min-height:44px">' +
+        E(s.relReason) +
+        '</textarea>' +
+        dlReleaseButton(r, job, 'rollback', '前の版へ戻す', 'dng')
+      );
+    }
+    return '';
+  }
+  /* 証跡の行：承認 → 成果物 → 配備 → 復旧（受付・版・Issue・job・PR・CI は上の行）。未承認は「準備完了・承認待ち」で止める */
+  function dlReleaseRows(r, s) {
+    const job = s.items[0];
+    if (!job) return dlRow('release', '承認・配備', 'none', 'ジョブがないので、この段階の記録はありません');
+    const rel = s.release[job.id] || null;
+    const ev = s.evidence[job.id] || {};
+    const isFakeLine = job.runnerKind === 'fake' || (ev.pr && ev.pr.source === 'fake');
+    const kind = (has) => (!has ? 'none' : isFakeLine ? 'fake' : 'ok');
+    const mergeApproval = dlApproval(rel, 'merge');
+    const deployApproval = dlApproval(rel, 'deploy');
+    const rollbackApproval = dlApproval(rel, 'rollback');
+    const build = dlLast(rel, ['build']);
+    const deploy = dlLast(rel, ['deploy']);
+    const back = dlLast(rel, ['rollback']);
+    let ac = '';
+    if (rel && rel.ac && rel.ac.length) {
+      ac = rel.ac.map((x) => E(x.acId) + ' ' + E(x.mark)).join('　');
+    }
+    let merge = '';
+    if (rel && rel.mergeState === 'merged') {
+      merge =
+        'merge 済み ' +
+        dlSha(rel.mergeSha) +
+        (rel.treeMatch === false
+          ? '<br><b>merge 後の内容が検査した内容と一致しません。配備へ進めません</b>'
+          : rel.treeMatch === null
+            ? '<br>内容の一致を確認できていません（承認者がもう一度押すと読み直します）'
+            : '<br>内容は検査した head と一致');
+    } else if (rel && rel.mergeState === 'unknown') {
+      merge = '結果不明・要照合（作り直しません）';
+    } else if (rel && rel.mergeState === 'sending') {
+      merge = '送信中か、結果を受け取れていません';
+    } else if (rel && rel.mergeState === 'rejected') {
+      merge = E(DL_MERGE_DETAIL[rel.mergeDetail] || 'merge できませんでした');
+    } else if (job.state === 'pr_ready') {
+      merge =
+        job.orderCurrent === false || job.supersededAt
+          ? 'この版はいまは無効です'
+          : rel && rel.mergeDetail === 'not_merged'
+            ? '照合の結果、PR は未 merge でした（merge は送っていません）。承認待ち'
+            : '準備完了・承認待ち';
+    } else {
+      merge = 'まだこの段階ではありません';
+    }
+    const approver = (a) => (a ? E(a.approverName) + '（' + E(SF.fmt(a.decidedAt)) + '）' : '');
+    return (
+      (ac ? dlRow('ac-detail', '受入条件（AC）', kind(true), ac) : '') +
+      dlRow(
+        'merge',
+        '人の承認・merge',
+        kind(rel && rel.mergeState === 'merged'),
+        merge +
+          dlMergeApprovalRows(rel) +
+          (mergeApproval
+            ? '<br><small data-dl-control-note>1 ユーザーの MVP で職務分離を満たしません。この承認は本番の承認統制を満たしません</small>'
+            : '') +
+          (isFakeLine && rel && rel.mergeState === 'merged'
+            ? '<br><small>ローカルの連携先への merge です（実 GitHub ではありません）</small>'
+            : ''),
+      ) +
+      dlRow(
+        'artifact',
+        '成果物',
+        kind(rel && rel.imageDigest),
+        rel && rel.imageDigest
+          ? 'イメージ ID ' +
+              dlSha(rel.imageDigest) +
+              (rel.artifactRunId
+                ? '<br>取得元：CI run ' +
+                  E(rel.artifactRunId) +
+                  ' 試行 ' +
+                  E(String(rel.artifactRunAttempt)) +
+                  '　artifact ' +
+                  E(String(rel.artifactId)) +
+                  '　tar ' +
+                  dlSha(rel.artifactTarSha256)
+                : '') +
+              '<br><small>CI で検査した成果物そのものです（このホストで作り直していません）。一時コンテナで health と smoke を確認済み</small>'
+          : build
+            ? build.state === 'failed'
+              ? '取得に失敗：' + E(dlAttemptNote(build))
+              : '取得中'
+            : '記録はありません',
+      ) +
+      dlRow(
+        'deploy',
+        '検証環境への配備',
+        kind(job.state === 'staged'),
+        job.state === 'staged'
+          ? (rel && rel.environmentDigest && rel.environmentDigest !== rel.imageDigest
+              ? '配備しましたが、いまの検証環境は別の版です（digest ' + dlSha(rel.environmentDigest) + '）'
+              : '配備済み（検証環境）') +
+              (deployApproval ? '<br>承認：' + approver(deployApproval) : '') +
+              (rel && rel.environmentUrl && rel.environmentDigest === rel.imageDigest
+                ? '<br>' + dlLink(rel.environmentUrl, rel.environmentUrl)
+                : '') +
+              '<br>health ' +
+              (rel && rel.health ? '○' : '×') +
+              '　smoke ' +
+              (rel && rel.smoke ? '○' : '×') +
+              '<br><small>このホストからだけ届く内部ネットワークの検証環境です</small>'
+          : deploy && ['pending', 'running'].includes(deploy.state)
+            ? '配備を進めています'
+            : deploy && deploy.state === 'failed'
+              ? '配備に失敗：' + E(dlAttemptNote(deploy))
+              : rel && rel.imageDigest && job.state === 'merged'
+                ? '準備完了・承認待ち'
+                : '記録はありません',
+      ) +
+      dlRow(
+        'rollback',
+        '戻し',
+        kind(back && back.state === 'succeeded'),
+        back
+          ? back.state === 'succeeded'
+            ? '前の版へ戻しました　digest ' +
+              dlSha(back.digest) +
+              (rollbackApproval ? '<br>' + approver(rollbackApproval) + '　理由：' + E(rollbackApproval.reason) : '')
+            : back.state === 'failed'
+              ? '戻しに失敗：' + E(dlAttemptNote(back))
+              : '戻しを進めています'
+          : '記録はありません',
+      ) +
+      '<li class="dlrow" data-dl-row="release-actions" style="display:block">' +
+      dlReleaseActions(r, job, rel) +
+      (s.relMsg
+        ? '<div class="dlstatus' +
+          (s.relMsg.ng ? ' ng' : '') +
+          '" data-dl-release-msg role="status"><span>' +
+          E(s.relMsg.t) +
+          '</span></div>'
+        : '') +
+      '</li>'
+    );
+  }
+  async function dlReleaseDo(id, jobId, action) {
+    const s = dlOf(id);
+    if (s.relBusy) return;
+    const job = s.items.find((j) => j.id === jobId);
+    const rel = (job && s.release[job.id]) || null;
+    if (!job) return;
+    let body;
+    if (action === 'approve-merge') body = { headSha: job.headSha };
+    // 照合は読み取りだけ。サーバは結果不明でなければ断り、merge を送らない
+    else if (action === 'reconcile-merge') body = { headSha: job.headSha, reconcileOnly: true };
+    else if (action === 'approve-deploy') body = { sha: rel.mergeSha, digest: rel.imageDigest, environment: rel.environment };
+    else if (action === 'revoke-approval') {
+      if (!(s.relRevokeReason || '').trim()) return toast('取り消す理由を書いてください', true);
+      body = { headSha: job.headSha, reason: s.relRevokeReason };
+    } else {
+      if (!s.relReason.trim()) return toast('戻す理由を書いてください', true);
+      body = { reason: s.relReason };
+    }
+    s.relBusy = true;
+    s.relMsg = null;
+    dlPaint(id);
+    try {
+      const path = action === 'reconcile-merge' ? 'approve-merge' : action;
+      await window.__MSF__.api('POST', '/api/jobs/' + encodeURIComponent(jobId) + '/' + path, body);
+      s.relReason = '';
+      s.relRevokeReason = '';
+      s.relMsg = {
+        t:
+          action === 'approve-merge' || action === 'reconcile-merge'
+            ? 'merge を記録しました。CI の成果物を取得して確かめるまで配備はできません'
+            : action === 'approve-deploy'
+              ? '配備を受け付けました。結果を読み込みます'
+              : action === 'revoke-approval'
+                ? '承認を取り消しました。merge するには承認し直してください'
+                : '戻しを受け付けました。結果を読み込みます',
+        ng: false,
+        // 結果を読み直している間の説明。試行が終わったら消す
+        watching: action === 'approve-deploy' || action === 'rollback',
+      };
+      s.watchCount = 0;
+    } catch (err) {
+      s.relMsg = { t: (err && err.message) || '処理を完了できませんでした', ng: true };
+    }
+    s.relBusy = false;
+    await dlLoad(id, true);
+    dlPaint(id);
+  }
+  /* 成果物の取得・配備・戻しは worker が進める。pending / running の間だけ読み直す（開いている欄だけ。上限つき） */
+  const DL_WATCH_MS = 4000;
+  const DL_WATCH_MAX = 150;
+  function dlActive(s) {
+    return Object.values(s.release || {}).some((rel) =>
+      ((rel && rel.attempts) || []).some((a) => a.state === 'pending' || a.state === 'running'),
+    );
+  }
+  function dlPanelOpen(id) {
+    return $$('[data-dl-panel]').some((el) => el.dataset.dlPanel === id);
+  }
+  function dlWatch(id) {
+    const s = dlOf(id);
+    if (s.watchTimer) return;
+    if (!dlActive(s) || !dlPanelOpen(id)) {
+      s.watchCount = 0;
+      return;
+    }
+    s.watchCount = s.watchCount || 0;
+    if (s.watchCount >= DL_WATCH_MAX) {
+      if (!s.relMsg || s.relMsg.watching) {
+        s.relMsg = { t: '結果の読み直しを止めました。欄を開き直すと読み直します', ng: true };
+        dlPaint(id);
+      }
+      return;
+    }
+    s.watchCount += 1;
+    s.watchTimer = setTimeout(() => {
+      s.watchTimer = null;
+      if (!dlPanelOpen(id)) {
+        s.watchCount = 0;
+        return;
+      }
+      // 操作の最中は読み直さず、次の回へ送る
+      if (s.relBusy || s.busy) return dlWatch(id);
+      void dlLoad(id, true);
+    }, DL_WATCH_MS);
+  }
+  /* DevOps の KPI（W-09）。集計は1回の要求で読む。読めなければ「－」のまま */
+  function dlSummaryLoad() {
+    if (!window.__MSF__) return;
+    window.__MSF__
+      .api('GET', '/api/devline/summary')
+      .then((res) => {
+        const set = (k, v) => {
+          const el = $('[data-dl-kpi="' + k + '"]');
+          if (el) el.textContent = String(v);
+        };
+        set('stopped', res.stopped);
+        set('merge', res.mergeWaiting);
+      })
+      .catch(() => undefined);
+  }
   function dlPanel(r) {
     dlLoad(r.id);
+    // 開き直したときも続ける（読み込みが TTL の内で走らない場合）。描画の後に確かめる
+    setTimeout(() => {
+      const s = dlOf(r.id);
+      if ((s.watchCount || 0) >= DL_WATCH_MAX) s.watchCount = 0;
+      dlWatch(r.id);
+    }, 0);
     return '<div class="dlp" data-dl-panel="' + E(r.id) + '">' + dlInner(r) + '</div>';
   }
   function dlPaint(id) {
@@ -5995,7 +6578,9 @@ const SF = (function () {
       if (res) {
         s.items = Array.isArray(res.items) ? res.items : [];
         s.handoffs = Array.isArray(res.handoffs) ? res.handoffs : [];
+        s.currentTargetRepo = res.currentTargetRepo || null;
         s.evidence = res.evidence || {};
+        s.release = res.release || {};
       }
       const r = find(id);
       const cur = r ? dlCurrent(r, s) : null;
@@ -6006,17 +6591,34 @@ const SF = (function () {
         s.msg = null;
         if (!(r.__issueNo > 0)) void window.__MSF__.refreshRequest(id);
       }
+      if (s.relMsg && s.relMsg.watching && !dlActive(s)) s.relMsg = null;
       if (!s.busy) dlPaint(id);
+      dlWatch(id);
     });
     return s.loadP;
+  }
+  /* ERR-405 は送信の前の拒否。「作られていない」と言えるのは、記録を読めて、投入の記録に Issue も結果不明も無いときだけ */
+  function dlNotConnected(r, res) {
+    const s = dlOf(r.id);
+    const message = res.message || '';
+    const clean =
+      !!s.loadedAt &&
+      !s.failed &&
+      !(r.__issueNo > 0) &&
+      !(res.details && res.details.handoffState === 'unknown') &&
+      !s.handoffs.some((h) => h.state === 'unknown' || h.state === 'sent' || h.state === 'succeeded' || h.issueNo > 0);
+    return {
+      t: clean
+        ? '開発ライン未接続：' + message + '。Issue は作られていません'
+        : '開発ライン未接続：' + message + '。今回の投入は送っていません。前の投入の結果は下の記録で確かめてください',
+      ng: true,
+    };
   }
   function dlMessage(r, res) {
     const message = res.message || '';
     switch (res.kind) {
       case 'not_connected':
-        // 別のリポジトリへの投入が結果不明のときは、作られていないとは言えない
-        if (res.details && res.details.handoffState === 'unknown') return { t: '開発ライン未接続：' + message, ng: true };
-        return { t: '開発ライン未接続：' + message + '。Issue は作られていません', ng: true };
+        return dlNotConnected(r, res);
       case 'unknown':
         if (res.details && res.details.scanComplete === true) {
           return {
@@ -6091,6 +6693,8 @@ const SF = (function () {
       s.msg = Object.assign({ v: r.__orderVersion }, dlMessage(r, res));
     }
     await dlLoad(id, true);
+    // 投入の記録を読み直した後で、断定してよいか決める
+    if (!res.ok && res.kind === 'not_connected' && s.msg) s.msg = Object.assign({ v: r.__orderVersion }, dlNotConnected(r, res));
     s.busy = false;
     dlPaint(id);
     dlFocus(id, panel);
@@ -6150,10 +6754,16 @@ const SF = (function () {
     const s = dlOf(el.dataset.id);
     if (el.dataset.dlInput === 'reason') s.absentReason = el.value;
     if (el.dataset.dlInput === 'check') s.absentChecked = el.checked;
+    if (el.dataset.dlInput === 'rollback-reason') s.relReason = el.value;
+    if (el.dataset.dlInput === 'revoke-reason') s.relRevokeReason = el.value;
     const form = el.closest('[data-dl-form]'),
       go = form && form.querySelector('[data-dl="absent-do"]');
     if (go) go.disabled = !(s.absentChecked && s.absentReason.trim()) || s.busy;
   }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('[data-dl-release]');
+    if (b) void dlReleaseDo(b.dataset.id, b.dataset.job, b.dataset.dlRelease);
+  });
   document.addEventListener('input', dlInputChanged);
   document.addEventListener('change', dlInputChanged);
 
@@ -7543,6 +8153,7 @@ const SF = (function () {
           .join('') +
         '</tbody></table></div>';
     }
+    if (window.__MSF__) setTimeout(dlSummaryLoad, 0);
     $('#view').innerHTML =
       '<div class="btool"><h2 class="h2" style="margin:0">' +
       ico('i-git') +
@@ -7555,15 +8166,25 @@ const SF = (function () {
       kcard('開発ラインに流れている依頼', act.length, 'i-git', '件') +
       kcard(
         '止まっている（エスカレーション）',
-        // 接続時は実の集計がまだないので、0 件と見せない（W-09）
-        window.__MSF__ ? '－' : act.filter((x) => x.p.esc).length,
+        // 接続時は実の job と release の集計（読めるまでは「－」。0 件と見せない）
+        window.__MSF__ ? '<span data-dl-kpi="stopped">－</span>' : act.filter((x) => x.p.esc).length,
         'i-alert',
         '件',
         act.some((x) => !window.__MSF__ && x.p.esc) ? 'ng' : '',
       ) +
-      kcard('マージ判断待ち', window.__MSF__ ? '－' : act.filter((x) => x.p.step === 9).length, 'i-stamp', '件') +
-      kcard('リリース判定待ち', relWait.length, 'i-rocket', '件') +
-      kcard('本番デプロイ（30日）', prod.filter((d) => d.result !== 'ロールバック').length, 'i-gauge', '回') +
+      kcard(
+        'マージ判断待ち',
+        window.__MSF__ ? '<span data-dl-kpi="merge">－</span>' : act.filter((x) => x.p.step === 9).length,
+        'i-stamp',
+        '件',
+      ) +
+      kcard(window.__MSF__ ? 'リリース判定待ち（見本）' : 'リリース判定待ち', relWait.length, 'i-rocket', '件') +
+      kcard(
+        window.__MSF__ ? '本番デプロイ・30日（見本）' : '本番デプロイ（30日）',
+        prod.filter((d) => d.result !== 'ロールバック').length,
+        'i-gauge',
+        '回',
+      ) +
       '</div>' +
       vtabs('dvtab', [
         ['line', '開発ライン', 'i-git', act.length || ''],

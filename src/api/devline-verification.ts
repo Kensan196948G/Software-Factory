@@ -14,10 +14,12 @@ import {
   PR_AGENTS_HEADINGS,
   PR_DECISION_ITEMS,
   REQUIRED_STAGES,
+  acIdsOf,
   decideRepair,
   evaluateVerification,
   isCiRerunAllowed,
   isOrderCurrent,
+  summarizeAc,
 } from '../shared/devline.js';
 import type {
   JobState,
@@ -30,10 +32,7 @@ import type {
 import { SIGNAL_LABEL, STATUS_LABEL } from '../shared/domain.js';
 import type { Signal, Status } from '../shared/domain.js';
 
-/** 合格の条件の ID。注文書の acceptance_criteria と同じく空の行を除いて数える。 */
-export function acIdsOf(criteria: readonly string[]): string[] {
-  return criteria.filter((c) => c.trim() !== '').map((_, i) => `AC-${i + 1}`);
-}
+export { acIdsOf };
 
 interface VerificationRow {
   delivery_id: string;
@@ -128,7 +127,15 @@ export async function recordVerification(input: RecordVerificationInput): Promis
     if (!recorded) {
       // 実 CI は再実行を要求できない。再開の後に同じ run しか無ければ、待たずにもう一度止める
       if (applicable && input.source === 'github' && verdict.verdict === 'incomplete') {
-        const moved = await applyVerdict(client, job, verdict, input);
+        // 記録済みの結果と今回の読み取りは別物なので、この読み取りでは AI の修正（費用がかかる）へ進めない
+        const moved = await applyVerdict(client, job, verdict, {
+          ...input,
+          diagnostics: {
+            runConclusion: input.diagnostics?.runConclusion ?? null,
+            unmatchedJobs: input.diagnostics?.unmatchedJobs ?? [],
+            acArtifact: 'already_recorded',
+          },
+        });
         return { status: 'duplicate', verdict, jobState: moved.state, advanced: moved.advanced };
       }
       return { status: 'duplicate', verdict, jobState: job.state, advanced: false };
@@ -169,6 +176,9 @@ export async function recordVerification(input: RecordVerificationInput): Promis
   });
 }
 
+/** artifact 自体は読めて、AC の試験の不足や書き方が原因のもの（AI の修正で直る）。 */
+const AI_FIXABLE_AC_PROBLEMS: readonly string[] = ['ok', 'missing_ac_id', 'unknown_ac_id', 'duplicate_ac_id'];
+
 /** CI は lease の持ち主ではないので fencing を +1 して lease を外す。動いている worker の書き込みは捨てられる。 */
 async function applyVerdict(
   client: PoolClient,
@@ -181,6 +191,30 @@ async function applyVerdict(
     await haltLockedJob(client, job, { to: 'stopped', reason, detail, now });
     await logTransition(client, job, 'stopped', { reason, ...detail }, input);
     return { state: 'stopped', advanced: true };
+  };
+
+  /** AI の修正へ戻す（同因と合計の上限の中で）。CI 自体は読めていて、直せるのは AI のとき。 */
+  const repair = async (
+    causeKey: string,
+    ciRunId: string,
+    failure: { failedStages: string[]; failedAcs: string[]; failedTestIds: string[]; note?: string },
+  ): Promise<{ state: JobState; advanced: boolean }> => {
+    const decision = decideRepair({ total: job.repair_count_total, byCause: job.repair_count_by_cause }, causeKey);
+    if (!decision.allow) return stop(decision.stopReason, { causeKey, ciRunId });
+    const byCause = {
+      ...job.repair_count_by_cause,
+      [causeKey]: (job.repair_count_by_cause[causeKey] ?? 0) + 1,
+    };
+    const workState = { ...job.work_state, previousFailure: { causeKey, ...failure, ciRunId } };
+    await client.query(
+      `update job set state='revising', repair_count_total=repair_count_total+1, repair_count_by_cause=$2::jsonb,
+              work_state=$3::jsonb, fencing_token=fencing_token+1, lease_owner=null, lease_expires_at=null, updated_at=$4::timestamptz,
+              ${rollSessionSql('$4')}
+        where id=$1`,
+      [job.id, JSON.stringify(byCause), JSON.stringify(workState), now],
+    );
+    await logTransition(client, job, 'revising', { causeKey, ciRunId }, input);
+    return { state: 'revising', advanced: true };
   };
 
   switch (verdict.verdict) {
@@ -196,48 +230,61 @@ async function applyVerdict(
       await logTransition(client, job, 'pr_ready', { ciRunId: verdict.ciRunId }, input);
       return { state: 'pr_ready', advanced: true };
     }
-    case 'failed': {
-      const decision = decideRepair({ total: job.repair_count_total, byCause: job.repair_count_by_cause }, verdict.causeKey);
-      if (!decision.allow) return stop(decision.stopReason, { causeKey: verdict.causeKey, ciRunId: verdict.ciRunId });
-      const byCause = {
-        ...job.repair_count_by_cause,
-        [verdict.causeKey]: (job.repair_count_by_cause[verdict.causeKey] ?? 0) + 1,
-      };
-      const workState = {
-        ...job.work_state,
-        previousFailure: {
-          causeKey: verdict.causeKey,
-          failedStages: verdict.failedStages,
-          failedTestIds: verdict.failedTestIds,
-          ciRunId: verdict.ciRunId,
-        },
-      };
-      await client.query(
-        `update job set state='revising', repair_count_total=repair_count_total+1, repair_count_by_cause=$2::jsonb, work_state=$3::jsonb,
-                fencing_token=fencing_token+1, lease_owner=null, lease_expires_at=null, updated_at=$4::timestamptz,
-                ${rollSessionSql('$4')}
-          where id=$1`,
-        [job.id, JSON.stringify(byCause), JSON.stringify(workState), now],
-      );
-      await logTransition(client, job, 'revising', { causeKey: verdict.causeKey, ciRunId: verdict.ciRunId }, input);
-      return { state: 'revising', advanced: true };
-    }
+    case 'failed':
+      return repair(verdict.causeKey, verdict.ciRunId, {
+        failedStages: verdict.failedStages,
+        failedAcs: verdict.failedAcs,
+        failedTestIds: verdict.failedTestIds,
+      });
     case 'incomplete': {
       // 実 CI の再実行は人が行う（worker は要求しない）。待っても結果は変わらないので、理由を付けてすぐ止める
+      // 段階は揃い artifact も読めたのに AC の試験が足りない。CI の再実行では直らない（AI が試験を足す）
+      if (
+        input.source === 'github' &&
+        verdict.incompleteStages.length === 0 &&
+        !verdict.acMissing &&
+        verdict.unconfirmedAcs.length > 0 &&
+        AI_FIXABLE_AC_PROBLEMS.includes(input.diagnostics?.acArtifact ?? '')
+      ) {
+        const acs = [...verdict.unconfirmedAcs].sort();
+        return repair(`ac-unconfirmed|${acs.join(',')}`, verdict.ciRunId, {
+          failedStages: [],
+          failedAcs: acs,
+          failedTestIds: [],
+          note: '試験名の先頭を AC 番号にした試験が無いか、結果を確認できません。`test/unit/` の試験名を `AC-n:` で始めてください',
+        });
+      }
       if (input.source === 'github') {
         const statusOf = (stage: string): string =>
           input.stages.filter((s) => s.stage === stage).find((s) => s.status !== 'passed')?.status ?? 'missing';
+        const acOpen = verdict.unconfirmedAcs.length > 0 || verdict.acMissing;
         return stop('ci_incomplete', {
+          ...(acOpen
+            ? {
+                cause: 'AC 未確認',
+                unconfirmedAcs: verdict.unconfirmedAcs,
+                acMissing: verdict.acMissing,
+                ...(verdict.unknownAcs.length > 0 ? { unknownAcs: verdict.unknownAcs } : {}),
+                ...(verdict.duplicateAcs.length > 0 ? { duplicateAcs: verdict.duplicateAcs } : {}),
+                acArtifact: input.diagnostics?.acArtifact ?? null,
+              }
+            : {}),
           ciRunId: verdict.ciRunId,
           logRef: input.logRef ?? null,
           runConclusion: input.diagnostics?.runConclusion ?? null,
           stages: verdict.incompleteStages.map((stage) => ({ stage, status: statusOf(stage) })),
           unmatchedJobs: input.diagnostics?.unmatchedJobs ?? [],
-          nextStep: 'GitHub Actions で CI を再実行してから再開する',
+          nextStep: acOpen
+            ? 'CI の ac-results を確かめ、GitHub Actions で CI を再実行してから再開する'
+            : 'GitHub Actions で CI を再実行してから再開する',
         });
       }
       if (!isCiRerunAllowed(job.ci_rerun_count)) {
-        return stop('ci_rerun_limit', { incompleteStages: verdict.incompleteStages, ciRunId: verdict.ciRunId });
+        return stop('ci_rerun_limit', {
+          incompleteStages: verdict.incompleteStages,
+          unconfirmedAcs: verdict.unconfirmedAcs,
+          ciRunId: verdict.ciRunId,
+        });
       }
       await client.query(
         `update job set ci_rerun_count=ci_rerun_count+1, fencing_token=fencing_token+1, lease_owner=null, lease_expires_at=null,
@@ -253,7 +300,12 @@ async function applyVerdict(
         fencingToken: job.fencing_token + 1,
         actorType: 'system',
         correlationId,
-        detail: { incompleteStages: verdict.incompleteStages, ciRunId: verdict.ciRunId, rerun: job.ci_rerun_count + 1 },
+        detail: {
+          incompleteStages: verdict.incompleteStages,
+          unconfirmedAcs: verdict.unconfirmedAcs,
+          ciRunId: verdict.ciRunId,
+          rerun: job.ci_rerun_count + 1,
+        },
       });
       return { state: 'verifying', advanced: true };
     }
@@ -371,6 +423,8 @@ export function renderPrBody(facts: PrFacts): string {
     return `| ${stage} | ${row?.status ?? '未実行'} |`;
   });
   const ciRun = 'ciRunId' in verdict ? verdict.ciRunId : '－';
+  const acSummary = summarizeAc(verdict.acEvidence);
+  const acLine = `${acSummary.label}（確認 ${acSummary.confirmed} / ${acSummary.total}）`;
 
   const decision: Record<(typeof PR_DECISION_ITEMS)[number], string> = {
     要望との対応: [
@@ -387,6 +441,8 @@ export function renderPrBody(facts: PrFacts): string {
       list(changedPaths),
     ].join('\n'),
     受入条件の検証: [
+      `判定: ${acLine}（CI の ac-results だけを根拠にする。AI の申告は使わない）`,
+      '',
       '| AC | 内容 | 結果 | test ID | CI 実行ID | SHA | digest |',
       '| --- | --- | --- | --- | --- | --- | --- |',
       ...acRows,
@@ -406,7 +462,7 @@ export function renderPrBody(facts: PrFacts): string {
     復旧方法: `- 戻し方: ${NOT_RUN}\n- DB 変更時の制約: ${NOT_RUN}`,
     残存リスク: real
       ? [
-          '- AI が作成した変更。受入条件の ○/×/未確認 を人が確かめる（CI が AC と test ID を報告しない項目は未確認）',
+          '- AI が作成した変更。PR 候補の準備完了は受入の合格ではない。試験の中身（AC を本当に確かめているか）は人が確かめる',
           `- 対象外:\n${list(request.out_of_scope)}`,
           '- 追加判断: 人の承認が必要（AI は merge も Approve もしない）',
         ].join('\n')
@@ -425,11 +481,13 @@ export function renderPrBody(facts: PrFacts): string {
     DB影響: NOT_RUN,
     Security影響: NOT_RUN,
     テスト結果:
-      verdict.verdict === 'passed' ? `${ciLabel} の全段階 passed（実行ID ${inline(ciRun)}）` : `未合格（${verdict.verdict}）`,
+      verdict.verdict === 'passed'
+        ? `${ciLabel} の全段階 passed（実行ID ${inline(ciRun)}）。${acLine}`
+        : `未合格（${verdict.verdict}）。${acLine}`,
     CI結果: real ? ciLabel : `fake CI（実 CI は${NOT_RUN}）`,
     Deployment結果: NOT_RUN,
     既知の制限: real
-      ? 'AI の変更は人の承認待ち。配備は行っていない。AC と test ID の対応は CI の報告が無ければ未確認'
+      ? 'AI の変更は人の承認待ち。配備は行っていない。AC の結果は CI の ac-results が無ければ未確認で、PR 候補にならない'
       : 'fake PoC。実 PR・実 AI・実 GitHub・配備は行っていない',
     Rollback: NOT_RUN,
   };

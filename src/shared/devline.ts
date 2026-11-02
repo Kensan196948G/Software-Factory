@@ -970,19 +970,36 @@ export interface AcEvidence {
 }
 
 export type VerificationVerdict =
-  /** 必須段階が全部 passed で、× の AC が無い。 */
+  /** 必須段階が全部 passed で、合格の条件が全件 ○。 */
   | { verdict: 'passed'; ciRunId: string; acEvidence: AcEvidence[] }
   /** 実際に失敗した（修正の対象）。 */
   | {
       verdict: 'failed';
       ciRunId: string;
       failedStages: string[];
+      /** 走り切っていない必須段階（AC だけ失敗しても CI 成功と言わないため）。 */
+      incompleteStages: string[];
+      failedAcs: string[];
       failedTestIds: string[];
       causeKey: string;
       acEvidence: AcEvidence[];
     }
-  /** 走り切っていない（missing/skipped/cancelled）。合格ではないが修正回数は使わず CI 再実行の対象。 */
-  | { verdict: 'incomplete'; ciRunId: string; incompleteStages: string[]; acEvidence: AcEvidence[] }
+  /**
+   * 走り切っていない（missing/skipped/cancelled）か、合格の条件に未確認がある。
+   * 合格ではないが修正回数は使わず CI 再実行の対象。段階が揃っていて AC だけが未確認のとき incompleteStages は空。
+   * 合格の条件が1件も無い注文書は、確かめたものが無いので acMissing=true で incomplete。
+   * 報告に注文書に無い AC（unknownAcs）か同じ AC の重複（duplicateAcs）があれば、報告全体を信用せず全件を未確認にする。
+   */
+  | {
+      verdict: 'incomplete';
+      ciRunId: string;
+      incompleteStages: string[];
+      unconfirmedAcs: string[];
+      acMissing: boolean;
+      unknownAcs: string[];
+      duplicateAcs: string[];
+      acEvidence: AcEvidence[];
+    }
   /** head_sha の結果が無く、古い SHA の結果だけがある。 */
   | { verdict: 'stale'; acEvidence: AcEvidence[] }
   /** 結果がまだ1件も無い。 */
@@ -991,8 +1008,16 @@ export type VerificationVerdict =
 /**
  * 判定（純関数）。head_sha の中で (runSequence, runAttempt) が最大の1件だけで決める。
  * 古い run の成功で新しい失敗を上書きせず、段階を複数の run から寄せ集めもしない。
- * 合格の条件（AC）は test ID の無い passed を証拠として認めず「未確認」にする。
+ * 合格の条件（AC）は test ID の無い passed、not_run、報告の欠落を「未確認」にし、未確認があれば合格にしない。
+ * 注文書に無い AC か同じ AC の重複が報告にあれば、どの結果も信用できないので全件「未確認」にする（failed でも修正へ進めない）。
+ * pr_ready は「PR 候補の準備完了」であって受入の合格ではない（merge の判断は人）。
  */
+/** 合否の根拠にする記録（その head の最新の run と試行）。成果物もこの run のものだけを使う。 */
+export function latestVerificationRecord(records: readonly VerificationRecord[], headSha: string): VerificationRecord | null {
+  const forHead = records.filter((r) => (VERIFICATION_SOURCES as readonly string[]).includes(r.source) && r.headSha === headSha);
+  return [...forHead].sort((a, b) => b.runSequence - a.runSequence || b.runAttempt - a.runAttempt)[0] ?? null;
+}
+
 export function evaluateVerification(
   records: readonly VerificationRecord[],
   headSha: string,
@@ -1007,12 +1032,15 @@ export function evaluateVerification(
       ? { verdict: 'stale', acEvidence: unconfirmed() }
       : { verdict: 'no_result', acEvidence: unconfirmed() };
   }
-  const latest = [...forHead].sort(
-    (a, b) => b.runSequence - a.runSequence || b.runAttempt - a.runAttempt,
-  )[0] as VerificationRecord;
+  const latest = latestVerificationRecord(trusted, headSha) as VerificationRecord;
+
+  const reported = latest.acResults.map((a) => a.acId);
+  const unknownAcs = [...new Set(reported.filter((id) => !acIds.includes(id)))];
+  const duplicateAcs = [...new Set(reported.filter((id, i) => reported.indexOf(id) !== i))];
+  const untrusted = unknownAcs.length > 0 || duplicateAcs.length > 0;
 
   const acEvidence: AcEvidence[] = acIds.map((acId) => {
-    const hit = latest.acResults.find((a) => a.acId === acId);
+    const hit = untrusted ? undefined : latest.acResults.find((a) => a.acId === acId);
     const mark: AcMark = !hit
       ? '未確認'
       : hit.status === 'failed'
@@ -1053,15 +1081,53 @@ export function evaluateVerification(
       verdict: 'failed',
       ciRunId: latest.ciRunId,
       failedStages: [...failedStages],
+      incompleteStages: [...incompleteStages],
+      failedAcs: failedAcs.map((a) => a.acId),
       failedTestIds: uniqueTests,
-      causeKey: failureCauseKey(failedStages, uniqueTests),
+      // test ID の無い AC の失敗も、AC ごとに別の原因として数える
+      causeKey: failureCauseKey(failedStages, uniqueTests.length > 0 ? uniqueTests : failedAcs.map((a) => a.acId)),
       acEvidence,
     };
   }
-  if (incompleteStages.length > 0) {
-    return { verdict: 'incomplete', ciRunId: latest.ciRunId, incompleteStages: [...incompleteStages], acEvidence };
+  const unconfirmedAcs = acEvidence.filter((a) => a.mark !== '○').map((a) => a.acId);
+  const acMissing = acIds.length === 0;
+  if (incompleteStages.length > 0 || unconfirmedAcs.length > 0 || acMissing) {
+    return {
+      verdict: 'incomplete',
+      ciRunId: latest.ciRunId,
+      incompleteStages: [...incompleteStages],
+      unconfirmedAcs,
+      acMissing,
+      unknownAcs,
+      duplicateAcs,
+      acEvidence,
+    };
   }
   return { verdict: 'passed', ciRunId: latest.ciRunId, acEvidence };
+}
+
+/** 合格の条件の ID。注文書の acceptance_criteria と同じく空の行を除いて数える。 */
+export function acIdsOf(criteria: readonly string[]): string[] {
+  return criteria.filter((c) => c.trim() !== '').map((_, i) => `AC-${i + 1}`);
+}
+
+export interface AcSummary {
+  total: number;
+  confirmed: number;
+  failed: number;
+  unconfirmed: number;
+  /** 画面と PR 本文の文言。「全件確認」は CI の報告が全件 ○ のときだけ。 */
+  label: '受入条件 全件確認' | '受入条件 不合格あり' | '受入条件 未確認あり';
+}
+
+/** AC の集計（純関数）。条件が0件なら確認していないので「未確認あり」。 */
+export function summarizeAc(evidence: readonly AcEvidence[]): AcSummary {
+  const confirmed = evidence.filter((a) => a.mark === '○').length;
+  const failed = evidence.filter((a) => a.mark === '×').length;
+  const unconfirmed = evidence.length - confirmed - failed;
+  const label =
+    failed > 0 ? '受入条件 不合格あり' : evidence.length > 0 && unconfirmed === 0 ? '受入条件 全件確認' : '受入条件 未確認あり';
+  return { total: evidence.length, confirmed, failed, unconfirmed, label };
 }
 
 /* ────────────────────────────── Runner adapter ────────────────────────────── */
@@ -1106,7 +1172,13 @@ export interface RunnerInput {
   policyVersion: string;
   baseSha: string;
   /** revise のときの直前の失敗（CI の結果から作る）。 */
-  previousFailure?: { causeKey: string; failedStages: readonly string[]; failedTestIds: readonly string[] } | null;
+  previousFailure?: {
+    failedAcs?: readonly string[];
+    note?: string;
+    causeKey: string;
+    failedStages: readonly string[];
+    failedTestIds: readonly string[];
+  } | null;
   /** 時刻は引数で渡す。runner は壁時計で判断しない。 */
   deadlineAt: string;
   signal: AbortSignal;
@@ -1288,9 +1360,34 @@ export interface JobView {
   updatedAt: string;
 }
 
+/**
+ * CI の成否（必須段階だけで決める）。success は「CI 成功」で、受入条件の結果でも PR 候補の準備完了でもない。
+ * stale は今の head の結果が無く、古い SHA の結果だけがある。
+ */
+export type CiResult = 'success' | 'failure' | 'incomplete' | 'stale';
+
+/** 判定から CI の成否を取り出す（純関数）。AC の未確認や不合格は CI の成否に混ぜない。 */
+export function ciResultOf(verdict: VerificationVerdict): CiResult | null {
+  switch (verdict.verdict) {
+    case 'passed':
+      return 'success';
+    case 'failed':
+      if (verdict.failedStages.length > 0) return 'failure';
+      return verdict.incompleteStages.length > 0 ? 'incomplete' : 'success';
+    case 'incomplete':
+      return verdict.incompleteStages.length > 0 ? 'incomplete' : 'success';
+    case 'stale':
+      return 'stale';
+    default:
+      return null;
+  }
+}
+
 /** 版ごとの投入の記録（画面用の読み取り）。マーカーと外部の応答の全文は出さない。 */
 export interface HandoffView {
   orderVersion: number;
+  /** この投入の連携先（読み取りのみ）。今の連携先と違えばここからは照合できない。 */
+  targetRepo: string;
   state: HandoffState;
   op: HandoffOp;
   issueNo: number | null;
@@ -1314,6 +1411,10 @@ export interface JobEvidence {
   ciRunUrl?: string | null;
   /** source='github' の記録が github.com のものか。 */
   ciSource?: 'github' | 'fake' | null;
+  /** 今の head の必須段階の結果（CI の成否）。受入条件の結果は ac で、これには含めない。検証の記録があるときだけ。 */
+  ciResult?: CiResult;
+  /** 今の head の受入条件の結果。検証の記録があるときだけ。 */
+  ac?: AcSummary & { items: { acId: string; mark: AcMark; testIds: readonly string[] }[] };
 }
 
 export interface RecordVerificationInput {
@@ -1329,7 +1430,7 @@ export interface RecordVerificationInput {
   logRef?: string | null;
   reportDigest?: string | null;
   /** 実 CI の補足（記録はせず、止めるときの理由に載せる）。 */
-  diagnostics?: { runConclusion: string | null; unmatchedJobs: readonly string[] };
+  diagnostics?: { runConclusion: string | null; unmatchedJobs: readonly string[]; acArtifact?: string };
   now: Date;
   correlationId: string;
 }

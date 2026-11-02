@@ -3,6 +3,7 @@ import cookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { versionAssets } from './asset-version.js';
 import { config } from './config.js';
 import { ApiError, Errors, applySecurityHeaders, correlationId, sendError } from './http.js';
 import { ZodError } from 'zod';
@@ -69,6 +70,16 @@ import {
   resumeJob,
   type DevlineDeps,
 } from './devline-service.js';
+import {
+  approveDeploy,
+  approveMerge,
+  revokeMergeApproval,
+  devlineSummary,
+  listReleaseEvidence,
+  rollbackRelease,
+  type ReleaseDeps,
+} from './devline-release.js';
+import { approveDeploySchema, approveMergeSchema, revokeApprovalSchema, rollbackSchema } from './devline-release-schemas.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -79,7 +90,9 @@ declare module 'fastify' {
 /** 承認依頼メールの状態（クエリ検証に使う）。 */
 const MAIL_STATES = ['pending', 'sending', 'sent', 'failed'] as const;
 
-export async function buildApp(opts: { serveStatic?: boolean; devlineDeps?: DevlineDeps } = {}): Promise<FastifyInstance> {
+export async function buildApp(
+  opts: { serveStatic?: boolean; devlineDeps?: DevlineDeps; releaseDeps?: ReleaseDeps } = {},
+): Promise<FastifyInstance> {
   const app = Fastify({
     logger:
       config.nodeEnv === 'test' && process.env.DEBUG_TEST !== '1'
@@ -336,7 +349,46 @@ export async function buildApp(opts: { serveStatic?: boolean; devlineDeps?: Devl
     const ctx = auth(req);
     const { id } = req.params as { id: string };
     const items = await listJobsForRequest(id, actorOf(ctx.user));
-    return { items, ...(await listDevlineTrace(id)) };
+    return { items, ...(await listDevlineTrace(id)), release: await listReleaseEvidence(id) };
+  });
+
+  /* ───────── 人の承認 → merge → 検証環境への配備 → 戻し（仕様 4-9）。repo・イメージ・ポートはブラウザから受けない ───────── */
+  app.post('/api/jobs/:id/approve-merge', async (req) => {
+    const ctx = mutate(req);
+    const { id } = req.params as { id: string };
+    const body = approveMergeSchema.parse(req.body);
+    return approveMerge(
+      { jobId: id, headSha: body.headSha, ...(body.reconcileOnly ? { reconcileOnly: true } : {}) },
+      actorOf(ctx.user),
+      correlationId(req),
+      opts.releaseDeps,
+    );
+  });
+
+  app.post('/api/jobs/:id/revoke-approval', async (req) => {
+    const ctx = mutate(req);
+    const { id } = req.params as { id: string };
+    const body = revokeApprovalSchema.parse(req.body);
+    return revokeMergeApproval({ jobId: id, ...body }, actorOf(ctx.user), correlationId(req), new Date());
+  });
+
+  app.post('/api/jobs/:id/approve-deploy', async (req) => {
+    const ctx = mutate(req);
+    const { id } = req.params as { id: string };
+    const body = approveDeploySchema.parse(req.body);
+    return approveDeploy({ jobId: id, ...body }, actorOf(ctx.user), correlationId(req), new Date());
+  });
+
+  app.post('/api/jobs/:id/rollback', async (req) => {
+    const ctx = mutate(req);
+    const { id } = req.params as { id: string };
+    const body = rollbackSchema.parse(req.body);
+    return rollbackRelease({ jobId: id, reason: body.reason }, actorOf(ctx.user), correlationId(req), new Date());
+  });
+
+  app.get('/api/devline/summary', async (req) => {
+    auth(req);
+    return devlineSummary();
   });
 
   app.post('/api/jobs/:id/cancel', async (req) => {
@@ -557,7 +609,7 @@ export async function buildApp(opts: { serveStatic?: boolean; devlineDeps?: Devl
 
   function renderAppHtml(ctx: AuthContext, boot: unknown): string | null {
     if (!existsSync(appHtmlPath)) return null;
-    const template = readFileSync(appHtmlPath, 'utf8');
+    const template = versionAssets(readFileSync(appHtmlPath, 'utf8'), config.commitSha);
     const json = JSON.stringify(boot).replace(/</g, '\\u003c');
     return template.replace('<!--MSF_BOOT-->', `<script type="application/json" id="msf-boot">${json}</script>`);
   }
@@ -609,7 +661,16 @@ export async function buildApp(opts: { serveStatic?: boolean; devlineDeps?: Devl
 
   /* ───────── static assets（index は上のルートで配信） ───────── */
   if (opts.serveStatic !== false && existsSync(webDist)) {
-    await app.register(fastifyStatic, { root: webDist, prefix: '/', index: false });
+    // Cloudflare のエッジに毎回確認させる。ブラウザ向けは 4 時間に書き換えられるので、URL の版（versionAssets）で更新する
+    await app.register(fastifyStatic, {
+      root: webDist,
+      prefix: '/',
+      index: false,
+      cacheControl: false,
+      setHeaders: (reply) => {
+        void reply.header('Cache-Control', 'no-cache');
+      },
+    });
     app.setNotFoundHandler((req, reply) => {
       if (req.url.startsWith('/api/') || req.url === '/healthz' || req.url === '/readyz') {
         void reply.status(404).send(Errors.notFound('API').toBody(correlationId(req)));

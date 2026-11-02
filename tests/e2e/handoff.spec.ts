@@ -635,10 +635,236 @@ test.describe('開発ラインへ投入', () => {
     const seq = await seqOf(page);
     await handoffBtn(page).click();
     await expect(statusLine(page)).toContainText('開発ライン未接続');
+    // 記録を読めて、投入の記録が何も無いときだけ断定する
+    await expect(statusLine(page)).toContainText('Issue は作られていません');
     await expect(panel(page).locator('[data-dl-row="issue"] a')).toHaveCount(0);
     await expect(panel(page).locator('[data-dl-row="issue"]')).toContainText('未接続');
     expect(fake.access, 'fake GitHub への送信').toHaveLength(0);
     expect((await seqOf(page)).issue).toBe(seq.issue);
+  });
+
+  /* 投入の記録を作り物で返す。#42 の残りの再現に使う（投入の POST は外へ送らせない）。 */
+  const fakeJobs = (
+    page: Page,
+    id: string,
+    handoffs: Record<string, unknown>[],
+    currentTargetRepo: string | null,
+  ): Promise<unknown> =>
+    page.route(`**/api/requests/${id}/jobs`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ items: [], evidence: {}, currentTargetRepo, handoffs }),
+      }),
+    );
+  const unknownHandoff = (targetRepo: string): Record<string, unknown> => ({
+    orderVersion: 1,
+    state: 'unknown',
+    op: 'create_issue',
+    issueNo: null,
+    issueUrl: null,
+    issueSource: 'fake',
+    attempts: 1,
+    nextAttemptAt: null,
+    updatedAt: '2026-11-01T00:00:00.000Z',
+    targetRepo,
+  });
+  const reject405 = (page: Page): Promise<unknown> =>
+    page.route(/\/api\/orders\/[^/]+\/handoff$/, (route) =>
+      route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'ERR-405', message: '開発ラインの設定が正しくありません' } }),
+      }),
+    );
+
+  test('details のない ERR-405: 結果不明の投入があれば「Issue は作られていません」と断定しない', async ({ page }) => {
+    await login(page);
+    const title = `断定なし ${Date.now()}`;
+    const id = await createApproved(page, title);
+    await fakeJobs(page, id, [unknownHandoff(FAKE_REPO)], FAKE_REPO);
+    await reject405(page);
+    await openDrawer(page, title);
+    await expect(handoffBtn(page)).toContainText('照合する');
+    await handoffBtn(page).click();
+    await expect(statusLine(page)).toContainText('開発ライン未接続');
+    await expect(statusLine(page)).not.toContainText('Issue は作られていません');
+    await expect(statusLine(page)).toContainText('今回の投入は送っていません');
+  });
+
+  test('details のない ERR-405: 投入の記録を読めないときも断定しない', async ({ page }) => {
+    await login(page);
+    const title = `記録不明 ${Date.now()}`;
+    const id = await createApproved(page, title);
+    await page.route(`**/api/requests/${id}/jobs`, (route) => route.abort());
+    await reject405(page);
+    await openDrawer(page, title);
+    await handoffBtn(page).click();
+    await expect(statusLine(page)).toContainText('開発ライン未接続');
+    await expect(statusLine(page)).not.toContainText('Issue は作られていません');
+  });
+
+  test('別のリポジトリの結果不明: 照合を案内せず、対象と理由と次の手順を出す。送信もしない', async ({ page }) => {
+    await login(page);
+    const title = `別リポジトリ ${Date.now()}`;
+    const id = await createApproved(page, title);
+    const other = 'other-owner/other-repo';
+    await fakeJobs(page, id, [unknownHandoff(other)], FAKE_REPO);
+    const posts = countOrderPosts(page);
+    await openDrawer(page, title);
+    await expect(statusLine(page)).toContainText(other);
+    await expect(statusLine(page)).toContainText('照合できません');
+    await expect(statusLine(page)).toContainText('次の手順');
+    await expect(panel(page)).not.toContainText('照合する');
+    await expect(handoffBtn(page)).toHaveCount(0);
+    await expect(panel(page).locator('[data-dl-row="issue"]')).toContainText(other);
+    expect(posts()).toBe(0);
+  });
+
+  test('同じリポジトリの結果不明は「照合する」のまま。今の連携先が分からないときは別リポジトリと決めつけない', async ({
+    page,
+  }) => {
+    await login(page);
+    const title = `同じリポジトリ ${Date.now()}`;
+    const id = await createApproved(page, title);
+    await fakeJobs(page, id, [unknownHandoff(FAKE_REPO)], null);
+    await openDrawer(page, title);
+    await expect(handoffBtn(page)).toContainText('照合する');
+    await expect(statusLine(page)).not.toContainText('別のリポジトリ');
+  });
+
+  test('同期と refreshRequest が重なってもコメントを重複送信しない', async ({ page }) => {
+    await login(page);
+    const title = `同期と取り直し ${Date.now()}`;
+    const id = await createApproved(page, title);
+    let posted = 0;
+    let stored = (): void => undefined;
+    const reached = new Promise<void>((r) => (stored = r));
+    let release = (): void => undefined;
+    const held = new Promise<void>((r) => (release = r));
+    await page.route(`**/api/requests/${id}/comments`, async (route) => {
+      posted += 1;
+      // サーバには保存させ、応答だけ遅らせる（base が古いまま GET が新しい内容を返す状況）
+      const res = await route.fetch();
+      stored();
+      await held;
+      await route.fulfill({ response: res });
+    });
+    await page.evaluate((rid) => {
+      const w = window as unknown as {
+        __MSF__: { persist: (d: unknown) => Promise<unknown>; refreshRequest: (i: string) => Promise<unknown> };
+        __MSF_UI__: { data: () => { items: { id: string; comments?: unknown[] }[] } };
+        __raced?: Promise<unknown>[];
+      };
+      const data = w.__MSF_UI__.data();
+      const item = data.items.find((x) => x.id === rid)!;
+      (item.comments ??= []).push({ at: new Date().toISOString(), by: '作り物', text: '重ならないコメント' });
+      w.__raced = [w.__MSF__.persist(data)];
+    }, id);
+    await reached;
+    await page.evaluate((rid) => {
+      const w = window as unknown as {
+        __MSF__: { refreshRequest: (i: string) => Promise<unknown> };
+        __raced: Promise<unknown>[];
+      };
+      w.__raced.push(w.__MSF__.refreshRequest(rid));
+    }, id);
+    await page.waitForTimeout(300);
+    release();
+    await page.evaluate(async () => {
+      const w = window as unknown as {
+        __MSF__: { persist: (d: unknown) => Promise<unknown> };
+        __MSF_UI__: { data: () => unknown };
+        __raced: Promise<unknown>[];
+      };
+      await Promise.all(w.__raced);
+      // 重複が手元に残っていれば、次の同期で送られる
+      await w.__MSF__.persist(w.__MSF_UI__.data());
+    });
+    const texts = ((await getDetail(page, id)) as unknown as { comments: { text: string }[] }).comments
+      .map((c) => c.text)
+      .filter((t) => t === '重ならないコメント');
+    expect(texts).toHaveLength(1);
+    expect(posted).toBe(1);
+    const live = await page.evaluate((rid) => {
+      const w = window as unknown as { __MSF_UI__: { data: () => { items: { id: string; comments?: { text: string }[] }[] } } };
+      return (w.__MSF_UI__.data().items.find((x) => x.id === rid)?.comments ?? []).filter((c) => c.text === '重ならないコメント')
+        .length;
+    }, id);
+    expect(live).toBe(1);
+  });
+
+  test('「CI 成功」「受入条件」「PR 候補の準備完了」を別の行と言葉で出す（応答は作り物）', async ({ page }) => {
+    await login(page);
+    const title = `用語 ${Date.now()}`;
+    const id = await createApproved(page, title);
+    const jobId = '55555555-5555-4555-8555-555555555555';
+    const paint = async (state: string, evidence: Record<string, unknown>): Promise<void> => {
+      await page.unroute(`**/api/requests/${id}/jobs`).catch(() => undefined);
+      await page.route(`**/api/requests/${id}/jobs`, (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            items: [
+              {
+                id: jobId,
+                requestId: id,
+                orderVersion: 1,
+                runnerKind: 'docker-claude',
+                state,
+                stopReason: state === 'stopped' ? 'ci_incomplete' : null,
+                stopDetail:
+                  state === 'stopped' ? { cause: 'AC 未確認', unconfirmedAcs: ['AC-1'], acArtifact: 'unknown_ac_id' } : null,
+                orderCurrent: true,
+                costJpy: 0,
+              },
+            ],
+            handoffs: [],
+            currentTargetRepo: FAKE_REPO,
+            evidence: {
+              [jobId]: {
+                attempts: 1,
+                verificationSources: ['github'],
+                hasPrDraft: state === 'pr_ready',
+                ciRunUrl: 'https://github.invalid/x/y/actions/runs/1',
+                ciSource: 'github',
+                ...evidence,
+              },
+            },
+          }),
+        }),
+      );
+      await reloadAs(page, 'desk');
+      await openDrawer(page, title);
+    };
+    const row = (name: string): Locator => panel(page).locator(`[data-dl-row="${name}"]`);
+    const ac = (label: string, confirmed: number): Record<string, unknown> => ({
+      total: 1,
+      confirmed,
+      failed: 0,
+      unconfirmed: 1 - confirmed,
+      label,
+      items: [{ acId: 'AC-1', mark: confirmed ? '○' : '未確認', testIds: [] }],
+    });
+
+    // CI は成功、AC は証跡の欠落: CI の行で成功と言っても、AC の行と job は合格に見せない
+    await paint('stopped', { ciResult: 'success', ac: ac('受入条件 未確認あり', 0) });
+    await expect(row('ci')).toContainText('CI 成功');
+    await expect(row('ac')).toContainText('受入条件 未確認あり');
+    await expect(row('ac')).not.toContainText('全件確認');
+    await expect(row('job')).toContainText('証跡の欠落');
+    await expect(panel(page)).not.toContainText('受入合格');
+
+    // CI の記録があるだけでは成功と言わない
+    await paint('stopped', { ciResult: 'failure', ac: ac('受入条件 未確認あり', 0) });
+    await expect(row('ci')).toContainText('CI 失敗');
+    await expect(row('ci')).not.toContainText('CI 成功');
+
+    // pr_ready は PR 候補の準備完了で、受入の合格ではない
+    await paint('pr_ready', { ciResult: 'success', ac: ac('受入条件 全件確認', 1) });
+    await expect(row('job')).toContainText('受入の合格ではありません');
+    await expect(row('ac')).toContainText('全件確認');
   });
 
   test('公開リポジトリ: 「開発ライン未接続」と表示し、Issue を作らない', async ({ page }) => {
@@ -867,7 +1093,10 @@ test.describe('見本と実依頼の分離', () => {
     for (const row of ['issue', 'job', 'plan', 'ci', 'pr']) {
       await expect(panel(page).locator(`[data-dl-row="${row}"] [data-dl-kind]`), row).toHaveText('fake');
     }
-    await expect(panel(page).locator('[data-dl-row="release"] [data-dl-kind]')).toHaveText('未接続');
+    // merge・成果物・配備・戻しは、記録が無ければ未接続のまま（準備完了でも実行済みに見せない）
+    for (const row of ['merge', 'artifact', 'deploy', 'rollback']) {
+      await expect(panel(page).locator(`[data-dl-row="${row}"] [data-dl-kind]`), row).toHaveText('未接続');
+    }
     await expect(panel(page)).not.toContainText('実行確認済み');
     expect((await getDetail(page, id)).status, 'job が進んでも受付の状態は動かない').toBe('approved');
   });
@@ -966,15 +1195,28 @@ test.describe('見本と実依頼の分離', () => {
       pr: { number: 12, url: 'https://github.invalid/x/y/pull/12', source: 'github' },
       ciRunUrl: 'https://github.invalid/x/y/actions/runs/1',
       ciSource: 'github',
+      ac: {
+        total: 2,
+        confirmed: 2,
+        failed: 0,
+        unconfirmed: 0,
+        label: '受入条件 全件確認',
+        items: [
+          { acId: 'AC-1', mark: '○', testIds: ['AC-1: t'] },
+          { acId: 'AC-2', mark: '○', testIds: ['AC-2: t'] },
+        ],
+      },
     });
     await openDrawer(page, title);
     const p = panel(page);
-    for (const row of ['job', 'plan', 'ci', 'pr']) {
+    for (const row of ['job', 'plan', 'ci', 'ac', 'pr']) {
       await expect(p.locator(`[data-dl-row="${row}"] [data-dl-kind]`), row).toHaveText('実行確認済み');
     }
     await expect(p.locator('[data-dl-row="plan"]')).toContainText('docker-claude');
     await expect(p.locator('[data-dl-row="plan"]')).toContainText('120 円');
     await expect(p.locator('[data-dl-row="ci"]')).toContainText('GitHub Actions');
+    await expect(p.locator('[data-dl-row="ac"]')).toContainText('受入条件 全件確認（確認 2 / 2）');
+    await expect(p.locator('[data-dl-row="job"]')).toContainText('受入の合格ではありません');
     await expect(p.locator('[data-dl-row="pr"] a')).toHaveText('PR #12');
     await expect(p.locator('[data-dl-row="pr"]')).toContainText('AI は merge しません');
 
@@ -992,6 +1234,95 @@ test.describe('見本と実依頼の分離', () => {
     await expect(panel(page).locator('[data-dl-row="ci"] [data-dl-kind]')).toHaveText('fake');
     await expect(panel(page).locator('[data-dl-row="pr"] [data-dl-kind]')).toHaveText('fake');
     await expect(panel(page).locator('[data-dl-row="ci"]')).toContainText('実 GitHub ではありません');
+  });
+
+  test('実 job は完了していない段階を実行確認済みにしない。AC 未確認は理由を出す（応答は作り物）', async ({ page }) => {
+    await login(page);
+    const title = `実 job 途中 ${Date.now()}`;
+    const id = await createApproved(page, title);
+    const jobId = '44444444-4444-4444-4444-444444444444';
+    const respond = (job: Record<string, unknown>, evidence: Record<string, unknown>): void => {
+      void page.unroute(`**/api/requests/${id}/jobs`);
+      void page.route(`**/api/requests/${id}/jobs`, (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            items: [
+              {
+                id: jobId,
+                requestId: id,
+                orderVersion: 1,
+                runnerKind: 'docker-claude',
+                stopReason: null,
+                orderCurrent: true,
+                costJpy: 10,
+                ...job,
+              },
+            ],
+            handoffs: [],
+            evidence: { [jobId]: evidence },
+          }),
+        }),
+      );
+    };
+    const kind = (row: string) => panel(page).locator(`[data-dl-row="${row}"] [data-dl-kind]`);
+
+    respond({ state: 'queued' }, { attempts: 0, verificationSources: [], hasPrDraft: false });
+    await openDrawer(page, title);
+    await expect(kind('job')).toHaveText('未接続');
+    await expect(panel(page)).not.toContainText('実行確認済み');
+
+    for (const state of ['planning', 'implementing', 'revising']) {
+      respond({ state }, { attempts: 1, verificationSources: [], hasPrDraft: false });
+      await reloadAs(page, 'desk');
+      await openDrawer(page, title);
+      await expect(kind('job'), state).toHaveText('実行中');
+      await expect(kind('plan'), state).toHaveText('実行中');
+      await expect(panel(page), state).not.toContainText('実行確認済み');
+    }
+
+    // 検査待ち: 実装は終わっているが、job と CI は実行中
+    respond({ state: 'verifying' }, { attempts: 2, verificationSources: [], hasPrDraft: false });
+    await reloadAs(page, 'desk');
+    await openDrawer(page, title);
+    await expect(kind('job')).toHaveText('実行中');
+    await expect(kind('ci')).toHaveText('実行中');
+    await expect(kind('ac')).toHaveText('未接続');
+
+    respond(
+      {
+        state: 'stopped',
+        stopReason: 'ci_incomplete',
+        stopDetail: { cause: 'AC 未確認', unconfirmedAcs: ['AC-2'] },
+      },
+      {
+        attempts: 2,
+        verificationSources: ['github'],
+        hasPrDraft: false,
+        ciRunUrl: 'https://github.invalid/x/y/actions/runs/1',
+        ciSource: 'github',
+        ac: {
+          total: 2,
+          confirmed: 1,
+          failed: 0,
+          unconfirmed: 1,
+          label: '受入条件 未確認あり',
+          items: [
+            { acId: 'AC-1', mark: '○', testIds: ['AC-1: t'] },
+            { acId: 'AC-2', mark: '未確認', testIds: [] },
+          ],
+        },
+      },
+    );
+    await reloadAs(page, 'desk');
+    await openDrawer(page, title);
+    await expect(kind('job')).toHaveText('停止');
+    await expect(kind('plan')).toHaveText('停止');
+    await expect(kind('ac')).toHaveText('未接続');
+    await expect(panel(page).locator('[data-dl-row="job"]')).toContainText('AC 未確認（AC-2）');
+    await expect(panel(page).locator('[data-dl-row="ac"]')).toContainText('受入条件 未確認あり（確認 1 / 2）');
+    await expect(panel(page).locator('[data-dl-row="ac"]')).not.toContainText('全件確認');
   });
 
   test('jobs を読めないときは未接続と表示する', async ({ page }) => {

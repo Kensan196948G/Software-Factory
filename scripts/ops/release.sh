@@ -133,4 +133,8 @@ if [[ "$code" != 0 ]]; then
   log "リリース失敗: $sha"
   exit "$code"
 fi
+# worker は古いリリースのコードで動き続けないように入れ替える（動いているときだけ。起動はしない）
+if [[ -z "${MIRAI_SF_RESTART_HOOK:-}" ]] && systemctl --user is-active --quiet mirai-sf-worker.service; then
+  systemctl --user restart mirai-sf-worker.service || log "注意: worker の再起動に失敗しました"
+fi
 log "リリース完了: $sha"

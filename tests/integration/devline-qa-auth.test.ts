@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { verifyAuditChain } from '../../src/api/audit.js';
 import { query } from '../../src/api/db.js';
 import { handoffOrder, recordVerification } from '../../src/api/devline-service.js';
+import { renderDraftPrBody } from '../../src/api/devline-verification.js';
 import { PR_AGENTS_HEADINGS, PR_DECISION_ITEMS } from '../../src/shared/devline.js';
 import { runUntilIdle } from '../../src/worker/loop.js';
 import type { FakeResponder } from './fake-github-server.js';
@@ -337,14 +338,12 @@ describe('T-88: PR 候補', () => {
   it('10項目と12見出しが全部あり、AC 別に ○／未確認。無いものは未実施と書き、成功のように書かない。実 PR を呼ばない', async () => {
     const id = await h.approvedRequest();
     const { jobId, headSha } = await h.untilVerifying(id);
-    await recordVerification(
-      h.delivery(jobId, headSha, {
-        acResults: [
-          { acId: 'AC-1', testIds: ['tc.1'], status: 'passed' },
-          { acId: 'AC-2', testIds: [], status: 'not_run' },
-        ],
-      }),
-    );
+    // 検査の前の本文は全件が未確認
+    const draft = await renderDraftPrBody(await h.jobRow(jobId));
+    expect(draft.split('\n').find((l) => l.startsWith('| AC-2 '))).toContain('未確認');
+    expect(draft).toContain('受入条件 未確認あり');
+    expect(draft).not.toContain('受入条件 全件確認');
+    await recordVerification(h.delivery(jobId, headSha));
     const body = (await query<any>(`select content from job_artifact where job_id=$1 and kind='pr_body_draft'`, [jobId])).rows[0]
       .content as string;
     expect(PR_DECISION_ITEMS).toHaveLength(10);
@@ -352,7 +351,8 @@ describe('T-88: PR 候補', () => {
     for (const item of PR_DECISION_ITEMS) expect(body).toMatch(new RegExp(`### \\d+\\. ${item}\\n`));
     for (const heading of PR_AGENTS_HEADINGS) expect(body).toMatch(new RegExp(`### ${heading}\\n`));
     expect(body.split('\n').find((l) => l.startsWith('| AC-1 '))).toContain('○');
-    expect(body.split('\n').find((l) => l.startsWith('| AC-2 '))).toContain('未確認');
+    expect(body.split('\n').find((l) => l.startsWith('| AC-2 '))).toContain('○');
+    expect(body).toContain('受入条件 全件確認（確認 2 / 2）');
     expect(body).toContain('未実施（fake PoC）');
     expect(body).toContain('実 PR は作成していません');
     expect(body).not.toMatch(/デプロイ(に)?成功|本番.*成功/);

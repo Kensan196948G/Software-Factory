@@ -170,3 +170,31 @@ jobs:
             test-results/
             playwright-report/
           retention-days: 7
+
+  docker:
+    name: docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: 実 runner と外部通信のプロキシのイメージを作る
+        run: |
+          docker build -f deploy/devline/Dockerfile.runner -t msf-devline-runner:2.1.316 deploy/devline
+          docker build -f deploy/devline/Dockerfile.proxy -t msf-devline-egress-proxy:v1 deploy/devline
+
+      - name: 実 Docker の隔離の試験（外部へは送らない）
+        run: pnpm exec vitest run --config vitest.docker.config.ts
