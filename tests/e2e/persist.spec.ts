@@ -2263,6 +2263,13 @@ test.describe('UI 保存の結果待ち', () => {
     await expect(page.locator('#role')).toHaveValue('desk');
   });
 
+  test('画面のスクリプトは版の付いた URL から読み込む', async ({ page }) => {
+    await login(page);
+    await expect(page.locator('script[src^="/bridge.js?v="]')).toHaveCount(1);
+    await expect(page.locator('script[src^="/console.js?v="]')).toHaveCount(1);
+    await expect(page.locator('#role')).toBeVisible();
+  });
+
   test('送信中は役割を切り替えられない', async ({ page }) => {
     await login(page);
     const title = `送信中の役割 ${Date.now()}`;
