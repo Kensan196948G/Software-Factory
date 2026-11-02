@@ -2256,7 +2256,9 @@ test.describe('UI 保存の結果待ち', () => {
     await setApiRole(page, 'approver');
     await page.reload();
     await expect(page.locator('#role')).toHaveValue('approver');
-    await setUiRole(page, 'desk');
+    const saved = page.waitForResponse((r) => r.url().endsWith('/api/auth/role') && r.request().method() === 'POST');
+    await page.selectOption('#role', 'desk');
+    await saved;
     await page.reload();
     await expect(page.locator('#role')).toHaveValue('desk');
     await setApiRole(page, 'requester');

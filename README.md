@@ -144,18 +144,18 @@ flowchart LR
 
 ## ✅ 検証（実測）
 
-| チェック                   | 結果                | コマンド                       |
-| -------------------------- | ------------------- | ------------------------------ |
-| 型チェック                 | ✅ PASS             | `pnpm typecheck`               |
-| Lint                       | ✅ PASS（警告0）    | `pnpm lint`                    |
-| 単体テスト                 | ✅ 529 / 529        | `pnpm test:unit`               |
-| 結合テスト（実PostgreSQL） | ✅ 669 / 669        | `pnpm test:integration`        |
-| E2E（コンソールUI）        | ✅ 117 / 117        | `pnpm test:e2e`                |
-| ビルド                     | ✅ PASS             | `pnpm build`                   |
-| 秘密情報スキャン           | ✅ PASS             | `node scripts/secret-scan.mjs` |
-| DB整合性                   | ✅ PASS             | `pnpm db:verify`               |
-| CI（GitHub Actions）       | ✅ success          | PRごと・main                   |
-| 実 Docker の隔離の試験     | ✅ 21 / 21（CI 外） | `pnpm test:docker`             |
+| チェック                   | 結果                                     | コマンド                       |
+| -------------------------- | ---------------------------------------- | ------------------------------ |
+| 型チェック                 | ✅ PASS                                  | `pnpm typecheck`               |
+| Lint                       | ✅ PASS（警告0）                         | `pnpm lint`                    |
+| 単体テスト                 | ✅ 529 / 529                             | `pnpm test:unit`               |
+| 結合テスト（実PostgreSQL） | ✅ 669 / 669                             | `pnpm test:integration`        |
+| E2E（コンソールUI）        | ✅ 116 合格・1 skip（資格情報が要る1件） | `pnpm test:e2e`                |
+| ビルド                     | ✅ PASS                                  | `pnpm build`                   |
+| 秘密情報スキャン           | ✅ PASS                                  | `node scripts/secret-scan.mjs` |
+| DB整合性                   | ✅ PASS                                  | `pnpm db:verify`               |
+| CI（GitHub Actions）       | ✅ success                               | PRごと・main                   |
+| 実 Docker の隔離の試験     | ✅ 21 / 21（CI 外、PR #48 の時点で実行） | `pnpm test:docker`             |
 
 ---
 
