@@ -660,7 +660,16 @@ export async function buildApp(
 
   /* ───────── static assets（index は上のルートで配信） ───────── */
   if (opts.serveStatic !== false && existsSync(webDist)) {
-    await app.register(fastifyStatic, { root: webDist, prefix: '/', index: false });
+    // 反映した版をすぐ届ける。max-age=0 だと Cloudflare が 4 時間に引き上げ、ブラウザが古い画面を動かし続ける
+    await app.register(fastifyStatic, {
+      root: webDist,
+      prefix: '/',
+      index: false,
+      cacheControl: false,
+      setHeaders: (reply) => {
+        void reply.header('Cache-Control', 'no-cache');
+      },
+    });
     app.setNotFoundHandler((req, reply) => {
       if (req.url.startsWith('/api/') || req.url === '/healthz' || req.url === '/readyz') {
         void reply.status(404).send(Errors.notFound('API').toBody(correlationId(req)));
