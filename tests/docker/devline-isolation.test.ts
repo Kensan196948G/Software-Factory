@@ -5,7 +5,7 @@
  * - プロキシの許可先（api.anthropic.com）への接続は試さない（単体試験で別のダミーへ確かめている）。
  * - 外部の名前は引かない。DNS の確認は `.invalid` を `--dns 127.0.0.1` のコンテナからだけ引く。
  */
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -109,6 +109,9 @@ interface OfflineCliResult {
 /** 実 CLI を本番の引数で動かす（--network none、ダミーのキー。費用なし）。 */
 function runOfflineCli(step: 'plan' | 'implement'): OfflineCliResult {
   const dir = mkdtempSync(join(tmpdir(), 'msf-dl-cli-'));
+  // mkdtemp は 0700。ホストの uid がコンテナの 1000 と違う環境（CI は 1001）でも読めるようにする。
+  // 中身は試験用の引数と探査スクリプトだけで、読み取り専用で渡す。
+  chmodSync(dir, 0o755);
   try {
     writeFileSync(
       join(dir, 'args.json'),
