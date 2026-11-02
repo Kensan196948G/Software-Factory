@@ -97,7 +97,7 @@ jobs:
 
       - name: Artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-artifacts
           path: dist/
@@ -163,7 +163,7 @@ jobs:
 
       - name: Artifacts（常に保存）
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-artifacts
           path: |
