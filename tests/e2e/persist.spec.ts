@@ -2261,7 +2261,6 @@ test.describe('UI 保存の結果待ち', () => {
     await saved;
     await page.reload();
     await expect(page.locator('#role')).toHaveValue('desk');
-    await setApiRole(page, 'requester');
   });
 
   test('送信中は役割を切り替えられない', async ({ page }) => {
