@@ -64,6 +64,39 @@ cloudflared tunnel route dns --overwrite-dns mirai-sf sf.mirai-dx-platform.com
 #    Policy: email_domain = mirai-const.co.jp（allow）
 ```
 
+### 3-1. Access JWT 検証への切替（人の承認後に実施）
+
+認証方式の変更なので、切替は承認を得てから行う。コードが入っただけでは動作は変わらない。
+
+| 環境変数             | 内容                                                                 |
+| -------------------- | -------------------------------------------------------------------- |
+| `ACCESS_TEAM_DOMAIN` | `https://<team>.cloudflareaccess.com`。JWT の `iss` と公開鍵の取得先 |
+| `ACCESS_AUD`         | Access アプリの Application Audience (AUD) タグ。JWT の `aud` と照合 |
+
+実値は `preview.conf`（0600）だけに置き、リポジトリへ書かない。
+
+| 設定                                 | 動作                                                            |
+| ------------------------------------ | --------------------------------------------------------------- |
+| 両方あり（`AUTH_MODE=access`）       | JWT 必須。下記の検証に通らなければ未認証（`/healthz` は応答）   |
+| 両方なし                             | 従来どおりヘッダを信頼。`NODE_ENV=production` なら起動時に warn |
+| 片方だけ、またはドメインの形式が不正 | 起動エラー（`AUTH_MODE=access` のとき）                         |
+
+検証内容:
+
+- 公開鍵は `<team>/cdn-cgi/access/certs` から取得する。キャッシュは1時間で、kid 不一致でも取り直す（取得は最短30秒に1回）。取得に失敗しても手元の鍵は取得から24時間まで使い、それを過ぎると拒否する。
+- `alg` は RS256 のみ。署名、`iss`（完全一致）、`aud`（`ACCESS_AUD` を含む）、`exp`（必須）、`nbf`（ある場合）を確認する。`exp` / `nbf` には30秒の時計ずれを許容する。
+- 利用者は JWT の `email` から決める（`ACCESS_ALLOWED_DOMAIN` / `ACCESS_ALLOWED_EMAILS` で判定）。`Cf-Access-Authenticated-User-Email` と `Cf-Access-Client-Id` は使わない。
+- `email` がないサービストークンは、`common_name` が `ACCESS_SERVICE_TOKEN_IDS` にあるときだけ通す。
+- Cookie のセッションがあっても毎回 JWT を検証する。JWT がなければ未認証、Cookie と別人の JWT なら JWT の利用者のセッションを作る。
+
+切替手順:
+
+1. Zero Trust のダッシュボードで対象 Access アプリの AUD を確認する。
+2. `preview.conf` に2つの変数を追加し、`systemctl --user restart mirai-sf-api`。
+3. `journalctl --user -u mirai-sf-api` に warn がないこと、Access ログイン後の画面表示、Tunnel を経由しない `127.0.0.1:8782` への `Cf-Access-Authenticated-User-Email` 付きリクエストが `/api/auth/me` で 401 になることを確認する。
+
+切り戻し: 2つの変数を削除して再起動する。
+
 ## 4. デプロイ後の確認（実測済み／残り）
 
 | #   | 確認                            | 結果                                                                              |
