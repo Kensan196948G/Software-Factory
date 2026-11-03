@@ -106,6 +106,9 @@ async function createRequest(page: Page, title: string): Promise<void> {
 
   await clickText(page, '青記録・整理・検索・お知らせ', false);
   await nextStep(page);
+  // Connected UI requires an explicit real user ID; use the synthetic test administrator.
+  const me = await page.evaluate(async () => (await (await fetch('/api/auth/me')).json()).user.id as string);
+  await page.selectOption('select[data-bind="approverUserId"]', me);
 
   await clickText(page, 'この内容で受け付ける');
   await page.waitForTimeout(800);
