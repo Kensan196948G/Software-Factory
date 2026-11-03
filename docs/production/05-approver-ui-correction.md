@@ -19,8 +19,9 @@
 - 回帰: 同姓同名をID区別してPOST/PATCH、未選択拒否、無効/名簿外IDで別人へ変更しない、旧名だけの依頼、空/不正名簿、オフライン見本維持、下書き再読込、変更なし同期のPATCH抑止、HTML文字の安全表示、指定承認者以外の承認操作抑止、同姓同名の競合差分表示。
 - UIのみを分離したリリース候補での実行結果: 単体テスト **644件成功**（運用CLI等を含む元作業ツリーは696件だったが、今回の配備対象から除外）。ブラウザ回帰 **16件成功**（全通信を横取りした架空データ）。型検査・Lint・ビルド成功。独立レビューで検出したウィザード外の名前だけ取込、bridge読込失敗時の見本モード復帰も修正して回帰に追加。
 - 実行コマンド: `pnpm test:browser:approver`（専用設定、サーバ不要）、`pnpm exec vitest run --config vitest.config.ts tests/unit`、`pnpm typecheck`、`pnpm lint`、`pnpm build`。
-- 既存E2Eの新規依頼ヘルパーも、テスト管理者IDを明示選択するよう更新した。ただし通常のDB付きE2E一式・統合テスト・GitHub CIは今回未実行。本人ログイン/本番受入の代替とはしない。
-- 専用ブラウザ回帰は現行CIの `pnpm exec playwright test` の対象外。CI組込みは既存e2eジョブで `pnpm test:browser:approver` を追加する別途適用が必要（本作業ではworkflowを変更しない）。
+- 既存E2Eの新規依頼/競合後編集ヘルパーも、テスト管理者IDを明示選択するよう更新した。専用の隔離_test DBで統合 **711/711成功**、通常E2E **117成功 / 1 skip**（skipは公開Accessのサービストークン未設定）。本人ログイン/本番受入の代替とはしない。
+- 専用16件は `tests/e2e/approver.spec.ts` から同じspecを読み込み、既存の必須e2eジョブでも検出する。workflow/保護規則は変更しない。GitHub CIの最終結果はPRで確認する。
+- 秘密スキャン成功。依存監査はCritical 0 / High 0 / Moderate 2（既存minimatch/glob）。依存更新は今回のUI配備へ混在させない。
 
 ## 変更しないもの / 未確認
 
