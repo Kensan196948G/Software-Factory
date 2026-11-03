@@ -148,13 +148,46 @@ pnpm ops:prod:rollback <戻し先SHA>
 
 ## 8. 公開（最後・人の承認が必要）
 
-1. ADR §8 の決定を `docs/devline/assessment/source-conflicts.md` に記録する。
-2. Cloudflare Zero Trust に本番用 Access アプリ（`sf-prod.mirai-dx-platform.com`、session 12h、OTP、`email_domain=mirai-const.co.jp`）を作成する。
-3. Tunnel の ingress に `sf-prod.mirai-dx-platform.com → http://127.0.0.1:8783` を追加し、DNS を CNAME で張る。
-4. 公開後、受入チェックリスト（§4）を再実行する。
-5. 切り戻し: ingress と DNS を戻し、`systemctl --user stop mirai-sf-prod-api`。
+> **公開は不可逆に近い。** 手順 4（DNS 作成）の前に、必ず所有者へ Y/N を取る（SC-03）。
+> 2026-11-03 時点の状態: 1〜3 は実施済み（Access アプリ作成・本番トンネル作成・ingress 検証）。
+> **4 は未実施（DNS 未作成＝未公開）。**
 
-**公開は不可逆に近い**ため、手順 1〜3 の前に Y/N の確認を取る。
+1. ✅ ADR §8 の決定を `docs/production/00-adr.md` §8.1 と `docs/devline/assessment/source-conflicts.md`（SC-02 / SC-03）に記録する。
+2. ✅ Cloudflare Zero Trust に本番用 Access アプリを作成する。
+   - ホスト名 `sf-prod.mirai-dx-platform.com` / session 12h / auto_redirect_to_identity / OTP
+   - ポリシー: `email_domain = mirai-const.co.jp` または `email = kensan1969@gmail.com`
+   - **AUD は `prod.conf` の `ACCESS_AUD` と一致させる**（2026-11-03 作成: `7f7129ce…`）。
+3. ✅ 本番専用トンネルを作成し、ingress を設定して接続を確認する（Staging のトンネルとは分離）。
+
+   ```bash
+   cloudflared tunnel create mirai-sf-prod                 # id: 1007198e-1214-47a4-86a3-09cd542d7cd4
+   # ~/.cloudflared/mirai-sf-prod-config.yml に
+   #   sf-prod.mirai-dx-platform.com → http://127.0.0.1:8783 と 404 の最終規則を書く
+   cloudflared tunnel --config ~/.cloudflared/mirai-sf-prod-config.yml ingress validate   # → OK
+   systemctl --user enable --now mirai-sf-prod-tunnel.service                             # 4 コネクションを確認
+   cloudflared tunnel info 1007198e-1214-47a4-86a3-09cd542d7cd4
+   ```
+
+4. **（人の承認後）DNS を CNAME で張る。**
+
+   ```bash
+   cloudflared tunnel route dns mirai-sf-prod sf-prod.mirai-dx-platform.com
+   dig +short sf-prod.mirai-dx-platform.com            # → <id>.cfargotunnel.com
+   ```
+
+5. 公開後、受入チェックリスト（§4）を再実行する。API では Access JWT を持てないため、**5（受付→承認→注文書）と 6（自己承認 ERR-105）はブラウザで人が実施**する。
+6. 切り戻し: DNS レコードを消し、`systemctl --user stop mirai-sf-prod-tunnel`（アプリ自体は止めない。止めるなら `stop mirai-sf-prod-api` も）。
+7. 公開・切り戻しのたびに、下の記録を残す（監査）。
+
+### 8.1 公開記録
+
+| 日時 (JST) | 操作             | 承認（Y/N と決定者） | commit    | 結果・実測                                                     |
+| ---------- | ---------------- | -------------------- | --------- | -------------------------------------------------------------- |
+| （未実施） | DNS CNAME 作成   | —                    | 84945ed   | —                                                              |
+
+### 8.2 公開前の最終確認（1 行で取る）
+
+- ADR §8.1 の「公開前に再確認」項目: 2（DB名）・5（同一ホスト）・8（Access OTP）・9（職務分離）・10（worker なし）・11（mail off）・12（可用性）・13（保持）・14（公開承認者）を、準備した推奨案のまま進めてよいか。
 
 ## 9. 障害時の一次対応
 
