@@ -173,8 +173,7 @@ cat ~/.local/state/mirai-sf-prod/healthcheck.json                          # ok=
 ## 8. 公開（最後・人の承認が必要）
 
 > **公開は不可逆に近い。** 手順 4（DNS 作成）の前に、必ず所有者へ Y/N を取る（SC-03）。
-> 2026-11-03 時点の状態: 1〜3 は実施済み（Access アプリ作成・本番トンネル作成・ingress 検証）。
-> **4 は未実施（DNS 未作成＝未公開）。**
+> **2026-11-03 18:13 JST に公開済み**（所有者の Y を得て実施）。1〜5 は完了。以降の再公開・切替も同じく Y/N を取る。
 
 1. ✅ ADR §8 の決定を `docs/production/00-adr.md` §8.1 と `docs/devline/assessment/source-conflicts.md`（SC-02 / SC-03）に記録する。
 2. ✅ Cloudflare Zero Trust に本番用 Access アプリを作成する。
@@ -192,12 +191,19 @@ cat ~/.local/state/mirai-sf-prod/healthcheck.json                          # ok=
    cloudflared tunnel info 1007198e-1214-47a4-86a3-09cd542d7cd4
    ```
 
-4. **（人の承認後）DNS を CNAME で張る。**
+4. ✅ **（人の承認後）DNS を CNAME で張る。**（2026-11-03 実施）
 
    ```bash
-   cloudflared tunnel route dns mirai-sf-prod sf-prod.mirai-dx-platform.com
-   dig +short sf-prod.mirai-dx-platform.com            # → <id>.cfargotunnel.com
+   # 注意: `cloudflared tunnel route dns <name>` は ~/.cloudflared/config.yml の tunnel を
+   # 既定として解決するため、別トンネルに向くことがある（実際に一度 onegate へ向いた）。
+   # 必ずトンネル ID を明示し、--overwrite-dns を使う。
+   cloudflared tunnel route dns --overwrite-dns 1007198e-1214-47a4-86a3-09cd542d7cd4 sf-prod.mirai-dx-platform.com
+   dig +short sf-prod.mirai-dx-platform.com            # → Cloudflare の anycast IP
    ```
+
+   確認: `curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' https://sf-prod.mirai-dx-platform.com/`
+   → `302 https://winter-lake-f4c9.cloudflareaccess.com/cdn-cgi/access/login/sf-prod.mirai-dx-platform.com…`
+   （`kid` / `aud` が Access アプリの AUD `7f7129ce…` と一致すること）。
 
 5. 公開後、受入チェックリスト（§4）を再実行する。API では Access JWT を持てないため、**5（受付→承認→注文書）と 6（自己承認 ERR-105）はブラウザで人が実施**する。
 6. 切り戻し: DNS レコードを消し、`systemctl --user stop mirai-sf-prod-tunnel`（アプリ自体は止めない。止めるなら `stop mirai-sf-prod-api` も）。
@@ -205,9 +211,10 @@ cat ~/.local/state/mirai-sf-prod/healthcheck.json                          # ok=
 
 ### 8.1 公開記録
 
-| 日時 (JST) | 操作             | 承認（Y/N と決定者） | commit    | 結果・実測                                                     |
-| ---------- | ---------------- | -------------------- | --------- | -------------------------------------------------------------- |
-| （未実施） | DNS CNAME 作成   | —                    | 84945ed   | —                                                              |
+| 日時 (JST)    | 操作                       | 承認（Y/N と決定者） | commit   | 結果・実測                                                                                                                                     |
+| ------------- | -------------------------- | -------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-11-03 18:13 | DNS CNAME 作成（公開）     | **Y**（所有者）      | 66ea4a3  | `302` → Access ログイン（aud `7f7129ce…` 一致）。`/`・`/login`・`/api/auth/me`・`/healthz` のすべてで未認証は 302。tunnel 4 コネクション。 |
+| 2026-11-03 18:13 | 誤トンネルへの CNAME を修正 | —                    | 66ea4a3  | 初回 `route dns mirai-sf-prod` が既定 config の `onegate`（a423aa88…・0 コネクション）を指した。24 秒後に `--overwrite-dns` + トンネル ID 明示で本番へ修正。onegate は接続が無く到達不能、Access はホスト名単位で有効のため情報露出なし。 |
 
 ### 8.2 公開前の最終確認（1 行で取る）
 
