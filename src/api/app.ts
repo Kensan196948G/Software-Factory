@@ -6,11 +6,15 @@ import { resolve } from 'node:path';
 import { versionAssets } from './asset-version.js';
 import { config, isAccessJwtEnabled } from './config.js';
 import { ApiError, Errors, applySecurityHeaders, correlationId, sendError } from './http.js';
-import { ZodError } from 'zod';
+import { ZodError, z } from 'zod';
 import { healthCheck } from './db.js';
 import {
   CSRF_COOKIE,
   accessLogin,
+  createUser,
+  getManagedUser,
+  listApprovers,
+  listManagedUsers,
   resolveAccessIdentity,
   checkLoginRate,
   clearSessionCookies,
@@ -19,8 +23,12 @@ import {
   requireAuth,
   resolveSession,
   setSessionCookies,
+  setUserActive,
+  setUserPassword,
+  setUserRoles,
   switchRole,
   verifyCsrf,
+  type AdminActor,
   type AuthContext,
 } from './auth.js';
 import {
@@ -48,7 +56,7 @@ import {
 } from './service.js';
 import { getCatalogTools, listDepartments } from './repo.js';
 import { deliverOutboxMail, deliverPendingMail, enqueueStallReminders, listOutbox, mailSummary } from './mail-outbox.js';
-import { verifyAuditChain } from './audit.js';
+import { verifyAuditChain, appendAudit } from './audit.js';
 import {
   commentSchema,
   draftSchema,
@@ -90,6 +98,53 @@ declare module 'fastify' {
 /** 承認依頼メールの状態（クエリ検証に使う）。 */
 const MAIL_STATES = ['pending', 'sending', 'sent', 'failed'] as const;
 
+/** 未ログインの /api/meta に出す従来の承認者一覧（実在の利用者のメールを公開しないための後方互換）。 */
+const LEGACY_APPROVERS = [
+  { name: '鈴木 一郎', email: 'suzuki@example.com' },
+  { name: '田中 誠司', email: 'tanaka@example.com' },
+  { name: '松本 綾', email: 'matsumoto@example.com' },
+];
+
+const managedRolesSchema = z.array(z.enum(['requester', 'desk', 'approver'])).min(1).max(3);
+
+const adminUserCreateSchema = z.object({
+  email: z.string().trim().email().max(200),
+  displayName: z.string().trim().min(1).max(80),
+  deptCode: z.string().trim().min(1).max(20),
+  password: z.string().min(1).max(200),
+  roles: managedRolesSchema,
+  isAdmin: z.boolean().optional(),
+});
+
+const adminUserPatchSchema = z
+  .object({
+    isActive: z.boolean().optional(),
+    roles: managedRolesSchema.optional(),
+    password: z.string().min(1).max(200).optional(),
+  })
+  .refine((value) => value.isActive !== undefined || value.roles !== undefined || value.password !== undefined, {
+    message: '変更する項目がありません',
+  });
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** 依頼の作成・更新で、承認者をユーザーIDで指定する任意の入力（後方互換のため名前だけでもよい）。 */
+function approverUserIdOf(req: FastifyRequest): string | undefined {
+  const raw = (req.body as { approverUserId?: unknown } | undefined)?.approverUserId;
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  if (typeof raw !== 'string' || !UUID_PATTERN.test(raw)) throw Errors.notAllowedValue('approverUserId');
+  return raw;
+}
+
+function adminActorOf(ctx: AuthContext): AdminActor {
+  return {
+    userId: ctx.user.id,
+    displayName: ctx.user.displayName,
+    role: ctx.user.actingRole,
+    isAdmin: ctx.user.isAdmin,
+  };
+}
+
 export async function buildApp(
   opts: { serveStatic?: boolean; devlineDeps?: DevlineDeps; releaseDeps?: ReleaseDeps } = {},
 ): Promise<FastifyInstance> {
@@ -112,6 +167,24 @@ export async function buildApp(
   });
 
   await app.register(cookie, {});
+
+  // 本番なのに自己承認を明示的に許可している場合は、起動時に一度だけ監査へ警告を残す。
+  if (config.selfApprovalForcedInProduction) {
+    app.addHook('onReady', async () => {
+      await appendAudit({
+        action: 'config.self_approval_enabled',
+        targetType: 'system',
+        targetId: null,
+        result: 'success',
+        actorName: 'system',
+        role: 'system',
+        diff: {
+          warning: 'APP_ENV=production で ALLOW_SELF_APPROVAL=1 を明示している（職務分離が弱まる）',
+          appEnv: config.appEnv,
+        },
+      }).catch(() => undefined);
+    });
+  }
 
   app.addHook('onRequest', async (req, reply) => {
     applySecurityHeaders(reply);
@@ -249,24 +322,36 @@ export async function buildApp(
   });
 
   /* ───────── meta ───────── */
-  app.get('/api/meta', async () => ({
-    appName: 'みらいSF 受付ステーション',
-    version: config.appVersion,
-    commit: config.commitSha,
-    environment: config.appEnv,
-    now: new Date().toISOString(),
-    staleWarnDays: 3,
-    staleDangerDays: 7,
-    allowSelfApproval: config.allowSelfApproval,
-    allowImport: config.allowImport,
-    authMode: config.authMode,
-    githubConfigured: Boolean(config.githubToken),
-    approvers: [
-      { name: '鈴木 一郎', email: 'suzuki@example.com' },
-      { name: '田中 誠司', email: 'tanaka@example.com' },
-      { name: '松本 綾', email: 'matsumoto@example.com' },
-    ],
-  }));
+  // 未ログインには実在の利用者のメールを出さない。ログイン時は承認者マスタを返す。
+  // 本番以外は、見本データの承認者名（従来の固定一覧）も後方互換で残す。
+  app.get('/api/meta', async (req) => {
+    const directory = req.auth ? await listApprovers() : [];
+    const master = directory.map((a) => ({ id: a.id, name: a.displayName, email: a.email }));
+    const approvers = config.isProduction
+      ? master
+      : [...master, ...LEGACY_APPROVERS.filter((legacy) => !master.some((m) => m.name === legacy.name || m.email === legacy.email))];
+    return {
+      appName: 'みらいSF 受付ステーション',
+      version: config.appVersion,
+      commit: config.commitSha,
+      environment: config.appEnv,
+      now: new Date().toISOString(),
+      staleWarnDays: 3,
+      staleDangerDays: 7,
+      allowSelfApproval: config.allowSelfApproval,
+      selfApprovalForcedInProduction: config.selfApprovalForcedInProduction,
+      allowImport: config.allowImport,
+      authMode: config.authMode,
+      githubConfigured: Boolean(config.githubToken),
+      approvers,
+    };
+  });
+
+  /* ───────── 承認者マスタ（有効な approver ロールの利用者） ───────── */
+  app.get('/api/approvers', async (req) => {
+    auth(req);
+    return { items: await listApprovers() };
+  });
 
   /* ───────── home / requests ───────── */
   app.get('/api/home', async (req) => homeFor(actorOf(auth(req).user)));
@@ -291,7 +376,13 @@ export async function buildApp(
     const body = requestInputSchema.parse(req.body);
     const key = req.headers['idempotency-key'];
     void reply.status(201);
-    const detail = await createRequest(body, actorOf(ctx.user), correlationId(req), typeof key === 'string' ? key : undefined);
+    const detail = await createRequest(
+      body,
+      actorOf(ctx.user),
+      correlationId(req),
+      typeof key === 'string' ? key : undefined,
+      approverUserIdOf(req),
+    );
     return { request: detail };
   });
 
@@ -307,7 +398,7 @@ export async function buildApp(
     const body = requestInputSchema.parse(req.body);
     const version = Number((req.body as { version?: number }).version);
     if (!Number.isInteger(version) || version < 1) throw Errors.shape('version');
-    return updateRequest(id, body, actorOf(ctx.user), version, correlationId(req));
+    return updateRequest(id, body, actorOf(ctx.user), version, correlationId(req), approverUserIdOf(req));
   });
 
   app.post('/api/requests/:id/transitions', async (req) => {
@@ -589,6 +680,50 @@ export async function buildApp(
   });
 
   /* ───────── admin（開発・検証用） ───────── */
+  // 利用者管理（職務分離のための複数ユーザー）。管理者だけが操作でき、すべて監査に残す。
+  app.get('/api/admin/users', async (req) => {
+    const ctx = auth(req);
+    if (!ctx.user.isAdmin) throw Errors.noPermission();
+    return { items: await listManagedUsers() };
+  });
+
+  app.post('/api/admin/users', async (req, reply) => {
+    const ctx = mutate(req);
+    if (!ctx.user.isAdmin) throw Errors.noPermission();
+    const body = adminUserCreateSchema.parse(req.body);
+    const user = await createUser(
+      {
+        email: body.email,
+        displayName: body.displayName,
+        deptCode: body.deptCode,
+        password: body.password,
+        roles: body.roles,
+        isAdmin: body.isAdmin,
+      },
+      adminActorOf(ctx),
+      correlationId(req),
+    );
+    void reply.status(201);
+    return { user };
+  });
+
+  app.patch('/api/admin/users/:id', async (req) => {
+    const ctx = mutate(req);
+    if (!ctx.user.isAdmin) throw Errors.noPermission();
+    const userId = (req.params as { id: string }).id;
+    if (!UUID_PATTERN.test(userId)) throw Errors.notFound('利用者');
+    const body = adminUserPatchSchema.parse(req.body);
+    const actor = adminActorOf(ctx);
+    const cid = correlationId(req);
+    // パスワード → ロール → 有効/無効の順。どの操作も個別に監査へ残す。
+    if (body.password !== undefined) await setUserPassword(userId, body.password, actor, cid);
+    if (body.roles !== undefined) await setUserRoles(userId, body.roles, actor, cid);
+    if (body.isActive !== undefined) await setUserActive(userId, body.isActive, actor, cid);
+    const user = await getManagedUser(userId);
+    if (!user) throw Errors.notFound('利用者');
+    return { user };
+  });
+
   app.post('/api/admin/reset-demo', async (req) => {
     const ctx = mutate(req);
     if (!ctx.user.isAdmin || config.isProduction) throw Errors.noPermission();

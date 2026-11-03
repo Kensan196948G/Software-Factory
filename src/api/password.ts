@@ -13,6 +13,24 @@ const R = 8;
 const P = 1;
 const KEYLEN = 64;
 
+/** 管理APIで新しく設定するパスワードの下限。既存のログイン（1文字以上）は変えない。 */
+export const PASSWORD_MIN_LENGTH = 10;
+export const PASSWORD_MAX_LENGTH = 200;
+
+/**
+ * 新しく設定するパスワードの方針を検査する。問題なければ null。
+ * 既存利用者のログインを妨げないよう、ログイン時ではなく作成・変更の API だけで使う。
+ */
+export function passwordPolicyError(password: string, email?: string): string | null {
+  if (password.length < PASSWORD_MIN_LENGTH) return `パスワードは${PASSWORD_MIN_LENGTH}文字以上にしてください`;
+  if (password.length > PASSWORD_MAX_LENGTH) return `パスワードは${PASSWORD_MAX_LENGTH}文字までです`;
+  if (password.trim() === '') return 'パスワードを入れてください';
+  if (email && password.toLowerCase() === email.trim().toLowerCase()) {
+    return 'パスワードにメールアドレスは使えません';
+  }
+  return null;
+}
+
 /** scrypt でパスワードをハッシュ化する（外部依存なし）。 */
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16);
