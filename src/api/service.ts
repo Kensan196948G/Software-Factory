@@ -71,13 +71,43 @@ async function deliverQueuedMail(mailId: string, warnings: { code: string; messa
 }
 
 const runtime = loadConfig();
-/** 承認者欄（表示名）から利用者を引き当てる。見つからなければ null（名前だけで運用）。 */
-async function resolveApproverUserId(client: PoolClient, approver: string): Promise<string | null> {
-  const name = (approver ?? '').trim();
-  if (!name) return null;
+/**
+ * 承認者マスタの解決。ユーザーIDが明示されたらそれを優先し（有効・approver ロールを確認）、
+ * 無ければ承認者欄の値（メール → 表示名）から利用者を引く。見つからなければ null（名前だけで運用）。
+ */
+async function resolveApproverUserId(
+  client: PoolClient,
+  approver: string,
+  explicitUserId?: string | null,
+): Promise<string | null> {
+  const explicit = (explicitUserId ?? '').trim();
+  if (explicit) {
+    const byId = await client.query<{ id: string }>(
+      `select u.id
+         from app_user u
+        where u.id = $1 and u.is_active
+          and exists (select 1 from user_role r where r.user_id = u.id and r.role = 'approver')`,
+      [explicit],
+    );
+    const id = byId.rows[0]?.id;
+    if (!id) throw Errors.notAllowedValue('approverUserId');
+    return id;
+  }
+
+  const value = (approver ?? '').trim();
+  if (!value) return null;
+  // メールは一意。表示名は一意でないため、承認者ロールを持つ人を優先し、作成の古い順で1人に決める。
+  // 名前一致だけの後方互換は残す（利用者表に居ない見本データの承認者名）。
   const { rows } = await client.query<{ id: string }>(
-    'select id from app_user where display_name = $1 and is_active order by created_at limit 1',
-    [name],
+    `select u.id
+       from app_user u
+      where u.is_active
+        and (lower(u.email) = lower($1) or u.display_name = $1)
+      order by (lower(u.email) = lower($1)) desc,
+               (exists (select 1 from user_role r where r.user_id = u.id and r.role = 'approver')) desc,
+               u.created_at
+      limit 1`,
+    [value],
   );
   return rows[0]?.id ?? null;
 }
@@ -336,8 +366,10 @@ export async function createRequest(
   actor: Actor,
   correlationId: string,
   idempotencyKey?: string,
+  approverUserId?: string | null,
 ): Promise<RequestDetail> {
-  const payloadHash = JSON.stringify(input);
+  // 承認者をユーザーIDで指定したときは、同じ操作キーでも内容が違うものとして扱う。
+  const payloadHash = JSON.stringify(approverUserId ? { input, approverUserId } : input);
 
   const result = await withTransaction(async (client) => {
     if (idempotencyKey) {
@@ -389,7 +421,7 @@ export async function createRequest(
       allocated = await allocateId(client);
     }
     const { id, seq, year } = allocated;
-    const approverUserId = await resolveApproverUserId(client, input.approver);
+    const approverUserIdResolved = await resolveApproverUserId(client, input.approver, approverUserId);
     await client.query(
       `insert into request (
         id, seq, year, applicant, applicant_user_id, dept_code, contact, title, kind, tool_id,
@@ -433,7 +465,7 @@ export async function createRequest(
         input.spread ?? null,
         input.wishDate ?? null,
         input.approver,
-        approverUserId,
+        approverUserIdResolved,
         actor.userId,
       ],
     );
@@ -508,6 +540,7 @@ export async function updateRequest(
   actor: Actor,
   version: number,
   correlationId: string,
+  approverUserId?: string | null,
 ): Promise<{ detail: RequestDetail; warnings: { code: string; message: string }[] }> {
   const warnings: { code: string; message: string }[] = [];
   let queuedMailId: string | null = null;
@@ -525,7 +558,7 @@ export async function updateRequest(
     if (!editableByOwner && !editableByStaff) throw Errors.noPermission();
     if (['done', 'hold', 'cancel'].includes(row.status)) throw Errors.noPermission();
 
-    const approverUserId = await resolveApproverUserId(client, input.approver);
+    const resolvedApproverUserId = await resolveApproverUserId(client, input.approver, approverUserId);
     const afterApproval = ['approved', 'dev', 'verify', 'field', 'release_wait'].includes(row.status);
     const nextStatus = afterApproval ? 'wait' : row.status;
     const signal = afterApproval ? null : row.signal_decided;
@@ -572,7 +605,7 @@ export async function updateRequest(
         signal,
         afterApproval ? 1 : 0,
         actor.userId,
-        approverUserId,
+        resolvedApproverUserId,
       ],
     );
     await client.query(
@@ -642,11 +675,36 @@ export async function performTransition(
 ): Promise<{ detail: RequestDetail; warnings: { code: string; message: string }[] }> {
   const warnings: { code: string; message: string }[] = [];
   let queuedMailId: string | null = null;
+  // 拒否も監査に残す。トランザクションを巻き戻すと監査も消えるため、
+  // 監査を書いてから正常に return し、コミット後にエラーを投げる。
+  const denial: { error?: ApiError } = {};
   await withTransaction(async (client) => {
     const row = await getRequestRowForUpdate(client, id);
     if (!row) throw Errors.notFound('依頼');
-    if (row.version !== input.version) throw Errors.conflict();
-    if (row.status === input.to) throw Errors.invalidTransition('いまの状態です');
+    if (row.version !== input.version) {
+      await appendAuditInTx(client, actor, {
+        action: 'request.transition_denied',
+        targetType: 'request',
+        targetId: id,
+        result: 'denied',
+        correlationId,
+        diff: { reason: 'version_conflict', expected: input.version, actual: row.version, to: input.to },
+      });
+      denial.error = Errors.conflict();
+      return;
+    }
+    if (row.status === input.to) {
+      await appendAuditInTx(client, actor, {
+        action: input.to === 'approved' ? 'approval.duplicate_denied' : 'request.transition_denied',
+        targetType: 'request',
+        targetId: id,
+        result: 'denied',
+        correlationId,
+        diff: { reason: 'already_in_state', status: row.status, to: input.to },
+      });
+      denial.error = Errors.invalidTransition('いまの状態です');
+      return;
+    }
 
     const isOwner = row.applicant_user_id === actor.userId;
     const verdict = roleCanTransition(
@@ -661,7 +719,18 @@ export async function performTransition(
       },
       isOwner,
     );
-    if (!verdict.allowed) throw Errors.invalidTransition(verdict.reason ?? 'その状態へは変更できません');
+    if (!verdict.allowed) {
+      await appendAuditInTx(client, actor, {
+        action: 'request.transition_denied',
+        targetType: 'request',
+        targetId: id,
+        result: 'denied',
+        correlationId,
+        diff: { reason: 'not_allowed', from: row.status, to: input.to, why: verdict.reason ?? null },
+      });
+      denial.error = Errors.invalidTransition(verdict.reason ?? 'その状態へは変更できません');
+      return;
+    }
 
     const reason = (input.reason ?? '').trim();
     if (isReasonRequired(row.status, input.to) && reason === '') throw Errors.reasonRequired();
@@ -679,7 +748,37 @@ export async function performTransition(
       const decidedSignal = input.signal;
       if (!decidedSignal) throw Errors.signalIncomplete('信号の色を選んでください');
 
-      if (!runtime.allowSelfApproval && row.applicant_user_id === actor.userId) throw Errors.selfApproval();
+      // 職務分離（ERR-105）: 依頼を作った人と承認する人が同じなら、承認させない。
+      // 開発・テストの既定は許可（従来動作）。APP_ENV=production の既定は拒否。
+      if (row.applicant_user_id === actor.userId) {
+        if (!config.allowSelfApproval) {
+          await appendAuditInTx(client, actor, {
+            action: 'approval.self_denied',
+            targetType: 'request',
+            targetId: id,
+            result: 'denied',
+            correlationId,
+            diff: { reason: 'self_approval', requestId: id, approverUserId: actor.userId },
+          });
+          denial.error = Errors.selfApproval();
+          return;
+        }
+        if (config.selfApprovalForcedInProduction) {
+          // 本番なのに明示的に許可している。自己承認は通すが、警告を監査に残す。
+          await appendAuditInTx(client, actor, {
+            action: 'approval.self_allowed',
+            targetType: 'request',
+            targetId: id,
+            result: 'success',
+            correlationId,
+            diff: {
+              warning: 'APP_ENV=production で ALLOW_SELF_APPROVAL=1 を明示している',
+              requestId: id,
+              approverUserId: actor.userId,
+            },
+          });
+        }
+      }
 
       const checklist = preApprovalChecklist({
         criteria: row.criteria,
@@ -791,6 +890,7 @@ export async function performTransition(
       warnings.push({ code: 'INFO-001', message: '取消にしました。データは残り、一覧の表示切替で確認できます' });
   });
 
+  if (denial.error) throw denial.error;
   if (queuedMailId) await deliverQueuedMail(queuedMailId, warnings);
 
   return { detail: await getDetail(id, actor), warnings };

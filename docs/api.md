@@ -23,8 +23,9 @@
 | —      | `POST /api/auth/logout`                              | ログアウト                                                                                                   | 要ログイン                                          |
 | —      | `GET /api/auth/me`                                   | 現在の利用者と役割                                                                                           | 要ログイン                                          |
 | —      | `POST /api/auth/role`                                | 検証用の役割切替                                                                                             | 要ログイン・付与済み役割のみ                        |
-| —      | `GET /api/meta`                                      | アプリ情報・しきい値・承認者一覧                                                                             | 要ログイン                                          |
-| API-01 | `POST /api/requests`                                 | 依頼の作成（採番・履歴・冪等）                                                                               | 要ログイン                                          |
+| —      | `GET /api/meta`                                      | アプリ情報・しきい値・承認者一覧（ログイン時は利用者表の承認者マスタ。本番以外は見本名も併記、未ログインは実在のメールを出さない） | なし                                                |
+| —      | `GET /api/approvers`                                 | 承認者マスタ（有効な approver ロールの利用者: `id` / `displayName` / `email` / `deptCode`）                  | 要ログイン                                          |
+| API-01 | `POST /api/requests`                                 | 依頼の作成（採番・履歴・冪等）。任意で `approverUserId` を指定でき、無ければ承認者欄の名前・メールから解決   | 要ログイン                                          |
 | API-02 | `GET /api/requests/{id}`                             | 依頼の詳細（履歴・コメント・候補・遷移）                                                                     | 要ログイン                                          |
 | API-02 | `PATCH /api/requests/{id}`                           | 依頼の更新（版番号必須）                                                                                     | 依頼者（受付/差戻しの自分の依頼）・受付担当・承認者 |
 | API-03 | `POST /api/requests/{id}/transitions`                | 状態変更（遷移表・権限・理由）                                                                               | 遷移表のとおり                                      |
@@ -39,6 +40,9 @@
 | —      | `GET /api/catalog/departments` / `tools` / `summary` | カタログ                                                                                                     | 要ログイン                                          |
 | —      | `GET /api/export.json` / `export.csv`                | 全件出力（監査ログに記録）                                                                                   | 要ログイン                                          |
 | —      | `POST /api/import`                                   | JSON取込（全件置換・検証付き）                                                                               | 承認者/管理者・`ALLOW_IMPORT=1`                     |
+| —      | `GET /api/admin/users`                               | 利用者の一覧（無効・ロールを含む。パスワードは返さない）                                                     | 管理者                                              |
+| —      | `POST /api/admin/users`                              | 利用者の作成（`email` `displayName` `deptCode` `password` `roles` `isAdmin`）。パスワードは scrypt            | 管理者                                              |
+| —      | `PATCH /api/admin/users/{id}`                        | ロール付与（`roles`）・パスワード変更（`password`）・無効化/有効化（`isActive`）                             | 管理者                                              |
 | API-08 | `GET /api/audit-logs`                                | 監査ログ（ハッシュ連鎖の検証結果つき）                                                                       | 管理者                                              |
 | —      | `GET /api/audit-logs.csv`                            | 監査ログのCSV（最大5000件・BOM付き）                                                                         | 管理者                                              |
 | —      | `GET /api/ops` / `PUT /api/ops`                      | 運用・DevOps・SecOps の画面状態（id=1 の単一ドキュメント）。PUT は `version` 必須で、古い版は409             | GET: 要ログイン / PUT: 受付担当・承認者・管理者     |
@@ -60,6 +64,11 @@
 
 拒否時は 409 `ERR-201`（理由と「できる人」を含む）。不正な遷移も監査ログに残す。
 
+承認（`to=approved`）で、依頼の作成者（`request.applicant_user_id`）と承認した人が同じときは 403 `ERR-105`。
+`APP_ENV=production` では `ALLOW_SELF_APPROVAL` の既定が 0（拒否）で、開発・テスト・staging の既定は 1（従来動作）。
+本番で明示 1 にした場合は許可するが、起動時と自己承認のたびに監査へ警告（`config.self_approval_enabled` / `approval.self_allowed`）を残す。
+拒否は `approval.self_denied`、二重承認は `approval.duplicate_denied` / `request.transition_denied` として監査に残す。
+
 ## 4. 注文書YAML
 
 `GET /api/requests/{id}/order` は `text` としてYAMLを返す（`yaml` フィールド）。
@@ -73,14 +82,23 @@
 - 送る: コミット後に best-effort。送信前に `status='sending'` へ原子的に移す（claim）ので二重送信しない。
   失敗しても遷移は成功し、`status='failed'` と `last_error` が残る（応答の `warnings` に `INFO-002`）。
   `POST /api/mail/outbox/{id}/retry` は**手動再送**（バックオフを待たない）。自動再送は `next_attempt_at` と `MAIL_RETRY_MAX`/`MAIL_RETRY_BASE_MINUTES`（指数バックオフ）で、日次ジョブと `flush` が期日を過ぎた行を拾う。10分以上 `sending` のままの行も拾い直す。
-- 宛先: ①承認者のメール（`request.approver_user_id`。現状の作成APIは設定しない）→ ②`request.approver` がメール形式ならそれ →
-  ③同じ表示名の利用者のメール → ④`MAIL_APPROVAL_TO`。どれも無ければ積まない。
+- 宛先: ①承認者のメール（`request.approver_user_id`。作成・更新の `approverUserId`、または承認者欄の名前・メールから利用者表で解決）→
+  ②`request.approver` がメール形式ならそれ → ③同じ表示名の利用者のメール → ④`MAIL_APPROVAL_TO`。どれも無ければ積まない。
 - 送信経路（`MAIL_MODE`）: `off`（送らない・本番の既定）/ `file`（`.mail/outbox` へ `.eml` を書き出す・開発とテストの既定）/ `sendmail`（ローカルMTAへ `sendmail -t -i`）/ `smtp`（`SMTP_HOST` `SMTP_PORT` `SMTP_SECURE` `SMTP_REQUIRE_TLS` `SMTP_USER` `SMTP_PASS`。認証情報は local.json（0600）か環境変数だけに置く）。
 - 滞留通知: `kind='reminder'`。`status in ('wait','release_wait')` で `updated_at` が N 日以上前の依頼へ、1日1回だけ積む（`(request_id, kind, reminder_date)` の unique）。
 - Secrets は持たない（SMTP のホスト・認証は未実装。`docs/limitations.md` L-04）。
 - 監査: `mail.enqueue` / `mail.sent` / `mail.failed` を監査ログに残す（送信結果の更新と同じトランザクション）。
 
-## 6. 例
+## 6. 職務分離（複数ユーザー・承認者マスタ）
+
+- 利用者は管理API（`/api/admin/users`）で作る。パスワードは scrypt（`src/api/password.ts`）で、10文字以上200文字以下・メールアドレスと同じものは不可。作成・ロール付与・パスワード変更・無効化は監査ログに actor と結果（success / denied）を残す。パスワードの値・ハッシュは監査に残さない。
+- ロールはサーバの3役（`requester` / `desk` / `approver`）。画面の運用・セキュリティ・管理・監査は従来どおり `approver` に割り当てる。
+- 無効化するとログインできず、その利用者のセッションも失効する。最後の管理者と自分自身は無効化できない。
+- 承認者マスタは `app_user` の `approver` ロール（有効な人）から解決する。`GET /api/approvers` が一覧、依頼の `approverUserId` はユーザーIDを優先する。名前一致は後方互換で許容（見本データなど）。
+- 自己承認（依頼の作成者と承認者が同じユーザーID）は本番の既定で拒否（`ERR-105`）。開発の既定は従来どおり許可する。
+- 二重承認は拒否する。同じ版の再送は 409 `ERR-301`、最新版で「もう承認済み」は 409 `ERR-201`。
+
+## 7. 例
 
 ```bash
 curl -c c.txt -X POST http://127.0.0.1:8781/api/auth/login \

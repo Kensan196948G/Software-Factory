@@ -24,8 +24,16 @@ export interface AppConfig {
   seedAdminPassword: string;
   cookieSecure: boolean;
   sessionTtlHours: number;
-  /** 個人利用MVPの検証用。本番では false（ERR-105 自分で自分を承認しない）。 */
+  /**
+   * 自己承認を許可するか（ERR-105 自分で自分を承認しない）。
+   * 開発・テストの既定は true（従来動作）。APP_ENV=production の既定は false。
+   */
   allowSelfApproval: boolean;
+  /**
+   * APP_ENV=production なのに ALLOW_SELF_APPROVAL=1 を明示したか。
+   * true のときは自己承認を許可したまま、起動時と自己承認のたびに監査へ警告を残す。
+   */
+  selfApprovalForcedInProduction: boolean;
   /** JSON 取込（全件置換）を許可するか。 */
   allowImport: boolean;
   /** password: アプリのログイン画面 / access: Cloudflare Access のヘッダを信頼 */
@@ -114,10 +122,19 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
 
   const sessionSecret = pick(file, 'SESSION_SECRET') ?? randomBytes(32).toString('base64url');
   const originSharedSecret = pick(file, 'ORIGIN_SHARED_SECRET') ?? '';
+  const appEnv = appEnvOf(pick(file, 'APP_ENV'), nodeEnv);
+
+  // 自己承認の既定は環境で決める。本番だけ既定で禁止し、明示の 1 は警告つきで許可する。
+  const rawSelfApproval = pick(file, 'ALLOW_SELF_APPROVAL')?.trim();
+  const explicitSelfApproval = rawSelfApproval === undefined || rawSelfApproval === '' ? undefined : rawSelfApproval;
+  const allowSelfApprovalDefault = appEnv !== 'production';
+  const allowSelfApproval =
+    explicitSelfApproval === undefined ? allowSelfApprovalDefault : explicitSelfApproval === '1';
+  const selfApprovalForcedInProduction = appEnv === 'production' && explicitSelfApproval === '1';
 
   return {
     nodeEnv,
-    appEnv: appEnvOf(pick(file, 'APP_ENV'), nodeEnv),
+    appEnv,
     isProduction,
     port: Number(pick(file, 'PORT') ?? 8781),
     host: pick(file, 'HOST') ?? '127.0.0.1',
@@ -135,7 +152,8 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
     seedAdminPassword: pick(file, 'SEED_ADMIN_PASSWORD') ?? '',
     cookieSecure: (pick(file, 'COOKIE_SECURE') ?? (isProduction ? '1' : '0')) === '1',
     sessionTtlHours: Number(pick(file, 'SESSION_TTL_HOURS') ?? 12),
-    allowSelfApproval: (pick(file, 'ALLOW_SELF_APPROVAL') ?? '1') === '1',
+    allowSelfApproval,
+    selfApprovalForcedInProduction,
     allowImport: (pick(file, 'ALLOW_IMPORT') ?? '1') === '1',
     authMode: (pick(file, 'AUTH_MODE') ?? 'password') === 'access' ? 'access' : 'password',
     accessAllowedEmails: (pick(file, 'ACCESS_ALLOWED_EMAILS') ?? '')
