@@ -29,7 +29,11 @@ createdb -O "$USER" mirai_sf_prod
 DATABASE_URL='postgresql:///mirai_sf_prod?host=/var/run/postgresql' \
 MIGRATION_DATABASE_URL='postgresql:///mirai_sf_prod?host=/var/run/postgresql' \
   pnpm exec tsx scripts/db.ts migrate
-# seed は本番では実行しない（見本データを入れない）。管理者ユーザーだけを登録する。
+# 見本データ（`seed`）は本番では実行しない。ただしマスタは必須（依頼の dept_code が
+# department への FK のため、空だと受付できない）。マスタと管理者だけを登録する:
+MIRAI_SF_ENV_FILE=~/.config/mirai-sf/prod.conf node scripts/ops/with-env.mjs pnpm exec tsx scripts/db.ts seed:master
+MIRAI_SF_ENV_FILE=~/.config/mirai-sf/prod.conf node scripts/ops/with-env.mjs pnpm exec tsx scripts/db.ts seed:admin
+MIRAI_SF_ENV_FILE=~/.config/mirai-sf/prod.conf node scripts/ops/with-env.mjs pnpm exec tsx scripts/db.ts verify
 
 # 2. 設定（0600。値をシェルの履歴・ログへ出さない）
 install -m 600 /dev/null ~/.config/mirai-sf/prod.conf
