@@ -28,6 +28,60 @@
     return;
   }
 
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const approverState = (() => {
+    if (!Array.isArray(boot.approvers)) {
+      return {
+        available: false,
+        reason: '承認者一覧を取得できないため、承認者を選択できません。',
+        items: [],
+      };
+    }
+    const seen = new Set();
+    const items = [];
+    for (const entry of boot.approvers) {
+      if (
+        !entry ||
+        typeof entry !== 'object' ||
+        typeof entry.id !== 'string' ||
+        !UUID_RE.test(entry.id) ||
+        typeof entry.displayName !== 'string' ||
+        !entry.displayName.trim()
+      ) {
+        return {
+          available: false,
+          reason: '承認者一覧に無効な項目があるため、承認者を選択できません。',
+          items: [],
+        };
+      }
+      if (seen.has(entry.id)) continue;
+      seen.add(entry.id);
+      items.push({
+        id: entry.id,
+        displayName: entry.displayName.trim(),
+        email: typeof entry.email === 'string' ? entry.email : '',
+        deptCode: typeof entry.deptCode === 'string' ? entry.deptCode : '',
+      });
+    }
+    return { available: true, reason: '', items };
+  })();
+  const approvers = approverState.items;
+  const approverById = new Map(approvers.map((a) => [a.id, a]));
+  const user =
+    boot.user &&
+    typeof boot.user === 'object' &&
+    !Array.isArray(boot.user) &&
+    typeof boot.user.id === 'string' &&
+    UUID_RE.test(boot.user.id) &&
+    typeof boot.user.displayName === 'string' &&
+    boot.user.displayName.trim()
+      ? boot.user
+      : null;
+  if (!user) {
+    window.__MSF__ = null;
+    return; // The boot marker keeps the console fail-closed, not in standalone sample mode.
+  }
+
   const KIND_LABEL = {
     new_tool: '新しい道具がほしい',
     improve_tool: 'いまある道具を良くしたい',
@@ -73,6 +127,7 @@
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       applicant: r.applicant,
+      applicantUserId: r.applicantUserId || null,
       dept: r.deptCode,
       contact: r.contact || '',
       title: r.title,
@@ -99,6 +154,7 @@
       wish: r.wishDate || '',
       attachments: [],
       approver: r.approver,
+      approverUserId: r.approverUserId || null,
       status: r.status,
       signalFinal: r.signalDecided || '',
       history: (r.history || []).map((h) => ({
@@ -118,7 +174,8 @@
 
   /** コンソールの依頼 → サーバの依頼 */
   function toServer(it) {
-    return {
+    const activeApprover = approverState.available && it.approverUserId ? approverById.get(it.approverUserId) : null;
+    const server = {
       title: String(it.title || '').trim(),
       kind: KIND_CODE[it.kind] || 'new_tool',
       deptCode: it.dept,
@@ -144,9 +201,20 @@
       dataReady: num(it.dataReady),
       spread: num(it.spread),
       wishDate: it.wish || null,
-      approver: String(it.approver || '').trim(),
+      approver: activeApprover ? activeApprover.displayName : String(it.approver || '').trim(),
       clientId: it.id && /^REQ-\d{4}-\d{4}$/.test(it.id) ? it.id : undefined,
     };
+    if (it.approverUserId) server.approverUserId = it.approverUserId;
+    return server;
+  }
+
+  function requireSelectedApprover(it) {
+    if (!approverState.available || !it.approverUserId || !approverById.has(it.approverUserId)) {
+      const error = new Error('有効な承認者を利用者IDで選び直してください。名前だけでは保存できません');
+      error.code = 'ERR-004';
+      error.status = 400;
+      throw error;
+    }
   }
 
   function contentSignature(it) {
@@ -346,6 +414,7 @@
     if (!s) {
       await step('create', async () => {
         // 応答が不明なまま入力が直されたときは、前回と同じ本文で照合してから PATCH で直す
+        requireSelectedApprover(it.__postAs || it);
         const body = toServer(it.__postAs || it);
         const res = await api('POST', '/api/requests', body, it.__idem ? { 'idempotency-key': it.__idem } : undefined);
         s = setBase(res.request);
@@ -365,6 +434,7 @@
     let warning = '';
     if (contentSignature(it) !== contentSignature(toConsole(s))) {
       await step('content', async () => {
+        requireSelectedApprover(it);
         const res = await api('PATCH', path(s.id), { ...toServer(it), version: s.version });
         s = setBase(res.detail);
         const w = (res.warnings || []).find((x) => x.code === 'ERR-202');
@@ -799,7 +869,9 @@
     switchRole,
     saveDraft,
     clearDraft,
-    user: boot.user,
+    approvers,
+    approverState,
+    user,
     api,
     handoff,
     readJobs,

@@ -779,6 +779,8 @@ export async function buildApp(
       items: data.items,
       drafts: data.drafts,
       ops: data.ops,
+      // Authenticated boot only; never fall back to the prototype's sample approvers.
+      approvers: await listApprovers(),
     });
     if (!html) {
       void reply.status(503).type('text/plain').send('画面がビルドされていません（pnpm build）');

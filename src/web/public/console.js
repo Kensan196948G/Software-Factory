@@ -482,6 +482,27 @@ const SF = (function () {
     return t ? { dept: dep, name: t[0], desc: t[1], c: t[2] } : null;
   }
   const roleOf = (k) => ROLES.find((r) => r.k === k) || ROLES[0];
+  const connectedUser = () => {
+    const msf = window.__MSF__;
+    return msf && msf.user && typeof msf.user.id === 'string' ? msf.user : null;
+  };
+  const whoName = (who) =>
+    who && typeof who === 'object' ? String(who.displayName || who.name || '') : String(who || '');
+  const whoId = (who) => {
+    if (who && typeof who === 'object') return who.id || who.userId || null;
+    const user = connectedUser();
+    return user ? user.id : null;
+  };
+  function isOwner(r, who) {
+    const uid = whoId(who);
+    if (uid) return Boolean(r && r.applicantUserId && r.applicantUserId === uid);
+    const name = whoName(who);
+    return Boolean(name && r && r.applicant === name);
+  }
+  function approverMismatch(r, who) {
+    if (!r || !r.approverUserId) return false;
+    return whoId(who) !== r.approverUserId;
+  }
 
   /* ---- 信号の色の判定（候補） ---- */
   function judge(r) {
@@ -581,19 +602,27 @@ const SF = (function () {
       return (from === 'back' && to === 'received') || (['received', 'back'].includes(from) && to === 'hold');
     return false;
   }
-  function canEdit(role, r, name) {
+  function canEdit(role, r, who) {
     if (!['requester', 'desk', 'approver'].includes(role)) return false;
     if (r.status === 'cancel') return false;
     return role !== 'requester'
       ? !['done'].includes(r.status)
-      : ['received', 'back'].includes(r.status) && (!name || r.applicant === name);
+      : ['received', 'back'].includes(r.status) &&
+          ((!window.__MSF__ && !whoName(who)) || isOwner(r, who));
   }
-  /* 依頼者は「自分の依頼」だけを動かせる */
-  function canMoveR(role, r, to, name) {
-    return canMove(role, r.status, to) && (role !== 'requester' || r.applicant === name);
+  /* 依頼者は「自分の依頼」だけを動かせる。承認待ちの承認は、指定された承認者だけ。 */
+  function canMoveR(role, r, to, who) {
+    const targeted = role === 'approver' && r.status === 'wait' && ['approved', 'done'].includes(to);
+    return (
+      canMove(role, r.status, to) &&
+      (role !== 'requester' || isOwner(r, who)) &&
+      !(targeted && approverMismatch(r, who))
+    );
   }
-  function whyNotR(role, r, to, name) {
-    return role === 'requester' && r.applicant !== name && canMove(role, r.status, to)
+  function whyNotR(role, r, to, who) {
+    if (role === 'approver' && r.status === 'wait' && ['approved', 'done'].includes(to) && approverMismatch(r, who))
+      return 'この依頼の承認者ではありません（承認者：' + (r.approver || '未設定') + '）';
+    return role === 'requester' && !isOwner(r, who) && canMove(role, r.status, to)
       ? 'ほかの人の依頼は動かせません（起票者：' + r.applicant + '）'
       : whyNot(role, r.status, to);
   }
@@ -641,11 +670,15 @@ const SF = (function () {
     },
     approver: { wait: '信号の色を決めて、承認か差戻しを決める', release_wait: 'リリース判定（公開承認）をする' },
   };
-  function turnOf(role, r, name) {
+  function turnOf(role, r, who) {
     const a = (TURN[role] || {})[r.status];
     if (!a) return '';
-    if (role === 'requester' && r.applicant !== name) return '';
-    if (role === 'approver' && r.approver && r.approver !== name) return '';
+    if (role === 'requester' && !isOwner(r, who)) return '';
+    if (role === 'approver') {
+      if (window.__MSF__) {
+        if (r.status === 'wait' && r.approverUserId && approverMismatch(r, who)) return '';
+      } else if (r.approver && r.approver !== whoName(who)) return '';
+    }
     return a;
   }
   /* ---- 滞留日数（いまの状態になってから） ---- */
@@ -934,12 +967,14 @@ const SF = (function () {
 
   function blank(role) {
     const ro = roleOf(role);
+    const user = connectedUser();
     return {
       id: '',
       createdAt: '',
       updatedAt: '',
-      applicant: ro.name,
-      dept: ro.dept,
+      applicant: window.__MSF__ ? String((user && user.displayName) || '') : ro.name,
+      applicantUserId: window.__MSF__ && user ? user.id : null,
+      dept: window.__MSF__ ? String((user && user.deptCode) || '') : ro.dept,
       contact: '',
       title: '',
       kind: KINDS[0],
@@ -964,7 +999,8 @@ const SF = (function () {
       spread: '',
       wish: '',
       attachments: [],
-      approver: '鈴木 一郎',
+      approver: window.__MSF__ || document.getElementById('msf-boot') ? '' : '鈴木 一郎',
+      approverUserId: null,
       status: 'received',
       signalFinal: '',
       history: [],
@@ -2310,6 +2346,7 @@ const SF = (function () {
     blank,
     seed,
     canMoveR,
+    isOwner,
     whyNotR,
     roleShort,
     whoCan,
@@ -2383,7 +2420,54 @@ const SF = (function () {
     conflict: null,
     draftLk: null,
   };
-  const me = () => SF.roleOf(S.role);
+  const MSF_CONNECTED = Boolean(window.__MSF__ || document.getElementById('msf-boot'));
+  const BOOT_USER =
+    window.__MSF__ && window.__MSF__.user && typeof window.__MSF__.user === 'object' && !Array.isArray(window.__MSF__.user)
+      ? window.__MSF__.user
+      : null;
+  const APPROVER_STATE = (() => {
+    if (!MSF_CONNECTED) return { available: false, reason: '', items: [] };
+    if (!window.__MSF__) return { available: false, reason: 'サーバ接続用の画面処理を読み込めませんでした。再読み込みしてください。', items: [] };
+    const state = window.__MSF__.approverState;
+    if (state && state.available === true && Array.isArray(state.items))
+      return { available: true, reason: '', items: state.items };
+    if (state && state.available === false)
+      return { available: false, reason: String(state.reason || '承認者一覧を取得できませんでした。'), items: [] };
+    const items = window.__MSF__.approvers;
+    if (Array.isArray(items)) return { available: true, reason: '', items };
+    return { available: false, reason: '承認者一覧を取得できませんでした。', items: [] };
+  })();
+  const APPROVER_BY_ID = new Map(APPROVER_STATE.items.map((a) => [a.id, a]));
+  function approverLabel(a) {
+    const dept = a.deptCode ? SF.deptOf(a.deptCode) : null;
+    const detail = [a.email, dept ? dept.short : a.deptCode].filter(Boolean).join(' / ');
+    return String(a.displayName || '') + (detail ? '（' + detail + '）' : '');
+  }
+  function approverError(d) {
+    if (!MSF_CONNECTED) return d.approver ? '' : '承認者を選んでください';
+    if (!APPROVER_STATE.available) return APPROVER_STATE.reason || '承認者一覧を取得できませんでした。画面を再読み込みしてください';
+    if (!APPROVER_STATE.items.length) return '有効な承認者が登録されていません。管理者に確認してください';
+    const id = String(d.approverUserId || '');
+    if (!id)
+      return d.approver
+        ? '承認者を選び直してください（利用者IDが未設定のため、名前だけでは決定できません）'
+        : '承認者を選んでください';
+    if (!APPROVER_BY_ID.has(id)) return '選ばれている承認者は現在利用できません。承認者を選び直してください';
+    return '';
+  }
+  const me = () => {
+    const ro = SF.roleOf(S.role);
+    if (!MSF_CONNECTED || !BOOT_USER) return ro;
+    return Object.assign({}, ro, {
+      name: String(BOOT_USER.displayName || ro.name),
+      dept: String(BOOT_USER.deptCode || ro.dept),
+      userId: BOOT_USER.id,
+      email: BOOT_USER.email || '',
+      roles: Array.isArray(BOOT_USER.roles) ? BOOT_USER.roles : [],
+      isAdmin: Boolean(BOOT_USER.isAdmin),
+      actingRole: BOOT_USER.actingRole || S.role,
+    });
+  };
   const find = (id) => S.data.items.find((x) => x.id === id);
   const colorOf = (r) => r.signalFinal || SF.judge(r).c;
   function persist(opts) {
@@ -2727,7 +2811,16 @@ const SF = (function () {
   };
 
   /* ---- shell ---- */
-  $('#role').innerHTML = SF.ROLES.map((r) => '<option value="' + r.k + '">' + E(r.name) + '（' + E(r.l) + '）</option>').join('');
+  $('#role').innerHTML = SF.ROLES.map(
+    (r) =>
+      '<option value="' +
+      r.k +
+      '">' +
+      E(MSF_CONNECTED ? (BOOT_USER ? BOOT_USER.displayName : '利用者情報を取得できません') : r.name) +
+      '（' +
+      E(r.l) +
+      '）</option>',
+  ).join('');
   // 読み込み直しても、表示と実際の役割をそろえる（そろえないと先頭の依頼者と出る）
   $('#role').value = S.role;
   $('#role').addEventListener('change', (e) => {
@@ -2829,7 +2922,7 @@ const SF = (function () {
     const active = (r) => !SF.ENDED.includes(r.status);
     const second =
       S.role === 'requester'
-        ? it.filter((r) => r.applicant === me().name && !SF.turnOf(S.role, r, me().name))
+        ? it.filter((r) => SF.isOwner(r, me()) && !SF.turnOf(S.role, r, me().name))
         : it
             .filter((r) => active(r) && SF.stayDays(r) >= SF.STAY_WARN && !SF.turnOf(S.role, r, me().name))
             .sort((x, y) => SF.stayDays(y) - SF.stayDays(x));
@@ -3377,7 +3470,10 @@ const SF = (function () {
     if (i === 3 && !d.scope.trim()) e.push('作るものを1つ以上書いてください');
     if (i === 4 && !d.criteria.filter((x) => x.trim()).length) e.push('合格の条件を1つ以上書いてください');
     if (i === 5 && !d.decides) e.push('「この道具は何をしますか」を選んでください');
-    if (i === 6 && !d.approver) e.push('承認者を選んでください');
+    if (i === 6) {
+      const ae = approverError(d);
+      if (ae) e.push(ae);
+    }
     return e;
   }
   const chipsM = (field, opts) =>
@@ -3442,6 +3538,85 @@ const SF = (function () {
     '>';
   const ta = (field, ph) =>
     '<textarea data-bind="' + field + '" placeholder="' + E(ph || '') + '">' + E(S.draft[field]) + '</textarea>';
+  function approverSelect(d) {
+    if (!MSF_CONNECTED) {
+      return (
+        '<select data-bind="approver">' +
+        ['鈴木 一郎', '田中 誠司', '松本 綾']
+          .map((a) => '<option' + (d.approver === a ? ' selected' : '') + '>' + a + '</option>')
+          .join('') +
+        '</select>'
+      );
+    }
+    const id = String(d.approverUserId || '');
+    const known = id ? APPROVER_BY_ID.get(id) : null;
+    let options =
+      '<option value=""' +
+      (!id ? ' selected' : '') +
+      '>' +
+      E(!id && d.approver ? '承認者を選択してください（現在: ' + d.approver + '／利用者IDが未設定）' : '承認者を選択してください') +
+      '</option>';
+    if (!APPROVER_STATE.available) {
+      options = '<option value="" selected>承認者一覧を取得できません</option>';
+    } else if (!APPROVER_STATE.items.length) {
+      options = '<option value="" selected>有効な承認者がいません</option>';
+    } else {
+      if (id && !known)
+        options =
+          '<option value="' +
+          E(id) +
+          '" selected disabled>現在の承認者: ' +
+          E(d.approver || '（不明）') +
+          '（現在は選択できません）</option>' +
+          options;
+      options += APPROVER_STATE.items
+        .map(
+          (a) =>
+            '<option value="' +
+            E(a.id) +
+            '"' +
+            (id === a.id ? ' selected' : '') +
+            '>' +
+            E(approverLabel(a)) +
+            '</option>',
+        )
+        .join('');
+    }
+    return (
+      '<select data-bind="approverUserId"' +
+      (!APPROVER_STATE.available || !APPROVER_STATE.items.length ? ' disabled' : '') +
+      '>' +
+      options +
+      '</select>'
+    );
+  }
+  function approverHint() {
+    if (!MSF_CONNECTED) return '信号の色の最終決定と承認を行う人';
+    if (!APPROVER_STATE.available)
+      return (
+        '<span style="color:var(--r);font-weight:600" role="alert">' +
+        E(APPROVER_STATE.reason || '承認者一覧を取得できませんでした。') +
+        ' この依頼は受け付けられません。</span>'
+      );
+    if (!APPROVER_STATE.items.length)
+      return '<span style="color:var(--r);font-weight:600" role="alert">有効な承認者が登録されていません。管理者に確認してください。この依頼は受け付けられません。</span>';
+    const d = S.draft;
+    if (d.approverUserId && !APPROVER_BY_ID.has(String(d.approverUserId)))
+      return '<span style="color:var(--r);font-weight:600" role="alert">前に選んだ承認者は現在利用できません。承認者を選び直してください。</span>';
+    if (!d.approverUserId && d.approver)
+      return (
+        '<span style="color:var(--r);font-weight:600" role="alert">これまでの承認者名（' +
+        E(d.approver) +
+        '）だけでは利用者IDを決められません。承認者を選び直してください。</span>'
+      );
+    return '信号の色の最終決定と承認を行う人';
+  }
+  function approverDisplay(r) {
+    if (!MSF_CONNECTED) return r.approver || '';
+    if (!r.approverUserId) return r.approver ? r.approver + '（利用者ID未設定）' : '';
+    const a = APPROVER_BY_ID.get(String(r.approverUserId));
+    return a ? approverLabel(a) : (r.approver || '（不明）') + '（現在利用できません）';
+  }
   function stepHTML(i) {
     const d = S.draft;
     if (i === 0) {
@@ -3634,16 +3809,7 @@ const SF = (function () {
         fld('元になるデータ', 0, chipsO('dataReady', SF.READY)) +
         fld('ほかに広げられそう？', 0, chipsO('spread', SF.SPREAD)) +
         '<div class="grid2">' +
-        fld(
-          '承認者（業務責任者）',
-          1,
-          '<select data-bind="approver">' +
-            ['鈴木 一郎', '田中 誠司', '松本 綾']
-              .map((a) => '<option' + (d.approver === a ? ' selected' : '') + '>' + a + '</option>')
-              .join('') +
-            '</select>',
-          '信号の色の最終決定と承認を行う人',
-        ) +
+        fld('承認者（業務責任者）', 1, approverSelect(d), approverHint()) +
         fld('希望時期', 0, inp('wish', '', 'date'), '目安。着手順は別途決めます') +
         '</div>' +
         fld(
@@ -3748,13 +3914,22 @@ const SF = (function () {
           )
           .join('<br>')
       : 'なし';
+  function bindDraftValue(d, key, value) {
+    if (key === 'approverUserId') {
+      const a = APPROVER_BY_ID.get(value);
+      d.approverUserId = a ? a.id : null;
+      d.approver = a ? a.displayName : '';
+    } else {
+      d[key] = value;
+    }
+  }
   function bindStep() {
     const body = $('#stepBody'),
       d = S.draft;
     body.addEventListener('input', (e) => {
       const b = e.target.dataset.bind;
       if (b !== undefined) {
-        d[b] = e.target.value;
+        bindDraftValue(d, b, e.target.value);
         updPreview();
       }
       const c = e.target.dataset.crit;
@@ -3773,7 +3948,7 @@ const SF = (function () {
     body.addEventListener('change', (e) => {
       const b = e.target.dataset.bind;
       if (b !== undefined) {
-        d[b] = e.target.value;
+        bindDraftValue(d, b, e.target.value);
         updPreview();
       }
     });
@@ -4037,8 +4212,8 @@ const SF = (function () {
   function conflictDiffs(latest, d) {
     return CONFLICT_FIELDS.map(([key, label]) => ({
       label,
-      theirs: conflictValue(key, latest[key]),
-      mine: conflictValue(key, d[key]),
+      theirs: key === 'approver' ? approverDisplay(latest) : conflictValue(key, latest[key]),
+      mine: key === 'approver' ? approverDisplay(d) : conflictValue(key, d[key]),
     })).filter((x) => x.theirs !== x.mine);
   }
   function openConflict(d) {
@@ -5002,7 +5177,7 @@ const SF = (function () {
         (r.minutes ? E(r.minutes) + '分' : '－') +
         '）</dd>' +
         '<dt>承認者</dt><dd>' +
-        E(r.approver) +
+        E(approverDisplay(r)) +
         '</dd><dt>希望時期</dt><dd>' +
         E(r.wish || '－') +
         '</dd>' +

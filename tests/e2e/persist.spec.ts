@@ -128,6 +128,8 @@ async function fillWizard(page: Page, title: string): Promise<void> {
   await nextStep(page);
   await clickText(page, '青記録・整理・検索・お知らせ', false);
   await nextStep(page);
+  const me = await callApi<{ user: { id: string } }>(page, 'GET', '/api/auth/me');
+  await page.selectOption('select[data-bind="approverUserId"]', me.user.id);
   await expect(page.locator('#submit')).toBeVisible();
 }
 
@@ -226,6 +228,13 @@ async function openEditAtLastStep(page: Page, title: string): Promise<void> {
 
 async function gotoLastStep(page: Page): Promise<void> {
   await page.locator('.stp').last().click();
+  // A concurrent legacy/name-only PATCH can clear the server binding. Re-select explicitly
+  // before sending edited content, rather than relying on the removed sample default.
+  const approver = page.locator('select[data-bind="approverUserId"]');
+  if (!(await approver.inputValue())) {
+    const me = await callApi<{ user: { id: string } }>(page, 'GET', '/api/auth/me');
+    await approver.selectOption(me.user.id);
+  }
   await expect(page.locator('#submit')).toBeVisible();
 }
 
@@ -399,6 +408,8 @@ async function completeOriginDraft(page: Page, title: string): Promise<void> {
   await nextStep(page);
   await clickText(page, '青記録・整理・検索・お知らせ', false);
   await nextStep(page);
+  const me = await callApi<{ user: { id: string } }>(page, 'GET', '/api/auth/me');
+  await page.selectOption('select[data-bind="approverUserId"]', me.user.id);
   await expect(page.locator('#submit')).toBeVisible();
 }
 

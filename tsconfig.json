@@ -29,6 +29,7 @@
     "deploy/devline/egress-proxy.d.mts",
     "vite.config.ts",
     "vitest.config.ts",
-    "playwright.config.ts"
+    "playwright.config.ts",
+    "playwright.approver.config.ts"
   ]
 }
