@@ -24,15 +24,23 @@ source_db="$OPS_DB_NAME"
 dir="${MIRAI_SF_BACKUP_DIR:-$HOME/.local/state/mirai-sf/backups}"
 [[ -d "$dir" ]] || die "バックアップの保存先がありません: $dir"
 
-latest=""
-shopt -s nullglob
-for file in "$dir/$source_db"-*.dump; do
-  [[ "$(basename "$file")" =~ ^${source_db}-[0-9]{8}T[0-9]{6}Z\.dump$ ]] && latest="$file"
-done
-shopt -u nullglob
-[[ -n "$latest" ]] || die "バックアップがありません: db=$source_db"
-manifest="${latest%.dump}.manifest.tsv"
-[[ -f "$manifest" ]] || die "manifest がありません: $(basename "$manifest")"
+if [[ -n "${MIRAI_SF_DRILL_DUMP:-}" ]]; then
+  # 明示のファイルで訓練する（オフサイトから取り寄せた dump など）。
+  latest="$MIRAI_SF_DRILL_DUMP"
+  manifest="${MIRAI_SF_DRILL_MANIFEST:-${latest%.dump}.manifest.tsv}"
+  [[ -f "$latest" ]] || die "指定された dump がありません: $latest"
+  [[ -f "$manifest" ]] || die "指定された manifest がありません: $manifest"
+else
+  latest=""
+  shopt -s nullglob
+  for file in "$dir/$source_db"-*.dump; do
+    [[ "$(basename "$file")" =~ ^${source_db}-[0-9]{8}T[0-9]{6}Z\.dump$ ]] && latest="$file"
+  done
+  shopt -u nullglob
+  [[ -n "$latest" ]] || die "バックアップがありません: db=$source_db"
+  manifest="${latest%.dump}.manifest.tsv"
+  [[ -f "$manifest" ]] || die "manifest がありません: $(basename "$manifest")"
+fi
 
 drill_db="mirai_sf_drill_$(date -u +%Y%m%dt%H%M%Sz)_$$"
 [[ "$drill_db" =~ $DRILL_PATTERN && "$drill_db" != "$source_db" ]] || die "drill のDB名が不正です"

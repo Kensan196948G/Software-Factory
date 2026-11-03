@@ -128,7 +128,9 @@ journalctl --user -u mirai-sf-prod-backup -u mirai-sf-prod-restore-drill -n 40 -
 
 - **毎時**: `mirai-sf-prod-backup.timer`（毎時 :05。RPO 1 時間 = ADR §8-6 の決定）が `pg_dump -Fc` + 同一スナップショットの manifest を `~/.local/state/mirai-sf-prod/backups/` へ出す（0700/0600）。
 - 週次: `mirai-sf-prod-restore-drill.timer`（日曜 04:30）が一時DBへ復元して件数と監査ハッシュ連鎖を照合し、必ず消す。
-- **オフサイト（Cloudflare R2、ADR §8-7 の決定）**: `prod.conf` の `MIRAI_SF_OFFSITE_CMD=scripts/ops/offsite-r2.mjs` で、毎時の dump と manifest を非公開バケット `mirai-sf-prod-backups`（APAC）へ送り、置いた実体を読み戻してバイト数の一致を確かめる。送信に失敗すると backup ユニットは **failed（終了コード 4）** になり、ローカルの dump は残る。認証は wrangler のログイン（OAuth）に依存する。R2 の S3 アクセスキーを用意できたら `rclone copyto` へ差し替える（`MIRAI_SF_OFFSITE_CMD` を差し替えるだけ）。
+- **オフサイト（Cloudflare R2、ADR §8-7 の決定）**: `prod.conf` の `MIRAI_SF_OFFSITE_CMD=scripts/ops/offsite-r2.mjs` で、毎時の dump と manifest を非公開バケット `mirai-sf-prod-backups`（APAC）へ送り、置いた実体を読み戻して **サイズと SHA-256 の一致**を確かめる。成功すると dump の隣に送信記録 `<dump>.r2.json`（バケット・キー・ハッシュ、0600）を残す。送信に失敗すると backup ユニットは **failed（終了コード 4）** になり、ローカルの dump は残る。認証は wrangler のログイン（OAuth）に依存する。R2 の S3 アクセスキーを用意できたら `rclone copyto` へ差し替える（`MIRAI_SF_OFFSITE_CMD` を差し替えるだけ）。
+- **オフサイトからの復元訓練**: `pnpm ops:prod:offsite-drill`。最新の送信記録の dump と manifest を **R2 から取り寄せ**、記録した SHA-256 と照合してから、`restore-drill.sh` と同じ手順（一時DBへ復元 → 件数・監査ハッシュ照合 → 一時DB削除）を実行する。「送れた」ではなく「R2 から復元できる」を確かめるための訓練。
+  - 2026-11-03 実測: 取得・SHA-256 一致 → 復元 → 28 テーブル・件数一致・監査連鎖 verify 成功 → 一時DB削除。
 - 保持: DB の監査行は削除しない（追記のみ）。ファイルの世代管理は `MIRAI_SF_BACKUP_RETENTION_DAYS`（既定14日。毎時だと最大 336 世代 = 約 60 MB/年）。
 
 ## 6. ロールバック
