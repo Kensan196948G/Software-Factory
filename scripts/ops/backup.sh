@@ -62,6 +62,18 @@ chmod 600 "$tmp_dump" "$tmp_manifest"
 mv -- "$tmp_manifest" "$manifest"
 mv -- "$tmp_dump" "$dump"
 
+# オフサイト（任意）。MIRAI_SF_OFFSITE_CMD を設定したときだけ、dump と manifest を外部へ送る。
+# 例: MIRAI_SF_OFFSITE_CMD="scripts/ops/offsite-r2.mjs"（Cloudflare R2。docs/production/02-runbook.md §5）
+# 失敗してもローカルのバックアップは有効。ただし黙って成功にしない（終了コード 4 で unit を failed にする）
+offsite=0
+if [[ -n "${MIRAI_SF_OFFSITE_CMD:-}" ]]; then
+  if "${MIRAI_SF_OFFSITE_CMD}" "$dump" "$manifest"; then
+    offsite=1
+  else
+    log "WARN オフサイトの送信に失敗しました（ローカルのバックアップは成功）: $MIRAI_SF_OFFSITE_CMD"
+  fi
+fi
+
 # 世代管理。この手順で作ったファイル名だけを対象にする（手動の dump には触らない）
 removed=0
 while IFS= read -r -d '' old; do
@@ -71,4 +83,7 @@ done < <(find "$dir" -maxdepth 1 -type f -regextype posix-extended \
   -regex ".*/$OPS_DB_NAME-[0-9]{8}T[0-9]{6}Z\.(dump|manifest\.tsv)" \
   -mmin +"$((retention * 1440))" -not -name "$base.*" -print0)
 
-log "backup OK db=$OPS_DB_NAME file=$dump size=$(stat -c %s "$dump") tables=$(grep -vc '^#' "$manifest") removed_old_files=$removed retention_days=$retention"
+log "backup OK db=$OPS_DB_NAME file=$dump size=$(stat -c %s "$dump") tables=$(grep -vc '^#' "$manifest") removed_old_files=$removed retention_days=$retention offsite=$offsite"
+if [[ -n "${MIRAI_SF_OFFSITE_CMD:-}" && "$offsite" == 0 ]]; then
+  exit 4
+fi

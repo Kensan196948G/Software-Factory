@@ -52,6 +52,7 @@ COOKIE_SECURE=1
 TRUST_PROXY=1
 AUTH_MODE=access
 ACCESS_ALLOWED_DOMAIN=mirai-const.co.jp
+ACCESS_ALLOWED_EMAILS=<公開承認者のメール（ドメインで足りない場合）>
 ALLOW_SELF_APPROVAL=0
 ALLOW_IMPORT=0
 MAIL_MODE=off
@@ -59,11 +60,17 @@ SEED_ADMIN_EMAIL=<管理者メール>
 SEED_ADMIN_PASSWORD=<初期パスワード>
 APP_VERSION=0.1.0
 GITHUB_REPO=Kensan196948G/Software-Factory
+# オフサイト（ADR §8-7: Cloudflare R2）。dump と manifest を非公開バケットへ送る
+MIRAI_SF_OFFSITE_CMD=scripts/ops/offsite-r2.mjs
+MIRAI_SF_R2_BUCKET=mirai-sf-prod-backups
+MIRAI_SF_R2_PREFIX=mirai_sf_prod
 ```
 
+- 本番の決定は `docs/production/00-adr.md` §8.1（2026-11-03）にある。**公開の直前に「公開前に再確認」の項目を 1 行で確認する**。
 - `AUTH_MODE=access` を使う場合、`ACCESS_TEAM_DOMAIN` / `ACCESS_AUD` を設定すると JWT 検証が必須になる（`docs/deployment.md` §3-1）。**公開前に必ず設定する**。
 - `ALLOW_SELF_APPROVAL=0` は本番の統制（ERR-105）。承認者を別ユーザーで用意する。
 - `ALLOW_IMPORT=0`（全件置換の取込を本番で許可しない）。必要になった時だけ一時的に許可し、監査に残す。
+- `MIRAI_SF_OFFSITE_CMD` は `backup.sh` の送信フック。未設定ならローカルのみ（RPO 1 時間の決定に反するため、本番では必ず設定する）。
 
 ## 3. リリース
 
@@ -115,10 +122,10 @@ journalctl --user -u mirai-sf-prod-backup -u mirai-sf-prod-restore-drill -n 40 -
 
 ## 5. バックアップ・復元・保持
 
-- 日次: `mirai-sf-prod-backup.timer`（01:30）が `pg_dump -Fc` + 同一スナップショットの manifest を `~/.local/state/mirai-sf-prod/backups/` へ出す（0700/0600）。
+- **毎時**: `mirai-sf-prod-backup.timer`（毎時 :05。RPO 1 時間 = ADR §8-6 の決定）が `pg_dump -Fc` + 同一スナップショットの manifest を `~/.local/state/mirai-sf-prod/backups/` へ出す（0700/0600）。
 - 週次: `mirai-sf-prod-restore-drill.timer`（日曜 04:30）が一時DBへ復元して件数と監査ハッシュ連鎖を照合し、必ず消す。
-- **オフサイト保存は未実装**（ADR §8-7 の決定後）。決まるまで「同一ホストのみ」であることを受容し、監査に残す。
-- 保持: DB の監査行は削除しない（追記のみ）。ファイルの世代管理は `MIRAI_SF_BACKUP_RETENTION_DAYS`（既定14日）。
+- **オフサイト（Cloudflare R2、ADR §8-7 の決定）**: `prod.conf` の `MIRAI_SF_OFFSITE_CMD=scripts/ops/offsite-r2.mjs` で、毎時の dump と manifest を非公開バケット `mirai-sf-prod-backups`（APAC）へ送り、置いた実体を読み戻してバイト数の一致を確かめる。送信に失敗すると backup ユニットは **failed（終了コード 4）** になり、ローカルの dump は残る。認証は wrangler のログイン（OAuth）に依存する。R2 の S3 アクセスキーを用意できたら `rclone copyto` へ差し替える（`MIRAI_SF_OFFSITE_CMD` を差し替えるだけ）。
+- 保持: DB の監査行は削除しない（追記のみ）。ファイルの世代管理は `MIRAI_SF_BACKUP_RETENTION_DAYS`（既定14日。毎時だと最大 336 世代 = 約 60 MB/年）。
 
 ## 6. ロールバック
 
