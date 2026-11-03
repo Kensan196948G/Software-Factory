@@ -107,7 +107,7 @@ DNS伝播後は不要。ブラウザで名前解決できない場合は削除�
 
 ## 7. 監視
 
-- `/healthz` の定期確認（Access 配下のため、外形監視には Access の bypass か サービストークンが必要）
+- `/healthz` の定期確認は `mirai-sf-healthcheck.timer`（5分ごと、§7-4）。公開URL（Access 経由）側の外形監視は、Access の bypass か サービストークンが必要で未実施
 - systemd `Restart=always`
 - 監査ログのハッシュ連鎖（`/api/audit-logs`）
 - ログ: `journalctl --user -u mirai-sf-api`（個人情報は出力しない）
@@ -153,9 +153,68 @@ DBの監査行は追記のみで消さない（アーカイブは外部コピー
 - `quality`: typecheck / lint / unit / migration（空DB・冪等）/ seed / db:verify / integration / build / secret scan
 - `e2e`: Postgres サービス＋ビルド＋Playwright（`quality` 成功後に実行）
 
+### 7-4. Staging の外形監視（`mirai-sf-healthcheck.timer`）
+
+`scripts/ops/healthcheck.mjs` を systemd user timer で5分ごとに実行し、Staging の異常を `systemctl --user --failed` と journal に残す。`mirai-sf-api.service` の `Restart=always` だけでは、プロセスが生きていても DB が落ちている・環境や commit が違う、といった異常に気づけないため。
+
+| #   | 確認項目                                                                                       | 失敗時の扱い           |
+| --- | ---------------------------------------------------------------------------------------------- | ---------------------- |
+| 1   | `http://127.0.0.1:8782/healthz` が HTTP 200 を返す（`MIRAI_SF_HEALTH_URL` で変更可）           | exit 1（failed）       |
+| 2   | `status=ok` かつ `db.ok=true`                                                                  | exit 1（failed）       |
+| 3   | `environment=staging`                                                                          | exit 1（failed）       |
+| 4   | `/healthz` の `commit` が `~/.local/share/mirai-sf/current/release.env` の `COMMIT_SHA` と一致 | exit 1（failed）       |
+| 5   | （任意）`git -C <repo> rev-parse origin/main` と一致（release 反映漏れの検知）                 | warning のみ（exit 0） |
+
+- 5 は `git fetch` をしない。`origin/main` は最後に fetch した値なので、古いと誤警告することがある。fetch 後に再実行して解消を確認する。
+- 失敗すると oneshot unit が `failed` になり、`systemctl --user --failed` と `journalctl --user -u mirai-sf-healthcheck` で確認できる。timer は止まらず5分ごとに再試行し、復旧すると `復旧: 連続 N 回の失敗から回復しました` の1行を出す。
+- 状態（連続失敗数・最終失敗理由・最終成功時刻・warning）は `~/.local/state/mirai-sf/healthcheck.json`（0600）に残す。監視自体の状態ファイルであり、秘密値は含めない。
+- 秘密情報は出力しない。`preview.conf`（`DATABASE_URL` など）は読まず、DB にも触らない。`/healthz` の本文はログへ出さず、確認済みの項目（`status` / `environment` / `db.ok` / `commit`）だけを出す。`with-env.mjs` と同じく設定値は表示しない。URL は資格情報・クエリを落として出す。
+- 実行元は `current` ではなく常設のチェックアウト（`~/Projects/Software-Factory-Project` → `/mnt/storage/Software-Factory/Software-Factory`）。監視がリリースのデプロイに依存しないため。リポジトリの場所が違う場合は drop-in（`~/.config/systemd/user/mirai-sf-healthcheck.service.d/`）で `WorkingDirectory` と `ExecStart` を差し替える。
+
+有効化（稼働中の API・tunnel・worker は止めない）:
+
+```bash
+# 1. マージ済みの main をチェックアウトへ反映（unit はチェックアウトから実行する）
+cd /mnt/storage/Software-Factory/Software-Factory
+git switch main && git pull --ff-only
+
+# 2. unit を配置して読み込み直す
+cp deploy/systemd/mirai-sf-healthcheck.service deploy/systemd/mirai-sf-healthcheck.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+
+# 3. 1回手動で実行し、成功してから有効化する（failed のまま有効化しない）
+systemctl --user start mirai-sf-healthcheck.service
+systemctl --user show -p Result -p ExecMainStatus mirai-sf-healthcheck.service
+journalctl --user -u mirai-sf-healthcheck -n 20 --no-pager
+
+# 4. timer を有効化
+systemctl --user enable --now mirai-sf-healthcheck.timer
+systemctl --user list-timers mirai-sf-healthcheck.timer
+```
+
+確認:
+
+```bash
+systemctl --user list-timers mirai-sf-healthcheck.timer        # NEXT が5分以内
+journalctl --user -u mirai-sf-healthcheck -n 20 --no-pager     # healthcheck OK
+cat ~/.local/state/mirai-sf/healthcheck.json                    # ok=true / consecutiveFailures=0
+systemctl --user --failed | grep mirai-sf-healthcheck || echo 'failed なし'
+```
+
+失敗時の一次対応:
+
+1. `systemctl --user --failed` と `journalctl --user -u mirai-sf-healthcheck -n 50` で、どの確認項目が落ちたかを見る。
+2. `curl -fsS http://127.0.0.1:8782/healthz` の応答、`~/.local/share/mirai-sf/current/release.env` の `COMMIT_SHA`、`systemctl --user status mirai-sf-api.service` を突き合わせる。
+   - `status` が `ok` でない／`db.ok` が false → `journalctl --user -u mirai-sf-api` と PostgreSQL の状態を確認する。API の再起動は `systemctl --user restart mirai-sf-api.service`（原因を記録してから行う）。
+   - `commit` が一致しない → `pnpm ops:rollback <SHA>` か `pnpm ops:release <SHA>` で `current` を正しいリリースへ戻す。反映漏れなら release する。
+   - `environment` が `staging` でない → `preview.conf` の `APP_ENV` と接続先を確認する（値はログ・Issue へ貼らない）。
+   - `origin/main` の warning だけ → 失敗ではない。fetch 後に再実行して解消を確認し、release 漏れなら release する。
+3. 直したら `systemctl --user start mirai-sf-healthcheck.service` で即時再確認する。成功すれば `failed` は消え、復旧ログが1行出る（次回の timer 実行を待ってもよい）。
+4. メンテナンスで監視を止めるときは `systemctl --user disable --now mirai-sf-healthcheck.timer`。unit ファイルは消さず、再開は `systemctl --user enable --now mirai-sf-healthcheck.timer`。
+
 ## 8. 既知の制約
 
-- Access のサービストークン発行は、現在のAPIトークンに `access-service-token.write` が無いため未実施。外形監視を自動化する場合はトークン権限の追加が必要。
+- Access のサービストークン発行は、現在のAPIトークンに `access-service-token.write` が無いため未実施。公開URL（Access 経由）側の外形監視は未実施で、§7-4 の healthcheck は origin（127.0.0.1:8782）を直接見る。公開URL側を自動化する場合はトークン権限の追加が必要。
 - CI は `.github/workflows/` のポリシーゲートにより未適用（`docs/patches/README.md`）。
 - ローカルホスト停止時は Preview も停止する（仕様）。
 
@@ -234,14 +293,16 @@ journalctl --user -u mirai-sf-backup -u mirai-sf-restore-drill -u mirai-sf-remin
 
 ### 9-5. 検証用の差し替え
 
-| 環境変数                         | 既定                               | 用途                                |
-| -------------------------------- | ---------------------------------- | ----------------------------------- |
-| `MIRAI_SF_ENV_FILE`              | `~/.config/mirai-sf/preview.conf`  | 接続先などの設定ファイル            |
-| `MIRAI_SF_HOME`                  | `~/.local/share/mirai-sf`          | `releases/` と `current` の置き場所 |
-| `MIRAI_SF_BACKUP_DIR`            | `~/.local/state/mirai-sf/backups`  | バックアップの保存先                |
-| `MIRAI_SF_BACKUP_RETENTION_DAYS` | `14`                               | 世代（日）                          |
-| `MIRAI_SF_HEALTH_URL`            | `http://127.0.0.1:8782/healthz`    | 切替後に確認するURL                 |
-| `MIRAI_SF_RESTART_HOOK`          | なし（`systemctl --user restart`） | 再起動の代わりに実行するファイル    |
+| 環境変数                         | 既定                                       | 用途                                         |
+| -------------------------------- | ------------------------------------------ | -------------------------------------------- |
+| `MIRAI_SF_ENV_FILE`              | `~/.config/mirai-sf/preview.conf`          | 接続先などの設定ファイル                     |
+| `MIRAI_SF_HOME`                  | `~/.local/share/mirai-sf`                  | `releases/` と `current` の置き場所          |
+| `MIRAI_SF_REPO`                  | このスクリプトを含むリポジトリ             | git リポジトリ（release / origin/main 比較） |
+| `MIRAI_SF_BACKUP_DIR`            | `~/.local/state/mirai-sf/backups`          | バックアップの保存先                         |
+| `MIRAI_SF_BACKUP_RETENTION_DAYS` | `14`                                       | 世代（日）                                   |
+| `MIRAI_SF_HEALTH_URL`            | `http://127.0.0.1:8782/healthz`            | 切替後・定期監視で確認するURL                |
+| `MIRAI_SF_HEALTH_STATE_FILE`     | `~/.local/state/mirai-sf/healthcheck.json` | 外形監視の状態ファイル（検証用に差し替え）   |
+| `MIRAI_SF_RESTART_HOOK`          | なし（`systemctl --user restart`）         | 再起動の代わりに実行するファイル             |
 
 `MIRAI_SF_HOME` を差し替えると、`MIRAI_SF_ENV_FILE` と（`--no-restart` でなければ）`MIRAI_SF_RESTART_HOOK` も必須になる。実DB・実サービスを誤って触らないための確認。
 
