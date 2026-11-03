@@ -65,8 +65,18 @@ function lastLine(text) {
   return text.trim().split('\n').filter(Boolean).pop() ?? '';
 }
 
+/**
+ * wrangler に渡す環境。systemd ユーザー環境には別用途の CLOUDFLARE_API_TOKEN が入っていることがあり、
+ * 期限切れだと OAuth（wrangler login）より優先されて 401 になる。明示許可があるとき以外は外す。
+ */
+function wranglerEnv() {
+  const env = { ...process.env };
+  if (!process.env.MIRAI_SF_R2_API_TOKEN) delete env.CLOUDFLARE_API_TOKEN;
+  return env;
+}
+
 function run(args, maxBuffer) {
-  const result = spawnSync(wrangler, args, { maxBuffer: maxBuffer ?? 16 * 1024 * 1024 });
+  const result = spawnSync(wrangler, args, { env: wranglerEnv(), maxBuffer: maxBuffer ?? 16 * 1024 * 1024 });
   return { code: result.status ?? 1, stdout: result.stdout, stderr: result.stderr?.toString('utf8') ?? '' };
 }
 
