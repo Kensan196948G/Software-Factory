@@ -526,8 +526,9 @@ async function collectCi(
 ): Promise<CiCollectResult> {
   if (options.ci) return options.ci(job, ctx);
   if (options.line) {
-    const { baseSha } = await loadOrder(job);
-    return options.line.ci.collect({ ...job, base_sha: baseSha }, ctx);
+    // artifact v2 の依頼の識別子（受付番号・注文書のハッシュ）と照合する
+    const { baseSha, envelope } = await loadOrder(job);
+    return options.line.ci.collect({ ...job, base_sha: baseSha, order_hash: envelope.content_sha256 }, ctx);
   }
   return buildFakeVerification(
     {

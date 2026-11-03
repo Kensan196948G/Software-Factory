@@ -104,14 +104,21 @@ export function buildZip(files: Record<string, string | Buffer>, method: 0 | 8 =
 
 /**
  * 既定は作り物の注文書の AC-1・AC-2 がすべて passed（注文書に無い番号は証跡の欠落になる）。
- * repository・runId・runAttempt は fake GitHub が配るときに取得元の run の値で埋める。試験で上書きできる（undefined で消せる）。
+ * `msf.ac-results/v2` の依頼の識別子と試験ファイルは、fake GitHub が PR の head ブランチと変更ファイルから埋める
+ * （実 CI がブランチ名から受付番号を決め、PR の試験を報告するのと同じ形）。試験で上書きできる（undefined で消せる）。
  */
 export function acDoc(headSha: string, ac?: unknown[]): unknown {
   return {
-    schema: 'msf.ac-results/v1',
+    schema: 'msf.ac-results/v2',
     headSha,
     ac: ac ?? Array.from({ length: 2 }, (_, i) => ({ id: `AC-${i + 1}`, status: 'passed', testIds: [`AC-${i + 1}: fake test`] })),
   };
+}
+
+/** ブランチ名（auto/req-2026-0011-v1-a1）から依頼の受付番号を取る（実 CI の scripts/ac-report.mjs と同じ規則）。 */
+export function requestIdOfBranch(ref: string | null | undefined): string | null {
+  const m = /(?:^|\/)auto\/req-(\d{4})-(\d{4})-v[1-9]\d*-a[1-9]\d*$/i.exec(ref ?? '');
+  return m ? `REQ-${m[1]}-${m[2]}` : null;
 }
 
 /** fake GitHub の artifact。何も指定しなければ全件 passed の ac-results が付く。 */
@@ -247,6 +254,55 @@ export async function startRealGithub(): Promise<RealGithub> {
     user: { login: p.login },
     head: { sha: p.headSha, ref: p.headRef, repo: { full_name: REAL_REPO } },
   });
+  /** PR の変更ファイル（base..head の git 差分）。GitHub の GET /pulls/{n}/files と同じ形にする。 */
+  const pullFiles = (pull: FakePull): { filename: string; status: string }[] => {
+    let out: string;
+    try {
+      out = git(bareDir, 'diff', '--name-status', `${baseSha}`, pull.headSha);
+    } catch {
+      return [];
+    }
+    return out
+      .split('\n')
+      .filter((line) => line !== '')
+      .map((line) => {
+        const [code = '', ...paths] = line.split('\t');
+        const status = code.startsWith('A')
+          ? 'added'
+          : code.startsWith('D')
+            ? 'removed'
+            : code.startsWith('R')
+              ? 'renamed'
+              : 'modified';
+        // rename は「新しい名前」を返す（GitHub の filename と同じ）
+        return { filename: paths[paths.length - 1] ?? '', status };
+      });
+  };
+  /**
+   * fake CI の artifact v2 に、実 CI と同じ規則で依頼の識別子と試験ファイルを埋める。
+   * ブランチ名から受付番号を、PR の変更ファイルから試験ファイルを選ぶ（明示された値は上書きしない）。
+   */
+  const withAcScope = (doc: unknown, run: FakeRun | undefined): unknown => {
+    if (typeof doc !== 'object' || doc === null || run === undefined) return doc;
+    const record = doc as { ac?: unknown; requestId?: unknown };
+    if (!Array.isArray(record.ac)) return doc;
+    const branch = run.head_branch ?? pulls.find((p) => p.headSha === run.head_sha)?.headRef ?? null;
+    const requestId = typeof record.requestId === 'string' ? record.requestId : requestIdOfBranch(branch);
+    const pull = pulls.find((p) => p.headSha === run.head_sha);
+    const changedTestFile = pull
+      ? pullFiles(pull).find((f) => f.status !== 'removed' && f.filename.startsWith('test/'))
+      : undefined;
+    const ac = record.ac.map((entry) => {
+      if (typeof entry !== 'object' || entry === null) return entry;
+      const item = entry as Record<string, unknown>;
+      return {
+        ...item,
+        ...(item.requestId === undefined && item.orderHash === undefined && requestId !== null ? { requestId } : {}),
+        ...(item.testFile === undefined && changedTestFile !== undefined ? { testFile: changedTestFile.filename } : {}),
+      };
+    });
+    return { ...record, ac };
+  };
   const addRun: RealGithub['addRun'] = (over, jobs = {}, ac = {}) => {
     nextRun += 1;
     const run: FakeRun = {
@@ -487,16 +543,24 @@ export async function startRealGithub(): Promise<RealGithub> {
       const art = artifacts.get(Number(blob[1]));
       if (!art) return finish(404, { message: 'Not Found' });
       if (art.blobStatus) return finish(art.blobStatus, {});
+      const run = runs.find((r) => r.id === Number(blob[1]));
       const source = {
         repository: REAL_REPO,
         runId: String(blob[1]),
-        runAttempt: String(runs.find((r) => r.id === Number(blob[1]))?.run_attempt ?? 1),
+        runAttempt: String(run?.run_attempt ?? 1),
       };
-      const zip =
-        art.zip ?? buildZip({ 'ac-results.json': JSON.stringify({ ...source, ...((art.doc ?? acDoc(art.head)) as object) }) });
+      const doc = art.doc ?? acDoc(art.head);
+      const zip = art.zip ?? buildZip({ 'ac-results.json': JSON.stringify(withAcScope({ ...source, ...(doc as object) }, run)) });
       res.writeHead(200, { 'content-type': 'application/zip' });
       res.end(zip);
       return;
+    }
+    // PR の変更ファイル一覧（実 CI が試験の範囲を確かめるのに使う）
+    const pullFilesPath = new RegExp(`^${repoPrefix}/pulls/(\\d+)/files$`).exec(path);
+    if (method === 'GET' && pullFilesPath) {
+      const pull = pulls.find((p) => p.number === Number(pullFilesPath[1]));
+      if (!pull) return finish(404, { message: 'Not Found' });
+      return finish(200, { files: pullFiles(pull) });
     }
     if (method === 'GET' && path === `${repoPrefix}/contents/.github/workflows/ci.yml`) {
       const ref = url.searchParams.get('ref') ?? '';

@@ -5,14 +5,23 @@
  * workflow ファイルが base と同じ blob でなければ policy_violation で止める（AI が弱めた workflow を受け入れない）。
  * 読むのは Actions（Read）と Contents（Read）の範囲。再実行は要求しない。
  *
- * 受入条件の結果は同じ run の artifact `ac-results` だけから読む。読めない（通信の失敗）ときはやり直し、
- * 無い・期限切れ・大きすぎる・形が違う・repository／run／attempt／head が取得元と違う・AC ID の重複／未知／欠落は
+ * 受入条件の結果は同じ run の artifact `ac-results`（v2）だけから読む。読めない（通信の失敗）ときはやり直し、
+ * 無い・期限切れ・大きすぎる・形が違う・repository／run／attempt／head が取得元と違う・AC ID の重複／未知／欠落・
+ * 旧形式 v1・依頼の識別子の不一致・試験ファイルが PR の変更ファイルに無い・PR の変更ファイルを取得できない、は
  * 「証跡の欠落」として記録し、合格にしない。PR 本文や AI の申告からは作らない。
+ * 試験ファイルの範囲は、Actions の run に紐づく PR の変更ファイル一覧（GET /pulls/{n}/files）で確かめる。
  */
 import { createHash } from 'node:crypto';
 import { assertApiUrlAllowed } from '../api/issue-adapter.js';
 import { REAL_RUNNER_POLICY, REQUIRED_STAGES } from '../shared/devline.js';
-import type { AcResult, RecordVerificationInput, StageResult, StageStatus, StopReason } from '../shared/devline.js';
+import type {
+  AcEvidenceScope,
+  AcResult,
+  RecordVerificationInput,
+  StageResult,
+  StageStatus,
+  StopReason,
+} from '../shared/devline.js';
 import {
   AC_ARTIFACT_MAX_BYTES,
   AC_ARTIFACT_NAME,
@@ -25,6 +34,10 @@ export interface CiJobFacts {
   id: string;
   head_sha: string | null;
   target_repo_id: string;
+  /** 依頼の受付番号。artifact v2 の依頼の識別子と照合する。 */
+  request_id: string;
+  /** 注文書の content_sha256。artifact v2 の識別子（orderHash）と照合する。 */
+  order_hash: string;
   work_state: Record<string, unknown>;
   base_sha: string;
 }
@@ -79,11 +92,11 @@ interface WorkflowArtifact {
   workflow_run?: { id?: number; head_sha?: string } | null;
 }
 
-/** ok: 読めた / problem: 証跡の欠落（記録して止まる）/ retry: 通信の失敗（記録せず次の工程でやり直す）。 */
-type AcRead =
-  | { kind: 'ok'; results: AcResult[]; digest: string; problem: 'missing_ac_id' | null }
-  | { kind: 'problem'; problem: AcArtifactProblem }
-  | { kind: 'retry' };
+/** ok: zip を読めた / problem: 証跡の欠落（記録して止まる）/ retry: 通信の失敗（記録せず次の工程でやり直す）。 */
+type AcRead = { kind: 'ok'; raw: Buffer; digest: string } | { kind: 'problem'; problem: AcArtifactProblem } | { kind: 'retry' };
+
+/** PR の変更ファイル一覧。取得できないものは合格にしないので、理由を分けて返す。 */
+type PrFilesRead = { ok: true; changedFiles: ReadonlySet<string> } | { ok: false; problem: 'file_scope_unavailable' } | 'retry';
 
 /** run の artifact から使うものを選ぶ（純関数）。同じ名前の別 run のものと、同じ run の前の試行のものは使わない。 */
 export function selectAcArtifact(
@@ -281,7 +294,62 @@ export function createGithubCiCollector(options: GithubCiCollectorOptions): Gith
     }
   }
 
-  async function readAcArtifact(repo: string, run: WorkflowRun, acIds: readonly string[]): Promise<AcRead> {
+  /**
+   * PR の変更ファイル一覧（追加・変更のみ。削除は除く）。最大5ページ=500件。
+   * 読めないときは合格にしない。404・401・403 は待っても変わらないので「取得できない」、
+   * 5xx・429・通信の失敗は一時的なものとしてやり直す。
+   */
+  async function readPullFiles(repo: string, prNumber: number): Promise<PrFilesRead> {
+    const changed = new Set<string>();
+    for (let page = 1; page <= 5; page += 1) {
+      const params = new URLSearchParams({ per_page: '100', page: String(page) });
+      let res: Response;
+      try {
+        res = await fetch(`${base}/repos/${repo}/pulls/${prNumber}/files?${params.toString()}`, {
+          method: 'GET',
+          headers: {
+            authorization: `Bearer ${options.token}`,
+            accept: 'application/vnd.github+json',
+            'user-agent': 'mirai-sf-devline',
+            'x-github-api-version': '2022-11-28',
+          },
+          signal: AbortSignal.timeout(httpTimeoutMs),
+          redirect: 'manual',
+        });
+      } catch {
+        return 'retry';
+      }
+      if (!res.ok) {
+        await res.body?.cancel().catch(() => undefined);
+        if (res.status === 404 || res.status === 401 || res.status === 403) {
+          return { ok: false, problem: 'file_scope_unavailable' };
+        }
+        return 'retry';
+      }
+      let list: { files?: unknown[] };
+      try {
+        list = (await res.json()) as { files?: unknown[] };
+      } catch {
+        return 'retry';
+      }
+      if (!Array.isArray(list.files)) return 'retry';
+      for (const raw of list.files) {
+        if (typeof raw !== 'object' || raw === null) return { ok: false, problem: 'file_scope_unavailable' };
+        const file = raw as { filename?: unknown; status?: unknown };
+        if (typeof file.filename !== 'string' || file.filename === '') {
+          return { ok: false, problem: 'file_scope_unavailable' };
+        }
+        // 削除されたファイルは head に無いので「追加または変更されたファイル」に含めない
+        if (file.status === 'removed') continue;
+        changed.add(file.filename);
+      }
+      if (list.files.length < 100) return { ok: true, changedFiles: changed };
+    }
+    // 500 件を超える PR は一覧を取り切れない。範囲を確かめられないものとして扱う
+    return { ok: false, problem: 'file_scope_unavailable' };
+  }
+
+  async function readAcArtifact(repo: string, run: WorkflowRun): Promise<AcRead> {
     const params = new URLSearchParams({ name: AC_ARTIFACT_NAME, per_page: '100' });
     const listed = await read<{ artifacts?: WorkflowArtifact[] }>(
       `/repos/${repo}/actions/runs/${run.id}/artifacts?${params.toString()}`,
@@ -296,20 +364,7 @@ export function createGithubCiCollector(options: GithubCiCollectorOptions): Gith
     if (!Buffer.isBuffer(zip)) return { kind: 'problem', problem: zip.problem };
     const raw = readSingleJsonFromZip(zip);
     if (!raw) return { kind: 'problem', problem: 'invalid' };
-    const parsed = parseAcResults(raw, {
-      repository: repo,
-      runId: run.id,
-      runAttempt: run.run_attempt,
-      headSha: run.head_sha,
-      acIds,
-    });
-    if (!parsed.ok) return { kind: 'problem', problem: parsed.problem };
-    return {
-      kind: 'ok',
-      results: parsed.results,
-      digest: createHash('sha256').update(raw).digest('hex'),
-      problem: parsed.missingAcIds.length > 0 ? 'missing_ac_id' : null,
-    };
+    return { kind: 'ok', raw, digest: createHash('sha256').update(raw).digest('hex') };
   }
 
   return {
@@ -322,14 +377,14 @@ export function createGithubCiCollector(options: GithubCiCollectorOptions): Gith
       lastPoll.set(job.id, ctx.now.getTime());
 
       const pr = job.work_state.pr as { number?: unknown } | undefined;
-      const prNumber = typeof pr?.number === 'number' ? pr.number : null;
+      const jobPr = typeof pr?.number === 'number' && Number.isSafeInteger(pr.number) && pr.number > 0 ? pr.number : null;
       const branch = typeof job.work_state.branch === 'string' ? job.work_state.branch : null;
 
       const params = new URLSearchParams({ head_sha: headSha, per_page: '100' });
       const listed = await read<{ workflow_runs?: WorkflowRun[] }>(`/repos/${repo}/actions/runs?${params.toString()}`);
       if (listed === null || listed === 'missing' || !Array.isArray(listed.workflow_runs)) return null;
       const runs = listed.workflow_runs
-        .filter((r) => isEvidenceRun(r, { repo, headSha, branch, prNumber }))
+        .filter((r) => isEvidenceRun(r, { repo, headSha, branch, prNumber: jobPr }))
         .sort((a, b) => b.run_number - a.run_number || b.run_attempt - a.run_attempt);
       const run = runs[0];
       if (!run || run.status !== 'completed') return null;
@@ -356,12 +411,49 @@ export function createGithubCiCollector(options: GithubCiCollectorOptions): Gith
         if (got.jobs.length < 100) break;
       }
       const stages = stagesFromJobs(jobs, headSha, run.conclusion);
+      // PR の変更ファイル一覧は Actions の run に紐づく PR から取る。job の記録が無ければ run の PR を使う
+      const runPr = (run.pull_requests ?? []).find((p) => typeof p.number === 'number' && p.number > 0)?.number ?? null;
+      const prNumber = jobPr ?? runPr;
       // 通信の失敗では記録しない。delivery は run ごとに1回なので、記録すると欠落のまま固定される
-      const ac = await readAcArtifact(repo, run, ctx.acIds);
+      const [ac, files] = await Promise.all([
+        readAcArtifact(repo, run),
+        prNumber !== null
+          ? readPullFiles(repo, prNumber)
+          : Promise.resolve<PrFilesRead>({ ok: false, problem: 'file_scope_unavailable' }),
+      ]);
       // 段階の失敗が分かっているときは、artifact の読み直しを待たずに修正へ進める
       if (ac.kind === 'retry' && !stages.some((st) => st.status === 'failed')) return null;
-      const acResults = ac.kind === 'ok' ? ac.results : [];
-      const acDigest = ac.kind === 'ok' ? ac.digest : null;
+      let acResults: AcResult[] = [];
+      let acDigest: string | null = null;
+      let acProblem: AcArtifactProblem | null = ac.kind === 'problem' ? ac.problem : null;
+      if (ac.kind === 'ok') {
+        // PR の変更ファイルを取得できない（通信の失敗）ときは、欠落として固定せず次の工程でやり直す
+        if (files === 'retry') return null;
+        if (!files.ok) {
+          acProblem = files.problem;
+        } else {
+          const scope: AcEvidenceScope = {
+            requestId: job.request_id,
+            orderHash: job.order_hash,
+            changedFiles: files.changedFiles,
+          };
+          const parsed = parseAcResults(ac.raw, {
+            repository: repo,
+            runId: run.id,
+            runAttempt: run.run_attempt,
+            headSha: run.head_sha,
+            acIds: ctx.acIds,
+            scope,
+          });
+          if (!parsed.ok) {
+            acProblem = parsed.problem;
+          } else {
+            acResults = parsed.results;
+            acDigest = ac.digest;
+            acProblem = parsed.missingAcIds.length > 0 ? 'missing_ac_id' : null;
+          }
+        }
+      }
       const reportDigest = createHash('sha256')
         .update(JSON.stringify({ runId: run.id, attempt: run.run_attempt, headSha, stages, acDigest }), 'utf8')
         .digest('hex');
@@ -380,7 +472,7 @@ export function createGithubCiCollector(options: GithubCiCollectorOptions): Gith
         diagnostics: {
           runConclusion: run.conclusion,
           unmatchedJobs: unmatchedJobNames(jobs),
-          acArtifact: ac.kind === 'retry' ? 'unavailable' : (ac.problem ?? 'ok'),
+          acArtifact: ac.kind === 'retry' ? 'unavailable' : (acProblem ?? 'ok'),
         },
         now: ctx.now,
         correlationId: ctx.correlationId,
