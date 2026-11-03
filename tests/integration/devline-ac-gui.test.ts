@@ -152,6 +152,34 @@ describe('実 CI の経路（fake GitHub・stub docker）', () => {
     ['1件欠落', (head) => ({ doc: acDoc(head, [fakeOkAcs[0]]) }), 'missing_ac_id', ['AC-2']],
     ['全件欠落', (head) => ({ doc: acDoc(head, []) }), 'missing_ac_id', ['AC-1', 'AC-2']],
     [
+      '旧形式 v1（依頼と試験ファイルの対応が無い）',
+      (head) => ({ doc: { ...(acDoc(head, fakeOkAcs) as object), schema: 'msf.ac-results/v1' } }),
+      'legacy_schema',
+      ['AC-1', 'AC-2'],
+    ],
+    [
+      '他依頼の受付番号を書いた試験',
+      (head) => ({
+        doc: acDoc(
+          head,
+          fakeOkAcs.map((ac) => ({ ...ac, requestId: 'REQ-2026-9999' })),
+        ),
+      }),
+      'request_mismatch',
+      ['AC-1', 'AC-2'],
+    ],
+    [
+      'この PR に無いファイルの試験',
+      (head) => ({
+        doc: acDoc(
+          head,
+          fakeOkAcs.map((ac) => ({ ...ac, testFile: 'test/unit/old-ac.test.js' })),
+        ),
+      }),
+      'test_file_mismatch',
+      ['AC-1', 'AC-2'],
+    ],
+    [
       'repository なしの古い形式',
       (head) => ({ doc: { ...(acDoc(head, fakeOkAcs) as object), repository: undefined } }),
       'invalid',
@@ -203,7 +231,9 @@ describe('実 CI の経路（fake GitHub・stub docker）', () => {
       addRun(headSha, ac(headSha));
       await runOnce(workerOf(line));
       const view = await h.view(jobId);
-      if (['ok', 'missing_ac_id', 'unknown_ac_id', 'duplicate_ac_id'].includes(problem)) {
+      if (
+        ['ok', 'missing_ac_id', 'unknown_ac_id', 'duplicate_ac_id', 'request_mismatch', 'test_file_mismatch'].includes(problem)
+      ) {
         // CI の再実行では直らないので、どの AC かを伝えて AI の修正へ戻す
         expect(view.state).toBe('revising');
         expect(view.repairCountTotal).toBe(1);
@@ -227,6 +257,23 @@ describe('実 CI の経路（fake GitHub・stub docker）', () => {
       expect(gh.blobAccess.every((a) => a.authorization === undefined)).toBe(true);
     },
   );
+
+  it('PR の変更ファイル一覧を取得できないときは合格にしない（未確認で止める）', async () => {
+    const line = makeLine();
+    const { jobId, headSha } = await untilVerifying(line);
+    addRun(headSha, { doc: acDoc(headSha, fakeOkAcs) });
+    // PR の変更ファイルだけを 403 で拒む（権限が無い・読めない場合）
+    gh.responders.push((req) => (req.path.endsWith('/files') ? { status: 403, body: { message: 'Forbidden' } } : null));
+    await runOnce(workerOf(line));
+    const view = await h.view(jobId);
+    expect(view.state).toBe('stopped');
+    expect(view.stopReason).toBe('ci_incomplete');
+    const detail = stopDetail(view);
+    expect(detail.cause).toBe('AC 未確認');
+    expect(detail.acArtifact).toBe('file_scope_unavailable');
+    expect(detail.unconfirmedAcs).toEqual(['AC-1', 'AC-2']);
+    expect(await h.count(`from job_artifact where job_id=$1 and kind='pr_body_draft'`, [jobId])).toBe(0);
+  });
 
   it('PR 本文に合格と書いてあっても、artifact が無ければ合格にしない（根拠は CI の記録だけ）', async () => {
     const line = makeLine();

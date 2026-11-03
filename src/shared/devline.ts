@@ -938,11 +938,81 @@ export interface StageResult {
   digest?: string | null;
 }
 
-/** AC → test ID の対応。run と SHA と digest は行そのものが持つ。 */
+/**
+ * AC → test ID の対応。run と SHA と digest は行そのものが持つ。
+ * `requestId` / `orderHash` / `testFile` は artifact `msf.ac-results/v2` の証跡。
+ * どの依頼の・どのファイルの試験かを示し、v1 の記録には無い（無い記録は合格にしない）。
+ */
 export interface AcResult {
   acId: string;
   testIds: readonly string[];
   status: 'passed' | 'failed' | 'not_run';
+  /** この結果を出した依頼の受付番号（REQ-YYYY-NNNN）。 */
+  requestId?: string | null;
+  /** 注文書の content_sha256。受付番号の代わりに使ってよい。 */
+  orderHash?: string | null;
+  /** 試験のあるファイル（リポジトリからの相対パス）。この job の PR で追加・変更されたファイルでなければならない。 */
+  testFile?: string | null;
+}
+
+export const AC_REQUEST_ID_RE = /^REQ-\d{4}-\d{4}$/;
+export const AC_ORDER_HASH_RE = /^[0-9a-f]{64}$/;
+
+/** AC の証跡が属すべき範囲。artifact v2 と、この PR で追加・変更されたファイルから作る。 */
+export interface AcEvidenceScope {
+  requestId: string;
+  orderHash: string;
+  /** PR で追加または変更されたファイル（削除は含めない）。 */
+  changedFiles: ReadonlySet<string>;
+}
+
+/** 試験の置き場所（このリポジトリの約束）。ここ以外を AC の根拠にしない。 */
+const AC_TEST_FILE_PREFIX_RE = /^(?:test|tests)\//;
+
+/** リポジトリ相対の試験ファイルの形を確かめ、比較用に正規化する（純関数）。 */
+export function normalizeAcTestFile(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const path = value.startsWith('./') ? value.slice(2) : value;
+  if (path === '' || path.length > 300 || path.trim() === '') return null;
+  if (path.startsWith('/') || path.includes('\\') || path.includes('\0')) return null;
+  // 制御文字を含む名前を認めない（TAP の出力をそのままパスにしない）
+  if (/[\u0000-\u001f\u007f]/.test(path)) return null;
+  const parts = path.split('/');
+  if (parts.some((part) => part === '' || part === '.' || part === '..')) return null;
+  return path;
+}
+
+/** 試験ファイルらしい場所か（`test/` または `tests/` の下）。 */
+export function isAcTestFile(value: unknown): boolean {
+  const path = normalizeAcTestFile(value);
+  return path !== null && AC_TEST_FILE_PREFIX_RE.test(path);
+}
+
+/**
+ * v2 の AC の証跡が、この job の依頼と PR の範囲に属するか（純関数）。
+ * 依頼の識別子は受付番号か注文書のハッシュのどちらか一方でよいが、書いてある識別子はすべて一致すること。
+ * 試験ファイルは、`test/`（または `tests/`）の下で、この PR で追加または変更されたファイルに含まれること。
+ * 範囲が無い・合わない結果は合格にしない（証跡の欠落として扱う）。
+ */
+export function acEvidenceProblem(result: AcResult, scope: AcEvidenceScope): 'request_mismatch' | 'test_file_mismatch' | null {
+  const requestId = typeof result.requestId === 'string' ? result.requestId : null;
+  const orderHash = typeof result.orderHash === 'string' ? result.orderHash : null;
+  if (requestId === null && orderHash === null) return 'request_mismatch';
+  if (requestId !== null && (!AC_REQUEST_ID_RE.test(requestId) || requestId !== scope.requestId)) return 'request_mismatch';
+  if (orderHash !== null && (!AC_ORDER_HASH_RE.test(orderHash) || orderHash !== scope.orderHash)) return 'request_mismatch';
+  const testFile = normalizeAcTestFile(result.testFile);
+  if (testFile === null || !AC_TEST_FILE_PREFIX_RE.test(testFile) || !scope.changedFiles.has(testFile)) {
+    return 'test_file_mismatch';
+  }
+  return null;
+}
+
+/** 実 CI の v2 の証跡か（依頼の識別子と試験ファイルがある）。無い記録（v1）は合格にしない。 */
+export function hasAcEvidenceScope(result: AcResult): boolean {
+  const identified =
+    (typeof result.requestId === 'string' && AC_REQUEST_ID_RE.test(result.requestId)) ||
+    (typeof result.orderHash === 'string' && AC_ORDER_HASH_RE.test(result.orderHash));
+  return identified && isAcTestFile(result.testFile);
 }
 
 export interface VerificationRecord {
@@ -989,6 +1059,8 @@ export type VerificationVerdict =
    * 合格ではないが修正回数は使わず CI 再実行の対象。段階が揃っていて AC だけが未確認のとき incompleteStages は空。
    * 合格の条件が1件も無い注文書は、確かめたものが無いので acMissing=true で incomplete。
    * 報告に注文書に無い AC（unknownAcs）か同じ AC の重複（duplicateAcs）があれば、報告全体を信用せず全件を未確認にする。
+   * 実 CI（source='github'）の記録に v2 の範囲（依頼の識別子・試験ファイル）が無いときも、どの依頼の試験か分からないので
+   * 全件を未確認にする（v1 の記録を後方互換で合格にしない）。
    */
   | {
       verdict: 'incomplete';
@@ -998,6 +1070,8 @@ export type VerificationVerdict =
       acMissing: boolean;
       unknownAcs: string[];
       duplicateAcs: string[];
+      /** v2 の範囲情報を持たない結果の AC（v1 の記録・範囲の無い記録）。 */
+      unscopedAcs: string[];
       acEvidence: AcEvidence[];
     }
   /** head_sha の結果が無く、古い SHA の結果だけがある。 */
@@ -1037,7 +1111,11 @@ export function evaluateVerification(
   const reported = latest.acResults.map((a) => a.acId);
   const unknownAcs = [...new Set(reported.filter((id) => !acIds.includes(id)))];
   const duplicateAcs = [...new Set(reported.filter((id, i) => reported.indexOf(id) !== i))];
-  const untrusted = unknownAcs.length > 0 || duplicateAcs.length > 0;
+  // 実 CI の記録は artifact v2 の範囲（どの依頼の・どのファイルの試験か）を持つ。
+  // v1 の頃に記録した行や範囲の無い行は、どの依頼の試験か分からないので全件を未確認にする。
+  const unscopedAcs =
+    latest.source === 'github' ? [...new Set(latest.acResults.filter((a) => !hasAcEvidenceScope(a)).map((a) => a.acId))] : [];
+  const untrusted = unknownAcs.length > 0 || duplicateAcs.length > 0 || unscopedAcs.length > 0;
 
   const acEvidence: AcEvidence[] = acIds.map((acId) => {
     const hit = untrusted ? undefined : latest.acResults.find((a) => a.acId === acId);
@@ -1100,6 +1178,7 @@ export function evaluateVerification(
       acMissing,
       unknownAcs,
       duplicateAcs,
+      unscopedAcs,
       acEvidence,
     };
   }

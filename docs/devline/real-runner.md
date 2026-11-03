@@ -359,52 +359,77 @@ API のプロセスは `DEVLINE_GITHUB_TOKEN` だけを読む。`ANTHROPIC_API_K
 
 ## 14. 受入条件の証跡（`ac-results`）
 
-CI は同じ run に artifact `ac-results` を残す。zip の中の `.json` はちょうど 1 つ。
+CI は同じ run に artifact `ac-results` を残す。zip の中の `.json` はちょうど 1 つ。いまは `msf.ac-results/v2` だけを読む。
 
 ```json
 {
-  "schema": "msf.ac-results/v1",
+  "schema": "msf.ac-results/v2",
   "repository": "<owner/name>",
   "runId": "<run の ID>",
   "runAttempt": "<run の attempt>",
   "headSha": "<run の head SHA>",
-  "ac": [{ "id": "AC-1", "status": "passed", "testIds": ["AC-1: 空文字なら 0 を返す"] }]
+  "ac": [
+    {
+      "id": "AC-1",
+      "status": "passed",
+      "testIds": ["test/unit/count-lines.test.js#AC-1: 空文字なら 0 を返す"],
+      "requestId": "REQ-2026-0012",
+      "testFile": "test/unit/count-lines.test.js"
+    }
+  ]
 }
 ```
 
 - `status` は `passed` / `failed` / `not_run`。
-- `repository`、`runId`、`runAttempt`、`headSha` がすべて取得元の run と一致するときだけ読む（Sandbox PR #5 の形式。`runId` と `runAttempt` は環境変数から書かれるので文字列で届く）。これらの無い古い形式は、どの run の結果か分からないので `invalid`。artifact の一覧の `workflow_run.id` と `workflow_run.head_sha` も照合する。
-- 判定: 全件 `passed`（test ID あり）のときだけ合格。`failed` は `failed`（修正へ）。未確認・欠落・`not_run`・test ID なしは、その AC を `incomplete`。条件が 0 件の注文書も `incomplete`。fake CI の経路も同じ判定。
-- 同じ AC の重複と注文書に無い AC は、報告全体を信用しない。全件を未確認にして `incomplete`（`failed` が含まれていても修正へ進めない）。`verdict` の `duplicateAcs` と `unknownAcs` に ID を載せる。
+- 各結果は**依頼の識別子**と**試験のファイル**を持つ。ここが「前の依頼の試験が今の依頼の AC に数えられる」不具合（L-05）の根拠になる。
+  - 識別子は `requestId`（受付番号 `REQ-YYYY-NNNN`）か `orderHash`（注文書の `content_sha256`）のどちらか。片方でよいが、書いてある識別子はすべてこの job の依頼と一致すること（`request_mismatch`）。
+  - `testFile` はリポジトリ相対のパスで、`test/`（または `tests/`）の下にあること。さらに、この job の PR で**追加または変更されたファイル**に含まれること（`test_file_mismatch`）。サーバは GitHub の `GET /repos/{repo}/pulls/{n}/files` をページ送りで読み、`removed` 以外を変更ファイルとして数える（最大 500 件）。PR が分からない・404/401/403・500 件超のときは `file_scope_unavailable` として未確認にする。5xx・429・通信の失敗はやり直す（記録しない）。
+- `repository`、`runId`、`runAttempt`、`headSha` がすべて取得元の run と一致するときだけ読む（Sandbox PR #5 以来の形式。`runId` と `runAttempt` は環境変数から書かれるので文字列で届く）。artifact の一覧の `workflow_run.id` と `workflow_run.head_sha` も照合する。
+- **旧形式 `msf.ac-results/v1` は合格にしない。** どの依頼の・どのファイルの試験か分からないので `legacy_schema` として未確認にする。この変更より前に保存した `verification.ac_results`（v2 の項目が無い行）も、実 CI（`source='github'`）の記録なら `unscopedAcs` として全件を未確認にする。
+- 判定: 全件 `passed`（test ID あり）のときだけ合格。`failed` は `failed`（修正へ）。未確認・欠落・`not_run`・test ID なしは、その AC を `incomplete`。条件が 0 件の注文書も `incomplete`。fake CI の経路も同じ判定（fake は artifact を読まないので v2 の範囲チェックは適用しない）。
+- 同じ AC の重複、注文書に無い AC、依頼の識別子の不一致、試験ファイルの不一致は、報告全体を信用しない。全件を未確認にして `incomplete`（`failed` が含まれていても修正へ進めない）。`verdict` の `duplicateAcs`、`unknownAcs`、`unscopedAcs` に ID を載せ、止めるときは `stop_detail.acArtifact` に理由を載せる。
+- 依頼の識別子の不一致と試験ファイルの不一致は、段階が揃っていれば AI の修正（`revising`）に回す。旧形式とファイル一覧の取得不能は、AI の修正でも CI の再実行でも直らないので `stopped(ci_incomplete)`。
 - 「失敗した job だけ再実行」では `ac-results` が前の試行のままなので、`attempt_mismatch` か `missing` で止まる。CI 全体を再実行する。
 - PR 本文、AI の申告、runner の結果からは合格を作らない。
 - 段階が揃い artifact も読めて AC の試験だけが足りないときは `revising`（再実行では直らないため）。それ以外の実 CI の `incomplete` は `stopped(ci_incomplete)`。`stop_detail` に `cause: 'AC 未確認'`、`unconfirmedAcs`、`acArtifact`（下表）を載せる。
 
-| `acArtifact`          | 意味                                                                          |
-| --------------------- | ----------------------------------------------------------------------------- |
-| `ok`                  | 読めた（中身に `not_run` などの未確認がある）                                 |
-| `missing`             | 同じ run に無い。前の試行のものは使わない                                     |
-| `expired`             | 期限切れ                                                                      |
-| `too_large`           | 1 MiB を超える（一覧の大きさ、受信の途中、展開後のどれか）                    |
-| `duplicate`           | 同じ試行に同じ名前が 2 つ                                                     |
-| `head_mismatch`       | 一覧の `workflow_run.head_sha` か JSON の `headSha` が run の head と違う     |
-| `invalid`             | zip や JSON の形が違う、古い形式、リダイレクト先が許可されない                |
-| `repository_mismatch` | JSON の `repository` が取得元と違う                                           |
-| `run_mismatch`        | 一覧の `workflow_run.id` か JSON の `runId` が run と違う（同じ名前の別 run） |
-| `attempt_mismatch`    | JSON の `runAttempt` が run の attempt と違う（前の試行の結果）               |
-| `duplicate_ac_id`     | 同じ AC ID が複数ある。全件を読まない                                         |
-| `unknown_ac_id`       | 注文書に無い AC ID がある。全件を読まない                                     |
-| `missing_ac_id`       | 注文書の AC ID が報告に無い。報告のある分は読み、無い分は未確認               |
+| `acArtifact`          | 意味                                                                                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `ok`                  | 読めた（中身に `not_run` などの未確認がある）                                                                            |
+| `missing`             | 同じ run に無い。前の試行のものは使わない                                                                                |
+| `expired`             | 期限切れ                                                                                                                 |
+| `too_large`           | 1 MiB を超える（一覧の大きさ、受信の途中、展開後のどれか）                                                               |
+| `duplicate`           | 同じ試行に同じ名前が 2 つ                                                                                                |
+| `head_mismatch`       | 一覧の `workflow_run.head_sha` か JSON の `headSha` が run の head と違う                                                |
+| `invalid`             | zip や JSON の形が違う、リダイレクト先が許可されない                                                                     |
+| `legacy_schema`       | 旧形式 v1。依頼と試験ファイルの対応が無いので合格にしない                                                                |
+| `repository_mismatch` | JSON の `repository` が取得元と違う                                                                                      |
+| `run_mismatch`        | 一覧の `workflow_run.id` か JSON の `runId` が run と違う（同じ名前の別 run）                                            |
+| `attempt_mismatch`    | JSON の `runAttempt` が run の attempt と違う（前の試行の結果）                                                          |
+| `duplicate_ac_id`     | 同じ AC ID が複数ある。全件を読まない                                                                                    |
+| `unknown_ac_id`       | 注文書に無い AC ID がある。全件を読まない                                                                                |
+| `request_mismatch`    | 結果の依頼の識別子が、この job の依頼と合わない。全件を読まない                                                          |
+| `test_file_mismatch`  | 結果の `testFile` が、この PR で追加・変更されたファイルに無い。全件を読まない                                           |
+| `file_scope_unavailable` | PR の変更ファイル一覧を取得できない（PR が分からない・読めない・500 件超）。合格にしない                             |
+| `missing_ac_id`       | 注文書の AC ID が報告に無い。報告のある分は読み、無い分は未確認                                                          |
 
 画面は `acArtifact` が `ok` 以外のとき、ジョブの行に「証跡の欠落（理由）」を出す。
 
-通信の失敗（接続エラーと 5xx）は欠落にしない。記録せず次の工程で読み直す（`delivery` は run ごとに 1 回なので、記録すると固定される）。読めないままなら `session_limit` で止まる。
+通信の失敗（接続エラーと 5xx）は欠落にしない。記録せず次の工程で読み直す（`delivery` は run ごとに 1 回なので、記録すると固定される）。読めないままなら `session_limit` で止まる。PR の変更ファイル一覧の通信の失敗も同じ扱い。
 
 取得: `GET /repos/{repo}/actions/artifacts/{id}/zip` の 302 を 1 回だけ自分で追う。追う先へ token を送らない。追う先は `GITHUB_API_URL` と同じ規則（https。試験ではループバックだけ）で確かめる。依存は増やしていない（`node:zlib`）。
 
-runner のプロンプトは、試験を `test/unit/` に置き、試験名の先頭を `AC-n:` にするよう伝える。試験を書くのは AI なので、**試験が AC を本当に確かめているかは機械では分からない**。人が PR で確かめる（`docs/limitations.md`）。
+Sandbox の CI（`scripts/ac-report.mjs`）は、PR の head ブランチ `auto/req-...` から受付番号を、TAP のファイル名から `testFile` を作る。**この PR で追加・変更したファイルの試験だけ**を報告し（`--changed-files`）、前の依頼の試験を数えない。サーバも GitHub の PR の一覧で同じことを独立に確かめる。16 章の 2 件目で実測した「前の依頼の試験が今の依頼の AC に数えられる」不具合は、この二重の確認で塞ぐ（Sandbox PR #11）。
 
-migration 0009 の DB ガード（`devline_has_passing_verification`）は `stages` だけを見る。AC の判定はサービス層（`evaluateVerification`）にあり、DB の最後の砦には入っていない。
+runner のプロンプトは、試験を `test/unit/` に置き、試験名の先頭を `AC-n:` にするよう伝える。v2 では、その試験が**その依頼の PR で追加・変更するファイル**に属することも要る。
+
+残る限界:
+
+- 試験を書くのは AI なので、**試験が AC を本当に確かめているかは機械では分からない**。人が PR で確かめる（`docs/limitations.md`）。
+- サーバが見るのは「その試験ファイルがこの PR の変更ファイルか」までで、試験の中身と AC の対応は見ない。中身のない試験に `AC-n:` と名付ければ通る。
+- 同じ AC の試験が複数の変更済みファイルにあるとき、Sandbox の CI は最初のファイルを代表として報告する（重複 AC はサーバが拒否するため）。
+- `scripts/ac-report.mjs` は head の checkout から動くので、AI が書き換えれば偽の報告を作れる（`security-residuals.md` R-15）。
+- migration 0009 の DB ガード（`devline_has_passing_verification`）は `stages` だけを見る。AC の判定はサービス層（`evaluateVerification`）にあり、DB の最後の砦には入っていない。
 
 ## 16. 画面起点の通し試験の記録（2026-11-01〜02）
 

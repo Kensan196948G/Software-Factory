@@ -11,6 +11,19 @@ import { buildRunnerPrompt } from '../../src/worker/docker-claude-runner.js';
 import { selectAcArtifact } from '../../src/worker/github-ci-collector.js';
 
 const HEAD = 'a'.repeat(40);
+const REQ = 'REQ-2026-0001';
+const ORDER = '1'.repeat(64);
+const TEST_FILE = 'test/unit/a.test.ts';
+/** 実 CI の v2 の証跡（依頼の識別子と試験ファイル）を持つ結果。 */
+const ok = (acId: string): AcResult => ({
+  acId,
+  status: 'passed',
+  testIds: [`${acId}: t`],
+  requestId: REQ,
+  testFile: TEST_FILE,
+});
+/** v1 の頃の結果（範囲情報が無い）。 */
+const unscoped = (acId: string): AcResult => ({ acId, status: 'passed', testIds: [`${acId}: t`] });
 const record = (acResults: AcResult[], over: Partial<VerificationRecord> = {}): VerificationRecord => ({
   deliveryId: 'd',
   source: 'github',
@@ -22,7 +35,6 @@ const record = (acResults: AcResult[], over: Partial<VerificationRecord> = {}): 
   acResults,
   ...over,
 });
-const ok = (acId: string): AcResult => ({ acId, status: 'passed', testIds: [`${acId}: t`] });
 
 describe('evaluateVerification: 受入条件', () => {
   it('全件 passed（test ID あり）のときだけ passed', () => {
@@ -32,12 +44,13 @@ describe('evaluateVerification: 受入条件', () => {
   it.each<[string, AcResult[]]>([
     ['報告なし', []],
     ['1件欠落', [ok('AC-1')]],
-    ['not_run', [ok('AC-1'), { acId: 'AC-2', status: 'not_run', testIds: ['x'] }]],
-    ['test ID なしの passed', [ok('AC-1'), { acId: 'AC-2', status: 'passed', testIds: [] }]],
+    ['not_run', [ok('AC-1'), { ...ok('AC-2'), status: 'not_run' }]],
+    ['test ID なしの passed', [ok('AC-1'), { ...ok('AC-2'), testIds: [] }]],
     ['同じ AC の重複は曖昧なので未確認', [ok('AC-1'), ok('AC-2'), ok('AC-2')]],
     ['注文書に無い AC は報告を信用しない', [ok('AC-1'), ok('AC-2'), ok('AC-3')]],
-    ['重複の中に failed があっても修正へ進めない', [ok('AC-1'), ok('AC-2'), { acId: 'AC-2', status: 'failed', testIds: ['t'] }]],
-    ['未知の AC が failed でも修正へ進めない', [ok('AC-1'), ok('AC-2'), { acId: 'AC-9', status: 'failed', testIds: ['t'] }]],
+    ['重複の中に failed があっても修正へ進めない', [ok('AC-1'), ok('AC-2'), { ...ok('AC-2'), status: 'failed' }]],
+    ['未知の AC が failed でも修正へ進めない', [ok('AC-1'), ok('AC-2'), { ...ok('AC-9'), status: 'failed' }]],
+    ['v1 の頃の範囲情報が無い結果', [ok('AC-1'), unscoped('AC-2')]],
   ])('%s は incomplete で、段階が揃っていても合格にしない', (_name, acs) => {
     const v = evaluateVerification([record(acs)], HEAD, ['AC-1', 'AC-2']);
     expect(v.verdict).toBe('incomplete');
@@ -46,10 +59,24 @@ describe('evaluateVerification: 受入条件', () => {
     expect(v.unconfirmedAcs.length).toBeGreaterThan(0);
   });
 
+  it('v2 の範囲（依頼の識別子・試験ファイル）が無い実 CI の記録は、v1 として全件「未確認」', () => {
+    const v = evaluateVerification([record([unscoped('AC-1'), unscoped('AC-2')])], HEAD, ['AC-1', 'AC-2']);
+    expect(v).toMatchObject({
+      verdict: 'incomplete',
+      unscopedAcs: ['AC-1', 'AC-2'],
+      unconfirmedAcs: ['AC-1', 'AC-2'],
+    });
+    expect(v.acEvidence.every((a) => a.mark === '未確認')).toBe(true);
+    // failed と書いてあっても、範囲が無い記録は修正へ進めない
+    const failed = evaluateVerification([record([{ ...unscoped('AC-1'), status: 'failed' }])], HEAD, ['AC-1']);
+    expect(failed.verdict).toBe('incomplete');
+    // 範囲の無い記録は fake の経路には適用しない（fake CI は artifact を読まない）
+    const fake = evaluateVerification([record([unscoped('AC-1')], { source: 'fake_ci' })], HEAD, ['AC-1']);
+    expect(fake.verdict).toBe('passed');
+  });
+
   it('failed は failed', () => {
-    expect(evaluateVerification([record([{ acId: 'AC-1', status: 'failed', testIds: ['t'] }])], HEAD, ['AC-1']).verdict).toBe(
-      'failed',
-    );
+    expect(evaluateVerification([record([{ ...ok('AC-1'), status: 'failed' }])], HEAD, ['AC-1']).verdict).toBe('failed');
   });
 
   it('未知の AC や重複があれば全件「未確認」で、報告の中の ○ を残さない', () => {
@@ -76,7 +103,7 @@ describe('evaluateVerification: 受入条件', () => {
       evaluateVerification([record(acs, over)], HEAD, ['AC-1']);
     expect(ciResultOf(verdictOf([ok('AC-1')]))).toBe('success');
     expect(ciResultOf(verdictOf([]))).toBe('success'); // AC は未確認。CI は成功
-    expect(ciResultOf(verdictOf([{ acId: 'AC-1', status: 'failed', testIds: ['t'] }]))).toBe('success');
+    expect(ciResultOf(verdictOf([{ ...ok('AC-1'), status: 'failed' }]))).toBe('success');
     const failedStage = REQUIRED_STAGES.map((stage, i) => ({
       stage,
       status: i === 0 ? ('failed' as const) : ('passed' as const),
@@ -149,29 +176,44 @@ describe('readSingleJsonFromZip', () => {
   });
 });
 
-describe('parseAcResults', () => {
+describe('parseAcResults: v2 の依頼・試験ファイルの範囲', () => {
+  const item = (over: Record<string, unknown> = {}) => ({
+    id: 'AC-1',
+    status: 'passed',
+    testIds: ['AC-1: t'],
+    requestId: REQ,
+    testFile: TEST_FILE,
+    ...over,
+  });
   const doc = (over: Record<string, unknown> = {}) =>
     Buffer.from(
       JSON.stringify({
-        schema: 'msf.ac-results/v1',
+        schema: 'msf.ac-results/v2',
         repository: 'o/r',
         runId: '7',
         runAttempt: '2',
         headSha: HEAD,
-        ac: [{ id: 'AC-1', status: 'passed', testIds: ['AC-1: t'] }],
+        ac: [item()],
         ...over,
       }),
     );
-  const expected = { repository: 'o/r', runId: 7, runAttempt: 2, headSha: HEAD, acIds: ['AC-1'] };
+  const scope = { requestId: REQ, orderHash: ORDER, changedFiles: new Set([TEST_FILE]) };
+  const expected = { repository: 'o/r', runId: 7, runAttempt: 2, headSha: HEAD, acIds: ['AC-1'], scope };
 
-  it('正しい形を読む', () => {
+  it('正しい形を読む（受付番号・試験ファイルを保持する）', () => {
     expect(parseAcResults(doc(), expected)).toEqual({
       ok: true,
-      results: [{ acId: 'AC-1', status: 'passed', testIds: ['AC-1: t'] }],
+      results: [{ acId: 'AC-1', status: 'passed', testIds: ['AC-1: t'], requestId: REQ, testFile: TEST_FILE }],
       missingAcIds: [],
     });
     // 数値で届いても同じ値なら読む
     expect(parseAcResults(doc({ runId: 7, runAttempt: 2 }), expected).ok).toBe(true);
+    // 注文書のハッシュだけでもよい（受付番号の代わり）
+    const byOrder = doc({ ac: [item({ requestId: undefined, orderHash: ORDER })] });
+    expect(parseAcResults(byOrder, expected)).toMatchObject({ ok: true, results: [{ orderHash: ORDER }] });
+    // ./ 付きの試験ファイルは正規化して比べる
+    const dotSlash = doc({ ac: [item({ testFile: `./${TEST_FILE}` })] });
+    expect(parseAcResults(dotSlash, expected)).toMatchObject({ ok: true, results: [{ testFile: TEST_FILE }] });
   });
 
   it.each<[string, Record<string, unknown>, string]>([
@@ -180,28 +222,45 @@ describe('parseAcResults', () => {
     ['別のリポジトリ', { repository: 'o/other' }, 'repository_mismatch'],
     ['別の run', { runId: '8' }, 'run_mismatch'],
     ['別の attempt', { runAttempt: '1' }, 'attempt_mismatch'],
-    [
-      '同じ AC の重複',
-      {
-        ac: [
-          { id: 'AC-1', status: 'passed', testIds: ['t'] },
-          { id: 'AC-1', status: 'passed', testIds: ['t'] },
-        ],
-      },
-      'duplicate_ac_id',
-    ],
-    [
-      '注文書に無い AC',
-      {
-        ac: [
-          { id: 'AC-1', status: 'passed', testIds: ['t'] },
-          { id: 'AC-2', status: 'passed', testIds: ['t'] },
-        ],
-      },
-      'unknown_ac_id',
-    ],
+    ['同じ AC の重複', { ac: [item(), item()] }, 'duplicate_ac_id'],
+    ['注文書に無い AC', { ac: [item(), item({ id: 'AC-2' })] }, 'unknown_ac_id'],
+    // 前の依頼の試験・別の依頼の試験を流用しても、依頼の識別子で落とす
+    ['他依頼の受付番号', { ac: [item({ requestId: 'REQ-2026-0099' })] }, 'request_mismatch'],
+    ['受付番号の形が違う', { ac: [item({ requestId: 'REQ-26-1' })] }, 'request_mismatch'],
+    ['別の注文書のハッシュ', { ac: [item({ requestId: undefined, orderHash: '2'.repeat(64) })] }, 'request_mismatch'],
+    ['注文書のハッシュの形が違う', { ac: [item({ requestId: undefined, orderHash: 'AB'.repeat(32) })] }, 'request_mismatch'],
+    ['識別子が両方あるが片方が違う', { ac: [item({ orderHash: '2'.repeat(64) })] }, 'request_mismatch'],
+    // 前の依頼の試験ファイルを流用しても、この PR の変更ファイルでなければ落とす
+    ['PR に無いファイルの試験', { ac: [item({ testFile: 'test/unit/old-ac.test.ts' })] }, 'test_file_mismatch'],
+    ['PR で削除されたファイルの試験', { ac: [item({ testFile: 'test/unit/removed.test.ts' })] }, 'test_file_mismatch'],
+    ['試験の置き場所でないファイル', { ac: [item({ testFile: 'src/index.js' })] }, 'test_file_mismatch'],
   ])('%s は全体を読まない', (_name, over, problem) => {
     expect(parseAcResults(doc(over), expected)).toEqual({ ok: false, problem });
+  });
+
+  it('変更ファイルでも test/ の外のファイルは AC の根拠にしない', () => {
+    const source = 'src/index.js';
+    expect(
+      parseAcResults(doc({ ac: [item({ testFile: source })] }), {
+        ...expected,
+        scope: { ...scope, changedFiles: new Set([source]) },
+      }),
+    ).toEqual({ ok: false, problem: 'test_file_mismatch' });
+  });
+
+  it('v1 は後方互換で合格にせず legacy_schema（未確認）', () => {
+    expect(parseAcResults(doc({ schema: 'msf.ac-results/v1' }), expected)).toEqual({
+      ok: false,
+      problem: 'legacy_schema',
+    });
+    expect(parseAcResults(doc({ schema: 'msf.ac-results/v3' }), expected)).toEqual({ ok: false, problem: 'invalid' });
+  });
+
+  it('依頼の識別子が無い v2 は不合格にしないが未確認（request_mismatch）', () => {
+    expect(parseAcResults(doc({ ac: [item({ requestId: undefined })] }), expected)).toEqual({
+      ok: false,
+      problem: 'request_mismatch',
+    });
   });
 
   it('注文書の AC が報告に無ければ欠落を返す（報告のある分は読む）', () => {
@@ -210,19 +269,24 @@ describe('parseAcResults', () => {
   });
 
   it.each<[string, Record<string, unknown>]>([
-    ['schema 違い', { schema: 'msf.ac-results/v2' }],
     ['ac が配列でない', { ac: {} }],
-    ['ID の形', { ac: [{ id: 'AC-0', status: 'passed', testIds: ['t'] }] }],
-    ['状態の値', { ac: [{ id: 'AC-1', status: 'ok', testIds: ['t'] }] }],
-    ['testIds の型', { ac: [{ id: 'AC-1', status: 'passed', testIds: [1] }] }],
-    ['testIds が空文字', { ac: [{ id: 'AC-1', status: 'passed', testIds: [' '] }] }],
-    ['多すぎる', { ac: Array.from({ length: 201 }, () => ({ id: 'AC-1', status: 'passed', testIds: ['t'] })) }],
+    ['ID の形', { ac: [item({ id: 'AC-0' })] }],
+    ['状態の値', { ac: [item({ status: 'ok' })] }],
+    ['testIds の型', { ac: [item({ testIds: [1] })] }],
+    ['testIds が空文字', { ac: [item({ testIds: [' '] })] }],
+    ['多すぎる', { ac: Array.from({ length: 201 }, () => item()) }],
     ['repository が無い古い形式', { repository: undefined }],
     ['runId が無い古い形式', { runId: undefined }],
     ['runAttempt が無い古い形式', { runAttempt: undefined }],
     ['runId が null', { runId: null }],
     ['runId の形', { runId: '7abc' }],
     ['runAttempt の形', { runAttempt: '0' }],
+    ['試験ファイルが無い', { ac: [item({ testFile: undefined })] }],
+    ['試験ファイルが絶対パス', { ac: [item({ testFile: '/etc/passwd' })] }],
+    ['試験ファイルに .. を含む', { ac: [item({ testFile: 'test/../secret.test.ts' })] }],
+    ['試験ファイルが空', { ac: [item({ testFile: ' ' })] }],
+    ['requestId の型', { ac: [item({ requestId: 7 })] }],
+    ['orderHash の型', { ac: [item({ orderHash: 7 })] }],
   ])('%s は全体を読まない', (_name, over) => {
     expect(parseAcResults(doc(over), expected)).toEqual({ ok: false, problem: 'invalid' });
   });

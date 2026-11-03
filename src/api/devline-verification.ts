@@ -176,8 +176,19 @@ export async function recordVerification(input: RecordVerificationInput): Promis
   });
 }
 
-/** artifact 自体は読めて、AC の試験の不足や書き方が原因のもの（AI の修正で直る）。 */
-const AI_FIXABLE_AC_PROBLEMS: readonly string[] = ['ok', 'missing_ac_id', 'unknown_ac_id', 'duplicate_ac_id'];
+/**
+ * artifact 自体は読めて、AC の試験の不足や書き方が原因のもの（AI の修正で直る）。
+ * v2 の依頼の識別子の不一致と試験ファイルの不一致も、AI が試験の置き場所・名前を直せば直る。
+ * 旧形式 v1 と PR の変更ファイル一覧の取得不能は、AI の修正では直らない（CI の再実行・設定の確認）。
+ */
+const AI_FIXABLE_AC_PROBLEMS: readonly string[] = [
+  'ok',
+  'missing_ac_id',
+  'unknown_ac_id',
+  'duplicate_ac_id',
+  'request_mismatch',
+  'test_file_mismatch',
+];
 
 /** CI は lease の持ち主ではないので fencing を +1 して lease を外す。動いている worker の書き込みは捨てられる。 */
 async function applyVerdict(
@@ -251,7 +262,7 @@ async function applyVerdict(
           failedStages: [],
           failedAcs: acs,
           failedTestIds: [],
-          note: '試験名の先頭を AC 番号にした試験が無いか、結果を確認できません。`test/unit/` の試験名を `AC-n:` で始めてください',
+          note: 'この依頼（受付番号）の試験が、この PR で追加・変更したファイルに `AC-n:` 付きで無いか、ac-results が v2 ではありません。`test/unit/` に試験を足し、AC の名前を先頭に付けてください',
         });
       }
       if (input.source === 'github') {
@@ -266,6 +277,7 @@ async function applyVerdict(
                 acMissing: verdict.acMissing,
                 ...(verdict.unknownAcs.length > 0 ? { unknownAcs: verdict.unknownAcs } : {}),
                 ...(verdict.duplicateAcs.length > 0 ? { duplicateAcs: verdict.duplicateAcs } : {}),
+                ...(verdict.unscopedAcs.length > 0 ? { unscopedAcs: verdict.unscopedAcs } : {}),
                 acArtifact: input.diagnostics?.acArtifact ?? null,
               }
             : {}),
@@ -441,7 +453,11 @@ export function renderPrBody(facts: PrFacts): string {
       list(changedPaths),
     ].join('\n'),
     受入条件の検証: [
-      `判定: ${acLine}（CI の ac-results だけを根拠にする。AI の申告は使わない）`,
+      `判定: ${acLine}（${
+        facts.ci?.source === 'github'
+          ? 'CI の ac-results v2 と、この PR で追加・変更されたファイルだけを根拠にする'
+          : 'CI の ac-results だけを根拠にする'
+      }。AI の申告は使わない）`,
       '',
       '| AC | 内容 | 結果 | test ID | CI 実行ID | SHA | digest |',
       '| --- | --- | --- | --- | --- | --- | --- |',

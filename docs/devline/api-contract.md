@@ -140,7 +140,7 @@ update job j set lease_owner=$owner, lease_expires_at=$now + make_interval(secs 
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
 | `passed`     | head の最新の記録で、必須段階が全部 passed、かつ AC が全件 ○                                                                                                     | 受入の合格ではない。合否と merge の判断は人   |
 | `failed`     | 必須段階の失敗か AC の ×（修正の対象）                                                                                                                           | `failedStages` が空なら CI は成功している     |
-| `incomplete` | 段階が走り切っていない、AC に未確認がある、AC が 0 件。報告に注文書に無い AC（`unknownAcs`）か同じ AC の重複（`duplicateAcs`）があれば全件未確認（× も作らない） | `incompleteStages` が空なら CI は成功している |
+| `incomplete` | 段階が走り切っていない、AC に未確認がある、AC が 0 件。報告に注文書に無い AC（`unknownAcs`）、同じ AC の重複（`duplicateAcs`）、v2 の範囲（依頼の識別子・試験ファイル）を持たない実 CI の結果（`unscopedAcs`）があれば全件未確認（× も作らない） | `incompleteStages` が空なら CI は成功している |
 | `stale`      | head の結果が無く、古い SHA の結果だけがある                                                                                                                     |                                               |
 | `no_result`  | 結果がまだ無い                                                                                                                                                   |                                               |
 
@@ -149,7 +149,7 @@ update job j set lease_owner=$owner, lease_expires_at=$now + make_interval(secs 
 | 言葉              | 決まり方                                                             | API の項目                           |
 | ----------------- | -------------------------------------------------------------------- | ------------------------------------ |
 | CI 成功           | 今の head の最新の記録で必須段階が全部 passed。AC の結果は混ぜない   | `evidence[jobId].ciResult='success'` |
-| 受入条件 全件確認 | CI の `ac-results` で AC が全件 ○。AI の申告と PR 本文は根拠にしない | `evidence[jobId].ac.label`           |
+| 受入条件 全件確認 | CI の `ac-results` v2 で AC が全件 ○。各結果の依頼の識別子と `testFile` が、この job の依頼と PR の変更ファイルに一致すること。AI の申告と PR 本文は根拠にしない | `evidence[jobId].ac.label`           |
 | PR 候補の準備完了 | CI 成功かつ受入条件 全件確認で、人の確認待ち                         | `JobView.state='pr_ready'`           |
 | 受入の合格        | 人の判断。システムは出さない                                         | なし                                 |
 
