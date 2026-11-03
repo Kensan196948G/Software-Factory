@@ -6,8 +6,8 @@
 import { lstatSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { REAL_RUNNER_POLICY, diffPolicyForRepo } from '../shared/devline.js';
-import type { AllowedRepo, RunnerBudget } from '../shared/devline.js';
+import { AUTO_MERGE_POLICY_VERSION, DEVLINE_REPO_LEDGER, REAL_RUNNER_POLICY, diffPolicyForRepo, ledgerEntryFor } from '../shared/devline.js';
+import type { AllowedRepo, RepoAllowEntry, RepoDiffPolicy, RunnerBudget } from '../shared/devline.js';
 
 export const DEFAULT_SECRETS_PATH = join(homedir(), '.config', 'mirai-sf', 'devline-secrets.env');
 
@@ -82,21 +82,35 @@ export function parseRunnerBudget(env: Record<string, string | undefined>): Runn
   return { limitJpy, jpyPerUsd };
 }
 
-/** 実 runner を向けてよいか（純関数）。DEVLINE_TARGET_REPOS と定数の両方に名前と ID が載っていること。 */
-export function isRealRunnerTarget(repo: string, allowed: readonly AllowedRepo[]): boolean {
+/**
+ * 実 runner を向けてよいか（純関数）。DEVLINE_TARGET_REPOS と**許可台帳**の両方に名前と ID が載っていること。
+ * 台帳は複数行を持つ。1件だけを強制しない（job ごとの repo は target_repo_id で持つ）。
+ */
+export function isRealRunnerTarget(
+  repo: string,
+  allowed: readonly AllowedRepo[],
+  ledger: readonly RepoAllowEntry[] = DEVLINE_REPO_LEDGER,
+  policyOf: (repo: string) => RepoDiffPolicy | null = diffPolicyForRepo,
+): boolean {
   const configured = allowed.find((r) => r.name === repo);
-  const fixed = REAL_RUNNER_POLICY.allowedRepos.find((r) => r.name === repo);
-  return Boolean(configured && fixed && configured.repoId === fixed.repoId && diffPolicyForRepo(repo));
+  if (!configured) return false;
+  const entry = ledgerEntryFor(repo, configured.repoId, ledger);
+  return Boolean(entry && entry.private && policyOf(repo));
 }
 
 /** 設定だけで決まる起動の拒否（純関数）。接続はしない。 */
-export function checkRealLineEnv(env: Record<string, string | undefined>, allowed: readonly AllowedRepo[]): string | null {
+export function checkRealLineEnv(
+  env: Record<string, string | undefined>,
+  allowed: readonly AllowedRepo[],
+  ledger: readonly RepoAllowEntry[] = DEVLINE_REPO_LEDGER,
+  policyOf: (repo: string) => RepoDiffPolicy | null = diffPolicyForRepo,
+): string | null {
   // Staging は NODE_ENV=production で動く。APP_ENV=staging を明示したときだけ許す。本番は常に拒否（所有者の決定、2026-11-01）
   if (env.NODE_ENV === 'production' && env.APP_ENV !== 'staging') return 'production では docker-claude を起動しません';
-  if (!allowed.some((r) => isRealRunnerTarget(r.name, allowed))) {
+  if (!allowed.some((r) => isRealRunnerTarget(r.name, allowed, ledger, policyOf))) {
     return 'DEVLINE_TARGET_REPOS に実 runner の許可先がありません';
   }
-  const stray = allowed.filter((r) => !isRealRunnerTarget(r.name, allowed));
+  const stray = allowed.filter((r) => !isRealRunnerTarget(r.name, allowed, ledger, policyOf));
   if (stray.length > 0) return 'DEVLINE_TARGET_REPOS に実 runner の許可先以外が含まれています';
   try {
     parseRunnerBudget(env);
@@ -104,4 +118,29 @@ export function checkRealLineEnv(env: Record<string, string | undefined>, allowe
     return (err as Error).message;
   }
   return null;
+}
+
+/** 自動マージの設定（DEVLINE_AUTO_MERGE）。既定は無効で、読めない値は拒否する（fail-closed）。 */
+export interface AutoMergePolicy {
+  enabled: boolean;
+  /** 監査に残す設定値（'1' / '0' / 未設定は空）。 */
+  configuredValue: string;
+  /** 判定根拠に残すポリシー版。 */
+  policyVersion: string;
+}
+
+/**
+ * DEVLINE_AUTO_MERGE の解釈（純関数）。既定は 0（無効）。'0' / '1' 以外は拒否する。
+ * production では既定 0 のままとし、明示的に 1 にしても APP_ENV=staging（検証環境）でなければ拒否する。
+ * 実 runner 本体（docker-claude）と同じ境界で、本番の自動 merge は作らない。
+ */
+export function parseAutoMergePolicy(env: Record<string, string | undefined>): AutoMergePolicy {
+  const raw = (env.DEVLINE_AUTO_MERGE ?? '').trim();
+  const disabled: AutoMergePolicy = { enabled: false, configuredValue: raw, policyVersion: AUTO_MERGE_POLICY_VERSION };
+  if (raw === '' || raw === '0') return disabled;
+  if (raw !== '1') throw new RealLineRefused('DEVLINE_AUTO_MERGE は 0 か 1 で指定してください');
+  if (env.NODE_ENV === 'production' && env.APP_ENV !== 'staging') {
+    throw new RealLineRefused('本番（APP_ENV=production）では自動マージを有効にできません（APP_ENV=staging の検証環境だけ）');
+  }
+  return { enabled: true, configuredValue: '1', policyVersion: AUTO_MERGE_POLICY_VERSION };
 }

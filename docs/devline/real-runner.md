@@ -18,10 +18,11 @@
 ```
 handoff（Issue）→ queued → planning（AI・読むだけ）→ implementing（AI）
   → ホストの差分検査 → ホストで commit → push → PR（CI の前に作る）
-  → verifying（GitHub Actions の結果を読む）→ pr_ready（本文を結果つきに更新）で止まる
+  → verifying（GitHub Actions の結果を読む）→ pr_ready（本文を結果つきに更新）
+  → 人の承認で merge（既定）／DEVLINE_AUTO_MERGE=1 のときだけ、条件を満たせばサーバが機械判定で merge（17 章）
 ```
 
-- **AI は merge も Approve もしない**。`PrAdapter` と worker にその口が無い。job は `pr_ready` で人の承認を待つ（merge は 13 章。人の画面操作からサーバが行う）。
+- **AI は merge も Approve もしない**。`PrAdapter` と AI のコンテナにその口が無い。job は `pr_ready` で人の承認を待つ（merge は 15 章。人の画面操作からサーバが行う）。例外は、所有者が明示設定した `DEVLINE_AUTO_MERGE=1` のときのサーバの機械判定だけで、AI の申告・PR 本文は根拠にしない（17 章）。
 - 合否の根拠は Actions の記録だけ（`verification.source='github'`）。AI の申告は使わない。受入条件は同じ run の artifact `ac-results` から読む（14 章）。
 - `pr_ready` は「PR 候補の準備完了」で、受入の合格ではない。merge の判断は人が行う。
 - CI の失敗は `revising`。修正は直前の head から始め、**試行ごとに新しいブランチと PR** を作る（`auto/<req>-v<版>-a<試行>`）。force push を避けるため。古い PR はマーカーと作成者を確かめて閉じる。差分検査は常に base からの全体で行う。
@@ -139,6 +140,7 @@ DEVLINE_GITHUB_TOKEN=
 | `DEVLINE_CI_POLL_MS`     | なし（15〜30秒）                | 1件実走の入口の CI の問い合わせ間隔                                                       |
 | `DEVLINE_DEPLOY_ENABLED` | なし                            | `1` で worker が成果物の作成と検証環境への配備を行う                                      |
 | `DEVLINE_ARTIFACT_DIR`   | OS の一時領域                   | CI の成果物を展開する場所。tmpfs でない、空きのあるところ（最大で zip 1 GiB + tar 3 GiB） |
+| `DEVLINE_AUTO_MERGE`     | `0`（無効）                     | `1` で、条件をすべて満たすときにサーバが squash merge する（17 章）。本番と検証環境以外では起動を拒否 |
 
 ## 7. 1件実走の手順（CTO）
 
@@ -293,7 +295,7 @@ Staging の最初の投入（REQ-2026-0010、job `914b0043`）は、`CLAUDE_CODE
 
 契約は `docs/devline/api-contract.md`、判定は `src/shared/devline-release.ts`。「検証環境への配備」は本番公開ではない。工場本体の Staging 更新（`pnpm ops:release`）とも別物。本番公開の経路は作らない（SC-02、SC-03 が未決）。
 
-1. **merge**: 承認者が画面で「PR を承認して merge する」を押す。サーバが検査し、`DEVLINE_SECRETS_FILE` の `DEVLINE_GITHUB_TOKEN`（API はこれだけを読む。環境変数のトークンは使わない）で `sha` を渡して squash で merge する。AI も worker も呼べない。送信の前に compare API で PR の head が base の最新を含むことを確かめ、遅れていれば送らず「base が進みました。AI の修正か更新が必要です」（`base_behind`）で拒否する。読めなければ送らない。
+1. **merge**: 承認者が画面で「PR を承認して merge する」を押す。サーバが検査し、`DEVLINE_SECRETS_FILE` の `DEVLINE_GITHUB_TOKEN`（API はこれだけを読む。環境変数のトークンは使わない）で `sha` を渡して squash で merge する。AI は呼べない。worker は人の承認の経路を呼ばない（自動マージは 17 章の別の経路）。送信の前に compare API で PR の head が base の最新を含むことを確かめ、遅れていれば送らず「base が進みました。AI の修正か更新が必要です」（`base_behind`）で拒否する。読めなければ送らない。
    結果不明（`unknown`、落ちた `sending`）のボタンは「結果を照合する」で、PR を読むだけ（merge を送らず、承認を作らず、取消も書きかえない）。merge 済みなら記録する。開いていて未 merge なら `none` へ戻し（`not_merged`）、人が「PR を承認して merge する」を押して初めて送る。404、読めない、許可の設定で確かめられないときは `unknown` のまま残す。
 2. **同一性**: merge の commit の tree が、CI で検査した head の tree と一致することを確かめる。違えば配備へ進めない（送信の前の確認と送信の間に base が動いた場合の保険）。
 3. **成果物**: worker は CI で検査した成果物を取得する（このホストで `docker build` しない。fallback も無い）。
@@ -346,10 +348,10 @@ runner の種別・対象・トークンはサーバの設定だけで決まる�
 | 設定                                | `POST /api/orders/:id/handoff`（と旧ルート）の動き                                                                                      |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `DEVLINE_RUNNER_KIND` なし / `fake` | 従来どおり。`GITHUB_TOKEN` と `GITHUB_REPO` で Issue を作り、job は `fake`                                                              |
-| `DEVLINE_RUNNER_KIND=docker-claude` | `DEVLINE_TARGET_REPOS` の1件へ `DEVLINE_GITHUB_TOKEN` で Issue を作り、job は `docker-claude`。`GITHUB_TOKEN` と `GITHUB_REPO` は見ない |
+| `DEVLINE_RUNNER_KIND=docker-claude` | `DEVLINE_TARGET_REPOS` と許可台帳の積集合の**先頭**へ `DEVLINE_GITHUB_TOKEN` で Issue を作り、job は `docker-claude`。`GITHUB_TOKEN` と `GITHUB_REPO` は見ない。複数あってよい（job は target_repo_id を持ち、その repo だけを触る） |
 | それ以外の値                        | ERR-405。fake として動かさない                                                                                                          |
 
-実 job の投入を ERR-405 で拒否する場合（fake へ落とさない）: 資格情報のファイルが無い・0600 以外・symlink・他人のもの・`DEVLINE_GITHUB_TOKEN` が無い、`DEVLINE_TARGET_REPOS` が空・`REAL_RUNNER_POLICY.allowedRepos` 以外を含む・repo ID が違う・複数のリポジトリ、公開リポジトリ、`NODE_ENV=production`。
+実 job の投入を ERR-405 で拒否する場合（fake へ落とさない）: 資格情報のファイルが無い・0600 以外・symlink・他人のもの・`DEVLINE_GITHUB_TOKEN` が無い、`DEVLINE_TARGET_REPOS` が空・許可台帳（`DEVLINE_REPO_LEDGER`）に無い・repo ID が違う・差分 policy が無い、公開リポジトリ、`NODE_ENV=production`。複数のリポジトリは拒否しない（`docs/devline/repo-onboarding.md`）。
 
 API のプロセスは `DEVLINE_GITHUB_TOKEN` だけを読む。`ANTHROPIC_API_KEY` は worker だけが読む。fake の worker は実 job を取らず、実の worker は fake の job を取らない。worker を動かさなければ job は `queued` のまま。
 
@@ -473,3 +475,80 @@ Staging の画面から作り物を登録した。承認、merge、配備、戻�
 - 実 AI が修正をやり直す経路、予算到達の停止、禁止差分や prompt injection への動作。2 件とも修正は 0 回だった。
 - 費用と Anthropic Console の請求の照合。
 - `/length` より先の、依頼で作った機能の配備後の動作。配備の smoke は `/length` だけで、依頼の機能は CI と手元の確認だけ。
+
+## 17. 自動マージ（DEVLINE_AUTO_MERGE）と複数リポジトリ
+
+状態: 実装済み（2026-11-03）。既定は**無効**。実環境（Staging）での実走はまだ行っていない（作り物の注文書と stub の GitHub で試験済み）。
+
+### 17-1. 原則
+
+- **AI は自分の成果物を承認しない。** 自動マージは人の承認の代替ではなく、所有者が明示設定したポリシー（環境変数 `DEVLINE_AUTO_MERGE=1`）によるサーバの機械判定である。判定根拠と設定値を監査に残す。AI の申告・PR 本文・runner の結果は根拠にしない。
+- 既定は 0（無効）。未設定・`0`・読めない値は無効または起動拒否で、**fail-closed**。本番（`NODE_ENV=production` かつ `APP_ENV!=staging`）では既定 0 のままで、明示的に 1 にしても起動を拒否する（実 runner と同じ境界）。
+- 有効でも、条件をすべて満たさないときは merge を送らない。無効のときは従来どおり、人の承認（`POST /api/jobs/:id/approve-merge`、15 章）だけが merge する。
+
+### 17-2. 判定条件（すべて満たすときだけ squash merge）
+
+| # | 条件 | 根拠（機械が読む記録） |
+| - | ---- | ---------------------- |
+| 1 | この head の検証が `passed` で、受入条件が全件確認済み | `verification` の最新の run（`evaluateVerification`）。PR 本文・AI の申告は使わない |
+| 2 | 許可台帳と `DEVLINE_TARGET_REPOS` の積集合にあり、private 前提である | `DEVLINE_REPO_LEDGER` と設定。repoId の一致も見る（`docs/devline/repo-onboarding.md`） |
+| 3 | 差分検査（禁止パス・秘密・バイナリ）を通った証跡がある | `work_state.diffPolicy`（検査した policy の版）と `work_state.changedPaths`。版が今の policy と違う・path が policy に反する・記録が無いときは通さない（`checkAutoMergeDiffEvidence`） |
+| 4 | 注文書が最新版で、新しい版に置きかえられていない | `isOrderCurrent` と `superseded_at`。赤信号は不可 |
+| 5 | PR の head が job の `head_sha` と一致する | GitHub の PR を読み直す。merge の直前に再確認する |
+| 6 | 実 PR の記録があり、人の merge が進行中・結果不明・却下でない | `work_state.pr` と `release.merge_state`。`sending` / `unknown` / `rejected` / `merged` は触らない |
+
+`pr_ready` 以外・head なし・停止系・人の承認が同時に入った場合は何もしない（後者が入っていたら機械判定で上書きしない）。
+
+### 17-3. 実行の順序
+
+1. worker が verifying → pr_ready に進めた直後、`devline-auto-merge.ts` を呼ぶ（契機は worker だけ。無効なら契機を渡さない）。
+2. DB のトランザクションで job を `for update` し、条件1〜4・6を判定する。通らなければ `job_event(auto_merge_refused)` と監査（`result='denied'`）を残して終わる。**merge は送らない。job は pr_ready のまま**（人が承認できる）。
+3. 通ったら `release` を `merge_state='sending'` にし、`auto_merge=true`・ポリシー版・verdict・AC・run を記録して commit する（外部呼び出しはトランザクションの外）。
+4. PR を読み、head の一致・open・自分の PR（マーカーと作成者）・base ブランチ・base の最新を含む（`behind_by=0`）を確かめる。違えば止める（17-5）。
+5. DB を読み直し（head、注文書、検証、差分証跡、人の承認が入っていないか）、まだ条件を満たすときだけ `sha` を渡して squash merge する。
+6. merge 済みを確認したら、同じトランザクションで `pr_ready → approved → merged`（`job_event` は `actor_type='system'`）と `release.merge_state='merged'` を記録する。tree が一致すれば成果物の作成（`release_attempt(kind='build')`）を積む。配備は従来どおり人が承認する（15 章）。
+
+### 17-4. 監査の残し方
+
+| 場所 | 残すもの |
+| ---- | -------- |
+| `audit_log` | action `job.auto_merge`（送信・拒否・延期・不明・停止）、action `job.merged`。`role='system'`、`actor_name='system:auto-merge'`、`actor_user_id=null`。diff に `mode`・`policyVersion`・`policyValue`・`verdict`・`acIds`・`headSha`・`runId`・`prNumber`・`repo`、拒否理由、`autoMerge: true`、および「人の承認の代替ではない」旨 |
+| `job_event` | `auto_merge_started` / `auto_merge_refused` / `auto_merge_deferred` / `auto_merge_unknown` / `auto_merge_skipped`、状態遷移（`actor_type='system'`） |
+| `release` | `auto_merge=true`、`auto_merge_policy_version`、`auto_merge_verdict`、`auto_merge_ac_ids`、`auto_merge_run_id`、`auto_merge_decided_at`、`auto_merge_detail`（失敗理由を含む。秘密は入れない） |
+| `job.stop_detail` | 失敗時に `autoMerge.reason`・`policyVersion`・`policyValue`・`repo`・`prNumber`・`headSha`・`runId`・`verdict`・`acIds` |
+
+**人の承認の行（`release_approval`）は作らない。** この表は人の承認だけの追記専用で、`approver_user_id` が必須だからである。自動マージの事実は上の `release` の列と監査で表し、画面の「人の承認」欄には出さない。
+
+### 17-5. 失敗時の扱い
+
+| 事象 | 扱い |
+| ---- | ---- |
+| GitHub が merge を拒否（405: 競合・必須検査・保護、409: head 変更、403: 権限） | job を `stopped`（`stop_reason='auto_merge_failed'`）にし、`stop_detail` に理由を残す。PR は残る（`prFollowupOf` が「merge しない」印を付ける） |
+| base が進んだ（`behind_by>0`）・PR が閉じた・head が変わった・自分の PR でない・base ブランチが違う | 同上で停止（CI の再実行・AI の修正・PR の確認が必要） |
+| merge の応答を失った（timeout・network・5xx・壊れた本文） | **再送しない。** PR を読み、merge 済みなら記録する。未 merge なら `merge_state='unknown'` にして job は pr_ready のまま残す（人が「結果を照合する」で確かめられる。15 章の結果不明と同じ） |
+| PR を読めない・compare を読めない・rate limited | merge は送らず、`merge_state='none'` に戻して監査に残す（job は pr_ready。人が押し直せる） |
+| 判定の途中で人が承認した・別の処理が release を進めた | 何も送らず、そのまま人の経路に任せる（`auto_merge_skipped`） |
+
+停止した job は、理由を直した後に人が再開できる（`stopped → pr_ready`、0014 で追加）。`auto_merge_failed` は再開可能な停止である。
+
+### 17-6. 複数リポジトリ
+
+- `DEVLINE_TARGET_REPOS` はカンマ区切りで複数書ける（`owner/name:repoId`）。許可台帳（コードの定数）との積集合だけが有効で、先頭が新しい投入の既定先。
+- job は作ったときの `target_repo_id` を持ち、worker と API はその repo だけを触る。job の repo が許可台帳と設定の積集合に無いときは worker が `policy_violation`（`target_repo_not_in_ledger`）で止める。人と自動マージの merge も、release の repo と job の repo がずれていれば送らない。
+- 実際に2つ目を載せる手順・CI の要件・戻し方は `docs/devline/repo-onboarding.md`。姉妹リポジトリとの接続仕様は `docs/devline/development-dispatcher-integration.md`（未配備。コードは書かない）。
+
+### 17-7. 試験
+
+- 単体: `tests/unit/devline-auto-merge.test.ts`（台帳の積集合・設定の解釈・差分証跡・判定の全条件・停止と再開）。
+- 結合: `tests/integration/devline-auto-merge.test.ts`（既定で merge しない／条件充足で system 主体の merge／head 不一致・注文書の版・AC 未確認・台帳外 repo・差分証跡なしの拒否／merge 拒否時の停止と `stop_detail`／worker の契機）。
+- `tests/integration/devline-qa-db.test.ts` の T-02/T-03（TS と SQL の遷移表・`STOP_REASONS` の一致）に 0014 の2辺と `auto_merge_failed` を反映。
+
+### 17-8. 既知の制限
+
+- 契機は pr_ready の直後だけ。worker がその瞬間に落ちた場合や、後から `DEVLINE_AUTO_MERGE=1` にした場合は自動で走らない（人が承認するか、再開して検証をやり直す）。
+- 有効化には `DEVLINE_GITHUB_TOKEN`（merge の口）を読める資格情報ファイルが要る。無ければ worker は起動を拒否する。
+- 有効化の前に pr_ready だった job は自動マージされない。
+- ブランチ保護（Required Checks）そのものはサーバが確かめない。GitHub の merge API と保護に依存する。保護が無い間は有効にしない（利用者規則）。
+- 画面は自動マージを「人の承認」として表示しない（`release_approval` を作らないため）。自動マージの証跡は API の release 応答にまだ出していない（監査と DB の列で確認する）。
+- 判定の途中で worker が落ちると、`release.merge_state='sending'` が残る。人の承認の経路は 5 分後に結果不明として照合できる。
+- 2つ目の repo を実際に使うには、その repo 側の CI（`ac-results` v2 と `image`）と main の保護が要る。依頼ごとの投入先の選択 UI は無い。

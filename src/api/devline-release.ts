@@ -472,6 +472,8 @@ async function recheckBeforeSend(release: ReleaseRow, headSha: string): Promise<
     const { rows } = await client.query<JobRow>('select * from job where id = $1', [release.job_id]);
     const job = rows[0];
     if (!job || job.state !== 'pr_ready' || job.head_sha !== headSha) return 'head_changed';
+    // job の repo と release の repo がずれていたら merge しない（取り違えの防止）
+    if (job.target_repo_id !== release.repo) return 'repo_refused';
     const facts = await orderFacts(client, job);
     if (job.superseded_at !== null || !facts.current) return 'approval_expired';
     const { verdict, run } = await verdictOf(client, job, facts.acIds);

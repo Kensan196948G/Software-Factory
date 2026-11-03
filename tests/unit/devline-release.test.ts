@@ -183,12 +183,16 @@ describe('merge の資格情報', () => {
   });
 });
 
-describe('merge の口は人の承認の経路だけ', () => {
+describe('merge の口は人の承認の経路と、明示設定された自動マージの経路だけ', () => {
   it('src のうち merge の口を作るのは devline-release.ts だけ。worker は承認の経路を import しない', () => {
     const users = walk('src').filter(
       (f) => !f.endsWith('pr-adapter.ts') && readFileSync(f, 'utf8').includes('createGithubPrMergeAdapter'),
     );
     expect(users).toEqual([join('src', 'api', 'devline-release.ts')]);
+    // 自動マージは release.ts の既定依存（merge の口）を受け取るだけで、口そのものを作らない
+    const auto = readFileSync(join('src', 'api', 'devline-auto-merge.ts'), 'utf8');
+    expect(auto).not.toContain('createGithubPrMergeAdapter');
+    expect(auto).toContain('defaultReleaseDeps');
     for (const file of walk(join('src', 'worker'))) {
       const text = readFileSync(file, 'utf8');
       expect(text, file).not.toMatch(/api\/devline-release\.js'/);

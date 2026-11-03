@@ -32,6 +32,7 @@ import {
   haltTarget,
   isOrderCurrent,
   isRepoAllowed,
+  ledgerEntryFor,
   matchIssueByMarker,
   nextHandoffAction,
   rateLimitedRetryAt,
@@ -66,17 +67,16 @@ export interface DevlineDeps {
 }
 
 /**
- * 実 runner の依存。対象は DEVLINE_TARGET_REPOS の唯一の許可先、トークンは DEVLINE_GITHUB_TOKEN だけ。
- * GITHUB_REPO・GITHUB_TOKEN は見ない。読めない・足りないときは ERR-405 で、fake へ落とさない。
+ * 実 runner の依存。DEVLINE_TARGET_REPOS と許可台帳の積集合の先頭を、新しい投入の既定先にする。
+ * 複数あってよい（job は作られたときの target_repo_id を持ち、worker と API はその repo だけを触る）。
+ * トークンは DEVLINE_GITHUB_TOKEN だけ。GITHUB_REPO・GITHUB_TOKEN は見ない。
+ * 読めない・足りないときは ERR-405 で、fake へ落とさない。
  */
 function realDevlineDeps(): DevlineDeps {
   const allowed = config.devlineTargetRepos;
   const refused = checkRealLineEnv({ ...process.env, NODE_ENV: config.nodeEnv, APP_ENV: config.appEnv }, allowed);
   if (refused) throw new ApiError('ERR-405', `開発ラインの設定が正しくありません（${refused}）`, 409);
   const target = allowed[0] as AllowedRepo;
-  if (allowed.some((r) => r.name !== target.name)) {
-    throw new ApiError('ERR-405', '開発ラインの設定が正しくありません（DEVLINE_TARGET_REPOS は1件にしてください）', 409);
-  }
   let token: string;
   try {
     token = loadDevlineGithubToken(config.devlineSecretsFile || DEFAULT_SECRETS_PATH, config.nodeEnv);
@@ -333,6 +333,11 @@ function readFailure(): ApiError {
 async function assertRepoIdentity(deps: DevlineDeps): Promise<void> {
   const allowed = deps.allowedRepos.find((r) => r.name === deps.targetRepo);
   if (!allowed) throw misconfigured('対象リポジトリが許可されていません（DEVLINE_TARGET_REPOS）');
+  // 実 runner は DEVLINE_TARGET_REPOS だけでは足りない。定数の許可台帳（用途・repoId・private 前提）にも載っていること。
+  // fake の経路は従来どおり（台帳は実 runner の許可先だけを扱う）。
+  if (deps.runnerKind === 'docker-claude' && !ledgerEntryFor(deps.targetRepo, allowed.repoId)) {
+    throw misconfigured('対象リポジトリが実 runner の許可台帳にありません（DEVLINE_TARGET_REPOS と台帳の積集合）');
+  }
   const got = await deps.issueAdapter.getRepoId(deps.targetRepo, timeoutSignal(deps));
   if (!got.ok) throw readFailure();
   if (got.value !== allowed.repoId) throw misconfigured('対象リポジトリの ID が許可リストと一致しません（DEVLINE_TARGET_REPOS）');

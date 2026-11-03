@@ -228,7 +228,7 @@ fence の無い関数だが、CI は lease の持ち主ではないので状態�
 | 成果物（worker） | tree の不一致か未確認（`not_buildable`）。合否の根拠の run に artifact が無い（`artifact_missing`）、期限切れ（`artifact_expired`）、上限超え（`artifact_too_large`）、repo・run・試行・head・tar のハッシュ・タグ・イメージ ID の不一致（`artifact_mismatch`）、通信の失敗（`artifact_unavailable`）、読み込みの失敗（`artifact_load_failed`）。どれもこのホストで作り直さず、配備の承認へ進めない。tree が一致していて digest が決まる前の失敗は、種類を問わず承認者が `approve-merge` を押し直すと同じ run の成果物を取り直す（merge は送らない。検査は毎回すべて行う。監査は `job.artifact_retry`）。tree の不一致は押し直しても取り直さない。tree が未確認のときは、押し直すと tree を読み直し、一致したときだけ取得へ進む（この経路では押し直した人の監査が残らない。取得の結果は worker が `job.build_result` に記録する） |
 | 戻し             | 人の条件、状態が `staged` 以外、別の版が載っている、戻す先が無い、理由が空                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
-merge の口（`createGithubPrMergeAdapter`）を作るのは `devline-release.ts` だけで、worker と runner は import しない（`tests/unit/devline-release.test.ts` で固定）。
+merge の口（`createGithubPrMergeAdapter`）を作るのは `devline-release.ts` だけで、worker と runner は import しない（`tests/unit/devline-release.test.ts` で固定）。自動マージ（`DEVLINE_AUTO_MERGE=1`）は `devline-auto-merge.ts` が `defaultReleaseDeps()` の merge の口を受け取って実行し、契機だけを worker が持つ（`docs/devline/real-runner.md` 17章）。AI のコンテナからはどちらにも到達できない。
 
 ## 3. エラーコード
 
@@ -252,7 +252,9 @@ merge の口（`createGithubPrMergeAdapter`）を作るのは `devline-release.t
 
 `details` に token、接続文字列、外部応答の全文を入れない。外部応答は `last_error` に 500 文字まで、秘密を含みうる header は保存しない。
 
-**監査の action**: `order.snapshot` `handoff.intent` `handoff.sent` `handoff.succeeded` `handoff.unknown` `handoff.failed` `handoff.confirm_absent` `job.create` `job.transition` `job.cancel` `job.resume` `job.late_write_discarded` `verification.record`。`role` と `actor_name` は人なら既存どおり、worker は `system`、runner の結果は `agent` / `agent:fake`。`actor_user_id` は null。
+**監査の action**: `order.snapshot` `handoff.intent` `handoff.sent` `handoff.succeeded` `handoff.unknown` `handoff.failed` `handoff.confirm_absent` `job.create` `job.transition` `job.cancel` `job.resume` `job.late_write_discarded` `verification.record` `job.auto_merge` `job.merged`。`role` と `actor_name` は人なら既存どおり、worker は `system`、runner の結果は `agent` / `agent:fake`、自動マージは `role='system'`・`actor_name='system:auto-merge'`。`actor_user_id` は null。
+
+自動マージ（0014）は `docs/devline/real-runner.md` 17章。既定は無効（`DEVLINE_AUTO_MERGE=0`）で、有効なときだけ条件をすべて満たす job をサーバが squash merge する。人の承認の行（`release_approval`）は作らず、`release.auto_merge*` の列と `audit_log` に根拠（ポリシー版・verdict・AC・head・run）を残す。API の形（`approve-merge` ほか）は変えない。
 
 ## 4. Dev が守ること
 
