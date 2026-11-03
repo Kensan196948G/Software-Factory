@@ -101,6 +101,25 @@ describe('JWT 検証が有効なとき', () => {
     expect(fetchMock.mock.calls.every(([url]) => url === `${TEAM}/cdn-cgi/access/certs`)).toBe(true);
   });
 
+  it('本番では未登録の利用者を自動登録しない（管理者の自動付与の廃止）', async () => {
+    const restoreEnv = config.appEnv;
+    config.appEnv = 'production';
+    try {
+      const res = await me({ 'cf-access-jwt-assertion': jwt({ email: 'jwt-unknown@example.com' }) });
+      expect(res.statusCode).toBe(401);
+      const users = await query<{ count: number }>(
+        `select count(*)::int as count from app_user where email = 'jwt-unknown@example.com'`,
+      );
+      expect(users.rows[0]?.count).toBe(0);
+      const audit = await query<{ count: number }>(
+        `select count(*)::int as count from audit_log where action = 'auth.access_denied' and target_type = 'user'`,
+      );
+      expect(audit.rows[0]?.count).toBeGreaterThan(0);
+    } finally {
+      config.appEnv = restoreEnv;
+    }
+  });
+
   it('ヘッダのメールだけでは401', async () => {
     const res = await me({ 'cf-access-authenticated-user-email': USER_A });
     expect(res.statusCode).toBe(401);
