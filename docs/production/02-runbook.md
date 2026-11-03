@@ -131,7 +131,8 @@ journalctl --user -u mirai-sf-prod-backup -u mirai-sf-prod-restore-drill -n 40 -
 - **オフサイト（Cloudflare R2、ADR §8-7 の決定）**: `prod.conf` の `MIRAI_SF_OFFSITE_CMD=scripts/ops/offsite-r2.mjs` で、毎時の dump と manifest を非公開バケット `mirai-sf-prod-backups`（APAC）へ送り、置いた実体を読み戻して **サイズと SHA-256 の一致**を確かめる。成功すると dump の隣に送信記録 `<dump>.r2.json`（バケット・キー・ハッシュ、0600）を残す。送信に失敗すると backup ユニットは **failed（終了コード 4）** になり、ローカルの dump は残る。認証は wrangler のログイン（OAuth）に依存する。R2 の S3 アクセスキーを用意できたら `rclone copyto` へ差し替える（`MIRAI_SF_OFFSITE_CMD` を差し替えるだけ）。
 - **オフサイトからの復元訓練**: `pnpm ops:prod:offsite-drill`。最新の送信記録の dump と manifest を **R2 から取り寄せ**、記録した SHA-256 と照合してから、`restore-drill.sh` と同じ手順（一時DBへ復元 → 件数・監査ハッシュ照合 → 一時DB削除）を実行する。「送れた」ではなく「R2 から復元できる」を確かめるための訓練。
   - 2026-11-03 実測: 取得・SHA-256 一致 → 復元 → 28 テーブル・件数一致・監査連鎖 verify 成功 → 一時DB削除。
-- 保持: DB の監査行は削除しない（追記のみ）。ファイルの世代管理は `MIRAI_SF_BACKUP_RETENTION_DAYS`（既定14日。毎時だと最大 336 世代 = 約 60 MB/年）。
+- 保持: DB の監査行は削除しない（追記のみ）。**ローカルの**ファイルの世代管理は `MIRAI_SF_BACKUP_RETENTION_DAYS`（既定14日。毎時だと最大 336 世代 = 約 43 MB）。
+- **R2 側の保持は自動では消えない**（アプリからは削除しない）。毎時 128 KB として概算 **約 1.1 GB/年**。S3 アクセスキーが用意できたら **R2 のライフサイクル規則**（例: 90 日で失効）を設定する。それまでは残課題として記録し、必要なら手動で削除する。
 
 ## 6. ロールバック
 
@@ -151,6 +152,10 @@ pnpm ops:prod:rollback <戻し先SHA>
   `/healthz` 200・`status=ok`・`db.ok=true`・`environment=production`・`commit` と `current/release.env` の一致
   （＋任意で `origin/main` との比較。ずれは warning で失敗にしない）。状態は
   `~/.local/state/mirai-sf-prod/healthcheck.json`（Staging の状態ファイルとは別）。
+- **バックアップの鮮度も監視する**（RPO が黙って破れないように）: `MIRAI_SF_HEALTH_BACKUP_DIR` と
+  `MIRAI_SF_HEALTH_BACKUP_MAX_AGE_MIN`（既定 90。RPO 1 時間に対する余裕）を設定すると、最新の `*.dump` が
+  無い・または指定分より古いときに healthcheck が失敗する。2026-11-03 実測: 正常時
+  `最新バックアップ: …（3 分前）`、空ディレクトリと 3 時間前の dump でいずれも NG（終了コード 1）。
 - 設定ファイル `prod.conf` は読まない（release.env の COMMIT_SHA だけを照合）。秘密は出力しない。
 - 失敗は `systemctl --user --failed` と `journalctl --user -u mirai-sf-prod-healthcheck` で見る。
   外部通知（Slack 等）は未実装（Access サービストークン待ち）。

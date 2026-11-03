@@ -14,6 +14,10 @@ Environment=MIRAI_SF_HEALTH_URL=http://127.0.0.1:8783/healthz
 Environment=MIRAI_SF_HEALTH_ENV=production
 Environment=MIRAI_SF_HOME=%h/.local/share/mirai-sf-prod
 Environment=MIRAI_SF_HEALTH_STATE_FILE=%h/.local/state/mirai-sf-prod/healthcheck.json
+# RPO 1 時間に対して 90 分。最新の dump がこれより古い／無いときは失敗にする
+Environment=MIRAI_SF_HEALTH_BACKUP_DIR=%h/.local/state/mirai-sf-prod/backups
+Environment=MIRAI_SF_HEALTH_BACKUP_MAX_AGE_MIN=90
+Environment=MIRAI_SF_HEALTH_UNIT=mirai-sf-prod-healthcheck
 WorkingDirectory=%h/Projects/Software-Factory-Project
 ExecStart=/usr/bin/env node scripts/ops/healthcheck.mjs
 TimeoutStartSec=60
