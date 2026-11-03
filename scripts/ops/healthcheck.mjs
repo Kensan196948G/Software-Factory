@@ -5,7 +5,7 @@
  * 確認項目:
  *   1. 127.0.0.1 の /healthz が HTTP 200 を返す
  *   2. status=ok かつ db.ok=true
- *   3. environment=staging
+ *   3. environment が期待どおり（既定 staging。本番は MIRAI_SF_HEALTH_ENV=production）
  *   4. /healthz の commit が current/release.env の COMMIT_SHA と一致する
  *   5. （任意）git rev-parse origin/main と一致しない場合は warning（失敗にはしない）
  *
@@ -34,7 +34,8 @@ import { fileURLToPath } from 'node:url';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_HEALTH_URL = 'http://127.0.0.1:8782/healthz';
-const EXPECTED_ENVIRONMENT = 'staging';
+/** 期待する environment。Staging は既定のまま。本番は MIRAI_SF_HEALTH_ENV=production を渡す。 */
+const EXPECTED_ENVIRONMENT = process.env.MIRAI_SF_HEALTH_ENV || 'staging';
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const HTTP_TIMEOUT_MS = 5000;
 const SAFE_VALUE_PATTERN = /^[A-Za-z0-9._:-]{1,80}$/;
@@ -225,9 +226,9 @@ async function main() {
     const dbOk = health.db && typeof health.db === 'object' ? health.db.ok === true : false;
     if (!dbOk) failures.push('db.ok=true ではありません（DB 接続に失敗している可能性）');
 
-    // 3. environment=staging
+    // 3. environment が期待どおりか
     if (health.environment !== EXPECTED_ENVIRONMENT) {
-      failures.push(`environment=${safeValue(health.environment)}（staging を期待）`);
+      failures.push(`environment=${safeValue(health.environment)}（${EXPECTED_ENVIRONMENT} を期待）`);
     }
 
     // 4. healthz の commit と current/release.env の COMMIT_SHA が一致
