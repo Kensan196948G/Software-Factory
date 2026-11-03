@@ -1,0 +1,15 @@
+[Unit]
+Description=Cloudflare Tunnel for sf-prod.mirai-dx-platform.com
+After=network.target mirai-sf-prod-api.service
+Wants=mirai-sf-prod-api.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cloudflared --no-autoupdate --config /home/kensan/.cloudflared/mirai-sf-prod-config.yml tunnel run
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
