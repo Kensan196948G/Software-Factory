@@ -1,0 +1,21 @@
+[Unit]
+Description=Mirai Software Factory Intake API (production: sf-prod.mirai-dx-platform.com)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Node 22 を明示する（systemd user の既定 PATH は v20 のことがある）
+Environment=PATH=%h/.nvm/versions/node/v22.22.3/bin:/usr/local/bin:/usr/bin:/bin
+Environment=MAIL_OUTBOX_DIR=%h/.local/state/mirai-sf-prod/mail-outbox
+WorkingDirectory=%h/.local/share/mirai-sf-prod/current
+EnvironmentFile=%h/.config/mirai-sf/prod.conf
+EnvironmentFile=%h/.local/share/mirai-sf-prod/current/release.env
+ExecStart=/usr/bin/env node dist/api/server.js
+Restart=always
+RestartSec=3
+# 本番はプロセスを落とさない。落ちたら failed として可視化する
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=default.target

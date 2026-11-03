@@ -57,7 +57,7 @@ if [[ "$code" != 0 ]]; then
   exit "$code"
 fi
 # worker も同じリリースへ戻す（動いているときだけ）
-if [[ -z "${MIRAI_SF_RESTART_HOOK:-}" ]] && systemctl --user is-active --quiet mirai-sf-worker.service; then
-  systemctl --user restart mirai-sf-worker.service || log "注意: worker の再起動に失敗しました"
+if [[ -z "${MIRAI_SF_RESTART_HOOK:-}" ]] && [[ "$OPS_WORKER_UNIT" != none ]] && systemctl --user is-active --quiet "$OPS_WORKER_UNIT"; then
+  systemctl --user restart "$OPS_WORKER_UNIT" || log "注意: worker の再起動に失敗しました"
 fi
 log "rollback 完了: $sha（DB は戻していません）"
