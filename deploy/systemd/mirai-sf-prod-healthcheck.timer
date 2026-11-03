@@ -1,0 +1,13 @@
+# 本番の外形監視。5分ごとに mirai-sf-prod-healthcheck.service を起動する。
+# OnCalendar=*:0/5 は毎時 00/05/10/…/55 分。Persistent=true で停止・サスペンド中の回を再開後に1回だけ補う。
+[Unit]
+Description=Mirai SF production health check timer (every 5 minutes)
+
+[Timer]
+OnCalendar=*:0/5
+AccuracySec=30s
+Persistent=true
+Unit=mirai-sf-prod-healthcheck.service
+
+[Install]
+WantedBy=timers.target

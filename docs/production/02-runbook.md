@@ -143,8 +143,25 @@ pnpm ops:prod:rollback <戻し先SHA>
 
 ## 7. 監視
 
-- `mirai-sf-healthcheck`（5分間隔）を本番にも向ける場合は、`MIRAI_SF_HEALTH_URL` を `8783` にした別 timer を作る（Staging と混在させない）。
-- 失敗は `systemctl --user --failed` と journal で可視化する。外部通知は未実装（Access サービストークン待ち）。
+- **本番の外形監視**: `mirai-sf-prod-healthcheck.timer`（5 分間隔）。`scripts/ops/healthcheck.mjs` を
+  `MIRAI_SF_HEALTH_URL=http://127.0.0.1:8783/healthz`・`MIRAI_SF_HEALTH_ENV=production`・
+  `MIRAI_SF_HOME=~/.local/share/mirai-sf-prod` で動かす。確認項目は
+  `/healthz` 200・`status=ok`・`db.ok=true`・`environment=production`・`commit` と `current/release.env` の一致
+  （＋任意で `origin/main` との比較。ずれは warning で失敗にしない）。状態は
+  `~/.local/state/mirai-sf-prod/healthcheck.json`（Staging の状態ファイルとは別）。
+- 設定ファイル `prod.conf` は読まない（release.env の COMMIT_SHA だけを照合）。秘密は出力しない。
+- 失敗は `systemctl --user --failed` と `journalctl --user -u mirai-sf-prod-healthcheck` で見る。
+  外部通知（Slack 等）は未実装（Access サービストークン待ち）。
+- Staging は従来どおり `mirai-sf-healthcheck.timer`（8782・`environment=staging`）。本番と混在させない。
+
+```bash
+# 設置・確認（初回だけ。ユニットは deploy/systemd/ から複製）
+cp deploy/systemd/mirai-sf-prod-healthcheck.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now mirai-sf-prod-healthcheck.timer
+systemctl --user start mirai-sf-prod-healthcheck.service                   # 手動で1回
+systemctl --user show -p Result -p ExecMainStatus mirai-sf-prod-healthcheck.service
+cat ~/.local/state/mirai-sf-prod/healthcheck.json                          # ok=true / consecutiveFailures=0
+```
 
 ## 8. 公開（最後・人の承認が必要）
 
