@@ -88,7 +88,7 @@
 | C-02 | Access のサービストークンを発行していない                            | 外形監視・自動E2Eを Access 経由で実行できない             | APIトークンに `access-service-token.write` を付与して発行する（Backlog）                                                                    |
 | C-03 | ワンタイムパスワードの受信は人間が必要                               | 自動ログイン検証ができない                                | 最終確認は人間が実施（deployment §4）                                                                                                       |
 | C-04 | ローカルDNSが新ホスト名を解決しない間は `/etc/hosts` で暫定対応      | このホストからの確認に限る                                | DNS伝播後に削除。他端末は通常のDNSで解決できる                                                                                              |
-| C-05 | `AUTH_MODE=access` は Cloudflare Access ヘッダを信頼する             | Access を外すと認証されない（フェイルクローズ）           | Access を無効化しない。ローカル確認は 127.0.0.1:8782 のみ                                                                                   |
+| C-05 | `AUTH_MODE=access` は `ACCESS_TEAM_DOMAIN` / `ACCESS_AUD` が未設定だと Cloudflare Access ヘッダを信頼する（JWT は検証しない） | Access を外すと認証されない（フェイルクローズ）。8782 へ直接届く経路があればヘッダを偽装できる | Access を無効化しない。ローカル確認は 127.0.0.1:8782 のみ。設定すると JWT 必須になる（deployment §3-1、切替は承認後） |
 
 ## 4. 未決事項（要件定義書 Q-01〜23との関係）
 

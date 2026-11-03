@@ -4,7 +4,7 @@ import fastifyStatic from '@fastify/static';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { versionAssets } from './asset-version.js';
-import { config } from './config.js';
+import { config, isAccessJwtEnabled } from './config.js';
 import { ApiError, Errors, applySecurityHeaders, correlationId, sendError } from './http.js';
 import { ZodError } from 'zod';
 import { healthCheck } from './db.js';
@@ -99,7 +99,12 @@ export async function buildApp(
         ? false
         : {
             level: process.env.LOG_LEVEL ?? 'info',
-            redact: ['req.headers.cookie', 'req.headers.authorization', 'req.headers["x-csrf-token"]'],
+            redact: [
+              'req.headers.cookie',
+              'req.headers.authorization',
+              'req.headers["x-csrf-token"]',
+              'req.headers["cf-access-jwt-assertion"]',
+            ],
           },
     trustProxy: config.trustProxy,
     bodyLimit: 2 * 1024 * 1024,
@@ -121,8 +126,11 @@ export async function buildApp(
       }
     }
     let ctx = await resolveSession(req);
-    if (!ctx && config.authMode === 'access') {
-      const identity = resolveAccessIdentity(req.headers);
+    // JWT 検証が有効なら毎回検証する（Cookie だけでは通さない。別人の JWT が来たらセッションも使わない）
+    const jwtRequired = isAccessJwtEnabled(config);
+    if (config.authMode === 'access' && (!ctx || jwtRequired)) {
+      const identity = await resolveAccessIdentity(req.headers, req.log);
+      if (jwtRequired && ctx && ctx.user.email.toLowerCase() !== identity) ctx = null;
       if (identity) {
         try {
           const result = await accessLogin(identity, req.ip);

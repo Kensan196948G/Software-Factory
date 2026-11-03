@@ -1,9 +1,11 @@
 import { buildApp } from './app.js';
-import { config } from './config.js';
+import { accessJwtStartupWarning, config } from './config.js';
 import { closePool } from './db.js';
 
 async function main(): Promise<void> {
   const app = await buildApp();
+  const accessWarning = accessJwtStartupWarning(config);
+  if (accessWarning) app.log.warn(accessWarning);
   const close = async (signal: string) => {
     app.log.info({ signal }, 'shutting down');
     await app.close();
