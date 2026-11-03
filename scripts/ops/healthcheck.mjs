@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Staging の外形監視（systemd user timer `mirai-sf-healthcheck.timer` から5分ごとに実行）。
+ * 外形監視（Staging: `mirai-sf-healthcheck.timer` / 本番: `mirai-sf-prod-healthcheck.timer` から5分ごとに実行）。
  *
  * 確認項目:
  *   1. 127.0.0.1 の /healthz が HTTP 200 を返す
@@ -27,9 +27,9 @@
  * 終了コード: 0=正常（warning を含む）/ 1=異常
  */
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -43,6 +43,11 @@ const SAFE_VALUE_PATTERN = /^[A-Za-z0-9._:-]{1,80}$/;
 const healthUrl = process.env.MIRAI_SF_HEALTH_URL || DEFAULT_HEALTH_URL;
 const miraiHome = process.env.MIRAI_SF_HOME || resolve(homedir(), '.local/share/mirai-sf');
 const stateFile = process.env.MIRAI_SF_HEALTH_STATE_FILE || resolve(homedir(), '.local/state/mirai-sf/healthcheck.json');
+/** 任意: バックアップの鮮度確認（RPO 1 時間に対して既定 90 分）。未設定なら確認しない。 */
+const backupDir = process.env.MIRAI_SF_HEALTH_BACKUP_DIR || '';
+const backupMaxAgeMin = Number.parseInt(process.env.MIRAI_SF_HEALTH_BACKUP_MAX_AGE_MIN ?? '90', 10) || 90;
+/** 障害時の案内に出す unit 名（本番は mirai-sf-prod-healthcheck）。 */
+const unitName = process.env.MIRAI_SF_HEALTH_UNIT || 'mirai-sf-healthcheck';
 const repoHint = process.env.MIRAI_SF_REPO || '';
 
 const timestamp = () => new Date().toISOString();
@@ -197,6 +202,27 @@ async function fetchHealth() {
   return { ok: true, health, durationMs: Date.now() - startedAt };
 }
 
+/** 最新の dump の経過時間を調べる（RPO が黙って破れていないかの確認）。 */
+function checkBackupFreshness(dir, maxAgeMin) {
+  if (!existsSync(dir)) return { failure: `バックアップの保存先がありません: ${dir}` };
+  let newest = 0;
+  let name = '';
+  for (const entry of readdirSync(dir)) {
+    if (!entry.endsWith('.dump')) continue;
+    const at = statSync(join(dir, entry)).mtimeMs;
+    if (at > newest) {
+      newest = at;
+      name = entry;
+    }
+  }
+  if (newest === 0) return { failure: `バックアップ（dump）がありません: ${dir}` };
+  const ageMinutes = Math.round((Date.now() - newest) / 60000);
+  if (ageMinutes > maxAgeMin) {
+    return { failure: `最新のバックアップが古すぎます（${ageMinutes} 分前 > ${maxAgeMin} 分）: ${name}` };
+  }
+  return { info: `最新バックアップ: ${name}（${ageMinutes} 分前）` };
+}
+
 async function main() {
   try {
     new URL(healthUrl);
@@ -259,6 +285,16 @@ async function main() {
     }
   }
 
+  // 6. （任意）バックアップの鮮度（RPO の確認）。環境変数があるときだけ
+  if (backupDir) {
+    const backup = checkBackupFreshness(backupDir, backupMaxAgeMin);
+    if (backup.failure) {
+      failures.push(backup.failure);
+    } else if (backup.info) {
+      log(backup.info);
+    }
+  }
+
   const baseState = {
     version: 1,
     checkedAt,
@@ -316,7 +352,7 @@ async function main() {
 
   for (const failure of failures) ng(failure);
   ng(`healthcheck NG（連続 ${consecutiveFailures} 回目）`);
-  ng('確認: journalctl --user -u mirai-sf-healthcheck / systemctl --user --failed');
+  ng(`確認: journalctl --user -u ${unitName} / systemctl --user --failed`);
   return 1;
 }
 
