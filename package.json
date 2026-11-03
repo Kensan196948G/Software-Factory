@@ -17,6 +17,7 @@
     "start": "node scripts/local-run.mjs node dist/api/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.api.json --noEmit",
     "lint": "eslint . --max-warnings=0",
+    "audit": "pnpm audit --prod --audit-level=high",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "node scripts/local-run.mjs vitest run --config vitest.config.ts && node scripts/local-run.mjs vitest run --config vitest.integration.config.ts",
@@ -46,7 +47,6 @@
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
     "@fastify/static": "^10.1.8",
-    "dotenv": "^18.0.9",
     "fastify": "^5.2.1",
     "nodemailer": "^10.2.1",
     "pg": "^8.13.1",
