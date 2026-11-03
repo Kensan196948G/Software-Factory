@@ -131,7 +131,7 @@ export async function buildApp(
     if (config.authMode === 'access' && (!ctx || jwtRequired)) {
       const identity = await resolveAccessIdentity(req.headers, req.log);
       if (jwtRequired && ctx && ctx.user.email.toLowerCase() !== identity) ctx = null;
-      if (identity) {
+      if (!ctx && identity) {
         try {
           const result = await accessLogin(identity, req.ip);
           setSessionCookies(reply, result.token, result.csrf, result.expiresAt);
