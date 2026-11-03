@@ -250,6 +250,20 @@ export async function accessLogin(
 
   let user = (await query<UserRow>(USER_WITH_ROLES, [normalized])).rows[0] ?? null;
   if (!user) {
+    // 本番は未登録の利用者を自動で作らない（ADR §8-9「管理者の自動付与の廃止」）。
+    // Access を通れば誰でも管理者になれる経路を塞ぎ、利用者は管理API（/api/admin/users）で作る。
+    if (config.appEnv === 'production') {
+      await appendAudit({
+        action: 'auth.access_denied',
+        targetType: 'user',
+        targetId: null,
+        result: 'denied',
+        actorName: normalized,
+        role: 'system',
+        diff: { reason: 'user_not_registered', appEnv: config.appEnv },
+      });
+      throw Errors.noPermission();
+    }
     const randomHash = await hashPassword(randomBytes(32).toString('base64url'));
     const inserted = await query<{ id: string }>(
       `insert into app_user (email, display_name, dept_code, password_hash, is_admin)
