@@ -4,9 +4,9 @@ import type { PoolClient } from 'pg';
 import { query, withTransaction } from './db.js';
 import { config, isAccessJwtEnabled } from './config.js';
 import { createAccessJwtVerifier, type AccessJwtVerifier } from './access-jwt.js';
-import { hashPassword, verifyPassword } from './password.js';
-import { Errors } from './http.js';
-import { appendAudit } from './audit.js';
+import { hashPassword, verifyPassword, passwordPolicyError } from './password.js';
+import { ApiError, Errors } from './http.js';
+import { appendAudit, appendAuditTx } from './audit.js';
 import type { Role } from '../shared/domain.js';
 import type { SessionUser } from '../shared/types.js';
 
@@ -407,4 +407,431 @@ export async function createSessionForUser(
 
 export async function withClient<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
   return withTransaction(fn);
+}
+
+/* ───────────────────────── 利用者管理（職務分離のための管理APIの土台） ───────────────────────── */
+
+/**
+ * 管理APIを呼ぶ人。isAdmin を必ず持たせ、権限の判定を呼び出し側の申告に依存させない。
+ * service.ts の Actor とは別に、auth 側で完結する最小の形にする（依存の向きを循環させない）。
+ */
+export interface AdminActor {
+  userId: string;
+  displayName: string;
+  role: Role;
+  isAdmin: boolean;
+}
+
+export interface ManagedUser {
+  id: string;
+  email: string;
+  displayName: string;
+  deptCode: string;
+  isAdmin: boolean;
+  isActive: boolean;
+  roles: Role[];
+  createdAt: string;
+  deactivatedAt: string | null;
+}
+
+/** 承認者マスタ（approver ロールを持つ有効な利用者）。 */
+export interface ApproverEntry {
+  id: string;
+  displayName: string;
+  email: string;
+  deptCode: string;
+}
+
+interface ManagedUserRow {
+  id: string;
+  email: string;
+  display_name: string;
+  dept_code: string;
+  is_admin: boolean;
+  is_active: boolean;
+  created_at: Date;
+  deactivated_at: Date | null;
+  roles: string[];
+}
+
+const MANAGED_USER_SELECT = `
+  select u.id, u.email, u.display_name, u.dept_code, u.is_admin, u.is_active,
+         u.created_at, u.deactivated_at,
+         coalesce(array_agg(r.role) filter (where r.role is not null), '{}') as roles
+    from app_user u
+    left join user_role r on r.user_id = u.id`;
+
+function toManagedUser(row: ManagedUserRow): ManagedUser {
+  return {
+    id: row.id,
+    email: row.email,
+    displayName: row.display_name,
+    deptCode: row.dept_code,
+    isAdmin: row.is_admin,
+    isActive: row.is_active,
+    roles: sortRoles(normalizeRoles(row.roles)),
+    createdAt: new Date(row.created_at).toISOString(),
+    deactivatedAt: row.deactivated_at ? new Date(row.deactivated_at).toISOString() : null,
+  };
+}
+
+/** 受け取ったロールを、サーバが扱う3役に正規化する（重複・未知の値は落とす）。 */
+export function normalizeRoles(roles: readonly string[]): Role[] {
+  const wanted = new Set<Role>();
+  for (const role of roles) {
+    if (ROLE_ORDER.includes(role as Role)) wanted.add(role as Role);
+  }
+  return ROLE_ORDER.filter((role) => wanted.has(role));
+}
+
+function invalidUserField(message: string, field: string): ApiError {
+  return new ApiError('ERR-003', message, 400, { field });
+}
+
+function duplicateEmailError(): ApiError {
+  return new ApiError('ERR-004', 'このメールアドレスは既に使われています', 400, { field: 'email' });
+}
+
+function requireAdmin(actor: AdminActor): void {
+  if (!actor.isAdmin) throw Errors.noPermission();
+}
+
+async function auditUserAdmin(
+  client: PoolClient,
+  actor: AdminActor,
+  action: string,
+  targetId: string | null,
+  result: 'success' | 'denied' | 'error',
+  diff: unknown,
+  correlationId: string,
+): Promise<void> {
+  await appendAuditTx(client, {
+    action,
+    targetType: 'user',
+    targetId,
+    result,
+    actorUserId: actor.userId,
+    actorName: actor.displayName,
+    role: actor.role,
+    diff,
+    correlationId,
+  });
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return (err as { code?: string } | null)?.code === '23505';
+}
+
+/** 全利用者（無効を含む）。管理API専用。パスワードのハッシュは返さない。 */
+export async function listManagedUsers(): Promise<ManagedUser[]> {
+  const { rows } = await query<ManagedUserRow>(`${MANAGED_USER_SELECT} group by u.id order by u.created_at, u.email`);
+  return rows.map(toManagedUser);
+}
+
+/** 1人分の利用者。見つからなければ null。 */
+export async function getManagedUser(userId: string): Promise<ManagedUser | null> {
+  const found = await query<ManagedUserRow>(`${MANAGED_USER_SELECT} where u.id = $1 group by u.id`, [userId]);
+  return found.rows[0] ? toManagedUser(found.rows[0]) : null;
+}
+
+/** 承認者マスタ（有効な approver ロールの利用者）。表示名とメールをユーザー表から解決する。 */
+export async function listApprovers(): Promise<ApproverEntry[]> {
+  const { rows } = await query<{
+    id: string;
+    display_name: string;
+    email: string;
+    dept_code: string;
+  }>(
+    `select u.id, u.display_name, u.email, u.dept_code
+       from app_user u
+       join user_role r on r.user_id = u.id and r.role = 'approver'
+      where u.is_active
+      order by u.display_name, u.created_at`,
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    displayName: row.display_name,
+    email: row.email,
+    deptCode: row.dept_code,
+  }));
+}
+
+export interface CreateUserInput {
+  email: string;
+  displayName: string;
+  deptCode: string;
+  password: string;
+  roles: Role[];
+  isAdmin?: boolean;
+}
+
+/** 利用者を作る（scrypt）。作成は監査に actor と結果を残す。 */
+export async function createUser(
+  input: CreateUserInput,
+  actor: AdminActor,
+  correlationId: string,
+): Promise<ManagedUser> {
+  requireAdmin(actor);
+  const email = input.email.trim().toLowerCase();
+  const displayName = input.displayName.trim();
+  const deptCode = input.deptCode.trim();
+  const roles = normalizeRoles(input.roles);
+  const denyAudit = (reason: string): Promise<unknown> =>
+    appendAudit({
+      action: 'user.create',
+      targetType: 'user',
+      targetId: email,
+      result: 'denied',
+      actorUserId: actor.userId,
+      actorName: actor.displayName,
+      role: actor.role,
+      diff: { email, reason },
+      correlationId,
+    }).catch(() => undefined);
+
+  if (roles.length === 0) {
+    await denyAudit('roles_required');
+    throw invalidUserField('ロールを1つ以上選んでください', 'roles');
+  }
+  const policyError = passwordPolicyError(input.password, email);
+  if (policyError) {
+    await denyAudit('password_policy');
+    throw invalidUserField(policyError, 'password');
+  }
+
+  let outcome: { id: string } | { error: ApiError };
+  try {
+    outcome = await withTransaction(async (client) => {
+      const duplicate = await client.query('select 1 from app_user where email = $1', [email]);
+      if (duplicate.rowCount) {
+        await auditUserAdmin(client, actor, 'user.create', email, 'denied', { email, reason: 'duplicate' }, correlationId);
+        return { error: duplicateEmailError() };
+      }
+      const dept = await client.query('select 1 from department where code = $1', [deptCode]);
+      if (!dept.rowCount) {
+        await auditUserAdmin(
+          client,
+          actor,
+          'user.create',
+          email,
+          'denied',
+          { email, reason: 'dept_not_found', deptCode },
+          correlationId,
+        );
+        return { error: Errors.notAllowedValue('deptCode') };
+      }
+      const hash = await hashPassword(input.password);
+      const inserted = await client.query<{ id: string }>(
+        `insert into app_user (email, display_name, dept_code, password_hash, is_admin)
+         values ($1,$2,$3,$4,$5) returning id`,
+        [email, displayName, deptCode, hash, input.isAdmin === true],
+      );
+      const id = inserted.rows[0]?.id;
+      if (!id) throw Errors.internal();
+      for (const role of roles) {
+        await client.query('insert into user_role (user_id, role, granted_by) values ($1,$2,$3)', [
+          id,
+          role,
+          actor.userId,
+        ]);
+      }
+      await auditUserAdmin(
+        client,
+        actor,
+        'user.create',
+        id,
+        'success',
+        { email, displayName, deptCode, roles, isAdmin: input.isAdmin === true },
+        correlationId,
+      );
+      return { id };
+    });
+  } catch (err) {
+    // 同時に同じメールで作られた場合（事前確認をすり抜けた競合）。監査を残して同じ断り方にする。
+    if (isUniqueViolation(err)) {
+      await appendAudit({
+        action: 'user.create',
+        targetType: 'user',
+        targetId: email,
+        result: 'denied',
+        actorUserId: actor.userId,
+        actorName: actor.displayName,
+        role: actor.role,
+        diff: { email, reason: 'duplicate_race' },
+        correlationId,
+      }).catch(() => undefined);
+      throw duplicateEmailError();
+    }
+    throw err;
+  }
+
+  if ('error' in outcome) throw outcome.error;
+  const created = await getManagedUser(outcome.id);
+  if (!created) throw Errors.internal();
+  return created;
+}
+
+/** ロールを付け替える（依頼者・受付担当・承認者の3役だけ）。監査に actor と前後の値を残す。 */
+export async function setUserRoles(
+  userId: string,
+  rolesInput: readonly string[],
+  actor: AdminActor,
+  correlationId: string,
+): Promise<ManagedUser> {
+  requireAdmin(actor);
+  const roles = normalizeRoles(rolesInput);
+  if (roles.length === 0) throw invalidUserField('ロールを1つ以上選んでください', 'roles');
+
+  const outcome = await withTransaction(async (client) => {
+    const found = await client.query<{ email: string }>('select email from app_user where id = $1 for update', [userId]);
+    const row = found.rows[0];
+    if (!row) {
+      await auditUserAdmin(client, actor, 'user.roles', userId, 'denied', { reason: 'not_found' }, correlationId);
+      return { error: Errors.notFound('利用者') };
+    }
+    const before = normalizeRoles(
+      (await client.query<{ role: Role }>('select role from user_role where user_id = $1', [userId])).rows.map(
+        (r) => r.role,
+      ),
+    );
+    // 残すロールは消さない（付与日時を保つ）。
+    await client.query('delete from user_role where user_id = $1 and role <> all($2::text[])', [userId, roles]);
+    for (const role of roles) {
+      await client.query(
+        'insert into user_role (user_id, role, granted_by) values ($1,$2,$3) on conflict (user_id, role) do nothing',
+        [userId, role, actor.userId],
+      );
+    }
+    await auditUserAdmin(client, actor, 'user.roles', userId, 'success', { email: row.email, before, after: roles }, correlationId);
+    return { ok: true as const };
+  });
+
+  if ('error' in outcome) throw outcome.error;
+  const updated = await getManagedUser(userId);
+  if (!updated) throw Errors.internal();
+  return updated;
+}
+
+/** パスワードを変える（scrypt）。変更後はその利用者のセッションを失効させる。値は監査に残さない。 */
+export async function setUserPassword(
+  userId: string,
+  password: string,
+  actor: AdminActor,
+  correlationId: string,
+): Promise<ManagedUser> {
+  requireAdmin(actor);
+  const outcome = await withTransaction(async (client) => {
+    const found = await client.query<{ email: string }>('select email from app_user where id = $1 for update', [userId]);
+    const row = found.rows[0];
+    if (!row) {
+      await auditUserAdmin(client, actor, 'user.password', userId, 'denied', { reason: 'not_found' }, correlationId);
+      return { error: Errors.notFound('利用者') };
+    }
+    const policyError = passwordPolicyError(password, row.email);
+    if (policyError) {
+      await auditUserAdmin(client, actor, 'user.password', userId, 'denied', { email: row.email, reason: 'policy' }, correlationId);
+      return { error: invalidUserField(policyError, 'password') };
+    }
+    const hash = await hashPassword(password);
+    await client.query('update app_user set password_hash = $2, password_changed_at = now(), updated_at = now() where id = $1', [
+      userId,
+      hash,
+    ]);
+    const revoked = await client.query('delete from session where user_id = $1', [userId]);
+    await auditUserAdmin(
+      client,
+      actor,
+      'user.password',
+      userId,
+      'success',
+      { email: row.email, sessionsRevoked: revoked.rowCount ?? 0 },
+      correlationId,
+    );
+    return { ok: true as const };
+  });
+
+  if ('error' in outcome) throw outcome.error;
+  const updated = await getManagedUser(userId);
+  if (!updated) throw Errors.internal();
+  return updated;
+}
+
+/** 有効・無効を切り替える。無効化はセッションも消し、最後の管理者と自分自身は無効化できない。 */
+export async function setUserActive(
+  userId: string,
+  isActive: boolean,
+  actor: AdminActor,
+  correlationId: string,
+): Promise<ManagedUser> {
+  requireAdmin(actor);
+  if (!isActive && userId === actor.userId) {
+    await withTransaction(async (client) => {
+      await auditUserAdmin(client, actor, 'user.deactivate', userId, 'denied', { reason: 'self' }, correlationId);
+    });
+    throw invalidUserField('自分自身は無効化できません', 'isActive');
+  }
+
+  const outcome = await withTransaction(async (client) => {
+    const found = await client.query<{ email: string; is_admin: boolean; is_active: boolean }>(
+      'select email, is_admin, is_active from app_user where id = $1 for update',
+      [userId],
+    );
+    const row = found.rows[0];
+    if (!row) {
+      await auditUserAdmin(client, actor, isActive ? 'user.activate' : 'user.deactivate', userId, 'denied', { reason: 'not_found' }, correlationId);
+      return { error: Errors.notFound('利用者') };
+    }
+
+    if (isActive) {
+      await client.query(
+        'update app_user set is_active = true, deactivated_at = null, deactivated_by = null, updated_at = now() where id = $1',
+        [userId],
+      );
+      await auditUserAdmin(client, actor, 'user.activate', userId, 'success', { email: row.email }, correlationId);
+      return { ok: true as const };
+    }
+
+    if (!row.is_active) {
+      await auditUserAdmin(
+        client,
+        actor,
+        'user.deactivate',
+        userId,
+        'success',
+        { email: row.email, alreadyInactive: true, sessionsRevoked: 0 },
+        correlationId,
+      );
+      return { ok: true as const };
+    }
+    if (row.is_admin) {
+      const others = await client.query<{ count: number }>(
+        'select count(*)::int as count from app_user where is_admin and is_active and id <> $1',
+        [userId],
+      );
+      if ((others.rows[0]?.count ?? 0) === 0) {
+        await auditUserAdmin(client, actor, 'user.deactivate', userId, 'denied', { email: row.email, reason: 'last_admin' }, correlationId);
+        return { error: invalidUserField('最後の管理者は無効化できません', 'isActive') };
+      }
+    }
+    await client.query(
+      'update app_user set is_active = false, deactivated_at = now(), deactivated_by = $2, updated_at = now() where id = $1',
+      [userId, actor.userId],
+    );
+    const revoked = await client.query('delete from session where user_id = $1', [userId]);
+    await auditUserAdmin(
+      client,
+      actor,
+      'user.deactivate',
+      userId,
+      'success',
+      { email: row.email, sessionsRevoked: revoked.rowCount ?? 0 },
+      correlationId,
+    );
+    return { ok: true as const };
+  });
+
+  if ('error' in outcome) throw outcome.error;
+  const updated = await getManagedUser(userId);
+  if (!updated) throw Errors.internal();
+  return updated;
 }
