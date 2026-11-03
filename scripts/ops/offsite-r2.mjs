@@ -17,7 +17,8 @@
  * 秘密・バケットの資格情報は出力しない。
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 
@@ -80,21 +81,29 @@ function run(args, maxBuffer) {
   return { code: result.status ?? 1, stdout: result.stdout, stderr: result.stderr?.toString('utf8') ?? '' };
 }
 
-/** 1 ファイルを送り、実サイズを読み戻して一致を確かめる。 */
+function sha256(buffer) {
+  return createHash('sha256').update(buffer).digest('hex');
+}
+
+/** 1 ファイルを送り、置いた実体を読み戻して SHA-256 とサイズの一致を確かめる。 */
 function upload(file) {
   const key = `${prefix}/${basename(file)}`;
-  const size = statSync(file).size;
+  const bytes = readFileSync(file);
+  const size = bytes.length;
+  const digest = sha256(bytes);
 
   const put = run(['r2', 'object', 'put', `${bucket}/${key}`, '--file', file, '--remote']);
   if (put.code !== 0) return { ok: false, key, why: `put: ${lastLine(put.stderr)}` };
 
-  // R2 に置いた実体を読み戻し、バイト数が一致することを確かめる（読み戻しは小さい dump を前提にしている）
+  // R2 に置いた実体を読み戻す（読み戻しは小さい dump を前提にしている）
   const get = run(['r2', 'object', 'get', `${bucket}/${key}`, '--remote', '--pipe'], size * 2 + 1024 * 1024);
   if (get.code !== 0) return { ok: false, key, why: `get: ${lastLine(get.stderr)}` };
-  const got = Buffer.isBuffer(get.stdout) ? get.stdout.length : Buffer.byteLength(String(get.stdout ?? ''));
-  if (got !== size) return { ok: false, key, why: `サイズ不一致 got=${got} want=${size}` };
+  const got = Buffer.isBuffer(get.stdout) ? get.stdout : Buffer.from(String(get.stdout ?? ''));
+  if (got.length !== size) return { ok: false, key, why: `サイズ不一致 got=${got.length} want=${size}` };
+  const gotDigest = sha256(got);
+  if (gotDigest !== digest) return { ok: false, key, why: `SHA-256 不一致 got=${gotDigest.slice(0, 12)} want=${digest.slice(0, 12)}` };
 
-  return { ok: true, key, size };
+  return { ok: true, key, size, sha256: digest };
 }
 
 const results = [dump, manifest].map(upload);
@@ -104,6 +113,23 @@ for (const result of results) {
     process.exit(1);
   }
 }
+// 後から「R2 から復元する訓練」ができるよう、送った鍵とハッシュを dump の隣に残す（0600）。
+const marker = `${dump}.r2.json`;
+writeFileSync(
+  marker,
+  `${JSON.stringify(
+    {
+      bucket,
+      uploadedAt: new Date().toISOString(),
+      dump: { key: results[0].key, size: results[0].size, sha256: results[0].sha256 },
+      manifest: { key: results[1].key, size: results[1].size, sha256: results[1].sha256 },
+    },
+    null,
+    2,
+  )}\n`,
+  { mode: 0o600 },
+);
+
 console.log(
-  `offsite-r2 OK bucket=${bucket} keys=${results.map((r) => r.key).join(',')} bytes=${results.map((r) => r.size).join(',')}`,
+  `offsite-r2 OK bucket=${bucket} keys=${results.map((r) => r.key).join(',')} bytes=${results.map((r) => r.size).join(',')} sha256=${results.map((r) => r.sha256.slice(0, 12)).join(',')} marker=${basename(marker)}`,
 );
