@@ -38,9 +38,10 @@ import {
   checkChangedPaths,
   pathsRequiringHumanApproval,
   checkTimeLimits,
+  diffPolicyForRepo,
   haltTarget,
   isOrderCurrent,
-  isRepoAllowed,
+  ledgerEntryFor,
   maxBudgetUsd,
   prFollowupOf,
   usdToJpyCeil,
@@ -85,6 +86,12 @@ export interface WorkerOptions {
   > & {
     ci: Pick<RealLine['ci'], 'collect'>;
   };
+  /**
+   * pr_ready に入った直後に呼ぶ自動マージの契機（DEVLINE_AUTO_MERGE=1 のときだけ main が渡す）。
+   * 判定と merge の実行は src/api/devline-auto-merge.ts が持つ。worker は merge の口（PrMergeAdapter）を持たない。
+   * 渡さない（既定・無効）ときは従来どおり人の承認だけが merge する。
+   */
+  autoMerge?: (jobId: string) => Promise<unknown>;
   /** この job だけを取る（1件実走の入口）。 */
   onlyJobId?: string;
   /** 終了の合図（SIGINT / SIGTERM）。動いている AI を止め、試行を閉じ、lease を外して工程を終える。 */
@@ -591,7 +598,12 @@ async function verifyStep(options: WorkerOptions, job: JobRow, lease: JobLease, 
   // 動かしたときは recordVerification が lease を外している
   // 進まなかったときは session を閉じない。結果を待ち続ける job は session_limit で止まる
   if (!recorded.advanced) await releaseLease(lease, options.clock(), { keepSession: true });
-  if (recorded.advanced && recorded.jobState === 'pr_ready') await finalizePr(options, job, correlationId);
+  if (recorded.advanced && recorded.jobState === 'pr_ready') {
+    await finalizePr(options, job, correlationId);
+    // 明示設定（DEVLINE_AUTO_MERGE=1）のときだけ main が渡す。無効時は何もせず、人の承認のまま残す。
+    // 自動マージの判定はこの契機の後、DB の記録を読み直して別トランザクションで行う（AI の申告は使わない）。
+    if (options.autoMerge) await options.autoMerge(job.id);
+  }
   return { kind: 'stepped', jobId: job.id, from: 'verifying', to: recorded.advanced ? recorded.jobState : 'unchanged' };
 }
 
@@ -696,13 +708,17 @@ export async function runOnce(options: WorkerOptions): Promise<StepOutcome> {
   if (!current) return halt('order_invalidated', { requestStatus: facts?.status ?? null });
 
   const allowed = options.allowedRepos ?? config.devlineTargetRepos;
-  if (
-    !isRepoAllowed(
-      job.target_repo_id,
-      allowed.map((r) => r.name),
-    )
-  ) {
-    return halt('policy_violation', { rule: 'target_repo_not_allowed' });
+  const allowedEntry = allowed.find((r) => r.name === job.target_repo_id);
+  // 実 runner の job は、名前だけでなく許可台帳（repoId・private 前提）との積集合にも載っていること。
+  // job が持つ target_repo_id だけを見る（別の repo の job をこの repo として進めない）。
+  const ledgerOk =
+    job.runner_kind !== 'docker-claude' ||
+    Boolean(allowedEntry && ledgerEntryFor(allowedEntry.name, allowedEntry.repoId) && diffPolicyForRepo(job.target_repo_id));
+  if (!allowedEntry || !ledgerOk) {
+    return halt('policy_violation', {
+      rule: allowedEntry ? 'target_repo_not_in_ledger' : 'target_repo_not_allowed',
+      repo: job.target_repo_id,
+    });
   }
   if (job.runner_kind !== options.runner.capability.kind) {
     return halt('runner_rejected', { jobRunner: job.runner_kind, workerRunner: options.runner.capability.kind });

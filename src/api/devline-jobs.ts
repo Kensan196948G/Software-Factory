@@ -352,8 +352,9 @@ async function acEvidenceOf(
  */
 function currentTargetRepoOf(): string | null {
   if (config.devlineRunnerKind === 'docker-claude') {
-    const [only, ...rest] = config.devlineTargetRepos;
-    return only && rest.length === 0 ? only.name : null;
+    // 新しい投入の既定先は DEVLINE_TARGET_REPOS の先頭（realDevlineDeps と同じ）。複数あっても先頭を返す。
+    // 既存の job は target_repo_id を持ち、その job の repo だけを触る。
+    return config.devlineTargetRepos[0]?.name ?? null;
   }
   if (config.devlineRunnerKind !== 'fake') return null;
   return config.githubToken && config.githubRepo ? config.githubRepo : null;

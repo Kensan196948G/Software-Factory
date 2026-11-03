@@ -202,21 +202,23 @@ describe('遷移表（T-02, T-03）', () => {
     expect(await checkValues('verification', 'source')).toEqual([...VERIFICATION_SOURCES].sort());
   });
 
-  it('T-03: job の遷移表が仕様 4-3 の表と一致する（期待値は仕様から直書き）', () => {
+  it('T-03: job の遷移表が仕様 4-3 の表と一致する（期待値は仕様から直書き。0014 の自動マージの2辺を含む）', () => {
     const spec: Record<string, string[]> = {
       queued: ['planning', 'cancelled'],
       planning: ['implementing', 'stopped'],
       implementing: ['verifying', 'stopped', 'failed'],
       verifying: ['pr_ready', 'revising', 'stopped'],
       revising: ['verifying', 'stopped'],
-      pr_ready: ['reviewing', 'approved'],
+      // 0014: 自動マージの失敗だけが pr_ready から stopped へ進む（理由 auto_merge_failed）
+      pr_ready: ['reviewing', 'approved', 'stopped'],
       reviewing: ['approved', 'revising', 'stopped'],
       approved: ['merged'],
       merged: ['staged'],
       staged: ['released'],
       released: ['closed'],
       closed: [],
-      stopped: ['planning', 'implementing', 'verifying', 'revising', 'reviewing', 'closed'],
+      // 0014: 自動マージの失敗を人が直して pr_ready へ戻せる
+      stopped: ['planning', 'implementing', 'verifying', 'revising', 'reviewing', 'pr_ready', 'closed'],
       failed: ['implementing', 'closed'],
       cancelled: ['queued', 'closed'],
     };

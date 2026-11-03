@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { closePool } from '../api/db.js';
 import { config } from '../api/config.js';
+import { autoMergeAfterPrReady, defaultAutoMergeDeps } from '../api/devline-auto-merge.js';
 import { parseDevlineTargetRepos } from '../shared/devline.js';
 import type { FakeScenario } from '../shared/devline.js';
 import { createRunner, isFakeScenario } from './fake-runner.js';
@@ -136,6 +137,22 @@ async function main(): Promise<void> {
       return;
     }
   }
+  // 自動マージは明示設定（DEVLINE_AUTO_MERGE=1）のときだけ。無効（既定）なら契機を渡さない。
+  // 設定の誤りは起動の拒否にする（fake の成功へ落とさない）。資格情報が読めないときも同じ。
+  let autoMerge: ((jobId: string) => Promise<unknown>) | undefined;
+  try {
+    const autoMergeDeps = defaultAutoMergeDeps();
+    if (autoMergeDeps) {
+      autoMerge = (jobId) =>
+        autoMergeAfterPrReady({ jobId, correlationId: `auto-merge-${randomUUID()}` }, autoMergeDeps);
+    }
+  } catch (err) {
+    console.error(`[worker] 自動マージの設定を拒否しました: ${(err as Error).message}`);
+    process.exitCode = 1;
+    await line?.close();
+    await closePool();
+    return;
+  }
   const stop = new AbortController();
   process.once('SIGINT', () => stop.abort());
   process.once('SIGTERM', () => stop.abort());
@@ -157,6 +174,7 @@ async function main(): Promise<void> {
           clock: () => new Date(),
           shutdown: stop.signal,
           ...(line ? { line } : {}),
+          ...(autoMerge ? { autoMerge } : {}),
         }),
       ...(deploy ? { deploy: () => runDeployOnce({ ...(deploy as DeployWorkerOptions), shutdown: stop.signal }) } : {}),
       shutdown: stop.signal,

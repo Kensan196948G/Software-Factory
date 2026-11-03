@@ -35,6 +35,8 @@ export type JobState = (typeof JOB_STATES)[number];
 /**
  * 遷移表（仕様 4-3 をそのまま写したもの）。
  * db/migrations/0008 の devline_job_transition_allowed と一致させる（試験 T-02）。
+ * 0014（自動マージ）で pr_ready → stopped と stopped → pr_ready を追加した。仕様 4-3 への追加で、
+ * 明示設定された自動マージの失敗だけが pr_ready から stopped へ進む（docs/devline/real-runner.md 17 章）。
  *
  * - 実行中の取消の行き先は stopped（仕様に実行中 → cancelled は無い。ADR D-05）。
  * - stopped / failed / cancelled の行き先は「人の指示の再開先」と closed（ADR D-06）。
@@ -45,14 +47,14 @@ export const JOB_TRANSITIONS: Readonly<Record<JobState, readonly JobState[]>> = 
   implementing: ['verifying', 'stopped', 'failed'],
   verifying: ['pr_ready', 'revising', 'stopped'],
   revising: ['verifying', 'stopped'],
-  pr_ready: ['reviewing', 'approved'],
+  pr_ready: ['reviewing', 'approved', 'stopped'],
   reviewing: ['approved', 'revising', 'stopped'],
   approved: ['merged'],
   merged: ['staged'],
   staged: ['released'],
   released: ['closed'],
   closed: [],
-  stopped: ['planning', 'implementing', 'verifying', 'revising', 'reviewing', 'closed'],
+  stopped: ['planning', 'implementing', 'verifying', 'revising', 'reviewing', 'pr_ready', 'closed'],
   failed: ['implementing', 'closed'],
   cancelled: ['queued', 'closed'],
 };
@@ -115,6 +117,8 @@ export const STOP_REASONS = [
   'runner_failure',
   'runner_rejected',
   'human_stop',
+  // 明示設定された自動マージ（DEVLINE_AUTO_MERGE=1）の失敗。人の承認の経路は従来どおり残る
+  'auto_merge_failed',
 ] as const;
 export type StopReason = (typeof STOP_REASONS)[number];
 
@@ -200,10 +204,13 @@ export function cancelDecision(state: JobState): CancelDecision {
  * worker やサービスが止めるときの行き先（純関数）。仕様 4-3 に沿う。
  * queued に stopped への遷移は無いので cancelled。failed へ行けるのは implementing の runner 失敗だけ。
  * 止める遷移が無い状態（pr_ready 以降・停止系）は null で、状態を動かさない。
+ * 例外は自動マージの失敗（`auto_merge_failed`）だけで、pr_ready から stopped へ進める（0014。
+ * 人の取消 `cancelRequested` は pr_ready を受けないまま）。
  */
 export function haltTarget(state: JobState, reason: StopReason): 'stopped' | 'failed' | 'cancelled' | null {
   if (state === 'queued') return 'cancelled';
   if (state === 'implementing' && reason === 'runner_failure') return 'failed';
+  if (state === 'pr_ready' && reason === 'auto_merge_failed') return 'stopped';
   return JOB_STOPPABLE_STATES.includes(state) ? 'stopped' : null;
 }
 
@@ -835,6 +842,53 @@ export const SANDBOX_DIFF_POLICY: RepoDiffPolicy = {
 
 export const SANDBOX_REPO: AllowedRepo = { name: 'Kensan196948G/Software-Factory-Sandbox', repoId: '1440860477' };
 
+/**
+ * 実 runner の許可台帳（コードの定数）。`DEVLINE_TARGET_REPOS` との**積集合**だけが許可される。
+ * 1行が1リポジトリで、owner/name・repoId・用途・非公開の前提を持つ。増やすときは
+ * docs/devline/repo-onboarding.md の手順（CI の artifact v2 と image、private、repoId の確認、差分 policy の追加）を満たす。
+ * ここに載っていないリポジトリは、設定に書いても起動時に拒否する（fail-closed）。
+ */
+export interface RepoAllowEntry extends AllowedRepo {
+  /** 用途。監査と画面・docs に出す（何のために許したか）。 */
+  purpose: string;
+  /** 非公開のリポジトリだけを載せる。公開リポジトリを受ける例外は作らない。 */
+  private: true;
+}
+
+export const DEVLINE_REPO_LEDGER: readonly RepoAllowEntry[] = [
+  {
+    name: SANDBOX_REPO.name,
+    repoId: SANDBOX_REPO.repoId,
+    purpose: '開発ラインの検証用 Sandbox（作り物の注文書だけを流し、CI が ac-results と image を出す）',
+    private: true,
+  },
+];
+
+/** 台帳の行（名前と repoId の両方が一致するものだけ）。 */
+export function ledgerEntryFor(
+  repo: string,
+  repoId?: string | null,
+  ledger: readonly RepoAllowEntry[] = DEVLINE_REPO_LEDGER,
+): RepoAllowEntry | null {
+  return ledger.find((r) => r.name === repo && (repoId === undefined || repoId === null || r.repoId === repoId)) ?? null;
+}
+
+/**
+ * 設定（DEVLINE_TARGET_REPOS）と台帳の積集合。順は設定の順（先頭が投入の既定先）。
+ * repoId が台帳と違う行は含めない（名前の付け替え・譲渡で別のリポジトリへ送らない）。
+ */
+export function allowedLedgerRepos(
+  configured: readonly AllowedRepo[],
+  ledger: readonly RepoAllowEntry[] = DEVLINE_REPO_LEDGER,
+): RepoAllowEntry[] {
+  const out: RepoAllowEntry[] = [];
+  for (const repo of configured) {
+    const entry = ledgerEntryFor(repo.name, repo.repoId, ledger);
+    if (entry) out.push(entry);
+  }
+  return out;
+}
+
 const REPO_DIFF_POLICIES: Readonly<Record<string, RepoDiffPolicy>> = {
   'Kensan196948G/Software-Factory': FACTORY_DIFF_POLICY,
   [SANDBOX_REPO.name]: SANDBOX_DIFF_POLICY,
@@ -845,6 +899,168 @@ export function diffPolicyForRepo(repo: string): RepoDiffPolicy | null {
   return Object.hasOwn(REPO_DIFF_POLICIES, repo) ? (REPO_DIFF_POLICIES[repo] as RepoDiffPolicy) : null;
 }
 
+/**
+ * 記録済みの変更 path を、リポジトリの差分 policy で検査する（純関数）。
+ * 実 runner は push の前に git の差分（mode・リネーム・中身の秘密・バイナリ）を見て止める。
+ * ここはその**証跡**（work_state.changedPaths）を、自動マージの前にもう一度 policy に照らすためのもの。
+ */
+export function checkRepoChangedPaths(paths: readonly string[], policy: RepoDiffPolicy): PathViolation[] {
+  const violations: PathViolation[] = [];
+  for (const raw of paths) {
+    const path = normalizeRepoPath(raw);
+    if (path === null) {
+      violations.push({ path: raw.slice(0, 300), rule: 'invalid_path' });
+      continue;
+    }
+    const lower = path.toLowerCase();
+    if (policy.forbidden.some((re) => re.test(lower))) {
+      violations.push({ path, rule: 'forbidden' });
+    } else if (!policy.allowedExactPaths.includes(path) && !policy.allowedPrefixes.some((prefix) => path.startsWith(prefix))) {
+      violations.push({ path, rule: 'not_allowed' });
+    }
+  }
+  if (paths.length > policy.maxFiles) violations.push({ path: `${paths.length} files`, rule: 'not_allowed' });
+  return violations;
+}
+
+export type AutoMergeDiffProblem = 'diff_policy_missing' | 'diff_policy_mismatch' | 'diff_paths_missing' | 'diff_violation';
+
+export type AutoMergeDiffEvidence =
+  | { ok: true; policyVersion: string; changedPaths: string[] }
+  | { ok: false; problem: AutoMergeDiffProblem; violations?: PathViolation[] };
+
+/**
+ * 自動マージの条件3「差分検査（禁止パス・秘密・バイナリ）通過済み」の証跡を確かめる（純関数）。
+ * 実 runner はホスト側の差分検査を通った結果に `work_state.diffPolicy`（検査した policy の版）と
+ * `work_state.changedPaths` を残す。記録が無い・版が今の policy と違う・policy に反する path は通さない。
+ * 中身（秘密・バイナリ）の再走査はしない。それは push の前にホストが行い、ここでは「その検査を通った記録」を根拠にする。
+ */
+export function checkAutoMergeDiffEvidence(
+  repo: string,
+  workState: unknown,
+  policyOf: (repo: string) => RepoDiffPolicy | null = diffPolicyForRepo,
+): AutoMergeDiffEvidence {
+  const policy = policyOf(repo);
+  const state = (workState ?? {}) as { diffPolicy?: unknown; changedPaths?: unknown };
+  if (!policy) return { ok: false, problem: 'diff_policy_missing' };
+  if (typeof state.diffPolicy !== 'string' || state.diffPolicy === '') return { ok: false, problem: 'diff_policy_missing' };
+  if (state.diffPolicy !== policy.version) return { ok: false, problem: 'diff_policy_mismatch' };
+  const rawPaths = state.changedPaths;
+  if (!Array.isArray(rawPaths) || rawPaths.length === 0) return { ok: false, problem: 'diff_paths_missing' };
+  const paths = rawPaths.filter((p): p is string => typeof p === 'string');
+  if (paths.length !== rawPaths.length) return { ok: false, problem: 'diff_paths_missing' };
+  const violations = checkRepoChangedPaths(paths, policy);
+  if (violations.length > 0) return { ok: false, problem: 'diff_violation', violations };
+  return { ok: true, policyVersion: policy.version, changedPaths: paths };
+}
+
+/* ────────────────────────────── 自動マージ（DEVLINE_AUTO_MERGE） ────────────────────────────── */
+
+/**
+ * 自動マージのポリシー版。判定の根拠・監査・release の記録に残す。
+ * 条件を変えたら版を上げる（どの規約で merge したかを後から辿れるようにする）。
+ */
+export const AUTO_MERGE_POLICY_VERSION = 'msf.auto-merge/v1';
+
+/** 自動マージが見る merge の途中経過（release.merge_state と同じ語）。 */
+export type AutoMergeMergeState = 'none' | 'sending' | 'unknown' | 'rejected' | 'merged';
+
+/** 自動マージを通さない理由。監査と stop_detail に残す。 */
+export type AutoMergeRefusal =
+  | 'disabled'
+  | 'state'
+  | 'head_missing'
+  | 'superseded'
+  | 'order_not_current'
+  | 'verification'
+  | 'ac_unconfirmed'
+  | 'diff_policy_missing'
+  | 'diff_policy_mismatch'
+  | 'diff_paths_missing'
+  | 'diff_violation'
+  | 'repo_not_configured'
+  | 'repo_not_in_ledger'
+  | 'repo_id_mismatch'
+  | 'repo_not_private'
+  | 'no_pr'
+  | 'merge_in_progress'
+  | 'merge_rejected';
+
+export interface AutoMergeRepoFacts {
+  /** DEVLINE_TARGET_REPOS の行。 */
+  configured: AllowedRepo | null;
+  /** 台帳の行（名前と repoId が一致するものだけ）。 */
+  ledger: RepoAllowEntry | null;
+  /** 台帳に名前だけはあるか（repoId の作り替え・譲渡を区別する）。 */
+  ledgerNameMatch: boolean;
+}
+
+/** リポジトリの許可（設定と台帳の積集合）を自動マージの観点でまとめる（純関数）。 */
+export function autoMergeRepoFacts(
+  repo: string,
+  configured: readonly AllowedRepo[],
+  ledger: readonly RepoAllowEntry[] = DEVLINE_REPO_LEDGER,
+): AutoMergeRepoFacts {
+  const entry = configured.find((r) => r.name === repo) ?? null;
+  const byName = ledger.find((r) => r.name === repo) ?? null;
+  return {
+    configured: entry,
+    ledger: entry && byName && byName.repoId === entry.repoId ? byName : null,
+    ledgerNameMatch: byName !== null,
+  };
+}
+
+export interface AutoMergeFacts {
+  enabled: boolean;
+  jobState: JobState;
+  jobHeadSha: string | null;
+  superseded: boolean;
+  orderCurrent: boolean;
+  verdict: VerificationVerdict['verdict'];
+  acAllConfirmed: boolean;
+  diff: AutoMergeDiffEvidence;
+  repo: AutoMergeRepoFacts;
+  hasPr: boolean;
+  mergeState: AutoMergeMergeState;
+}
+
+export type AutoMergeDecision = { ok: true; alreadyMerged: boolean } | { ok: false; reasons: AutoMergeRefusal[] };
+
+/**
+ * 自動マージの判定（純関数）。`DEVLINE_AUTO_MERGE=1` のときだけ動く。
+ *
+ * 次を**すべて**満たすときだけ通す（1つでも欠ければ merge を送らない）:
+ * 1. この head の検証が合格し、受入条件が全件確認済み
+ * 2. 対象 repo が許可台帳と DEVLINE_TARGET_REPOS の積集合にあり、private 前提である
+ * 3. PR の差分検査の証跡（policy の版と変更 path）が今の policy に合う
+ * 4. 注文書が最新版で、新しい版に置きかえられていない
+ * 5. PR の記録があり、人の merge が進行中・結果不明・却下でない
+ * 6. job が pr_ready で、head がある
+ *
+ * **人の承認の代替ではない**。明示設定されたポリシーによる機械判定で、根拠と設定値は監査に残す。
+ */
+export function decideAutoMerge(f: AutoMergeFacts): AutoMergeDecision {
+  if (!f.enabled) return { ok: false, reasons: ['disabled'] };
+  if (f.mergeState === 'merged') return { ok: true, alreadyMerged: true };
+  const reasons: AutoMergeRefusal[] = [];
+  if (f.jobState !== 'pr_ready') reasons.push('state');
+  if (!f.jobHeadSha) reasons.push('head_missing');
+  if (f.superseded) reasons.push('superseded');
+  if (!f.orderCurrent) reasons.push('order_not_current');
+  if (f.verdict !== 'passed') reasons.push('verification');
+  if (!f.acAllConfirmed) reasons.push('ac_unconfirmed');
+  if (!f.diff.ok) reasons.push(f.diff.problem);
+  if (!f.repo.configured) reasons.push('repo_not_configured');
+  if (!f.repo.ledger) {
+    reasons.push(f.repo.configured && f.repo.ledgerNameMatch ? 'repo_id_mismatch' : 'repo_not_in_ledger');
+  }
+  if (f.repo.ledger && !f.repo.ledger.private) reasons.push('repo_not_private');
+  if (!f.hasPr) reasons.push('no_pr');
+  if (f.mergeState === 'sending' || f.mergeState === 'unknown') reasons.push('merge_in_progress');
+  if (f.mergeState === 'rejected') reasons.push('merge_rejected');
+  return reasons.length === 0 ? { ok: true, alreadyMerged: false } : { ok: false, reasons };
+}
+
 /* ────────────────────────────── 実 runner の予算（所有者の決定: 1タスク 1,000 円） ────────────────────────────── */
 
 export const REAL_RUNNER_POLICY = {
@@ -853,8 +1069,11 @@ export const REAL_RUNNER_POLICY = {
   /** 為替の既定は安全側（高めの円換算）。 */
   defaultJpyPerUsd: 160,
   budgetWarnRatio: 0.8,
-  /** 実 runner を向けてよいリポジトリ。DEVLINE_TARGET_REPOS とこの両方に載っていること。 */
-  allowedRepos: [SANDBOX_REPO] as readonly AllowedRepo[],
+  /**
+   * 実 runner を向けてよいリポジトリの台帳。`DEVLINE_TARGET_REPOS` とこの両方に載っていること。
+   * 複数可（積集合）。増やす手順は docs/devline/repo-onboarding.md。
+   */
+  allowedRepos: DEVLINE_REPO_LEDGER as readonly AllowedRepo[],
   /** 検証の根拠にする workflow。 */
   ciWorkflowPath: '.github/workflows/ci.yml',
   ciEvent: 'pull_request',
