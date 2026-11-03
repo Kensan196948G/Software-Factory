@@ -10,6 +10,7 @@ pnpm test:e2e       # Playwright（9シナリオ）
 pnpm build          # API + Web
 pnpm db:verify      # DB整合性（19/118/採番/監査連鎖）
 node scripts/secret-scan.mjs
+node scripts/ops/healthcheck.mjs   # Staging外形監視（正常時 exit 0 / 失敗時 exit 1）
 BASE_URL=... SMOKE_EMAIL=... SMOKE_PASSWORD=... pnpm exec tsx scripts/smoke.ts
 ```
 
@@ -64,3 +65,84 @@ BASE_URL=... SMOKE_EMAIL=... SMOKE_PASSWORD=... pnpm exec tsx scripts/smoke.ts
 - E2E（Preview DB `mirai_sf`）は、`preview.conf` の `SEED_ADMIN_PASSWORD` が空のため未実行（migration は適用済み）。
 - SMTP はローカル受け皿で認証付きの到達を実測済み。実プロバイダ・TLS（STARTTLS/暗黙TLS）は未検証（認証情報と証明書が必要）。
 - 滞留通知・下書きTTL・（別コマンドで）監査アーカイブは、systemd user timer `mirai-sf-reminders.timer`（毎日 08:30）で実行する（登録済み・初回実行で催促1通を実測）。
+
+## 6. Staging 外形監視（healthcheck）の実測（2026-11-03）
+
+対象は稼働中の Staging（`127.0.0.1:8782`、current / origin/main / `/healthz` の commit はいずれも `b2ae9e3…`）。実行は worktree（`auto/staging-healthcheck`）から `node scripts/ops/healthcheck.mjs`。**稼働中の `mirai-sf-api` / `mirai-sf-tunnel` / `mirai-sf-worker` は停止・再起動していない。** Node は v22.22.3。
+
+### 6-1. 正常系
+
+| 確認項目                | 実測結果                                                      |
+| ----------------------- | ------------------------------------------------------------- |
+| `/healthz`              | HTTP 200 / `status=ok` / `db.ok=true` / `environment=staging` |
+| `commit` と release.env | 一致（`b2ae9e32e54c97c8f34457b10f7940f21fe0c64a`）            |
+| `origin/main`（任意）   | 一致（同じ SHA）                                              |
+| 終了コード              | **0**                                                         |
+| 状態ファイル            | `ok=true` / `consecutiveFailures=0`（0600）                   |
+
+```text
+[...] healthcheck 開始: url=http://127.0.0.1:8782/healthz
+[...] origin/main と一致: b2ae9e32e54c97c8f34457b10f7940f21fe0c64a
+[...] healthcheck OK（commit=b2ae9e32e54c97c8f34457b10f7940f21fe0c64a, environment=staging, db.ok=true, 72ms）
+```
+
+### 6-2. 失敗系（`MIRAI_SF_HEALTH_URL` を一時的に接続不可の URL へ）
+
+正常な unit を止めずに失敗系を確認するため、`MIRAI_SF_HEALTH_URL=http://127.0.0.1:59999/healthz` を指定して手動実行した（59999 は待ち受けなし。URL の差し替えは `docs/deployment.md` §7-4 の `MIRAI_SF_HEALTH_URL` と同じ）。
+
+| 確認項目     | 実測結果                                                                                                               |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| 出力         | `NG: healthz へ接続できません（ECONNREFUSED）` → `NG: healthcheck NG（連続 1 回目）`                                   |
+| 終了コード   | **1**                                                                                                                  |
+| 状態ファイル | `ok=false` / `consecutiveFailures=1` / `totalFailures=4`（実測を重ねた累計）/ `lastFailureAt=2026-11-03T02:46:34.000Z` |
+| 秘密情報     | 出力・状態ファイルに設定値・トークンは出ていない                                                                       |
+
+```text
+[...] healthcheck 開始: url=http://127.0.0.1:59999/healthz
+[...] NG: healthz へ接続できません（ECONNREFUSED）
+[...] NG: healthcheck NG（連続 1 回目）
+[...] NG: 確認: journalctl --user -u mirai-sf-healthcheck / systemctl --user --failed
+```
+
+### 6-3. 復旧系（恒常 URL に戻して再実行）
+
+| 確認項目     | 実測結果                                                                                                |
+| ------------ | ------------------------------------------------------------------------------------------------------- |
+| 出力         | `復旧: 連続 1 回の失敗から回復しました（最終失敗 2026-11-03T02:46:34.000Z）` の1行＋`healthcheck OK`    |
+| 終了コード   | **0**                                                                                                   |
+| 状態ファイル | `ok=true` / `consecutiveFailures=0` / `lastIncidentFailures=1` / `recoveredAt=2026-11-03T02:46:34.133Z` |
+
+```text
+[...] 復旧: 連続 1 回の失敗から回復しました（最終失敗 2026-11-03T02:46:34.000Z）
+[...] healthcheck OK（commit=b2ae9e32e54c97c8f34457b10f7940f21fe0c64a, environment=staging, db.ok=true, 71ms）
+```
+
+### 6-4. 確認項目ごとの異常検知（ローカル stub で確認）
+
+`127.0.0.1:8783` に一時的な stub を立て、`status=degraded` / `db.ok=false` / `environment=production` / `commit=1111…` を返した。終了コード 1 で、次の4件を同時に検出した（状態ファイルは一時ファイルへ差し替え）。
+
+- `status=degraded（ok を期待）`
+- `db.ok=true ではありません（DB 接続に失敗している可能性）`
+- `environment=production（staging を期待）`
+- `commit が一致しません（healthz=1111…, release.env=b2ae9e3…）`
+
+`MIRAI_SF_REPO` に `origin/main` が別 SHA の一時リポジトリを指定した場合は、**exit 0 のまま warning だけ**を出し、`~/.local/state/mirai-sf/healthcheck.json` の `warnings` に記録された（release 反映漏れの検知）。
+
+URL に資格情報とクエリ（`http://user:<token>@127.0.0.1:8782/healthz?token=<token>`）を入れて実行しても、ログ・状態ファイルの URL は `http://127.0.0.1:8782/healthz` に落ち、`grep` で値が出ないことを確認した。
+
+### 6-5. systemd 連携の確認（`~/.config/systemd/user/` へは未配置）
+
+- `systemd-analyze calendar '*:0/5'` → `Normalized form: *-*-* *:00/5:00`（5分ごと）。`systemd-analyze --user verify deploy/systemd/mirai-sf-healthcheck.service deploy/systemd/mirai-sf-healthcheck.timer` はエラーなし。
+- 失敗の可視化は、設定ファイルを置かない一時 unit（`systemd-run --user`）で実測した。`WorkingDirectory` と `PATH` は unit 雛形と同じ条件。
+  - 失敗時: `systemctl --user --failed` に `mirai-sf-healthcheck-selftest-ng.service loaded failed failed` が表示され、`journalctl --user -u …` で NG 行、`systemctl --user show` で `Result=exit-code` / `ExecMainStatus=1` を確認。確認後 `systemctl --user reset-failed` で消えた（`LoadState=not-found`）。
+  - 成功時: `Result=success` / `ExecMainStatus=0`、journal に `healthcheck OK` を確認。`--collect` により unit は自動で消えた。
+- 本番の unit 配置・timer 有効化は Lead が行う（この作業では `~/.config/systemd/user/` へコピーしていない）。有効化後の5分周期・復旧時の failed 解消は、`docs/deployment.md` §7-4 の手順で確認する。
+
+### 6-6. 静的検証
+
+| 項目         | 結果                                                              |
+| ------------ | ----------------------------------------------------------------- |
+| typecheck    | **PASS**（`pnpm typecheck`、エラー0）                             |
+| lint         | **PASS**（`pnpm lint`、警告0）                                    |
+| Prettier     | 変更ファイルは `prettier --check` で整形済み                      |
+| 既存ユニット | 停止・再起動なし（`mirai-sf-api` / tunnel / worker は稼働のまま） |

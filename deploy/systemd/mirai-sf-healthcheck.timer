@@ -1,0 +1,13 @@
+# 雛形: 5分ごとに mirai-sf-healthcheck.service を起動する（有効化は docs/deployment.md の「監視」）。
+# OnCalendar=*:0/5 は毎時 00/05/10/…/55 分。Persistent=true で停止・サスペンド中の回を再開後に1回だけ補う。
+[Unit]
+Description=Mirai SF staging health check timer (every 5 minutes)
+
+[Timer]
+OnCalendar=*:0/5
+AccuracySec=30s
+Persistent=true
+Unit=mirai-sf-healthcheck.service
+
+[Install]
+WantedBy=timers.target

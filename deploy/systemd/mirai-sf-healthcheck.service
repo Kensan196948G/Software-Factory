@@ -1,0 +1,21 @@
+# 雛形: ~/.config/systemd/user/ へコピーして使う（有効化・確認は docs/deployment.md の「監視」）。
+# Staging の外形監視。確認は /healthz の 200・status=ok・db.ok=true・environment=staging・
+# commit と current/release.env の COMMIT_SHA 一致（+ 任意で origin/main との比較）。
+# 失敗（exit 1）は oneshot の failed として残り、systemctl --user --failed で見える。
+# preview.conf（秘密値を含む設定）は読まない。release.env の COMMIT_SHA だけを照合する。
+# リリースのデプロイに依存せず監視を続けるため、実行元は current ではなく常設のチェックアウト。
+# リポジトリの場所が違う場合は drop-in（~/.config/systemd/user/mirai-sf-healthcheck.service.d/）で
+# WorkingDirectory と ExecStart を差し替える。
+[Unit]
+Description=Mirai SF staging health check (/healthz, db.ok, environment, commit)
+After=network.target
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.nvm/versions/node/v22.22.3/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/Projects/Software-Factory-Project
+ExecStart=/usr/bin/env node scripts/ops/healthcheck.mjs
+TimeoutStartSec=60
+SyslogIdentifier=mirai-sf-healthcheck
+StandardOutput=journal
+StandardError=journal

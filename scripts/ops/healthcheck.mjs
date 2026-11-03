@@ -1,0 +1,322 @@
+#!/usr/bin/env node
+/**
+ * Staging の外形監視（systemd user timer `mirai-sf-healthcheck.timer` から5分ごとに実行）。
+ *
+ * 確認項目:
+ *   1. 127.0.0.1 の /healthz が HTTP 200 を返す
+ *   2. status=ok かつ db.ok=true
+ *   3. environment=staging
+ *   4. /healthz の commit が current/release.env の COMMIT_SHA と一致する
+ *   5. （任意）git rev-parse origin/main と一致しない場合は warning（失敗にはしない）
+ *
+ * 失敗時は exit 1（oneshot unit が failed になり `systemctl --user --failed` で見える）。
+ * 連続失敗と最終状態は ~/.local/state/mirai-sf/healthcheck.json に残し、復旧時に1行ログを出す。
+ *
+ * 秘密情報は出力しない:
+ *   - preview.conf（DATABASE_URL などの設定値）は読まない。DB も触らない。
+ *   - /healthz の本文はログへ出さない。出すのは確認済みの項目（status / environment / db.ok / commit）だけ。
+ *   - URL は scheme://host:port/path までに落として出し、資格情報・クエリは出さない。
+ *   - with-env.mjs と同じく、設定値は表示せず、失敗理由も内部で組み立てた文言だけを出す。
+ *
+ * 環境変数:
+ *   MIRAI_SF_HEALTH_URL          確認する URL（既定 http://127.0.0.1:8782/healthz）
+ *   MIRAI_SF_HOME                current/release.env を置く場所（既定 ~/.local/share/mirai-sf）
+ *   MIRAI_SF_REPO                ⑤ の git リポジトリ（既定: カレント → このスクリプトの2階層上）
+ *   MIRAI_SF_HEALTH_STATE_FILE   状態ファイル（既定 ~/.local/state/mirai-sf/healthcheck.json。検証用）
+ *
+ * 終了コード: 0=正常（warning を含む）/ 1=異常
+ */
+import { execFileSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const DEFAULT_HEALTH_URL = 'http://127.0.0.1:8782/healthz';
+const EXPECTED_ENVIRONMENT = 'staging';
+const SHA_PATTERN = /^[0-9a-f]{40}$/;
+const HTTP_TIMEOUT_MS = 5000;
+const SAFE_VALUE_PATTERN = /^[A-Za-z0-9._:-]{1,80}$/;
+
+const healthUrl = process.env.MIRAI_SF_HEALTH_URL || DEFAULT_HEALTH_URL;
+const miraiHome = process.env.MIRAI_SF_HOME || resolve(homedir(), '.local/share/mirai-sf');
+const stateFile = process.env.MIRAI_SF_HEALTH_STATE_FILE || resolve(homedir(), '.local/state/mirai-sf/healthcheck.json');
+const repoHint = process.env.MIRAI_SF_REPO || '';
+
+const timestamp = () => new Date().toISOString();
+const log = (message) => console.log(`[${timestamp()}] ${message}`);
+const warn = (message) => console.warn(`[${timestamp()}] 警告: ${message}`);
+const ng = (message) => console.error(`[${timestamp()}] NG: ${message}`);
+
+// URL は scheme://host:port/path だけにする（資格情報・クエリ・フラグメントを出さない）
+function describeUrl(raw) {
+  try {
+    const parsed = new URL(raw);
+    parsed.username = '';
+    parsed.password = '';
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString();
+  } catch {
+    return '(URL を解釈できません)';
+  }
+}
+
+// 応答の値をログへ出す前に形を検証する（改行などで journal を汚さない）
+function safeValue(value) {
+  return typeof value === 'string' && SAFE_VALUE_PATTERN.test(value) ? value : '(想定外の値)';
+}
+
+// ネットワーク例外の文言は URL を含むことがあるので、errno など安全な断片だけを出す
+function describeFetchError(error) {
+  if (error instanceof Error && error.name === 'TimeoutError') return `タイムアウト（${HTTP_TIMEOUT_MS}ms）`;
+  const cause = error && typeof error === 'object' ? error.cause : undefined;
+  if (cause && typeof cause === 'object') {
+    if (typeof cause.code === 'string' && /^[A-Z0-9_]{2,40}$/.test(cause.code)) return cause.code;
+    if (typeof cause.errno === 'string' && /^[A-Z0-9_]{2,40}$/.test(cause.errno)) return cause.errno;
+    if (cause.message === 'bad port') return 'bad port';
+  }
+  return error instanceof Error ? error.name : '不明なエラー';
+}
+
+function loadState() {
+  if (!existsSync(stateFile)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(stateFile, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    log('状態ファイルを読めないため、今回を新規の状態として扱います');
+    return {};
+  }
+}
+
+function saveState(state) {
+  mkdirSync(dirname(stateFile), { recursive: true, mode: 0o700 });
+  const temporary = `${stateFile}.tmp.${process.pid}`;
+  writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(temporary, 0o600);
+  renameSync(temporary, stateFile);
+}
+
+function resolveGitRepo() {
+  const candidates = [];
+  if (repoHint) candidates.push(repoHint);
+  candidates.push(process.cwd(), resolve(SCRIPT_DIR, '../..'));
+  for (const candidate of candidates) {
+    try {
+      const toplevel = execFileSync('git', ['-C', candidate, 'rev-parse', '--show-toplevel'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 3000,
+      }).trim();
+      if (toplevel) return toplevel;
+    } catch {
+      // 次の候補へ（git 管理外・パス不在など）
+    }
+  }
+  return null;
+}
+
+function readGitRef(repo, ref) {
+  try {
+    return execFileSync('git', ['-C', repo, 'rev-parse', '--verify', '--quiet', ref], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 3000,
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+// release.env は KEY=VALUE。COMMIT_SHA 以外は読まない・出さない
+function readDeployedCommit() {
+  const releaseEnv = resolve(miraiHome, 'current', 'release.env');
+  if (!existsSync(releaseEnv)) {
+    return { ok: false, failure: `release.env が見つかりません（${releaseEnv}）` };
+  }
+  let text;
+  try {
+    text = readFileSync(releaseEnv, 'utf8');
+  } catch {
+    return { ok: false, failure: 'release.env を読めません' };
+  }
+  const matched = /^COMMIT_SHA=([0-9a-f]{40})[ \t]*$/m.exec(text);
+  if (!matched) return { ok: false, failure: 'release.env に 40 桁の COMMIT_SHA がありません' };
+  return { ok: true, value: matched[1] };
+}
+
+async function fetchHealth() {
+  const startedAt = Date.now();
+  let response;
+  try {
+    response = await fetch(healthUrl, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+      headers: { accept: 'application/json' },
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      failure: `healthz へ接続できません（${describeFetchError(error)}）`,
+      durationMs: Date.now() - startedAt,
+    };
+  }
+
+  if (response.status !== 200) {
+    return {
+      ok: false,
+      failure: `healthz が HTTP ${response.status} を返しました（200 を期待）`,
+      durationMs: Date.now() - startedAt,
+    };
+  }
+
+  let text;
+  try {
+    text = await response.text();
+  } catch (error) {
+    return {
+      ok: false,
+      failure: `healthz の本文を読めません（${describeFetchError(error)}）`,
+      durationMs: Date.now() - startedAt,
+    };
+  }
+
+  let health;
+  try {
+    health = JSON.parse(text);
+  } catch {
+    return { ok: false, failure: 'healthz の本文が JSON ではありません', durationMs: Date.now() - startedAt };
+  }
+  if (!health || typeof health !== 'object') {
+    return { ok: false, failure: 'healthz の本文が JSON オブジェクトではありません', durationMs: Date.now() - startedAt };
+  }
+
+  return { ok: true, health, durationMs: Date.now() - startedAt };
+}
+
+async function main() {
+  try {
+    new URL(healthUrl);
+  } catch {
+    ng('MIRAI_SF_HEALTH_URL を URL として解釈できません（値をログへは出しません）');
+    return 1;
+  }
+
+  const checkedAt = timestamp();
+  const previous = loadState();
+  const previousFailures = Math.max(0, Number.parseInt(previous.consecutiveFailures, 10) || 0);
+  const totalFailures = Math.max(0, Number.parseInt(previous.totalFailures, 10) || 0);
+  const warnings = [];
+  const failures = [];
+
+  log(`healthcheck 開始: url=${describeUrl(healthUrl)}`);
+
+  const probe = await fetchHealth();
+  let health = null;
+  if (!probe.ok) {
+    failures.push(probe.failure);
+  } else {
+    health = probe.health;
+
+    // 2. status=ok かつ db.ok=true
+    if (health.status !== 'ok') failures.push(`status=${safeValue(health.status)}（ok を期待）`);
+    const dbOk = health.db && typeof health.db === 'object' ? health.db.ok === true : false;
+    if (!dbOk) failures.push('db.ok=true ではありません（DB 接続に失敗している可能性）');
+
+    // 3. environment=staging
+    if (health.environment !== EXPECTED_ENVIRONMENT) {
+      failures.push(`environment=${safeValue(health.environment)}（staging を期待）`);
+    }
+
+    // 4. healthz の commit と current/release.env の COMMIT_SHA が一致
+    const deployed = readDeployedCommit();
+    if (!deployed.ok) {
+      failures.push(deployed.failure);
+    } else if (!SHA_PATTERN.test(String(health.commit))) {
+      failures.push('healthz の commit が 40 桁の 16 進ではありません');
+    } else if (health.commit !== deployed.value) {
+      failures.push(`commit が一致しません（healthz=${health.commit}, release.env=${deployed.value}）`);
+    }
+
+    // 5. （任意）origin/main との比較。取得できるときだけ warning を出す
+    if (SHA_PATTERN.test(String(health.commit))) {
+      const repo = resolveGitRepo();
+      const originMain = repo ? readGitRef(repo, 'refs/remotes/origin/main') : null;
+      if (!repo) {
+        log('git リポジトリを特定できないため origin/main の比較はスキップします（任意チェック）');
+      } else if (!originMain) {
+        log('origin/main を取得できないため比較はスキップします（任意チェック。git fetch は行いません）');
+      } else if (health.commit !== originMain) {
+        const message = `デプロイ commit ${health.commit} は origin/main ${originMain} と一致しません（release 反映漏れの可能性）`;
+        warnings.push(message);
+        warn(message);
+      } else {
+        log(`origin/main と一致: ${originMain}`);
+      }
+    }
+  }
+
+  const baseState = {
+    version: 1,
+    checkedAt,
+    url: describeUrl(healthUrl),
+    healthCommit: health && SHA_PATTERN.test(String(health.commit)) ? health.commit : null,
+    environment: health ? safeValue(health.environment) : null,
+    dbOk: health && health.db && typeof health.db === 'object' ? health.db.ok === true : null,
+    previousConsecutiveFailures: previousFailures,
+    totalFailures,
+    lastFailureAt: previous.lastFailureAt ?? null,
+    lastFailureReason: previous.lastFailureReason ?? null,
+    lastIncidentFailures: previous.lastIncidentFailures ?? null,
+    recoveredAt: previous.recoveredAt ?? null,
+    warnings,
+  };
+
+  if (failures.length === 0) {
+    const recovered = previousFailures > 0;
+    const state = { ...baseState, ok: true, consecutiveFailures: 0, durationMs: probe.durationMs };
+    if (recovered) {
+      state.lastIncidentFailures = previousFailures;
+      state.recoveredAt = checkedAt;
+    }
+    try {
+      saveState(state);
+    } catch {
+      ng('状態ファイルを書き込めません（~/.local/state/mirai-sf の権限を確認してください）');
+      return 1;
+    }
+    if (recovered) {
+      log(`復旧: 連続 ${previousFailures} 回の失敗から回復しました（最終失敗 ${previous.lastFailureAt ?? '不明'}）`);
+    }
+    log(
+      `healthcheck OK（commit=${health.commit}, environment=${safeValue(health.environment)}, db.ok=true, ${probe.durationMs}ms）`,
+    );
+    return 0;
+  }
+
+  const consecutiveFailures = previousFailures + 1;
+  const reason = failures.join(' / ');
+  const state = {
+    ...baseState,
+    ok: false,
+    consecutiveFailures,
+    totalFailures: totalFailures + 1,
+    lastFailureAt: checkedAt,
+    lastFailureReason: reason,
+    durationMs: probe.durationMs,
+  };
+  try {
+    saveState(state);
+  } catch {
+    ng('状態ファイルを書き込めません（~/.local/state/mirai-sf の権限を確認してください）');
+  }
+
+  for (const failure of failures) ng(failure);
+  ng(`healthcheck NG（連続 ${consecutiveFailures} 回目）`);
+  ng('確認: journalctl --user -u mirai-sf-healthcheck / systemctl --user --failed');
+  return 1;
+}
+
+process.exitCode = await main();
