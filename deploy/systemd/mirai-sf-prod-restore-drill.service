@@ -1,0 +1,11 @@
+[Unit]
+Description=Mirai SF production restore drill
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.nvm/versions/node/v22.22.3/bin:/usr/local/bin:/usr/bin:/bin
+Environment=MIRAI_SF_HOME=%h/.local/share/mirai-sf-prod
+Environment=MIRAI_SF_ENV_FILE=%h/.config/mirai-sf/prod.conf
+Environment=MIRAI_SF_BACKUP_DIR=%h/.local/state/mirai-sf-prod/backups
+WorkingDirectory=%h/Projects/Software-Factory-Project
+ExecStart=/usr/bin/env node scripts/ops/with-env.mjs scripts/ops/restore-drill.sh

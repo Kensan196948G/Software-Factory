@@ -7,7 +7,9 @@ OPS_ROOT="$(cd "$OPS_DIR/../.." && pwd)"
 
 OPS_DEFAULT_HOME="$HOME/.local/share/mirai-sf"
 OPS_HOME="${MIRAI_SF_HOME:-$OPS_DEFAULT_HOME}"
-OPS_API_UNIT="mirai-sf-api.service"
+OPS_API_UNIT="${MIRAI_SF_API_UNIT:-mirai-sf-api.service}"
+# current を参照する worker。本番で worker を動かさない場合は MIRAI_SF_WORKER_UNIT=none にする
+OPS_WORKER_UNIT="${MIRAI_SF_WORKER_UNIT:-mirai-sf-worker.service}"
 
 log() { printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 die() {
@@ -78,8 +80,8 @@ ops_assert_sha() {
 ops_guard_overrides() {
   local needs_env="$1" no_restart="$2"
   [[ "$OPS_HOME" != "$OPS_DEFAULT_HOME" ]] || return 0
-  if [[ "$no_restart" != 1 && -z "${MIRAI_SF_RESTART_HOOK:-}" ]]; then
-    die "MIRAI_SF_HOME を差し替えるときは MIRAI_SF_RESTART_HOOK か --no-restart が必要です（実サービスを再起動しないため）"
+  if [[ "$no_restart" != 1 && -z "${MIRAI_SF_RESTART_HOOK:-}" && -z "${MIRAI_SF_API_UNIT:-}" ]]; then
+    die "MIRAI_SF_HOME を差し替えるときは MIRAI_SF_RESTART_HOOK / MIRAI_SF_API_UNIT / --no-restart のいずれかが必要です（実サービスを再起動しないため）"
   fi
   if [[ "$needs_env" == 1 && -z "${MIRAI_SF_ENV_FILE:-}" ]]; then
     die "MIRAI_SF_HOME を差し替えるときは MIRAI_SF_ENV_FILE が必要です（実DBへ migration しないため）"

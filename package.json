@@ -41,6 +41,10 @@
     "ops:reminders": "node scripts/ops/with-env.mjs tsx scripts/reminders.ts",
     "ops:audit:archive": "node scripts/ops/with-env.mjs tsx scripts/audit-archive.ts",
     "ops:db:verify": "node scripts/ops/with-env.mjs tsx scripts/db.ts verify",
+    "ops:prod:release": "bash scripts/ops/prod-release.sh",
+    "ops:prod:rollback": "bash scripts/ops/prod-rollback.sh",
+    "ops:prod:backup": "bash scripts/ops/prod-backup.sh",
+    "ops:prod:restore-drill": "bash scripts/ops/prod-restore-drill.sh",
     "verify:all": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run build",
     "bootstrap:local": "node scripts/bootstrap-local.mjs"
   },
