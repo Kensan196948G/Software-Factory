@@ -68,6 +68,23 @@ assert_current() {
   printf '  current: 期待 %s / 実際 %s\n' "$1" "$actual" >&2
   return 1
 }
+assert_release_dir() {
+  if [[ -d "$HOME_DIR/releases/$1" ]]; then return 0; fi
+  printf '  リリースが残っていません: %s\n' "$1" >&2
+  return 1
+}
+assert_no_release_dir() {
+  if [[ ! -d "$HOME_DIR/releases/$1" ]]; then return 0; fi
+  printf '  リリースが残っています: %s\n' "$1" >&2
+  return 1
+}
+assert_release_count() {
+  local actual
+  actual="$(find "$HOME_DIR/releases" -mindepth 1 -maxdepth 1 -type d | wc -l)"
+  if [[ "$actual" -eq "$1" ]]; then return 0; fi
+  printf '  リリース数: 期待 %s / 実際 %s\n' "$1" "$actual" >&2
+  return 1
+}
 assert_health_commit() {
   local actual
   actual="$(node -e 'try { console.log(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).commit ?? ""); } catch { console.log(""); }' "$HEALTH_FILE")"
@@ -101,6 +118,8 @@ if [[ "$mode" == "ok" ]]; then
   printf '{"status":"ok","environment":"staging","commit":"%s","db":{"ok":true}}' "$sha" >"$HEALTH_FILE"
 elif [[ "$mode" == "db-fail" ]]; then
   printf '{"status":"ok","environment":"staging","commit":"%s","db":{"ok":false}}' "$sha" >"$HEALTH_FILE"
+elif [[ "$mode" == "wrong-env" ]]; then
+  printf '{"status":"ok","environment":"production","commit":"%s","db":{"ok":true}}' "$sha" >"$HEALTH_FILE"
 fi
 # bad-health: 切替だけして /healthz は前の commit のまま（= 不一致）
 exit 0
@@ -283,6 +302,70 @@ setup_case usage
 run_case ok --bogus
 check "不正なオプションで終了コード 1" assert_code 1
 check "使い方を出す" assert_out_contains "不明なオプション"
+
+printf '\n== 9. 手動の release/rollback 中は触らない（.ops.lock） ==\n'
+setup_case opslock
+(
+  exec 9>"$HOME_DIR/.ops.lock"
+  flock 9
+  : >"$CASE/ops-locked"
+  sleep 20
+) &
+OPS_LOCK_PID=$!
+for _ in $(seq 1 200); do
+  [[ -f "$CASE/ops-locked" ]] && break
+  sleep 0.05
+done
+run_case ok
+check "手動 release 中は終了コード 75" assert_code 75
+check "手動 release 中は release.sh を呼ばない" assert_no_release
+check "手動 release 中はスキップをログに出す" assert_out_contains "手動の release/rollback が実行中"
+kill "$OPS_LOCK_PID" 2>/dev/null || true
+wait "$OPS_LOCK_PID" 2>/dev/null || true
+
+printf '\n== 10. 実行元が main でない場合は配備しない ==\n'
+setup_case branch
+git -C "$REPO" checkout -q -b feature
+run_case ok
+check "main 以外では終了コード 75" assert_code 75
+check "main 以外では release.sh を呼ばない" assert_no_release
+check "main 以外をログに出す" assert_out_contains "main・clean ではありません"
+
+printf '\n== 11. 実行元が汚れている場合は配備しない ==\n'
+setup_case dirty
+: >"$REPO/dirty.txt"
+run_case ok
+check "未コミットの変更があると終了コード 75" assert_code 75
+check "未コミットの変更があると release.sh を呼ばない" assert_no_release
+check "未コミットの変更をログに出す" assert_out_contains "main・clean ではありません"
+
+printf '\n== 12. environment が staging でない health は失敗 ==\n'
+setup_case wrongenv
+run_case wrong-env
+check "environment 不一致で終了コード 1" assert_code 1
+check "直前のリリースへ rollback する" assert_rollback_called_with "$OLD"
+check "current が直前の commit に戻る" assert_current "$OLD"
+check "配備後の確認失敗をログに出す" assert_out_contains "配備後の確認に失敗"
+
+printf '\n== 13. 成功後に古い releases を整理する ==\n'
+setup_case prune
+for i in 1 2 3 4 5 6 7 8; do
+  sha="$(printf '%040x' "$i")"
+  mkdir -p "$HOME_DIR/releases/$sha"
+  : >"$HOME_DIR/releases/$sha/.release-complete"
+  printf 'COMMIT_SHA=%s\n' "$sha" >"$HOME_DIR/releases/$sha/release.env"
+  touch -d "2026-01-0$i 00:00:00" "$HOME_DIR/releases/$sha"
+done
+run_case ok
+check "配備成功で終了コード 0" assert_code 0
+check "current が新しい commit になる" assert_current "$NEW"
+check "直近5世代は残る（4〜8）" assert_release_dir "$(printf '%040x' 4)"
+check "直近5世代は残る（8）" assert_release_dir "$(printf '%040x' 8)"
+check "古い世代は削除される（1）" assert_no_release_dir "$(printf '%040x' 1)"
+check "古い世代は削除される（3）" assert_no_release_dir "$(printf '%040x' 3)"
+check "current/previous も残る" assert_release_dir "$OLD"
+check "リリース数は 7（current/previous + 5）" assert_release_count 7
+check "整理をログに出す" assert_out_contains "releases を整理"
 
 printf '\n== 結果: PASS %d / FAIL %d ==\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]]

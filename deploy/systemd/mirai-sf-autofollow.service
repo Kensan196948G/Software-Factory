@@ -3,6 +3,8 @@
 # Staging を origin/main に追従させる。main が進んだときだけ配備し、失敗時は直前の
 # リリースへ戻す（切替・再起動・healthz 確認は scripts/ops/release.sh に任せる）。
 # 実行元は current ではなく常設のチェックアウト（リリースのデプロイに依存しないため）。
+# ただしスクリプトは配備前に実行元が main・clean であることを確認し、違えば skip（exit 75）する。
+# dev ツリーを main に保つか、専用チェックアウトを作って WorkingDirectory を差し替えること。
 # 75 = 別の autofollow が実行中（多重実行防止）。failed にせず成功扱いにする。
 [Unit]
 Description=Mirai SF staging auto-follow to origin/main

@@ -6,24 +6,31 @@
 # 流れ:
 #   1. 多重実行防止（flock）
 #   2. git fetch → origin/main の commit を固定
-#   3. current と同一なら no-op（ただし /healthz の commit・db.ok のずれは異常として失敗）
-#   4. 既存の release.sh で配備（切替・再起動・/healthz 確認・失敗時の戻しは release.sh に任せる）
-#   5. 配備後に /healthz を独立に確認し、だめなら直前のリリースへ戻す
+#   3. current と同一なら no-op（/healthz の commit・db.ok・environment のずれは異常として失敗）
+#   4. main・clean のチェックアウトからの実行を確認（作業ツリーのブランチに依存させない）
+#   5. .ops.lock を取る（手動の release/rollback 中は触らず exit 75）
+#   6. 既存の release.sh で配備（切替・再起動・/healthz 確認・失敗時の戻しは release.sh に任せる）
+#   7. 配備後に /healthz を独立に確認し、だめなら直前のリリースへ戻す
+#   8. 成功後に古い releases を整理する（current/previous と直近 N 世代を保持）
 #
 # 終了コード:
 #   0  追従済み（no-op）または配備成功
 #   1  失敗（health 不一致など。直前のリリースへ戻した場合を含む）
 #   2  失敗して直前のリリースへ戻せなかった（手動で復旧する）
 #   3  破壊的な可能性がある migration のため中止（release.sh の判定）
-#   75 別の実行が進行中（多重実行防止。timer は SuccessExitStatus=75 で成功扱い）
+#   75 別の実行（autofollow／手動 release/rollback）が進行中、または実行元が main・clean でない
+#      （skip。timer は SuccessExitStatus=75 で成功扱い）
 #
 # 環境変数（release.sh と共通のものは lib.sh を参照）:
 #   MIRAI_SF_REPO                      git リポジトリ（既定: このスクリプトを含むリポジトリ）
 #   MIRAI_SF_HEALTH_URL                既定 http://127.0.0.1:8782/healthz
 #   MIRAI_SF_RELEASE_SCRIPT            既定 scripts/ops/release.sh（検証用に差し替え可）
 #   MIRAI_SF_ROLLBACK_SCRIPT           既定 scripts/ops/rollback.sh（検証用に差し替え可）
+#   MIRAI_SF_HEALTH_ENV                期待する environment（既定 staging。別アプリの誤判定を防ぐ）
 #   MIRAI_SF_AUTOFOLLOW_STATE_FILE     既定 ~/.local/state/mirai-sf/autofollow.json
 #   MIRAI_SF_AUTOFOLLOW_HEALTH_RETRIES 既定 5（配備後の確認回数）
+#   MIRAI_SF_AUTOFOLLOW_KEEP_RELEASES  既定 5（current/previous のほかに残す世代数）
+#   MIRAI_SF_AUTOFOLLOW_PRUNE          既定 1。0 で releases の整理を無効化
 #
 # 秘密情報は出力しない（/healthz の本文は出さず、確認済みの項目だけを出す）。
 # 非対話で動く（git の資格情報入力を待たない）。
@@ -37,7 +44,7 @@ dry_run=0
 for arg in "$@"; do
   case "$arg" in
     --check | --dry-run) dry_run=1 ;;
-    -h | --help) sed -n '2,31p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h | --help) awk 'NR > 1 && /^set -euo pipefail$/ { exit } NR > 1 { print }' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) die "不明なオプション: $arg（--check / --dry-run のみ）" ;;
     *) die "引数は取りません: $arg" ;;
   esac
@@ -50,6 +57,7 @@ repo="${MIRAI_SF_REPO:-$(git -C "$OPS_DIR" rev-parse --show-toplevel 2>/dev/null
 [[ -n "$repo" ]] || die "git リポジトリを特定できません。MIRAI_SF_REPO を指定してください"
 
 health_url="${MIRAI_SF_HEALTH_URL:-http://127.0.0.1:8782/healthz}"
+expected_env="${MIRAI_SF_HEALTH_ENV:-staging}"
 release_script="${MIRAI_SF_RELEASE_SCRIPT:-$OPS_DIR/release.sh}"
 rollback_script="${MIRAI_SF_ROLLBACK_SCRIPT:-$OPS_DIR/rollback.sh}"
 state_file="${MIRAI_SF_AUTOFOLLOW_STATE_FILE:-$HOME/.local/state/mirai-sf/autofollow.json}"
@@ -66,8 +74,9 @@ previous=""
 
 # KEY=VALUE に相当する固定値だけを書く（SHA は 40 桁の 16 進、action は内部の列挙）。
 write_state() {
-  local action="$1" code="$2" dir tmp db_ok=false
+  local action="$1" code="$2" dir tmp db_ok=false prev_json=""
   [[ "$HEALTH_DBOK" != true ]] || db_ok=true
+  if [[ "$previous" =~ ^[0-9a-f]{40}$ ]]; then prev_json="$previous"; fi
   dir="$(dirname "$state_file")"
   mkdir -p "$dir"
   tmp="$state_file.tmp.$$"
@@ -77,7 +86,7 @@ write_state() {
     printf '  "at": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf '  "action": "%s",\n' "$action"
     printf '  "target": "%s",\n' "$target"
-    printf '  "previous": "%s",\n' "$previous"
+    printf '  "previous": "%s",\n' "$prev_json"
     printf '  "healthCommit": "%s",\n' "$HEALTH_COMMIT"
     printf '  "healthEnvironment": "%s",\n' "$HEALTH_ENV"
     printf '  "healthDbOk": %s,\n' "$db_ok"
@@ -98,6 +107,11 @@ finish() {
 # /healthz を読み取り、HEALTH_* へ入れる。接続・JSON 不正は失敗。
 probe_health() {
   local body line
+  # 読めなかったときに前回の値を残さない
+  HEALTH_STATUS=""
+  HEALTH_ENV=""
+  HEALTH_COMMIT=""
+  HEALTH_DBOK=""
   body="$(curl -fsS --max-time 3 "$health_url" 2>/dev/null)" || return 1
   line="$(
     printf '%s' "$body" | node -e '
@@ -124,7 +138,16 @@ describe_health() {
 }
 
 health_matches() {
-  [[ "$HEALTH_STATUS" == ok && "$HEALTH_DBOK" == true && "$HEALTH_COMMIT" == "$1" ]]
+  [[ "$HEALTH_STATUS" == ok && "$HEALTH_DBOK" == true && "$HEALTH_COMMIT" == "$1" && "$HEALTH_ENV" == "$expected_env" ]]
+}
+
+# 実行元の作業ツリーが main・clean か（ブランチ切替中のコードを 10 分毎に配備しないため）
+checkout_head() {
+  git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null || true
+}
+
+checkout_is_clean() {
+  [[ -z "$(git -C "$repo" status --porcelain 2>/dev/null || true)" ]]
 }
 
 # 配備後の確認。再起動直後の数秒を許すため数回試す。
@@ -157,7 +180,7 @@ recover_to_previous() {
     return 1
   fi
   log "直前のリリースへ戻します: $prev"
-  bash "$rollback_script" "$prev" || rc=$?
+  OPS_LOCK_HELD=1 bash "$rollback_script" "$prev" || rc=$?
   if [[ "$rc" != 0 ]]; then
     log "rollback に失敗しました（終了コード $rc）"
     return 1
@@ -168,6 +191,39 @@ recover_to_previous() {
   fi
   log "戻した後も healthz が一致しません（$(describe_health)）"
   return 1
+}
+
+# 古いリリースを整理する。current/previous と直近 N 世代だけ残す（既定 N=5）。
+# 本番ホーム（*-prod）と MIRAI_SF_AUTOFOLLOW_PRUNE=0 では何もしない。
+prune_releases() {
+  local current="$1" prev="$2" keep="${MIRAI_SF_AUTOFOLLOW_KEEP_RELEASES:-5}"
+  local releases="$OPS_HOME/releases" entry kept=0 removed=0
+  local dirs=()
+  if [[ "${MIRAI_SF_AUTOFOLLOW_PRUNE:-1}" == 0 ]]; then
+    log "releases の整理は無効です（MIRAI_SF_AUTOFOLLOW_PRUNE=0）"
+    return 0
+  fi
+  if [[ "$OPS_HOME" == *"-prod"* ]]; then
+    log "本番ホームのため releases は整理しません: $OPS_HOME"
+    return 0
+  fi
+  [[ -d "$releases" ]] || return 0
+  [[ "$keep" =~ ^[0-9]+$ ]] || keep=5
+  mapfile -t dirs < <(find "$releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %f\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
+  for entry in "${dirs[@]}"; do
+    [[ "$entry" =~ ^[0-9a-f]{40}$ ]] || continue
+    [[ "$entry" != "$current" && "$entry" != "$prev" ]] || continue
+    kept=$((kept + 1))
+    ((kept > keep)) || continue
+    [[ -f "${releases:?}/${entry:?}/.release-complete" ]] || continue
+    if rm -rf -- "${releases:?}/${entry:?}"; then
+      removed=$((removed + 1))
+    else
+      log "注意: 古いリリースを削除できません: $entry"
+    fi
+  done
+  log "releases を整理: ${removed} 世代を削除（current/previous と直近 ${keep} 世代を保持）"
+  return 0
 }
 
 if [[ "$dry_run" != 1 ]]; then
@@ -215,14 +271,33 @@ if [[ "$dry_run" == 1 ]]; then
   else
     log "現在の healthz: 読めません（$health_url）"
   fi
+  head="$(checkout_head)"
+  if [[ "$head" != main ]] || ! checkout_is_clean; then
+    log "[dry-run] 注意: 実行元が main・clean ではありません（HEAD=${head:-detached}）。配備モードでは skip（exit 75）"
+  fi
   log "[dry-run] 更新あり: ${previous:-（なし）} → $target"
   log "[dry-run] 計画: fetch 済み → release.sh $target（切替・再起動・healthz 確認・失敗時は $previous へ戻す）"
+  log "[dry-run] 変更するのは fetch した refs と状態ファイルだけ（配備・DB・サービスは変更しない）"
   finish "dry-run" 0
+fi
+
+head="$(checkout_head)"
+if [[ "$head" != main ]] || ! checkout_is_clean; then
+  log "実行元が main・clean ではありません（HEAD=${head:-detached}）。作業ツリーのブランチに依存した配備をしないため中止（exit 75）"
+  finish "skipped" 75
+fi
+
+# 手動の release/rollback と同じ .ops.lock を取る（競合したら触らず skip）
+exec 9>"$OPS_HOME/.ops.lock"
+if ! flock -n 9; then
+  log "手動の release/rollback が実行中です（触らない。終了コード 75）"
+  finish "skipped" 75
 fi
 
 log "配備を開始: ${previous:-（なし）} → $target（release.sh）"
 code=0
-bash "$release_script" "$target" || code=$?
+# .ops.lock はこのプロセスが保持しているので、release.sh 側では取り直さない
+OPS_LOCK_HELD=1 bash "$release_script" "$target" || code=$?
 if [[ "$code" == 3 ]]; then
   log "破壊的な可能性がある migration のため中止しました（DB も current も変更していません）"
   finish "failed" 3
@@ -231,6 +306,7 @@ fi
 if [[ "$code" == 0 ]]; then
   if wait_for_target "$target" && [[ "$(ops_current_sha)" == "$target" ]]; then
     log "配備成功: $target（$(describe_health)）"
+    prune_releases "$target" "$previous" || log "注意: releases の整理に失敗しました"
     finish "deployed" 0
   fi
   # release.sh は成功を返したが、独立した確認で合わない（current のずれ・health のずれ）

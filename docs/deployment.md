@@ -375,14 +375,19 @@ journalctl --user -u mirai-sf-worker.service -n 50
 main が進んだら Staging を自動で追従させる。既存の `release.sh` / `rollback.sh` をそのまま使い、新しい配備手順は足さない。
 
 ```bash
-bash scripts/ops/staging-autofollow.sh --dry-run   # 計画だけ（何も変えない）
+bash scripts/ops/staging-autofollow.sh --dry-run   # 計画だけ（fetch と状態ファイルのみ更新）
 bash scripts/ops/staging-autofollow.sh             # 手動で追従
 ```
 
-- 流れ: `flock` → `git fetch origin main` → `current` と比較して同一なら no-op → `release.sh <40桁SHA>` →
-  `/healthz` の commit と `db.ok` を独立に確認 → 不一致なら `rollback.sh <直前のSHA>`。
+- 流れ: `flock` → `git fetch origin main` → `current` と比較して同一なら no-op（`commit`・`environment`・
+  `db.ok` のずれは失敗）→ 実行元が **main・clean** か確認 → 手動運用と同じ **`.ops.lock`** を取得
+  （取れなければ触らず exit 75）→ `release.sh <40桁SHA>` → `/healthz` の `commit`・`environment`・`db.ok` を
+  独立に確認 → 不一致なら `rollback.sh <直前のSHA>` → 成功後に古い `releases/` を整理。
 - 終了コード: `0`=追従済み/成功, `1`=失敗（旧版へ戻した場合を含む）, `2`=戻せなかった, `3`=破壊的 migration で中止,
-  `75`=別の実行が進行中（timer は成功扱い）。
+  `75`=autofollow／手動 release/rollback が実行中、または実行元が main・clean でない（skip。timer は成功扱い）。
+- 実行元が main・clean でない間は配備しない（exit 75）。`WorkingDirectory` は main を保つ常設チェックアウトにする。
+- 成功後に current/previous と直近 N 世代（`MIRAI_SF_AUTOFOLLOW_KEEP_RELEASES`、既定 5）だけ残す。
+  `MIRAI_SF_AUTOFOLLOW_PRUNE=0` で無効化。本番ホーム（`*-prod`）では整理しない。
 - timer の雛形: `deploy/systemd/mirai-sf-autofollow.{service,timer}`（10 分ごと、`SuccessExitStatus=75`）。
   実行が長引くと次回は 75 で skip し、二重配備しない。
 - 実測・導入・検証の詳細は [06-staging-parity-and-autofollow.md](production/06-staging-parity-and-autofollow.md)。
