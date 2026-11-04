@@ -486,8 +486,7 @@ const SF = (function () {
     const msf = window.__MSF__;
     return msf && msf.user && typeof msf.user.id === 'string' ? msf.user : null;
   };
-  const whoName = (who) =>
-    who && typeof who === 'object' ? String(who.displayName || who.name || '') : String(who || '');
+  const whoName = (who) => (who && typeof who === 'object' ? String(who.displayName || who.name || '') : String(who || ''));
   const whoId = (who) => {
     if (who && typeof who === 'object') return who.id || who.userId || null;
     const user = connectedUser();
@@ -607,17 +606,12 @@ const SF = (function () {
     if (r.status === 'cancel') return false;
     return role !== 'requester'
       ? !['done'].includes(r.status)
-      : ['received', 'back'].includes(r.status) &&
-          ((!window.__MSF__ && !whoName(who)) || isOwner(r, who));
+      : ['received', 'back'].includes(r.status) && ((!window.__MSF__ && !whoName(who)) || isOwner(r, who));
   }
   /* 依頼者は「自分の依頼」だけを動かせる。承認待ちの承認は、指定された承認者だけ。 */
   function canMoveR(role, r, to, who) {
     const targeted = role === 'approver' && r.status === 'wait' && ['approved', 'done'].includes(to);
-    return (
-      canMove(role, r.status, to) &&
-      (role !== 'requester' || isOwner(r, who)) &&
-      !(targeted && approverMismatch(r, who))
-    );
+    return canMove(role, r.status, to) && (role !== 'requester' || isOwner(r, who)) && !(targeted && approverMismatch(r, who));
   }
   function whyNotR(role, r, to, who) {
     if (role === 'approver' && r.status === 'wait' && ['approved', 'done'].includes(to) && approverMismatch(r, who))
@@ -687,6 +681,9 @@ const SF = (function () {
     return (h.length ? h[h.length - 1].at : r.createdAt) || r.updatedAt || '';
   }
   function stayDays(r, now) {
+    // 一覧のサーバ絞り込みでは、サーバが計算した滞留日数（status_since から）を使う。
+    // 画面の履歴を持たない行（起動後に別の端末で作られた依頼）でも、同じ値になる。
+    if (typeof r.staleDays === 'number') return r.staleDays;
     const t = new Date(since(r)).getTime();
     if (isNaN(t)) return 0;
     return Math.max(0, Math.floor(((now || Date.now()) - t) / 86400000));
@@ -2427,7 +2424,8 @@ const SF = (function () {
       : null;
   const APPROVER_STATE = (() => {
     if (!MSF_CONNECTED) return { available: false, reason: '', items: [] };
-    if (!window.__MSF__) return { available: false, reason: 'サーバ接続用の画面処理を読み込めませんでした。再読み込みしてください。', items: [] };
+    if (!window.__MSF__)
+      return { available: false, reason: 'サーバ接続用の画面処理を読み込めませんでした。再読み込みしてください。', items: [] };
     const state = window.__MSF__.approverState;
     if (state && state.available === true && Array.isArray(state.items))
       return { available: true, reason: '', items: state.items };
@@ -2445,7 +2443,8 @@ const SF = (function () {
   }
   function approverError(d) {
     if (!MSF_CONNECTED) return d.approver ? '' : '承認者を選んでください';
-    if (!APPROVER_STATE.available) return APPROVER_STATE.reason || '承認者一覧を取得できませんでした。画面を再読み込みしてください';
+    if (!APPROVER_STATE.available)
+      return APPROVER_STATE.reason || '承認者一覧を取得できませんでした。画面を再読み込みしてください';
     if (!APPROVER_STATE.items.length) return '有効な承認者が登録されていません。管理者に確認してください';
     const id = String(d.approverUserId || '');
     if (!id)
@@ -2783,8 +2782,7 @@ const SF = (function () {
         E(r.l) +
         '</label>',
     ).join('');
-    const field =
-      'width:100%;border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;background:var(--surface)';
+    const field = 'width:100%;border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;background:var(--surface)';
     $('#view').innerHTML =
       '<div class="btool"><h2 class="h2" style="margin:0">' +
       ico('i-users') +
@@ -2857,7 +2855,9 @@ const SF = (function () {
     });
   };
   const find = (id) => S.data.items.find((x) => x.id === id);
-  const colorOf = (r) => r.signalFinal || SF.judge(r).c;
+  // 色は「承認者の決定 → サーバが返した候補（一覧のサーバ絞り込みで付く）→ 画面の判定」の順。
+  // サーバが付けた候補を使うのは、一覧の絞り込みと行の色が食い違わないようにするため（L-08）。
+  const colorOf = (r) => r.signalFinal || r.signalServer || SF.judge(r).c;
   function persist(opts) {
     if (!SF.save(KEY, S.data) && S.persistent) {
       S.persistent = false;
@@ -2895,6 +2895,7 @@ const SF = (function () {
   function syncApplied(changed) {
     SF.save(KEY, S.data);
     if (!changed) return;
+    resetListServer(); // 一覧のサーバ絞り込みは、依頼が変わったら取り直す
     if (S.view !== 'new') render();
     if (S.open) {
       const a = document.activeElement;
@@ -3947,7 +3948,9 @@ const SF = (function () {
       '<option value=""' +
       (!id ? ' selected' : '') +
       '>' +
-      E(!id && d.approver ? '承認者を選択してください（現在: ' + d.approver + '／利用者IDが未設定）' : '承認者を選択してください') +
+      E(
+        !id && d.approver ? '承認者を選択してください（現在: ' + d.approver + '／利用者IDが未設定）' : '承認者を選択してください',
+      ) +
       '</option>';
     if (!APPROVER_STATE.available) {
       options = '<option value="" selected>承認者一覧を取得できません</option>';
@@ -3964,14 +3967,7 @@ const SF = (function () {
           options;
       options += APPROVER_STATE.items
         .map(
-          (a) =>
-            '<option value="' +
-            E(a.id) +
-            '"' +
-            (id === a.id ? ' selected' : '') +
-            '>' +
-            E(approverLabel(a)) +
-            '</option>',
+          (a) => '<option value="' + E(a.id) + '"' + (id === a.id ? ' selected' : '') + '>' + E(approverLabel(a)) + '</option>',
         )
         .join('');
     }
@@ -5050,18 +5046,149 @@ const SF = (function () {
   }
 
   /* ---- list ---- */
+  // 一覧の絞り込み（部署・状態・信号）は、サーバ接続時はサーバの SQL（WHERE）に任せる（L-08）。
+  // 取得した全件を画面で濾さない。オフライン見本モードと、絞り込みが無いときは、これまでどおり
+  // 起動データ（S.data.items）をそのまま描く。
+  const LIST_PAGE = 500; // API の pageSize の上限
+  const LIST_PAGE_MAX = 10; // 従来の取得上限（5000件 = 500 × 10）に合わせる
+  const listServerWanted = () =>
+    Boolean(
+      MSF_CONNECTED &&
+      window.__MSF__ &&
+      typeof window.__MSF__.toRecord === 'function' &&
+      // 絞り込みがあるとき、または起動データが取得上限（5000件）に達しているとき。
+      // 後者は 5000 件を超える依頼で起動データが切り詰められている可能性があるため、
+      // サーバの total とページ取得で正しい件数を出す。
+      (S.fd || S.fs || S.fc || S.data.items.length >= 5000),
+    );
+  const listServerKey = () => [S.fd, S.fs, S.fc, S.data.items.length >= 5000 ? 'cap' : ''].join('\u0001');
+  let listServer = { key: null, items: null, total: 0, error: '', loading: '' };
+  // 一覧の応答に入っていた依頼の版と更新時刻（id → version / updatedAt）。詳細を開くときの判定に使う。
+  let listServerVersions = new Map();
+  let listServerUpdatedAt = new Map();
+  // 取得の世代。条件を行き来したとき（A→B→A）に、古い応答を新しい結果として採用しないための番号。
+  let listServerGen = 0;
+
+  /** 絞り込み条件が変わった（同期で依頼が変わった）ときに、取り直させる。 */
+  function resetListServer() {
+    if (listServer.key === null && !listServer.loading && !listServer.items) return; // 既に空
+    listServerGen += 1; // 飛んでいる取得の応答は捨てる
+    listServer = { key: null, items: null, total: 0, error: '', loading: '' };
+    listServerVersions = new Map();
+    listServerUpdatedAt = new Map();
+  }
+
+  /** サーバの絞り込み結果を取る。件数が 500 を超えるときは、表示の上限（5000件）までページを辿る。 */
+  function requestListServer(key) {
+    const gen = ++listServerGen;
+    const current = () => gen === listServerGen;
+    listServer = { key: key, items: null, total: 0, error: '', loading: key };
+    const base = new URLSearchParams({ pageSize: String(LIST_PAGE) });
+    if (S.fd) base.set('dept', S.fd);
+    if (S.fs) base.set('status', S.fs);
+    if (S.fc) base.set('signal', S.fc);
+    const done = (state) => {
+      listServer = state;
+      // 一覧の応答に入っていた版・更新時刻。詳細を開くときに「手元より新しいか」を比べる。
+      listServerVersions = new Map((state.items || []).map((x) => [x.id, Number(x.version) || 0]));
+      listServerUpdatedAt = new Map((state.items || []).map((x) => [x.id, String(x.updatedAt || '')]));
+      if (S.view === 'list') renderList();
+    };
+    const load = (page, acc, total, restarted) =>
+      window.__MSF__
+        .api('GET', '/api/requests?' + base.toString() + '&page=' + page)
+        .then((res) => {
+          if (!current()) return; // 条件が変わった（新しい取得が始まった）。古い応答は捨てる
+          const items = Array.isArray(res && res.items) ? res.items : [];
+          // ページをまたいだ取得中に依頼が増減すると、OFFSET の窓がずれて同じ行が再び来る。
+          // 重複を検出したら一度だけ先頭から取り直し、それでも重複する分は捨てる（一覧の二重表示を防ぐ）。
+          const seen = new Set(acc.map((x) => x.id));
+          const fresh = [];
+          let duplicate = false;
+          for (const item of items) {
+            if (item && seen.has(item.id)) {
+              duplicate = true;
+              continue;
+            }
+            if (item) seen.add(item.id);
+            fresh.push(item);
+          }
+          const all = acc.concat(fresh);
+          const t = Number(res && res.total) || 0;
+          if (duplicate && !restarted) return load(1, [], 0, true);
+          if (items.length && all.length < t && page < LIST_PAGE_MAX) return load(page + 1, all, t, restarted);
+          done({ key: key, items: all, total: t, error: '', loading: '' });
+          return undefined;
+        })
+        .catch((err) => {
+          if (!current()) return;
+          done({
+            key: key,
+            items: [],
+            total: 0,
+            error: (err && err.message) || '絞り込みの結果を取得できませんでした',
+            loading: '',
+          });
+        });
+    load(1, [], 0, false);
+  }
+
+  /** キーワード検索の対象（画面側で行う）。サーバ応答と起動データで同じ並びにする。 */
+  const listSearchText = (r) => [r.id, r.title, r.applicant, r.problem, r.purpose].join(' ').toLowerCase();
+
+  /**
+   * サーバの絞り込み結果を、画面の依頼レコードへ直す。
+   * 起動データに同じ依頼があれば、それを使う（履歴・コメント・滞留がそのまま使える）。
+   * 無いとき（起動後に別の端末で作られた等）は、サーバ応答をブリッジの変換で同じ形にする。
+   */
+  function listServerRows() {
+    const byId = new Map(S.data.items.map((r) => [r.id, r]));
+    return (listServer.items || []).map((item) => {
+      const local = item && byId.get(item.id);
+      // 未同期の編集がある行は、その編集を消さない。ただしサーバの新しい状態・決定色・滞留日数は
+      // 項目単位で反映する（古い status / 色を「最新」として出さない）。
+      const pending = local && window.__MSF__.sameAsServer && !window.__MSF__.sameAsServer(local);
+      if (pending) {
+        const merged =
+          window.__MSF__.mergeSummary && local ? window.__MSF__.mergeSummary(local, item) : Object.assign({}, local || {});
+        merged.signalServer = item.suggested;
+        if (typeof item.staleDays === 'number') merged.staleDays = item.staleDays;
+        return merged;
+      }
+      // それ以外はサーバの最新（状態・件名・決定色）で描く。履歴の無い行でも滞留日数はサーバの値を使う。
+      const record = window.__MSF__.toRecord(item);
+      record.signalServer = item.suggested;
+      record.staleDays = item.staleDays;
+      return record;
+    });
+  }
+
   function renderList() {
+    const useServer = listServerWanted();
+    const serverKey = useServer ? listServerKey() : '';
+    if (useServer && listServer.key !== serverKey) requestListServer(serverKey);
+    // 絞り込みを外したら、次に同じ条件を選んだときに取り直す（古い結果を使い回さない）
+    if (!useServer) resetListServer();
     const q = S.fq.toLowerCase();
-    const a = S.data.items
-      .filter(
-        (r) =>
-          (S.showCancel || S.fs === 'cancel' || r.status !== 'cancel') &&
-          (!S.fd || r.dept === S.fd) &&
-          (!S.fs || r.status === S.fs) &&
-          (!S.fc || colorOf(r) === S.fc) &&
-          (!q || [r.id, r.title, r.applicant, r.problem, r.purpose].join(' ').toLowerCase().includes(q)),
-      )
+    const source = useServer ? listServerRows() : S.data.items;
+    const a = source
+      .filter((r) => {
+        if (!(S.showCancel || S.fs === 'cancel' || r.status !== 'cancel')) return false;
+        if (q && !listSearchText(r).includes(q)) return false;
+        // サーバ接続時は、部署・状態・色の条件をサーバが済ませている（ここでは濾さない）
+        if (useServer) return true;
+        return (!S.fd || r.dept === S.fd) && (!S.fs || r.status === S.fs) && (!S.fc || colorOf(r) === S.fc);
+      })
       .sort((x, y) => (x.id < y.id ? 1 : -1));
+    const totalLabel = useServer ? listServer.total : S.data.items.length;
+    const loadedLabel = useServer && listServer.items ? listServer.items.length : 0;
+    const capped = useServer && listServer.total > loadedLabel; // 表示の上限までしか出していない
+    const emptyMsg =
+      useServer && listServer.loading
+        ? '絞り込みの結果を読み込んでいます…'
+        : useServer && listServer.error
+          ? listServer.error
+          : '条件に合う依頼がありません';
     $('#view').innerHTML =
       '<div class="btool"><h2 class="h2" style="margin:0">' +
       ico('i-list') +
@@ -5129,12 +5256,19 @@ const SF = (function () {
               );
             })
             .join('')
-        : '<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">条件に合う依頼がありません</td></tr>') +
+        : '<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">' + E(emptyMsg) + '</td></tr>') +
       '</tbody></table></div><p class="hint">' +
       a.length +
       ' 件 ／ 全 ' +
-      S.data.items.length +
-      ' 件</p>';
+      totalLabel +
+      ' 件</p>' +
+      (capped
+        ? '<p class="hint">全 ' +
+          listServer.total +
+          ' 件のうち、一覧に出せる上限（' +
+          loadedLabel +
+          ' 件）までを表示しています。絞り込むと残りを確認できます。</p>'
+        : '');
     const re = () => {
       const p = $('#lq').selectionStart;
       renderList();
@@ -5368,9 +5502,120 @@ const SF = (function () {
   });
 
   /* ---- drawer ---- */
+  /** 取り直しの途中の表示。古い内容を最新として出さない（読み込み中であることを見せる）。 */
+  function drawerPending(id) {
+    $('#drawer').classList.add('show');
+    $('#dmask').classList.add('show');
+    $('#drawer').innerHTML =
+      '<div class="dh"><div class="r1"><span class="no">' +
+      E(id) +
+      '</span></div><button class="x" id="dx" type="button" title="閉じる">' +
+      ico('i-x') +
+      '</button></div><div class="box"><h4>' +
+      ico('i-inbox') +
+      '依頼を読み込んでいます</h4><p class="hint">サーバから最新の内容を取り直しています。</p></div>';
+    $('#dx').addEventListener('click', closeDrawer);
+  }
+
+  /** 取り直しに失敗したときの表示。古い内容を最新として出さず、閉じられるようにする。 */
+  function drawerFailed(id) {
+    toast('依頼を読み込めませんでした', true);
+    $('#drawer').classList.add('show');
+    $('#dmask').classList.add('show');
+    $('#drawer').innerHTML =
+      '<div class="dh"><div class="r1"><span class="no">' +
+      E(id) +
+      '</span></div><button class="x" id="dx" type="button" title="閉じる">' +
+      ico('i-x') +
+      '</button></div><div class="box"><h4>' +
+      ico('i-alert') +
+      '依頼を読み込めませんでした</h4><p class="hint">サーバから最新の内容を取れませんでした。少し待って、一覧から開き直してください。</p></div>';
+    $('#dx').addEventListener('click', closeDrawer);
+  }
+
+  /**
+   * 一覧のサーバ絞り込みで出たが、起動データに無い依頼（別の端末で作られた等）を、
+   * サーバの詳細を取り直して画面の依頼に加える。ブリッジが base も同じ内容で揃えるので、
+   * 次の同期で作り直し（POST）や空の履歴での上書きは起きない。
+   */
+  function adoptIntoDrawer(id) {
+    S.open = id;
+    drawerPending(id);
+    const adopt = window.__MSF__ && typeof window.__MSF__.adoptRequest === 'function' ? window.__MSF__.adoptRequest : null;
+    if (!adopt) {
+      drawerFailed(id);
+      return;
+    }
+    adopt(id)
+      .then((rec) => {
+        // 詳細を閉じた・別の依頼へ移った後でも、採用した依頼は画面のデータへ残す。
+        // base にだけ存在する状態にすると、次の同期で「画面から消えた＝取消」と誤判定される。
+        if (rec) {
+          if (!find(rec.id)) S.data.items.push(rec);
+          SF.save(KEY, S.data);
+        }
+        if (S.open !== id) return; // 別の依頼へ移った・閉じた
+        if (!rec) {
+          drawerFailed(id);
+          return;
+        }
+        renderDrawer();
+        refreshRequestMail(id);
+      })
+      .catch(() => {
+        if (S.open !== id) return;
+        drawerFailed(id);
+      });
+  }
+
+  /**
+   * 一覧の応答の方が手元より新しいとき、詳細を取り直してから描く。
+   * 正規の取り直し（refreshRequest）は、未同期の編集を mergeServer で残す。
+   * 取れなかったときは、古い内容を最新として出さずに理由を出す。
+   */
+  function hydrateThenDrawer(id) {
+    S.open = id;
+    drawerPending(id);
+    const refresh = window.__MSF__ && typeof window.__MSF__.refreshRequest === 'function' ? window.__MSF__.refreshRequest : null;
+    if (!refresh) {
+      drawerFailed(id);
+      return;
+    }
+    refresh(id)
+      .then((ok) => {
+        if (S.open !== id) return;
+        if (!ok || !find(id)) {
+          drawerFailed(id);
+          return;
+        }
+        renderDrawer();
+        refreshRequestMail(id);
+      })
+      .catch(() => {
+        if (S.open !== id) return;
+        drawerFailed(id);
+      });
+  }
+
   function openDrawer(id) {
     S.open = id;
     S.dtab = 'sum';
+    const local = find(id);
+    if (!local) {
+      adoptIntoDrawer(id);
+      return;
+    }
+    // 一覧の応答の方が新しい（別の端末で状態・決定・投入先が進んだ等）→ 詳細を取り直してから描く。
+    // version は投入先の変更では上がらないため、updatedAt の差も見る。
+    // 取り直さずに古い手元の内容を「最新」として出さない。
+    const serverVersion = listServerVersions.get(id);
+    const serverUpdatedAt = listServerUpdatedAt.get(id);
+    const newerByVersion = typeof serverVersion === 'number' && serverVersion > Number(local.__v || 0);
+    const newerByUpdatedAt = typeof serverUpdatedAt === 'string' && serverUpdatedAt !== '' && serverUpdatedAt !== local.updatedAt;
+    if (newerByVersion || newerByUpdatedAt) {
+      hydrateThenDrawer(id);
+      return;
+    }
     renderDrawer();
     $('#drawer').classList.add('show');
     $('#dmask').classList.add('show');

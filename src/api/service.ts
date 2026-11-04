@@ -254,27 +254,32 @@ export interface ListQuery {
 }
 
 export async function listForActor(actor: Actor, filter: ListQuery) {
-  const { rows } = await listRequests({
+  // 画面から来る page / pageSize は数値とは限らない（'abc'、小数、Infinity 等）。
+  // そのまま LIMIT/OFFSET へ渡すと PostgreSQL が 500 になるため、有限の整数へ丸める。
+  const rawPageSize = Number(filter.pageSize ?? 50);
+  const pageSize = Number.isFinite(rawPageSize) ? Math.min(Math.max(Math.trunc(rawPageSize), 1), 500) : 50;
+  const rawPage = Number(filter.page ?? 1);
+  const page = Number.isFinite(rawPage) ? Math.max(Math.trunc(rawPage), 1) : 1;
+  const offset = (page - 1) * pageSize;
+  // 信号の色の絞り込みは SQL（WHERE）で行う（L-08）。取得後に全件を JS で濾さない。
+  // ページも SQL の LIMIT/OFFSET で取る（以前は 5000 件まで取ってから JS で切っていたため、
+  // 5001 件目以降のページが空になっていた）。件数は LIMIT を付けない同じ条件で数える。
+  const { rows, total } = await listRequests({
     q: filter.q,
     dept: filter.dept,
     status: filter.status,
+    signal: filter.signal,
     includeDeleted: filter.includeDeleted,
     applicantUserId: filter.mine ? actor.userId : undefined,
-    limit: 5000,
+    limit: pageSize,
+    offset,
   });
   const cache = new Map<string, Signal>();
   const signals = await getCatalogSignals(rows.map((r) => r.tool_id).filter((v): v is string => Boolean(v)));
   for (const [k, v] of signals) cache.set(k, v);
 
-  let summaries = rows.map((r) => summaryOf(r, r.tool_id ? (cache.get(r.tool_id) ?? null) : null, actor));
-  if (filter.signal) {
-    summaries = summaries.filter((s) => (s.signalDecided ?? s.suggested) === filter.signal);
-  }
-  const total = summaries.length;
-  const pageSize = Math.min(Math.max(filter.pageSize ?? 50, 1), 500);
-  const page = Math.max(filter.page ?? 1, 1);
-  const start = (page - 1) * pageSize;
-  return { items: summaries.slice(start, start + pageSize), total, page, pageSize };
+  const items = rows.map((r) => summaryOf(r, r.tool_id ? (cache.get(r.tool_id) ?? null) : null, actor));
+  return { items, total, page, pageSize };
 }
 
 export async function homeFor(actor: Actor) {
@@ -297,16 +302,19 @@ export async function homeFor(actor: Actor) {
     .filter((s) => s.applicantUserId === actor.userId && !s.yourTurn.target && !CLOSED_STATUSES.includes(s.status as Status))
     .slice(0, 6);
 
-  const waitingApproval = active.filter((s) => s.status === 'wait' && s.approverIsMe).length;
   const draft = await one<{ user_id: string }>('select user_id from draft where user_id = $1', [actor.userId]);
+  // ホームの total / 承認待ちは、起動データの 5000 件窓ではなく DB 全体で数える。
+  // yourTurn / stale3 は先頭 5000 件の要約から数える（5000 件超では過小になりうる）。
+  const totalCount = (await listRequests({ limit: 1 })).total;
+  const waitingApprovalCount = (await listRequests({ status: 'wait', approverUserId: actor.userId, limit: 1 })).total;
 
   return {
     role: actor.role,
     counts: {
       yourTurn: turn.length,
-      waitingApproval,
+      waitingApproval: waitingApprovalCount,
       stale3: active.filter((s) => s.staleDays >= 3).length,
-      total: summaries.length,
+      total: totalCount,
       draft: Boolean(draft),
     },
     yourTurn: turn.slice(0, 20),
