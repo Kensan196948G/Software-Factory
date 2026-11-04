@@ -389,6 +389,71 @@ describe('利用者管理（複数ユーザー）', () => {
   });
 });
 
+/**
+ * 接続モードのコンソール「利用者管理」（管理者のみ）が読む形と、画面が表示するエラーコード。
+ * UI は tests/browser/admin-users.spec.ts が通信を横取りして確かめる。ここでは API の契約を固定する。
+ */
+describe('利用者管理の画面契約（一覧の項目・エラーコード）', () => {
+  it('一覧の各行は画面が描く項目を持ち、パスワードやハッシュを返さない', async () => {
+    const admin = await loginAs(app);
+    const created = await createUser(admin);
+    const res = await app.inject({ method: 'GET', url: '/api/admin/users', headers: authHeaders(admin) });
+    expect(res.statusCode).toBe(200);
+    const items = (res.json() as { items: Record<string, unknown>[] }).items;
+    const row = items.find((u) => u.id === created.id)!;
+    expect(row).toMatchObject({
+      id: created.id,
+      email: APPROVER.email,
+      displayName: APPROVER.displayName,
+      deptCode: 'dx',
+      roles: ['approver'],
+      isAdmin: false,
+      isActive: true,
+    });
+    // 画面はこの本文をそのまま描く。パスワードに関わる値は返さない（漏れれば UI とログに残る）。
+    const text = JSON.stringify(items);
+    expect(text).not.toContain(APPROVER_PASSWORD);
+    expect(text).not.toContain('scrypt$');
+    expect(text).not.toContain('password');
+  });
+
+  it('無効化した利用者は画面の「有効化」（isActive:true）で戻せる', async () => {
+    const admin = await loginAs(app);
+    const user = await createUser(admin);
+    const off = await patchUser(admin, user.id, { isActive: false });
+    expect(off.statusCode).toBe(200);
+
+    const res = await patchUser(admin, user.id, { isActive: true });
+    expect(res.statusCode).toBe(200);
+    const updated = (res.json() as { user: ManagedUser }).user;
+    expect(updated.isActive).toBe(true);
+    expect(updated.deactivatedAt).toBeNull();
+
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { email: APPROVER.email, password: APPROVER_PASSWORD },
+    });
+    expect(login.statusCode).toBe(200);
+  });
+
+  it('画面が表示できるよう、400 は ERR-003、403 は ERR-101 を返す', async () => {
+    const admin = await loginAs(app);
+    const user = await createUser(admin);
+
+    // 自分自身の無効化（画面は危険な確認をはさんでから送る）
+    const self = await patchUser(admin, admin.user.id, { isActive: false });
+    expect(self.statusCode).toBe(400);
+    expect((self.json() as { error: { code: string } }).error.code).toBe('ERR-003');
+
+    // 権限のない利用者が管理APIを叩いた場合（403 を握りつぶさない）
+    const member = await loginWith(TEST_MEMBER.email, TEST_MEMBER.password);
+    const forbidden = await patchUser(member, user.id, { isActive: false });
+    expect(forbidden.statusCode).toBe(403);
+    expect((forbidden.json() as { error: { code: string } }).error.code).toBe('ERR-101');
+  });
+});
+
 describe('承認者マスタ（ユーザーID優先）', () => {
   it('承認者一覧はユーザー表から返し、名前一致よりユーザーID指定を優先して宛先を決める', async () => {
     const admin = await loginAs(app);
