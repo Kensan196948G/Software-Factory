@@ -43,6 +43,8 @@ export interface RequestRecord {
   version: number;
   deleted: boolean;
   issueNo?: number | null;
+  /** 依頼ごとの開発ラインの投入先（`owner/name`）。null は未指定（既定＝DEVLINE_TARGET_REPOS の先頭）。 */
+  targetRepoId?: string | null;
   history?: HistoryEntry[];
   comments?: CommentEntry[];
 }

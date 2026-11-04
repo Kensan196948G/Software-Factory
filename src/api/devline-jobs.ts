@@ -15,12 +15,14 @@ import { query, withTransaction, type Db } from './db.js';
 import { appendAudit, appendAuditTx } from './audit.js';
 import { Errors } from './http.js';
 import type { Actor } from './service.js';
+import type { DevlineDeps } from './devline-handoff.js';
 import {
   DEVLINE_POLICY,
   JOB_HALTED_STATES,
   JOB_RUNNABLE_STATES,
   cancelDecision,
   canOperateJob,
+  findTargetRepoInLedger,
   haltTarget,
   acIdsOf,
   ciResultOf,
@@ -347,10 +349,18 @@ async function acEvidenceOf(
 }
 
 /**
- * 今の投入先（画面で「別のリポジトリの結果不明」を区別するため）。選び方は defaultDevlineDeps と同じで、例外は投げない。
- * 設定から決まらないときは null（画面は別のリポジトリと決めつけない）。
+ * 今の投入先（画面で「別のリポジトリの結果不明」を区別するため）。選び方は handoffOrder と同じで、例外は投げない。
+ * 依頼が投入先を選んでいればそれ（L-12）。未指定は既定。決まらないときは null（画面は別のリポジトリと決めつけない）。
  */
-function currentTargetRepoOf(): string | null {
+function currentTargetRepoOf(requested: string | null, deps?: DevlineDeps): string | null {
+  const configured = deps?.allowedRepos ?? config.devlineTargetRepos;
+  const chosen = (requested ?? '').trim();
+  if (chosen !== '') {
+    // 画面の値をそのまま出さない。積集合に載っているときだけ「今の投入先」と言う
+    return findTargetRepoInLedger(chosen, configured, deps?.ledger)?.name ?? null;
+  }
+  // API の依存が分かるときは、投入と同じ既定（deps.targetRepo）を返す
+  if (deps) return deps.targetRepo;
   if (config.devlineRunnerKind === 'docker-claude') {
     // 新しい投入の既定先は DEVLINE_TARGET_REPOS の先頭（realDevlineDeps と同じ）。複数あっても先頭を返す。
     // 既存の job は target_repo_id を持ち、その job の repo だけを触る。
@@ -363,7 +373,10 @@ function currentTargetRepoOf(): string | null {
 /** 画面の表示用。投入の記録（版の新しい順）、今の投入先、job ごとの証跡の要約を返す。 */
 export async function listDevlineTrace(
   requestId: string,
+  deps?: DevlineDeps,
 ): Promise<{ handoffs: HandoffView[]; currentTargetRepo: string | null; evidence: Record<string, JobEvidence> }> {
+  // 依頼が選んだ投入先（L-12）。無ければ従来どおり設定の既定を返す
+  const chosen = await query<{ target_repo_id: string | null }>('select target_repo_id from request where id = $1', [requestId]);
   const intents = await query<{
     order_version: number;
     target_repo_id: string;
@@ -425,7 +438,7 @@ export async function listDevlineTrace(
       ...(ciAc?.ciResult ? { ciResult: ciAc.ciResult } : {}),
     };
   }
-  return { handoffs, currentTargetRepo: currentTargetRepoOf(), evidence };
+  return { handoffs, currentTargetRepo: currentTargetRepoOf(chosen.rows[0]?.target_repo_id ?? null, deps), evidence };
 }
 
 export async function getJobView(jobId: string): Promise<JobView | null> {

@@ -5857,6 +5857,11 @@ const SF = (function () {
         absentReason: '',
         absentChecked: false,
         follow: 0,
+        /* 依頼ごとの投入先（L-12）。候補はサーバ（設定と台帳の積集合）から1回だけ読む */
+        targetRepos: null,
+        targetP: null,
+        targetBusy: false,
+        tmsg: null,
       });
     }
     return dlStates.get(id);
@@ -6250,6 +6255,7 @@ const SF = (function () {
       '<span>' +
       E(st.t) +
       '</span></div>' +
+      dlTargetHtml(r, s, cur) +
       dlButton(r, s, cur) +
       dlAbsentHtml(r, s, cur) +
       '<ul class="dlrows">' +
@@ -6719,6 +6725,7 @@ const SF = (function () {
   }
   function dlPanel(r) {
     dlLoad(r.id);
+    dlTargetLoad(r.id);
     // 開き直したときも続ける（読み込みが TTL の内で走らない場合）。描画の後に確かめる
     setTimeout(() => {
       const s = dlOf(r.id);
@@ -6726,6 +6733,85 @@ const SF = (function () {
       dlWatch(r.id);
     }, 0);
     return '<div class="dlp" data-dl-panel="' + E(r.id) + '">' + dlInner(r) + '</div>';
+  }
+
+  /* ---- 依頼ごとの投入先（L-12） ----
+     候補はサーバ（DEVLINE_TARGET_REPOS と許可台帳の積集合）が返す。画面は値を決めない。
+     未指定は「既定（先頭）」。保存は内容の編集ではないので、版と承認は動かない（サーバの PATCH）。 */
+  function dlTargetLoad(id) {
+    const s = dlOf(id);
+    if (!window.__MSF__ || s.targetRepos || s.targetP) return;
+    s.targetP = window.__MSF__.targetRepos().then((res) => {
+      s.targetP = null;
+      if (!res) return;
+      s.targetRepos = res;
+      const r = find(id);
+      if (r && dlPanelOpen(id)) dlPaint(id);
+    });
+  }
+  function dlTargetHtml(r, s, cur) {
+    const c = s.targetRepos;
+    // 候補が無い（積集合が空・未接続）ときは出さない。投入のたびにサーバが ERR-405 で理由を返す
+    if (!c || !Array.isArray(c.items) || c.items.length === 0) return '';
+    // 投入済み・別のリポジトリの結果不明のときは変えられない（変えても投入で ERR-405 になる）
+    if (dlOtherRepo(s) || (cur && cur.state === 'succeeded')) return '';
+    const value = s.targetSel === null || s.targetSel === undefined ? r.__targetRepo || '' : s.targetSel;
+    const def = c.defaultRepo ? E(c.defaultRepo) : '未設定';
+    let why = '';
+    if (!DL_HANDOFF_ROLES.includes(S.role)) why = '投入先を変えられるのは受付担当か承認者です';
+    else if (dlUnresolved(s, cur)) why = '投入の結果が確定していないため変えられません（先に照合してください）';
+    const off = s.busy || s.targetBusy || !!why || (s.loading && !s.loadedAt);
+    const opt = (v, label, selected) =>
+      '<option value="' + E(v) + '"' + (selected ? ' selected' : '') + '>' + label + '</option>';
+    const rows = c.items
+      .map((x) =>
+        opt(x.name, E(x.name) + (x.isDefault ? '（既定）' : '') + (x.purpose ? '：' + E(x.purpose) : ''), x.name === value),
+      )
+      .join('');
+    return (
+      '<div class="dltarget">' +
+      '<label for="dlt-' +
+      E(r.id) +
+      '">投入先</label>' +
+      '<select id="dlt-' +
+      E(r.id) +
+      '" data-dl="target" data-dl-input="target" data-id="' +
+      E(r.id) +
+      '"' +
+      (off ? ' disabled aria-disabled="true"' : '') +
+      '>' +
+      opt('', '既定（' + def + '）', value === '') +
+      rows +
+      '</select>' +
+      (s.targetBusy ? '<small class="muted">保存しています…</small>' : '') +
+      (s.tmsg ? '<small class="' + (s.tmsg.ng ? 'ng' : 'muted') + '" data-dl-target-msg>' + E(s.tmsg.t) + '</small>' : '') +
+      (why ? '<small class="muted">' + E(why) + '</small>' : '') +
+      '</div>'
+    );
+  }
+  /** 選択をサーバへ保存する。成功しても失敗しても、画面の値はサーバの値に合わせ直す。 */
+  async function dlTargetChanged(id, value, el) {
+    const r = find(id),
+      s = dlOf(id);
+    if (!r || s.busy || s.targetBusy) return;
+    if ((r.__targetRepo || '') === value) return;
+    s.targetSel = value;
+    s.targetBusy = true;
+    s.tmsg = null;
+    dlPaint(id);
+    const res = await window.__MSF__.setTargetRepo(id, value);
+    s.targetSel = null;
+    s.targetBusy = false;
+    if (res.ok) {
+      s.tmsg = { t: value ? '投入先を「' + value + '」にしました' : '投入先を既定に戻しました', ng: false };
+      toast(s.tmsg.t);
+    } else {
+      s.tmsg = { t: res.message || '投入先を変えられませんでした', ng: true };
+      // 保存できていないので、選択をサーバの値へ戻す（画面の選択を keep しない）
+      if (el) el.value = r.__targetRepo || '';
+      toast(s.tmsg.t, true);
+    }
+    dlPaint(id);
   }
   function dlPaint(id) {
     const r = find(id);
@@ -6931,6 +7017,10 @@ const SF = (function () {
     if (el.dataset.dlInput === 'check') s.absentChecked = el.checked;
     if (el.dataset.dlInput === 'rollback-reason') s.relReason = el.value;
     if (el.dataset.dlInput === 'revoke-reason') s.relRevokeReason = el.value;
+    // 依頼ごとの投入先（L-12）。選び直したらサーバへ保存する（値の正しさはサーバが決める）
+    if (el.dataset.dlInput === 'target' && e.type === 'change' && window.__MSF__) {
+      return void dlTargetChanged(el.dataset.id, el.value, el);
+    }
     const form = el.closest('[data-dl-form]'),
       go = form && form.querySelector('[data-dl="absent-do"]');
     if (go) go.disabled = !(s.absentChecked && s.absentReason.trim()) || s.busy;

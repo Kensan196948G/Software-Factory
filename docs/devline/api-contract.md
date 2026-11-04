@@ -11,6 +11,7 @@ interface DevlineDeps {
   issueAdapter: IssueAdapter;       // 既定は GitHub 実装。テストはローカル fake を注入
   targetRepo: string;               // 既定は config.githubRepo。クライアントから受けない
   allowedRepos: readonly AllowedRepo[];  // DEVLINE_TARGET_REPOS（owner/name:repoId）。既定は空で投入をすべて拒否
+  ledger?: readonly RepoAllowEntry[];   // 許可台帳。既定は DEVLINE_REPO_LEDGER。試験の差し替えだけが渡す
   now: () => Date;
   httpTimeoutMs?: number;           // 既定は HANDOFF_POLICY.httpTimeoutMs
 }
@@ -173,10 +174,17 @@ fence の無い関数だが、CI は lease の持ち主ではないので状態�
 | 既存   | `POST /api/requests/:id/handoff` | なし                                                                | `{issueNo, issueUrl, created, detail}`                                                                                                   | desk / approver                                       |
 | 新規   | `GET /api/jobs/:id`              | －                                                                  | `{ job: JobView }`                                                                                                                       | ログイン済み                                          |
 | 新規   | `GET /api/requests/:id/jobs`     | －                                                                  | `{ items: JobView[], handoffs: HandoffView[], currentTargetRepo: string \| null, evidence: Record<jobId, JobEvidence> }`（版の新しい順） | ログイン済み                                          |
+| 新規   | `GET /api/devline/target-repos`  | －                                                                  | `{ items: [{ name, repoId, purpose, isDefault }], defaultRepo: string \| null }`（設定と台帳の積集合。先頭が既定）                       | ログイン済み                                          |
+| 新規   | `PATCH /api/requests/:id/devline-target` | `{ targetRepoId: string \| null }`                          | `{ targetRepo: { requestId, targetRepoId, defaultRepo, changed } }`                                                                      | desk / approver                                       |
 | 新規   | `POST /api/jobs/:id/cancel`      | `{ reason: string, expectedState?: JobState }`                      | `{ job: JobView }`                                                                                                                       | desk / approver / admin                               |
 | 新規   | `POST /api/jobs/:id/resume`      | `{ reason: string, expectedState?: JobState }`                      | `{ job: JobView }`                                                                                                                       | desk / approver / admin                               |
 
 - API-06 の `:id` は受付番号。注文書に別の ID は無い。
+- **依頼ごとの投入先（L-12）**: 依頼（`request.target_repo_id`。additive migration 0015）に `owner/name` を持つ。**作成**（`POST /api/requests`）の `targetRepoId` と、`PATCH /api/requests/:id/devline-target` の値は、**サーバが** 設定（`DEVLINE_TARGET_REPOS`）と許可台帳（`DEVLINE_REPO_LEDGER`）の**積集合**で決め直す（画面の値を信じない）。積集合の外は ERR-405。未指定（NULL）は従来どおり既定＝積集合の先頭で、既存の依頼はすべて NULL（後方互換）。
+- **内容の更新（`PATCH /api/requests/:id`）では投入先を変えられない**。変化する `targetRepoId` は ERR-004（`details.field='targetRepoId'`）。同じ値の再送は受理し、列は触らない（古い画面の互換）。変更は専用の口（`PATCH /api/requests/:id/devline-target`）だけにする。これは**食い違いを作れないようにする**ため: 投入済み・結果未確定の依頼で `request.target_repo_id` だけが動くと、作り済みの Issue と job の repo（と注文書の記録）と食い違い、次の投入が ERR-405 になる。
+- **認可は非対称で、これは意図**。投入前の依頼は依頼者も自分で作れる（作成の `targetRepoId` は依頼者の入力）。一方、**投入先を後から変えるのは desk / approver だけ**（専用の口）。投入済み・結果未確定の整合性を守る操作なので、依頼者や requester ロールには開けない（開けると自分の依頼で対象 repo を差し替えられる）。
+- `PATCH /api/requests/:id/devline-target` は内容の編集ではないので `version` / `order_version` / 承認を動かさない（監査 `request.update` に `from` / `to` を残す）。結果未確定（`intent` / `sent` / `unknown`）の投入があるときは ERR-301、終了・保留の依頼は ERR-201、取り下げた依頼は ERR-104。承認後でも使えるので、画面の選択はこちらを使う（内容の PATCH だと承認がやり直しになる）。
+- 投入済みの repo と食い違う変更は ERR-405。比較は**実効値**（次に投入する repo）で行う。未指定（`null`）は既定＝積集合の先頭に解決されるので、**`null` へ戻す変更も同じ検査を通る**（例: B へ投入済みの依頼で `null` に戻すと、次は既定の A へ行こうとするので拒否。既定が B なら `changed=false` で通る）。積集合が空で実効値が決まらないときは、投入そのものが ERR-405 になるため比較しない。
 - `JobView` に `canonical_yaml`、lease の所有者名、`stop_detail` 内の秘密情報を含めない。
 - `HandoffView` と `JobEvidence` は画面の表示用（読み取りのみ）。再読込の後も Issue の URL と結果不明を表示するために足した。`marker` と `last_error` は出さない。`issueSource` はサーバが `GITHUB_API_URL` と URL の host で決める（`api.github.com` と `github.com` のときだけ `github`）。
 - `HandoffView.targetRepo` はその投入の連携先、応答の `currentTargetRepo` は今の投入先（設定から決まらなければ null）。どちらも読み取りのみ。別のリポジトリに結果不明の投入があると API-06 は ERR-405（`details: { handoffState: 'unknown', targetRepo }`）で拒否するので、画面は「照合する」を出さず、対象と理由と次の手順を出す。`currentTargetRepo` が null なら別のリポジトリと決めつけない。
@@ -190,6 +198,7 @@ fence の無い関数だが、CI は lease の持ち主ではないので状態�
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | `:id`            | 受付番号（`REQ-YYYY-NNNN`）。注文書は独立の ID を持たない（SC-09 の案）                                                      | 受付番号                                                    |
 | 版               | 本文の `orderVersion`。古い版は ERR-202                                                                                      | 指定なし。いまの版を使う                                    |
+| 投入先           | 依頼の `target_repo_id`（積集合で検証済み）。未指定は `DEVLINE_TARGET_REPOS` の先頭                           | 同じ                                                        |
 | 冪等             | 受付番号＋版＋対象 repo。同じ版の再投入は `created=false`                                                                    | 同じ。`issue_no` 済みなら新しい処理を呼ばず `created=false` |
 | 応答             | `HandoffResult`（`requestId`、`orderVersion`、`issueNo`、`issueUrl`、`jobId`、`jobState`、`contentSha256`、`created`、`op`） | `{ issueNo, issueUrl, created, detail }`                    |
 | 結果不明         | ERR-304 と `details.handoffState`。作り直さず list API で照合する。`confirmAbsent` は走査が完全なときだけ                    | 同じ ERR-304                                                |
@@ -249,6 +258,9 @@ merge の口（`createGithubPrMergeAdapter`）を作るのは `devline-release.t
 | 再開時に注文書が無効                                   | ERR-202 | 409      |                                                         |
 | 取込（全置換）と devline の行の衝突                    | ERR-201 | 409      | 理由を表示                                              |
 | GitHub 未設定、対象リポジトリが許可外、未実装の runner | ERR-405 | 既存 409 | システムの設定が合っていない（仕様は 500。ADR U-15）    |
+| 依頼の `targetRepoId` が積集合の外、別の repo に投入済み | ERR-405 | 既存 409 | 対象リポジトリが許可外（新しいコードは作らない）          |
+| 内容の更新で投入先を変えようとした                       | ERR-004 | 400      | 選べない値。変更は専用の口だけ（食い違いを作れない）      |
+| 依頼の投入先の変更で、結果未確定の投入がある             | ERR-301 | 409      | ほかの人が先に更新した。先に照合する                      |
 
 `details` に token、接続文字列、外部応答の全文を入れない。外部応答は `last_error` に 500 文字まで、秘密を含みうる header は保存しない。
 

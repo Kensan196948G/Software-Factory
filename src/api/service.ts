@@ -427,12 +427,12 @@ export async function createRequest(
         id, seq, year, applicant, applicant_user_id, dept_code, contact, title, kind, tool_id,
         problem, purpose, users, people, places, scope, out_of_scope, criteria, decides, data_handling,
         parties, constraints, constraints_other, requires_human_approval, frequency, minutes_per_time,
-        data_ready, spread, wish_date, approver, approver_user_id, status, created_by, updated_by
+        data_ready, spread, wish_date, approver, approver_user_id, status, created_by, updated_by, target_repo_id
       ) values (
         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
         $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
         $21,$22,$23,$24,$25,$26,
-        $27,$28,$29,$30,$31,'received',$32,$32
+        $27,$28,$29,$30,$31,'received',$32,$32,$33
       )`,
       [
         id,
@@ -467,6 +467,8 @@ export async function createRequest(
         input.approver,
         approverUserIdResolved,
         actor.userId,
+        // 投入先（L-12）。未指定は NULL（投入のときに既定を使う）。値は route が積集合で検証済み
+        input.targetRepoId ?? null,
       ],
     );
     await client.query(
@@ -488,7 +490,7 @@ export async function createRequest(
       targetId: id,
       result: 'success',
       correlationId,
-      diff: { title: input.title, dept: input.deptCode },
+      diff: { title: input.title, dept: input.deptCode, targetRepoId: input.targetRepoId ?? null },
     });
     return { id, created: true };
   });
@@ -563,6 +565,18 @@ export async function updateRequest(
     const nextStatus = afterApproval ? 'wait' : row.status;
     const signal = afterApproval ? null : row.signal_decided;
     if (afterApproval) warnings.push({ code: 'ERR-202', message: '承認後に内容を変えたため、承認をやり直す必要があります' });
+    // 投入先（L-12）は内容の更新では変えない（専用の口に一本化する）。
+    // ここで変えると、投入済み・結果未確定の依頼で `request.target_repo_id` だけが動き、
+    // job と Issue の repo と食い違う状態（次の投入が ERR-405）を作れてしまう。
+    // 古い画面などが同じ値を送ってくることはあるので、変化しない再送だけは受理する（列は触らない）。
+    if (Object.hasOwn(input, 'targetRepoId') && (input.targetRepoId ?? null) !== (row.target_repo_id ?? null)) {
+      throw new ApiError(
+        'ERR-004',
+        '投入先は内容の更新では変えられません（依頼の詳細の「開発ライン」欄の投入先で変えてください）',
+        400,
+        { field: 'targetRepoId' },
+      );
+    }
 
     await client.query(
       `update request set
