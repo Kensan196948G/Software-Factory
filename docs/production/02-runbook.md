@@ -1,6 +1,8 @@
 # 本番（Production）運用手順
 
 対象: 本番環境の構築・リリース・バックアップ・復元・ロールバック・監視。
+
+ログイン・2人目の登録・自己承認拒否・注文書までの限定受入と運用残課題の対応案は [本番業務受入と運用残課題の実施計画](03-business-acceptance-and-operations.md) を参照する。
 前提: `docs/production/00-adr.md`（案A）と `01-staging-acceptance.md`。**公開（DNS / Access）は最後**に行う。
 
 > 本書は手順書であり、実施の許可ではない。公開ホスト名の作成と本番DBの作成は、
@@ -132,7 +134,7 @@ journalctl --user -u mirai-sf-prod-backup -u mirai-sf-prod-restore-drill -n 40 -
 - **オフサイトからの復元訓練**: `pnpm ops:prod:offsite-drill`。最新の送信記録の dump と manifest を **R2 から取り寄せ**、記録した SHA-256 と照合してから、`restore-drill.sh` と同じ手順（一時DBへ復元 → 件数・監査ハッシュ照合 → 一時DB削除）を実行する。「送れた」ではなく「R2 から復元できる」を確かめるための訓練。
   - 2026-11-03 実測: 取得・SHA-256 一致 → 復元 → 28 テーブル・件数一致・監査連鎖 verify 成功 → 一時DB削除。
 - 保持: DB の監査行は削除しない（追記のみ）。**ローカルの**ファイルの世代管理は `MIRAI_SF_BACKUP_RETENTION_DAYS`（既定14日。毎時だと最大 336 世代 = 約 43 MB）。
-- **R2 側の保持は自動では消えない**（アプリからは削除しない）。毎時 128 KB として概算 **約 1.1 GB/年**。S3 アクセスキーが用意できたら **R2 のライフサイクル規則**（例: 90 日で失効）を設定する。それまでは残課題として記録し、必要なら手動で削除する。
+- **R2 側の保持規則は未設定として記録中**（アプリからは削除しない。最新のクラウド設定は適用前に再取得する）。毎時 128 KB として概算 **約 1.1 GB/年**。**保持日数と対象プレフィックスの承認後**に R2 ライフサイクル規則（例: 90 日で失効）を設定する。S3 アクセスキーは必須ではなく、[公式手順](https://developers.cloudflare.com/r2/buckets/object-lifecycles/)に従い Dashboard / Wrangler / Cloudflare API でも管理できる。期限超過の既存オブジェクトも削除対象になるため、未承認のまま有効化しない。
 
 ## 6. ロールバック
 
@@ -158,7 +160,7 @@ pnpm ops:prod:rollback <戻し先SHA>
   `最新バックアップ: …（3 分前）`、空ディレクトリと 3 時間前の dump でいずれも NG（終了コード 1）。
 - 設定ファイル `prod.conf` は読まない（release.env の COMMIT_SHA だけを照合）。秘密は出力しない。
 - 失敗は `systemctl --user --failed` と `journalctl --user -u mirai-sf-prod-healthcheck` で見る。
-  外部通知（Slack 等）は未実装（Access サービストークン待ち）。
+  外部通知（Slack 等）は未実装（通知先・送信方式の承認待ち）。通知送信自体に Access サービストークンは不要。Access 認証付きの公開経路監視は別課題であり、最小権限の機械認証を設計してから追加する。現行のサービストークン認証は ACCESS_ALLOWED_EMAILS の先頭（なければ seed 管理者メール）の利用者へマッピングし、その権限を引き継ぐため、本番監視用として安易に有効化しない。
 - Staging は従来どおり `mirai-sf-healthcheck.timer`（8782・`environment=staging`）。本番と混在させない。
 
 ```bash

@@ -47,8 +47,7 @@ if [[ -z "${MIRAI_SF_RESTART_HOOK:-}" ]] && ! ops_unit_uses_current; then
   die "$OPS_API_UNIT が current を参照していません（docs/deployment.md）"
 fi
 
-exec 9>"$OPS_HOME/.ops.lock"
-flock -n 9 || die "別のリリース・rollback が実行中です"
+ops_lock_ops
 
 code=0
 ops_switch_and_verify "$sha" || code=$?

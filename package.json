@@ -15,13 +15,14 @@
     "build:api": "tsc -p tsconfig.api.json",
     "build:web": "vite build --config vite.config.ts",
     "start": "node scripts/local-run.mjs node dist/api/server.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.api.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.api.json --noEmit && tsc -p tsconfig.ops.json --noEmit",
     "lint": "eslint . --max-warnings=0",
     "audit": "pnpm audit --prod --audit-level=high",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "node scripts/local-run.mjs vitest run --config vitest.config.ts && node scripts/local-run.mjs vitest run --config vitest.integration.config.ts",
     "test:unit": "node scripts/local-run.mjs vitest run --config vitest.config.ts tests/unit",
+    "test:ops": "bash scripts/ops/tests/staging-autofollow.test.sh",
     "test:integration": "node scripts/local-run.mjs vitest run --config vitest.integration.config.ts",
     "test:e2e": "node scripts/local-run.mjs playwright test",
     "test:browser:approver": "playwright test --config playwright.approver.config.ts",
@@ -48,7 +49,8 @@
     "ops:prod:restore-drill": "bash scripts/ops/prod-restore-drill.sh",
     "verify:all": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run build",
     "bootstrap:local": "node scripts/bootstrap-local.mjs",
-    "ops:prod:offsite-drill": "bash scripts/ops/prod-offsite-drill.sh"
+    "ops:prod:offsite-drill": "bash scripts/ops/prod-offsite-drill.sh",
+    "ops:slo": "node scripts/ops/measure-slo.mjs"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
@@ -62,6 +64,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@playwright/test": "^1.50.1",
     "@types/node": "^22.13.1",
     "@types/nodemailer": "^8.0.2",

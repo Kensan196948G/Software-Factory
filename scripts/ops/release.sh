@@ -83,8 +83,7 @@ if [[ "$no_restart" != 1 && -z "${MIRAI_SF_RESTART_HOOK:-}" ]] && ! ops_unit_use
 fi
 
 mkdir -p "$releases"
-exec 9>"$OPS_HOME/.ops.lock"
-flock -n 9 || die "別のリリース・rollback が実行中です"
+ops_lock_ops
 
 if [[ -f "$release/.release-complete" ]]; then
   log "展開済みのリリースを再利用します: $sha"

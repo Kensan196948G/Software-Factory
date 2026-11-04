@@ -9,6 +9,7 @@ OPS_DEFAULT_HOME="$HOME/.local/share/mirai-sf"
 OPS_HOME="${MIRAI_SF_HOME:-$OPS_DEFAULT_HOME}"
 OPS_API_UNIT="${MIRAI_SF_API_UNIT:-mirai-sf-api.service}"
 # current を参照する worker。本番で worker を動かさない場合は MIRAI_SF_WORKER_UNIT=none にする
+# shellcheck disable=SC2034 # release.sh / rollback.sh が使う
 OPS_WORKER_UNIT="${MIRAI_SF_WORKER_UNIT:-mirai-sf-worker.service}"
 
 log() { printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
@@ -86,6 +87,17 @@ ops_guard_overrides() {
   if [[ "$needs_env" == 1 && -z "${MIRAI_SF_ENV_FILE:-}" ]]; then
     die "MIRAI_SF_HOME を差し替えるときは MIRAI_SF_ENV_FILE が必要です（実DBへ migration しないため）"
   fi
+}
+
+# .ops.lock を取る。呼び出し元（staging-autofollow.sh）が既に保持している場合は
+# OPS_LOCK_HELD=1 で渡され、二重に取らない（同じロックを親子で取り直すと自分自身と衝突する）。
+ops_lock_ops() {
+  if [[ "${OPS_LOCK_HELD:-}" == 1 ]]; then
+    log ".ops.lock は呼び出し元が保持しています"
+    return 0
+  fi
+  exec 9>"$OPS_HOME/.ops.lock"
+  flock -n 9 || die "別のリリース・rollback が実行中です"
 }
 
 # 稼働中の unit が current を見ていないと、再起動しても切り替わらない

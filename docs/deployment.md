@@ -255,15 +255,16 @@ systemctl --user --failed | grep mirai-sf-healthcheck || echo 'failed なし'
 
 `scripts/ops/` と `deploy/systemd/` の雛形で、Preview を commit に固定して運用する。
 
-| 操作           | コマンド                              | 内容                                                                                    |
-| -------------- | ------------------------------------- | --------------------------------------------------------------------------------------- |
-| バックアップ   | `pnpm ops:backup`                     | `pg_dump -Fc` を `~/.local/state/mirai-sf/backups/` へ（0700/0600）。既定14日で世代管理 |
-| 復元ドリル     | `pnpm ops:restore-drill`              | 最新を一時DB `mirai_sf_drill_<ts>` へ復元し、件数とハッシュ連鎖を検証して一時DBを消す   |
-| リリース       | `pnpm ops:release [--dry-run] <SHA>`  | main に含まれる commit だけを展開し、切替と `/healthz` の commit 確認まで行う           |
-| ロールバック   | `pnpm ops:rollback [--dry-run] <SHA>` | 展開済みのリリースへ切替（DB は戻さない）                                               |
-| 日次保守       | `pnpm ops:reminders`                  | preview.conf の DB に対して滞留通知・再送・下書きTTLを実行                              |
-| 監査アーカイブ | `pnpm ops:audit:archive`              | 同じDBに対して §7-2 を実行                                                              |
-| DB 検証        | `pnpm ops:db:verify`                  | 同じDBに対して `db:verify` を実行                                                       |
+| 操作           | コマンド                                             | 内容                                                                                    |
+| -------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| バックアップ   | `pnpm ops:backup`                                    | `pg_dump -Fc` を `~/.local/state/mirai-sf/backups/` へ（0700/0600）。既定14日で世代管理 |
+| 復元ドリル     | `pnpm ops:restore-drill`                             | 最新を一時DB `mirai_sf_drill_<ts>` へ復元し、件数とハッシュ連鎖を検証して一時DBを消す   |
+| リリース       | `pnpm ops:release [--dry-run] <SHA>`                 | main に含まれる commit だけを展開し、切替と `/healthz` の commit 確認まで行う           |
+| ロールバック   | `pnpm ops:rollback [--dry-run] <SHA>`                | 展開済みのリリースへ切替（DB は戻さない）                                               |
+| 日次保守       | `pnpm ops:reminders`                                 | preview.conf の DB に対して滞留通知・再送・下書きTTLを実行                              |
+| 監査アーカイブ | `pnpm ops:audit:archive`                             | 同じDBに対して §7-2 を実行                                                              |
+| DB 検証        | `pnpm ops:db:verify`                                 | 同じDBに対して `db:verify` を実行                                                       |
+| 自動追従       | `bash scripts/ops/staging-autofollow.sh [--dry-run]` | origin/main に追従し、health 確認・失敗時は直前のリリースへ戻す（timer は雛形。未導入） |
 
 ### 9-1. 設計上の決まり
 
@@ -368,3 +369,26 @@ journalctl --user -u mirai-sf-worker.service -n 50
 ```
 
 起動を拒否すると（資格情報なし、イメージなし、公開リポジトリなど）exit 1 で終わり、理由をログに出す。fake へ落とさない。繰り返し失敗するとユニットは止まる。`pnpm ops:release` と `pnpm ops:rollback` は、worker が動いていれば再起動する（動いている AI は止まり、次の起動で同じ工程からやり直す。止まっている worker は起動しない）。止める: `systemctl --user disable --now mirai-sf-worker.service`（動いている AI は止まり、job は次の起動で同じ工程からやり直す）。
+
+### 9-7. Staging の main 自動追従（雛形。有効化は Lead）
+
+main が進んだら Staging を自動で追従させる。既存の `release.sh` / `rollback.sh` をそのまま使い、新しい配備手順は足さない。
+
+```bash
+bash scripts/ops/staging-autofollow.sh --dry-run   # 計画だけ（fetch と状態ファイルのみ更新）
+bash scripts/ops/staging-autofollow.sh             # 手動で追従
+```
+
+- 流れ: `flock` → `git fetch origin main` → `current` と比較して同一なら no-op（`commit`・`environment`・
+  `db.ok` のずれは失敗）→ 実行元が **main・clean** か確認 → 手動運用と同じ **`.ops.lock`** を取得
+  （取れなければ触らず exit 75）→ `release.sh <40桁SHA>` → `/healthz` の `commit`・`environment`・`db.ok` を
+  独立に確認 → 不一致なら `rollback.sh <直前のSHA>` → 成功後に古い `releases/` を整理。
+- 終了コード: `0`=追従済み/成功, `1`=失敗（旧版へ戻した場合を含む）, `2`=戻せなかった, `3`=破壊的 migration で中止,
+  `75`=autofollow／手動 release/rollback が実行中、または実行元が main・clean でない（skip。timer は成功扱い）。
+- 実行元が main・clean でない間は配備しない（exit 75）。`WorkingDirectory` は main を保つ常設チェックアウトにする。
+- 成功後に current/previous と直近 N 世代（`MIRAI_SF_AUTOFOLLOW_KEEP_RELEASES`、既定 5）だけ残す。
+  `MIRAI_SF_AUTOFOLLOW_PRUNE=0` で無効化。本番ホーム（`*-prod`）では整理しない。
+- timer の雛形: `deploy/systemd/mirai-sf-autofollow.{service,timer}`（10 分ごと、`SuccessExitStatus=75`）。
+  実行が長引くと次回は 75 で skip し、二重配備しない。
+- 実測・導入・検証の詳細は [06-staging-parity-and-autofollow.md](production/06-staging-parity-and-autofollow.md)。
+- 本番には適用しない。本番は §3（runbook）の手動リリースのまま。
