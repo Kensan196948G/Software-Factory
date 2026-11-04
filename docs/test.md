@@ -162,8 +162,10 @@ pnpm exec playwright test --config playwright.approver.config.ts tests/browser/a
 pnpm test:e2e
 ```
 
-`playwright.approver.config.ts` の `testMatch` に `a11y.spec.ts` を追加したため、`pnpm test:browser:approver` は
-**承認者回帰 16 件 + アクセシビリティ 5 件 = 21 件**を実行する。CI の workflow は変更しない（`.github/workflows/` はポリシーで対象外）。
+`playwright.approver.config.ts` の `testMatch` は承認者・a11y・利用者管理を対象とし、`8a1ee99` 時点で
+**承認者回帰 16 件 + アクセシビリティ 5 件 + 利用者管理 9 件 = 30 件**を実行する。
+既存の `tests/e2e/approver.spec.ts` / `tests/e2e/a11y.spec.ts` に加え、`tests/e2e/admin-users.spec.ts` から同じ管理UI9件を読み込む。
+CIのworkflow・必須チェック規則は変更しない。通常のe2e設定でも各specを収集する（追加の9件は `--list` で確認）。
 CI の E2E ジョブは `pnpm install` で `@axe-core/playwright` を入れるため、追加の設定は要らない。
 
 ### 7-2. 対象と方式
