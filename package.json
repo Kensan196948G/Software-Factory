@@ -49,7 +49,8 @@
     "ops:prod:restore-drill": "bash scripts/ops/prod-restore-drill.sh",
     "verify:all": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run build",
     "bootstrap:local": "node scripts/bootstrap-local.mjs",
-    "ops:prod:offsite-drill": "bash scripts/ops/prod-offsite-drill.sh"
+    "ops:prod:offsite-drill": "bash scripts/ops/prod-offsite-drill.sh",
+    "ops:slo": "node scripts/ops/measure-slo.mjs"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
