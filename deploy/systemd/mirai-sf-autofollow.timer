@@ -1,0 +1,17 @@
+# 雛形: 10分ごとに mirai-sf-autofollow.service を起動する（有効化は Lead が行う。
+# 手順は docs/production/06-staging-parity-and-autofollow.md）。
+# origin/main の追従は push フックではなく、この timer の定期確認で行う。
+# Persistent=true で停止・サスペンド中の回を再開後に1回だけ補う。実際の多重実行は
+# スクリプトの flock が防ぐ（2回目は終了コード 75 で成功扱い）。
+[Unit]
+Description=Mirai SF staging auto-follow timer (every 10 minutes)
+
+[Timer]
+OnCalendar=*:0/10
+AccuracySec=1min
+RandomizedDelaySec=30s
+Persistent=true
+Unit=mirai-sf-autofollow.service
+
+[Install]
+WantedBy=timers.target

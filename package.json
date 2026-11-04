@@ -22,6 +22,7 @@
     "format:check": "prettier --check .",
     "test": "node scripts/local-run.mjs vitest run --config vitest.config.ts && node scripts/local-run.mjs vitest run --config vitest.integration.config.ts",
     "test:unit": "node scripts/local-run.mjs vitest run --config vitest.config.ts tests/unit",
+    "test:ops": "bash scripts/ops/tests/staging-autofollow.test.sh",
     "test:integration": "node scripts/local-run.mjs vitest run --config vitest.integration.config.ts",
     "test:e2e": "node scripts/local-run.mjs playwright test",
     "test:browser:approver": "playwright test --config playwright.approver.config.ts",
