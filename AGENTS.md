@@ -66,4 +66,4 @@ pnpm db:verify
 
 - 1ユーザー・3役の切替。自己承認は既定で許可（本番は SSO＋複数ユーザーで禁止）。
 - 添付はメタ情報のみ。通知・Entra ID は未実装。開発ラインの到達点は `docs/limitations.md` を参照。
-- 数値目標は（案）。MVPの実測後に確定する。
+- 数値目標は 2026-11-04 に実測済み（`docs/production/07-slo-and-measurement.md`）。目標値の最終確定は所有者確認待ち。
