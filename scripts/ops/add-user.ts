@@ -90,6 +90,7 @@ async function main(): Promise<void> {
     );
     const rl = createInterface({ input: process.stdin, output: process.stdout, historySize: 0 });
     const abort = new AbortController();
+    let committing = false;
     rl.on('SIGINT', () => {
       if (committing) {
         console.log('書込み開始後です。完了結果を待ってください。');
@@ -99,7 +100,6 @@ async function main(): Promise<void> {
       rl.close();
     });
     rl.on('close', () => abort.abort());
-    let committing = false;
     const actor: import('../../src/api/auth.js').LocalAdminActor = {
       userId: null,
       displayName: `local-cli uid=${uid}`,

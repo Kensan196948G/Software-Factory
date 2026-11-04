@@ -386,7 +386,8 @@ export async function acquireLocks(options: {
   await new Promise<void>((resolveLock, rejectLock) => {
     let ready = false;
     const timer = setTimeout(() => {
-      child.kill('SIGTERM');
+      child.stdin.end();
+      child.kill('SIGKILL');
       rejectLock(new StorageError('lock_unavailable', 'flock acquisition timed out'));
     }, 5000);
     const settle = (error?: StorageError) => {
@@ -433,7 +434,8 @@ export async function acquireLocks(options: {
       child.stdin.end('RELEASE\n');
       await new Promise<void>((resolveRelease, rejectRelease) => {
         const timer = setTimeout(() => {
-          child.kill('SIGTERM');
+          child.stdin.end();
+          child.kill('SIGKILL');
           rejectRelease(new StorageError('lock_release_failed', 'flock process did not release promptly'));
         }, 5000);
         child.once('exit', () => {
