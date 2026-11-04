@@ -16,6 +16,10 @@ Type=oneshot
 Environment=PATH=%h/.nvm/versions/node/v22.22.3/bin:/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=%h/Projects/Software-Factory-Project
 ExecStart=/usr/bin/env bash scripts/ops/staging-autofollow.sh
+# systemd --user の環境に残った資格情報（失効した PAT 等）が gh の hosts.yml より
+# 優先され、fetch が「Invalid username or token」で失敗するのを防ぐ。
+# 認証は gh auth git-credential（~/.config/gh/hosts.yml）に一本化する。
+UnsetEnvironment=GH_TOKEN GITHUB_TOKEN GITHUB_PAT_TOKEN GITHUB_PERSONAL_ACCESS_TOKEN
 # 75 は「別の実行が進行中」。timer の failed を増やさない
 SuccessExitStatus=75
 # pnpm install / build を含むため長めに取る（多重実行は flock で防ぐ）
