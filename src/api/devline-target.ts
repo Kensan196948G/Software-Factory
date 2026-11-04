@@ -136,15 +136,20 @@ export async function setRequestTargetRepo(
       [input.requestId],
     );
     const value = input.targetRepoId === null ? null : requireTargetRepo(input.targetRepoId, deps).name;
+    // 投入済みの repo と食い違う変更は断る。比較は**実効値**（次に投入する repo）で行う:
+    // 未指定（null）は既定＝積集合の先頭に解決されるので、null へ戻す変更も同じ検査を通す。
+    // 例: B へ投入済みの依頼で null に戻すと次は既定の A へ行こうとする → ERR-405。
+    const effective = value ?? allowedTargetRepos(deps)[0]?.name ?? null;
     // request.issue_no は別のリポジトリの番号かもしれない。別の repo に投入済みなら対象を変えさせない
     // （変えても投入のときに ERR-405 になる。ここで理由を返す）。
-    if (value !== null && succeeded.rows.length > 0 && succeeded.rows.every((r) => r.target_repo_id !== value)) {
+    if (effective !== null && succeeded.rows.length > 0 && succeeded.rows.every((r) => r.target_repo_id !== effective)) {
       return deny(
-        new ApiError('ERR-405', 'この依頼はすでに別のリポジトリへ投入されています', 409, {
+        new ApiError('ERR-405', 'この依頼はすでに別のリポジトリへ投入されているため、投入先を変えられません', 409, {
           targetRepo: succeeded.rows[0]?.target_repo_id ?? null,
+          effectiveTargetRepo: effective,
         }),
         'already_handed_off',
-        { targetRepo: succeeded.rows[0]?.target_repo_id ?? null },
+        { targetRepo: succeeded.rows[0]?.target_repo_id ?? null, effectiveTargetRepo: effective },
       );
     }
     if ((row.target_repo_id ?? null) === value) return { value, changed: false };

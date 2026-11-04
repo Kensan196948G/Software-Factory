@@ -403,9 +403,8 @@ export async function buildApp(
     const body = requestInputSchema.parse(req.body);
     const version = Number((req.body as { version?: number }).version);
     if (!Number.isInteger(version) || version < 1) throw Errors.shape('version');
-    // 投入先（L-12）。本文に無ければ現状維持（既存のクライアントの後方互換）
-    const target = readTargetRepoInput(req.body, opts.devlineDeps);
-    if (target.provided) body.targetRepoId = target.value;
+    // 投入先（L-12）は内容の更新では変えない。service 側で「変化する指定」を ERR-004 にする
+    // （変更は `PATCH /api/requests/:id/devline-target` だけ。食い違いを作れないようにする一本化）。
     return updateRequest(id, body, actorOf(ctx.user), version, correlationId(req), approverUserIdOf(req));
   });
 

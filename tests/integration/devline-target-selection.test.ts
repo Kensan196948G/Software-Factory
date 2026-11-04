@@ -101,6 +101,9 @@ const handoff = async (id: string): Promise<LightMyRequestResponse> => {
 const intents = async (id: string): Promise<any[]> =>
   (await query('select * from handoff_intent where request_id=$1 order by order_version', [id])).rows;
 
+const intentStates = async (id: string): Promise<string[]> =>
+  (await intents(id)).map((i) => String(i.state));
+
 beforeAll(async () => {
   await prepareTestDb();
   adapter = createFakeIssueAdapter({
@@ -198,15 +201,35 @@ describe('後方互換（既存の依頼と既存のクライアント）', () =
     expect((await detail(request.id)).targetRepoId).toBe(B.name);
   });
 
-  it('T-26: 明示の null は「未指定（既定）へ戻す」', async () => {
+  it('T-26: 内容の更新では投入先を変えられない（変化する指定は ERR-004。同値の再送は受理）', async () => {
+    const request = await create({ targetRepoId: B.name });
+    await setRole('desk');
+    const changed = await api('PATCH', `/api/requests/${request.id}`, {
+      ...sampleRequest({ approver: 'テスト 太郎', title: request.title, targetRepoId: A.name }),
+      version: request.version,
+    });
+    expect(changed.statusCode, changed.body).toBe(400);
+    expect(changed.json().error.code).toBe('ERR-004');
+    expect((await detail(request.id)).targetRepoId).toBe(B.name);
+    // 同じ値の再送（古い画面）は受理し、列は変わらない
+    const same = await api('PATCH', `/api/requests/${request.id}`, {
+      ...sampleRequest({ approver: 'テスト 太郎', title: request.title, targetRepoId: B.name }),
+      version: (await detail(request.id)).version,
+    });
+    expect(same.statusCode, same.body).toBe(200);
+    expect((await detail(request.id)).targetRepoId).toBe(B.name);
+  });
+
+  it('T-26b: 内容の更新で null（未指定へ戻す）も変えられない（ERR-004）', async () => {
     const request = await create({ targetRepoId: B.name });
     await setRole('desk');
     const patch = await api('PATCH', `/api/requests/${request.id}`, {
       ...sampleRequest({ approver: 'テスト 太郎', title: request.title, targetRepoId: null }),
       version: request.version,
     });
-    expect(patch.statusCode, patch.body).toBe(200);
-    expect((await detail(request.id)).targetRepoId).toBeNull();
+    expect(patch.statusCode, patch.body).toBe(400);
+    expect(patch.json().error.code).toBe('ERR-004');
+    expect((await detail(request.id)).targetRepoId).toBe(B.name);
   });
 
   it('T-27: 既存の NULL の依頼は、編集しても NULL のまま（既定の repo へ投入）', async () => {
@@ -218,6 +241,87 @@ describe('後方互換（既存の依頼と既存のクライアント）', () =
     });
     expect(patch.statusCode, patch.body).toBe(200);
     expect((await detail(request.id)).targetRepoId).toBeNull();
+  });
+});
+
+describe('食い違いを作れない（投入済みの依頼）', () => {
+  it('T-51: 投入済みの依頼は内容の更新でも専用口でも別の repo に変えられない（job / Issue と食い違わない）', async () => {
+    const id = await approved({ targetRepoId: B.name });
+    expect((await handoff(id)).statusCode).toBe(200);
+    expect((await intents(id))[0].target_repo_id).toBe(B.name);
+
+    const content = await api('PATCH', `/api/requests/${id}`, {
+      ...sampleRequest({ approver: 'テスト 太郎', title: (await detail(id)).title, targetRepoId: A.name }),
+      version: (await detail(id)).version,
+    });
+    expect(content.statusCode, content.body).toBe(400);
+    expect(content.json().error.code).toBe('ERR-004');
+
+    const dedicated = await api('PATCH', `/api/requests/${id}/devline-target`, { targetRepoId: A.name });
+    expect(dedicated.statusCode, dedicated.body).toBe(409);
+    expect(dedicated.json().error.code).toBe('ERR-405');
+
+    // 依頼・job・Issue・投入の記録がすべて B のまま（食い違いが無い）
+    expect((await detail(id)).targetRepoId).toBe(B.name);
+    expect(adapter.issues.every((i) => i.repo === B.name)).toBe(true);
+    expect((await intents(id)).every((i) => i.target_repo_id === B.name)).toBe(true);
+    // 同じ版の再投入は作られない（Issue が増えない）
+    const again = await handoff(id);
+    expect(again.json()).toMatchObject({ created: false, issueNo: adapter.issues[0]?.number });
+    expect(adapter.issues).toHaveLength(1);
+  });
+
+  it('T-52: 未指定（null）へ戻す変更も、実効値（既定）で投入済みの repo と比べて拒否する', async () => {
+    const id = await approved({ targetRepoId: B.name });
+    expect((await handoff(id)).statusCode).toBe(200);
+    const reset = await api('PATCH', `/api/requests/${id}/devline-target`, { targetRepoId: null });
+    expect(reset.statusCode, reset.body).toBe(409);
+    expect(reset.json().error.code).toBe('ERR-405');
+    expect(reset.json().error.details).toMatchObject({ targetRepo: B.name, effectiveTargetRepo: A.name });
+    expect((await detail(id)).targetRepoId).toBe(B.name);
+  });
+
+  it('T-53: 既定の repo へ投入済みなら null へ戻しても実効値が同じなので通る（changed=false）', async () => {
+    const id = await approved();
+    expect((await handoff(id)).statusCode).toBe(200);
+    expect((await intents(id))[0].target_repo_id).toBe(A.name);
+    const reset = await api('PATCH', `/api/requests/${id}/devline-target`, { targetRepoId: null });
+    expect(reset.statusCode, reset.body).toBe(200);
+    expect(reset.json().targetRepo.changed).toBe(false);
+  });
+
+  it('T-54: 保存済みの repo が積集合から外れたら fail-closed（投入は ERR-405・今の投入先は null）', async () => {
+    const id = await approved({ targetRepoId: B.name });
+    // 台帳・設定から外れた古い値が残っている状態（設定の変更で起こりうる）
+    await query(`update request set target_repo_id='msf-test/repo-gone' where id=$1`, [id]);
+    const jobs = await api('GET', `/api/requests/${id}/jobs`);
+    expect(jobs.statusCode, jobs.body).toBe(200);
+    expect(jobs.json().currentTargetRepo).toBeNull();
+    const res = await handoff(id);
+    expect(res.statusCode, res.body).toBe(409);
+    expect(res.json().error.code).toBe('ERR-405');
+    expect(adapter.issues).toHaveLength(0);
+  });
+
+  it('T-55: 送信中の投入（sent）があるあいだは投入先を変えられない（ERR-301）', async () => {
+    const id = await approved();
+    expect((await handoff(id)).statusCode).toBe(200);
+    const [create] = await intents(id);
+    await query(
+      `insert into handoff_intent
+         (snapshot_id, request_id, order_version, target_repo_id, op_kind, state, marker, target_issue_no,
+          attempts, sent_at, created_at, updated_at)
+       select snapshot_id, request_id, order_version, target_repo_id, 'update_issue', 'sent', marker || '-sent', 1,
+              1, now(), now(), now()
+         from handoff_intent where id=$1`,
+      [create.id],
+    );
+    expect((await intentStates(id))).toContain('sent');
+    const res = await api('PATCH', `/api/requests/${id}/devline-target`, { targetRepoId: B.name });
+    expect(res.statusCode, res.body).toBe(409);
+    expect(res.json().error.code).toBe('ERR-301');
+    expect(res.json().error.details).toMatchObject({ handoffState: 'sent' });
+    expect((await detail(id)).targetRepoId).toBeNull();
   });
 });
 

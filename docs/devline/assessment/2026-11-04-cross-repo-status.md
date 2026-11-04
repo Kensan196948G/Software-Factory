@@ -14,7 +14,7 @@
 | 4   | 相手の受付契約（`packages/contracts/job-request.schema.json` v1）は**JSON の開発依頼**（`request_id`・`idempotency_key`・`repository{owner,name,base_branch}`・`task{acceptance_criteria}`・`policy{risk_level}`）。**注文書 YAML を受け取る形ではない** | 文書 3 章の「注文書 YAML を渡す」は**そのままでは実装できない**。YAML → JSON の写像を先に決める           |
 | 5   | 相手は**マージ・デプロイをしない**（README・ADR-0007）。PR まで                                                                                                                                                                          | 文書 2 章の役割分担どおり。SF が merge と配備を持つ前提は維持できる                                        |
 | 6   | 相手の状態は **pre-merge・本番未稼働**（README のバッジ、ADR-0009 は Proposed）。SF との接続は**仮定**（ADR-0009 に明記）                                                 | 「相手の契約が確定してから SF 側のコードを書く」という文書 7 章の判断は**維持**する                        |
-| 7   | SF 側の設定: `DEVLINE_TARGET_REPOS` は **preview だけ設定済み（1 件）**。`prod.conf`・`prodr.conf`・`local.json` には**無い**＝本番の投入は全て ERR-405。`DEVLINE_REPO_LEDGER` は環境変数ではなく**コード定数**（1 件＝Sandbox のみ） | 本番で投入するには台帳＋設定＋対象 repo の CI（`ac-results` v2／`image`）とブランチ保護が要る（`repo-onboarding.md`） |
+| 7   | SF 側の設定: `DEVLINE_TARGET_REPOS` は **preview だけ設定済み（1 件）**。`prod.conf`・`local.json` には**無い**＝本番の投入は全て ERR-405。`DEVLINE_REPO_LEDGER` は環境変数ではなく**コード定数**（1 件＝Sandbox のみ） | 本番で投入するには台帳＋設定＋対象 repo の CI（`ac-results` v2／`image`）とブランチ保護が要る（`repo-onboarding.md`） |
 | 8   | SF の `src/` に Dispatcher を呼ぶコードは**0 件**（`Dispatcher`/`dispatcher` で grep）                                                                                   | 文書「コードを書かない」は守られている。今回の PR でも足さない                                            |
 
 ## 2. 実測（このホスト）
@@ -76,10 +76,12 @@
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------ |
 | 許可台帳 `DEVLINE_REPO_LEDGER`             | `src/shared/devline.ts` の**コード定数**。環境変数ではない。1 件（Sandbox のみ、`private: true`）  |
 | `DEVLINE_TARGET_REPOS`（preview.conf）      | **設定済み・非空（1 件）**（`owner/name:repoId` の形。値は出さない）                              |
-| `DEVLINE_TARGET_REPOS`（prod.conf / prodr.conf / local.json） | **キーが無い**＝本番の新規投入は全て ERR-405（意図どおり fail-closed）              |
+| `DEVLINE_TARGET_REPOS`（prod.conf / local.json）            | **キーが無い**＝本番の新規投入は全て ERR-405（意図どおり fail-closed）              |
 | `DEVLINE_RUNNER_KIND`（preview.conf）       | 設定済み（非空）                                                                                 |
 | `~/.config/mirai-sf/devline-secrets.env`   | 0600。`DEVLINE_GITHUB_TOKEN` は**設定済み（非空）**。`ANTHROPIC_API_KEY` も有り（値は見ていない） |
 | SF の `src/` に Dispatcher の呼び出し       | **0 件**                                                                                          |
+
+- 「設定」と数えたのは、`scripts/ops/` が実際に読むファイル（`preview.conf`＝検証、`prod.conf`＝本番）と、アプリのローカル設定 `local.json`（`scripts/local-run.mjs`）だけ。ホストには `prodr.conf` というファイルもあるが、**どのスクリプトからも参照されていない**（`prod.conf` の綴り違いで作られた控えとみられる）ため、設定として数えていない。読むのは `preview.conf` / `prod.conf` / `local.json` と資格情報の `devline-secrets.env` だけ。
 
 ## 3. 未決事項への現状評価（文書 6 章）
 

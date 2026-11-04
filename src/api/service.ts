@@ -565,10 +565,18 @@ export async function updateRequest(
     const nextStatus = afterApproval ? 'wait' : row.status;
     const signal = afterApproval ? null : row.signal_decided;
     if (afterApproval) warnings.push({ code: 'ERR-202', message: '承認後に内容を変えたため、承認をやり直す必要があります' });
-    // 投入先（L-12）。本文に targetRepoId が無ければ現状維持（既存のクライアントは触らない）。
-    // 値は route が台帳と設定の積集合で検証済み。ここでは「指定があったか」だけを見る（後方互換）。
-    const targetProvided = Object.hasOwn(input, 'targetRepoId');
-    const targetValue = targetProvided ? (input.targetRepoId ?? null) : null;
+    // 投入先（L-12）は内容の更新では変えない（専用の口に一本化する）。
+    // ここで変えると、投入済み・結果未確定の依頼で `request.target_repo_id` だけが動き、
+    // job と Issue の repo と食い違う状態（次の投入が ERR-405）を作れてしまう。
+    // 古い画面などが同じ値を送ってくることはあるので、変化しない再送だけは受理する（列は触らない）。
+    if (Object.hasOwn(input, 'targetRepoId') && (input.targetRepoId ?? null) !== (row.target_repo_id ?? null)) {
+      throw new ApiError(
+        'ERR-004',
+        '投入先は内容の更新では変えられません（依頼の詳細の「開発ライン」欄の投入先で変えてください）',
+        400,
+        { field: 'targetRepoId' },
+      );
+    }
 
     await client.query(
       `update request set
@@ -577,8 +585,7 @@ export async function updateRequest(
         criteria=$15, decides=$16, data_handling=$17, parties=$18, constraints=$19, constraints_other=$20,
         requires_human_approval=$21, frequency=$22, minutes_per_time=$23, data_ready=$24, spread=$25,
         wish_date=$26, approver=$27, approver_user_id=$32, status=$28, signal_decided=$29, order_version=order_version + $30,
-        version=version+1, updated_at=now(), updated_by=$31,
-        target_repo_id = case when $33::boolean then $34::text else target_repo_id end
+        version=version+1, updated_at=now(), updated_by=$31
       where id=$1`,
       [
         id,
@@ -613,8 +620,6 @@ export async function updateRequest(
         afterApproval ? 1 : 0,
         actor.userId,
         resolvedApproverUserId,
-        targetProvided,
-        targetValue,
       ],
     );
     await client.query(
@@ -667,7 +672,7 @@ export async function updateRequest(
       targetId: id,
       result: 'success',
       correlationId,
-      diff: { version, afterApproval, ...(targetProvided ? { targetRepoId: targetValue } : {}) },
+      diff: { version, afterApproval },
     });
   });
   if (queuedMailId) await deliverQueuedMail(queuedMailId, warnings);

@@ -206,8 +206,9 @@
       approver: activeApprover ? activeApprover.displayName : String(it.approver || '').trim(),
       clientId: it.id && /^REQ-\d{4}-\d{4}$/.test(it.id) ? it.id : undefined,
     };
-    // 投入先（L-12）は内容の編集で消さない。未指定のままの依頼はキーを送らない（サーバは現状維持）
-    if (it.__targetRepo) server.targetRepoId = it.__targetRepo;
+    // 投入先（L-12）は内容の同期では送らない（キー無し＝サーバが現状維持）。
+    // 台帳から外れた値でも、無関係な内容の編集が ERR-405 にならないようにする。
+    // 変更は専用の口（setTargetRepo → PATCH /api/requests/:id/devline-target）だけ。
     if (it.approverUserId) server.approverUserId = it.approverUserId;
     return server;
   }
