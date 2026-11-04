@@ -205,15 +205,15 @@ CI の E2E ジョブは `pnpm install` で `@axe-core/playwright` を入れる�
 
 ### 7-5. 実測結果（2026-11-04）
 
-| 項目                         | 結果                                                                                                      |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `pnpm test:browser:approver` | **21 / 21 PASS**（既存16 + 新規5、skip 0）                                                                |
-| アクセシビリティ5画面        | **5 / 5 PASS**（serious/critical 0。除外は上表の7件のみ）                                                 |
-| `pnpm typecheck`             | **PASS**（エラー0）                                                                                       |
-| `pnpm lint`                  | **PASS**（警告0、max-warnings=0）                                                                         |
-| `pnpm test:unit`             | **644 / 644 PASS**（18ファイル）                                                                          |
-| 検出確認（mutation check）   | allowlist を一時的に外すと `.offline` の color-contrast で**失敗**することを確認（空振りしない）          |
-| `pnpm test:e2e`（全体）      | **未実行**（ローカル DB / API を起動するため。サーバ不要の5件は `pnpm test:browser:approver` で実行済み） |
+| 項目                         | 結果                                                                                                                                     |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm test:browser:approver` | **30 / 30 PASS**（承認者16 + a11y5 + 管理UI9、skip 0。管理UI9は PR #86 で追加、PR #88 で必須E2Eへ読込み。旧 21/21 は管理UI追加前の記録） |
+| アクセシビリティ5画面        | **5 / 5 PASS**（serious/critical 0。除外は上表の7件のみ）                                                                                |
+| `pnpm typecheck`             | **PASS**（エラー0）                                                                                                                      |
+| `pnpm lint`                  | **PASS**（警告0、max-warnings=0）                                                                                                        |
+| `pnpm test:unit`             | **644 / 644 PASS**（18ファイル）                                                                                                         |
+| 検出確認（mutation check）   | allowlist を一時的に外すと `.offline` の color-contrast で**失敗**することを確認（空振りしない）                                         |
+| `pnpm test:e2e`（全体）      | **未実行**（ローカル DB / API を起動するため。サーバ不要の5件は `pnpm test:browser:approver` で実行済み）                                |
 
 ### 7-6. 制限
 
