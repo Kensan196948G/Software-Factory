@@ -1,5 +1,6 @@
 import type { PoolClient } from 'pg';
 import { many, one, query } from './db.js';
+import { DATA_HANDLING, SAFETY_APPROVALS } from '../shared/domain.js';
 import type { CommentEntry, DepartmentRow, HistoryEntry, RequestRecord } from '../shared/types.js';
 import type { FrequencyKey, Kind, Party, Role, Signal, Status, Tailoring } from '../shared/domain.js';
 
@@ -123,11 +124,45 @@ export interface ListFilters {
   q?: string;
   dept?: string;
   status?: string;
+  /** 画面の「信号の色」の絞り込み。承認者の決定（signal_decided）→候補色の順で1つに決まる。 */
+  signal?: string;
   includeDeleted?: boolean;
   applicantUserId?: string;
   approverUserId?: string;
   order?: 'newest' | 'oldest';
   limit?: number;
+}
+
+/**
+ * 信号の色（`signalDecided ?? suggested`）を SQL で表した式。
+ *
+ * 候補色の正本は `shared/domain.ts` の `evaluateSignal`（詳細仕様書 3-4、R1〜R6）。
+ * R1 の `decides` だけが赤まで上げ、R2〜R6（カタログの色・データ・社外・安全）は黄まで。
+ * 「引き上げるだけ（下げない）」なので、最大値を取る CASE と等しくなる。
+ *
+ * `decides` / `catalog_tool.signal` は CHECK 制約で g/y/r に限られ、`parties` は NOT NULL で
+ * 'internal' が既定なので、JS の `?? 'internal'` と同じ結果になる。データと承認の配列は
+ * `DATA_HANDLING` / `SAFETY_APPROVALS` をパラメータで渡し、条件の二重定義を作らない
+ * （未知の値は JS と同じく「該当なし」）。`catalog_tool` は別名 `t` で結合済みであること。
+ *
+ * @param dataIdx `$n` に置く DATA_HANDLING のキー配列（text[]）の位置
+ * @param safetyIdx `$n` に置く SAFETY_APPROVALS の配列（text[]）の位置
+ */
+export function suggestedSignalCaseSql(dataIdx: number, safetyIdx: number): string {
+  return `case
+      when r.decides = 'r' or t.signal = 'r' then 'r'
+      when r.decides = 'y' or t.signal = 'y'
+        or r.data_handling && $${dataIdx}::text[]
+        or r.parties <> 'internal'
+        or r.requires_human_approval && $${safetyIdx}::text[]
+      then 'y'
+      else 'g'
+    end`;
+}
+
+/** 候補色の判定に使う配列パラメータ。SQL 式とセットで使う（順序は suggestedSignalCaseSql に合わせる）。 */
+export function suggestedSignalParams(): [string[], string[]] {
+  return [DATA_HANDLING.map((d) => d.key), [...SAFETY_APPROVALS]];
 }
 
 export async function listRequests(filters: ListFilters): Promise<{ rows: RequestRow[]; total: number }> {
@@ -159,6 +194,17 @@ export async function listRequests(filters: ListFilters): Promise<{ rows: Reques
     const idx = params.length;
     where.push(`(r.id ilike $${idx} or r.title ilike $${idx} or r.problem ilike $${idx} or r.purpose ilike $${idx})`);
   }
+  if (filters.signal) {
+    // 画面の色の絞り込み（L-08）。取得後に JS で全件を濾さず、候補色の計算ごと SQL に寄せる。
+    // 未知の値（'x' や 'g,r'）は今までどおり「該当なし」になる（比較は等値だけ）。
+    const [dataKeys, safety] = suggestedSignalParams();
+    params.push(dataKeys);
+    const dataIdx = params.length;
+    params.push(safety);
+    const safetyIdx = params.length;
+    params.push(filters.signal);
+    where.push(`coalesce(r.signal_decided, ${suggestedSignalCaseSql(dataIdx, safetyIdx)}) = $${params.length}`);
+  }
 
   const order = filters.order === 'oldest' ? 'asc' : 'desc';
   const limit = filters.limit ?? 5000;
@@ -167,8 +213,11 @@ export async function listRequests(filters: ListFilters): Promise<{ rows: Reques
     `${SELECT_BASE} where ${where.join(' and ')} order by r.created_at ${order} limit $${params.length}`,
     params,
   );
+  // 件数も同じ条件で数える（ページングの整合）。signal の条件は catalog_tool を参照するため、
+  // そのときだけ結合を足す。件数は LIMIT の影響を受けない全件（これまでは取得窓 5000 件の中だけ数えていた）。
+  const countJoin = filters.signal ? ' left join catalog_tool t on t.id = r.tool_id' : '';
   const countRow = await one<{ count: number }>(
-    `select count(*)::int as count from request r where ${where.map((w) => w.replace(/\br\./g, 'r.')).join(' and ')}`,
+    `select count(*)::int as count from request r${countJoin} where ${where.map((w) => w.replace(/\br\./g, 'r.')).join(' and ')}`,
     params.slice(0, -1),
   );
   return { rows, total: countRow?.count ?? rows.length };

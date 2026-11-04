@@ -2857,7 +2857,9 @@ const SF = (function () {
     });
   };
   const find = (id) => S.data.items.find((x) => x.id === id);
-  const colorOf = (r) => r.signalFinal || SF.judge(r).c;
+  // 色は「承認者の決定 → サーバが返した候補（一覧のサーバ絞り込みで付く）→ 画面の判定」の順。
+  // サーバが付けた候補を使うのは、一覧の絞り込みと行の色が食い違わないようにするため（L-08）。
+  const colorOf = (r) => r.signalFinal || r.signalServer || SF.judge(r).c;
   function persist(opts) {
     if (!SF.save(KEY, S.data) && S.persistent) {
       S.persistent = false;
@@ -2895,6 +2897,7 @@ const SF = (function () {
   function syncApplied(changed) {
     SF.save(KEY, S.data);
     if (!changed) return;
+    resetListServer(); // 一覧のサーバ絞り込みは、依頼が変わったら取り直す
     if (S.view !== 'new') render();
     if (S.open) {
       const a = document.activeElement;
@@ -5050,18 +5053,100 @@ const SF = (function () {
   }
 
   /* ---- list ---- */
+  // 一覧の絞り込み（部署・状態・信号）は、サーバ接続時はサーバの SQL（WHERE）に任せる（L-08）。
+  // 取得した全件を画面で濾さない。オフライン見本モードと、絞り込みが無いときは、これまでどおり
+  // 起動データ（S.data.items）をそのまま描く。
+  const LIST_PAGE = 500; // API の pageSize の上限
+  const LIST_PAGE_MAX = 10; // 従来の取得上限（5000件 = 500 × 10）に合わせる
+  const listServerWanted = () =>
+    Boolean(
+      MSF_CONNECTED && window.__MSF__ && typeof window.__MSF__.toRecord === 'function' && (S.fd || S.fs || S.fc),
+    );
+  const listServerKey = () => [S.fd, S.fs, S.fc].join('\u0001');
+  let listServer = { key: '', items: null, total: 0, error: '', loading: '' };
+
+  /** 絞り込み条件が変わった（同期で依頼が変わった）ときに、取り直させる。 */
+  function resetListServer() {
+    listServer = { key: '', items: null, total: 0, error: '', loading: '' };
+  }
+
+  /** サーバの絞り込み結果を取る。件数が 500 を超えるときは、従来の上限（5000件）までページを辿る。 */
+  function requestListServer(key) {
+    listServer = { key: key, items: null, total: 0, error: '', loading: key };
+    const base = new URLSearchParams({ pageSize: String(LIST_PAGE) });
+    if (S.fd) base.set('dept', S.fd);
+    if (S.fs) base.set('status', S.fs);
+    if (S.fc) base.set('signal', S.fc);
+    const done = (state) => {
+      listServer = state;
+      if (S.view === 'list') renderList();
+    };
+    const load = (page, acc, total) =>
+      window.__MSF__
+        .api('GET', '/api/requests?' + base.toString() + '&page=' + page)
+        .then((res) => {
+          if (listServer.key !== key) return; // 条件が変わった。古い応答は捨てる
+          const items = Array.isArray(res && res.items) ? res.items : [];
+          const all = acc.concat(items);
+          const t = Number(res && res.total) || 0;
+          if (items.length && all.length < t && page < LIST_PAGE_MAX) return load(page + 1, all, t);
+          done({ key: key, items: all, total: t, error: '', loading: '' });
+          return undefined;
+        })
+        .catch((err) => {
+          if (listServer.key !== key) return;
+          done({
+            key: key,
+            items: [],
+            total: 0,
+            error: (err && err.message) || '絞り込みの結果を取得できませんでした',
+            loading: '',
+          });
+        });
+    load(1, [], 0);
+  }
+
+  /** キーワード検索の対象（画面側で行う）。サーバ応答と起動データで同じ並びにする。 */
+  const listSearchText = (r) => [r.id, r.title, r.applicant, r.problem, r.purpose].join(' ').toLowerCase();
+
+  /**
+   * サーバの絞り込み結果を、画面の依頼レコードへ直す。
+   * 起動データに同じ依頼があれば、それを使う（履歴・コメント・滞留がそのまま使える）。
+   * 無いとき（起動後に別の端末で作られた等）は、サーバ応答をブリッジの変換で同じ形にする。
+   */
+  function listServerRows() {
+    const byId = new Map(S.data.items.map((r) => [r.id, r]));
+    return (listServer.items || []).map((item) => {
+      const local = item && byId.get(item.id);
+      const record = local ? Object.assign({}, local) : window.__MSF__.toRecord(item);
+      // 色はサーバが判定した候補を使う（起動データのカタログとサーバのカタログがずれても、食い違わない）
+      record.signalServer = item.suggested;
+      return record;
+    });
+  }
+
   function renderList() {
+    const useServer = listServerWanted();
+    const serverKey = useServer ? listServerKey() : '';
+    if (useServer && listServer.key !== serverKey) requestListServer(serverKey);
     const q = S.fq.toLowerCase();
-    const a = S.data.items
-      .filter(
-        (r) =>
-          (S.showCancel || S.fs === 'cancel' || r.status !== 'cancel') &&
-          (!S.fd || r.dept === S.fd) &&
-          (!S.fs || r.status === S.fs) &&
-          (!S.fc || colorOf(r) === S.fc) &&
-          (!q || [r.id, r.title, r.applicant, r.problem, r.purpose].join(' ').toLowerCase().includes(q)),
-      )
+    const source = useServer ? listServerRows() : S.data.items;
+    const a = source
+      .filter((r) => {
+        if (!(S.showCancel || S.fs === 'cancel' || r.status !== 'cancel')) return false;
+        if (q && !listSearchText(r).includes(q)) return false;
+        // サーバ接続時は、部署・状態・色の条件をサーバが済ませている（ここでは濾さない）
+        if (useServer) return true;
+        return (!S.fd || r.dept === S.fd) && (!S.fs || r.status === S.fs) && (!S.fc || colorOf(r) === S.fc);
+      })
       .sort((x, y) => (x.id < y.id ? 1 : -1));
+    const totalLabel = useServer ? listServer.total : S.data.items.length;
+    const emptyMsg =
+      useServer && listServer.loading
+        ? '絞り込みの結果を読み込んでいます…'
+        : useServer && listServer.error
+          ? listServer.error
+          : '条件に合う依頼がありません';
     $('#view').innerHTML =
       '<div class="btool"><h2 class="h2" style="margin:0">' +
       ico('i-list') +
@@ -5129,11 +5214,13 @@ const SF = (function () {
               );
             })
             .join('')
-        : '<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">条件に合う依頼がありません</td></tr>') +
+        : '<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">' +
+          E(emptyMsg) +
+          '</td></tr>') +
       '</tbody></table></div><p class="hint">' +
       a.length +
       ' 件 ／ 全 ' +
-      S.data.items.length +
+      totalLabel +
       ' 件</p>';
     const re = () => {
       const p = $('#lq').selectionStart;

@@ -1,0 +1,13 @@
+-- 0016: 一覧の取得順（受付の新しい順）に索引を足す（L-08 の性能実測より）。
+--
+-- 追加のみ。列・制約・既存データは変えない（破壊的変更なし）。
+--
+-- 一覧（GET /api/requests と起動データ）は `deleted = false` を条件に
+-- `order by created_at desc limit 5000` で読む。created_at の索引が無いため、
+-- 実測では毎回 10,000 行をメモリに収まらずディスクへ溢れる外部ソートで並べ替えていた
+-- （docs/production/09-list-filter-performance.md の EXPLAIN ANALYZE）。
+-- 論理削除を除いた部分索引にして、既定の一覧で読む範囲だけを小さく保つ。
+--
+-- 注意: migration はトランザクション内で適用されるため CONCURRENTLY は使えない。
+-- 10,000 行では一瞬で終わるが、既存の大きな表へ当てるときは書き込みが待つ。
+create index if not exists request_list_created_idx on request (created_at desc) where deleted = false;

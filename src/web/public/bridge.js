@@ -943,5 +943,8 @@
     refreshRequest,
     targetRepos,
     setTargetRepo,
+    // サーバの一覧応答（GET /api/requests の items）を画面の依頼レコードへ直す。
+    // 一覧の絞り込みをサーバへ任せたとき（L-08）、起動データに無い依頼も同じ形で描くために使う。
+    toRecord: toConsole,
   };
 })();

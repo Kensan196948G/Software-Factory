@@ -254,10 +254,13 @@ export interface ListQuery {
 }
 
 export async function listForActor(actor: Actor, filter: ListQuery) {
-  const { rows } = await listRequests({
+  // 信号の色の絞り込みは SQL（WHERE）で行う（L-08）。取得後に全件を JS で濾さない。
+  // 件数も同じ条件で数えるので、ページングと total がずれない。
+  const { rows, total } = await listRequests({
     q: filter.q,
     dept: filter.dept,
     status: filter.status,
+    signal: filter.signal,
     includeDeleted: filter.includeDeleted,
     applicantUserId: filter.mine ? actor.userId : undefined,
     limit: 5000,
@@ -266,11 +269,7 @@ export async function listForActor(actor: Actor, filter: ListQuery) {
   const signals = await getCatalogSignals(rows.map((r) => r.tool_id).filter((v): v is string => Boolean(v)));
   for (const [k, v] of signals) cache.set(k, v);
 
-  let summaries = rows.map((r) => summaryOf(r, r.tool_id ? (cache.get(r.tool_id) ?? null) : null, actor));
-  if (filter.signal) {
-    summaries = summaries.filter((s) => (s.signalDecided ?? s.suggested) === filter.signal);
-  }
-  const total = summaries.length;
+  const summaries = rows.map((r) => summaryOf(r, r.tool_id ? (cache.get(r.tool_id) ?? null) : null, actor));
   const pageSize = Math.min(Math.max(filter.pageSize ?? 50, 1), 500);
   const page = Math.max(filter.page ?? 1, 1);
   const start = (page - 1) * pageSize;
