@@ -146,3 +146,75 @@ URL に資格情報とクエリ（`http://user:<token>@127.0.0.1:8782/healthz?to
 | lint         | **PASS**（`pnpm lint`、警告0）                                    |
 | Prettier     | 変更ファイルは `prettier --check` で整形済み                      |
 | 既存ユニット | 停止・再起動なし（`mirai-sf-api` / tunnel / worker は稼働のまま） |
+
+## 7. アクセシビリティ自動検査（2026-11-04 追加）
+
+### 7-1. 実行方法
+
+```bash
+# 承認者回帰 + アクセシビリティ（同じサーバ不要・全通信横取りの config）
+pnpm test:browser:approver
+
+# アクセシビリティだけ
+pnpm exec playwright test --config playwright.approver.config.ts tests/browser/a11y.spec.ts
+
+# 既存の E2E 一式（tests/e2e/a11y.spec.ts 経由で同じ5件が加わる）
+pnpm test:e2e
+```
+
+`playwright.approver.config.ts` の `testMatch` に `a11y.spec.ts` を追加したため、`pnpm test:browser:approver` は
+**承認者回帰 16 件 + アクセシビリティ 5 件 = 21 件**を実行する。CI の workflow は変更しない（`.github/workflows/` はポリシーで対象外）。
+CI の E2E ジョブは `pnpm install` で `@axe-core/playwright` を入れるため、追加の設定は要らない。
+
+### 7-2. 対象と方式
+
+| #   | 画面                      | 起点                                                             | axe の範囲     |
+| --- | ------------------------- | ---------------------------------------------------------------- | -------------- |
+| 1   | ログイン                  | `src/web/public/login.html` + `login.js`                         | ページ全体     |
+| 2   | コンソール初期表示        | `src/web/index.html` + `bridge.js` / `console.js`（boot を注入） | ページ全体     |
+| 3   | 依頼詳細                  | 一覧の行を開いたドロワー `#drawer`                               | `#drawer` のみ |
+| 4   | 注文書タブ                | ドロワーの `[data-dt="yaml"]`                                    | `#drawer` のみ |
+| 5   | 承認者選択（ウィザード6） | 「新しい依頼」→ 道具 → … → 承認者選択                            | ページ全体     |
+
+- 既存の `tests/browser/approver.spec.ts` と同じく、`page.route('**/*')` で全通信を横取りする。実サーバ・DB・メール・本番/Staging には接続しない。
+- データはすべて作り物（`架空 同名` / `first@example.com` 等）。実データは使わない。
+- 画面遷移の `opacity` アニメーション中に測ると、半透明の色がコントラスト違反として誤検出される。`settle()` で有限のアニメーション完了後に測る（無限アニメのバッジは対象外）。
+
+### 7-3. 合否の基準
+
+- **失敗にするのは axe-core の `serious` / `critical` だけ。** `moderate` / `minor` は合否に使わない（既存画面の moderate を緑にするために重大度フィルタを緩めない）。
+- 既知の除外は「画面 + ルールID + 対象要素」の3点で最小に絞る（`KNOWN_EXCLUSIONS`）。同じルールでも別要素の違反は失敗する。
+- 検査が空振りしていないことを `results.passes.length > 0` で確認する。
+
+### 7-4. 既知の除外（allowlist）
+
+| #   | 画面           | ルール                      | 対象                                 | 理由（実測）                                                                             | 解消先           |
+| --- | -------------- | --------------------------- | ------------------------------------ | ---------------------------------------------------------------------------------------- | ---------------- |
+| 1   | 全画面         | color-contrast              | `.offline`                           | 「完全オフライン」バッジ 3.04:1（#1f9d55 on #e1f4e8）。配色は原本側。                    | W-10 / Backlog 6 |
+| 2   | コンソール初期 | color-contrast              | `.tm > .kd`（4ノード）               | 運用タイルの種別チップ 2.87:1（11px 太字）。文字が小さく原本の意匠。                     | W-10 / Backlog 6 |
+| 3   | 承認者選択     | color-contrast              | `.big > small`                       | 見出し横「時間／月」3.32:1（13px 太字）。補助表示。                                      | W-10 / Backlog 6 |
+| 4   | 承認者選択     | label                       | `input[type="date"]`                 | 希望時期の日付入力に可視ラベルが無い（placeholder も空）。                               | W-10 / Backlog 6 |
+| 5   | 承認者選択     | label                       | `#att`                               | 添付ファイル入力に可視ラベルが無い。選択後は `#attL` にファイル名を表示する作り。        | W-10 / Backlog 6 |
+| 6   | 承認者選択     | scrollable-region-focusable | `dl`（`.order dl`）                  | 注文書プレビュー（max-height 330px + overflow:auto）にキーボードのフォーカスが乗らない。 | W-10 / Backlog 6 |
+| 7   | 承認者選択     | select-name                 | `select[data-bind="approverUserId"]` | 承認者選択の select にアクセシブル名が無い。直前に見出しはあるが名前は未設定。           | W-10 / Backlog 6 |
+
+除外は「テストを緩める」ためではなく、原本（ベンダー扱い、W-05）の改変を最小にするための既知リストである。
+解消するときは `KNOWN_EXCLUSIONS` の該当行を消し、`pnpm test:browser:approver` が失敗することを確認してから直す。
+
+### 7-5. 実測結果（2026-11-04）
+
+| 項目                         | 結果                                                                                                      |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `pnpm test:browser:approver` | **21 / 21 PASS**（既存16 + 新規5、skip 0）                                                                |
+| アクセシビリティ5画面        | **5 / 5 PASS**（serious/critical 0。除外は上表の7件のみ）                                                 |
+| `pnpm typecheck`             | **PASS**（エラー0）                                                                                       |
+| `pnpm lint`                  | **PASS**（警告0、max-warnings=0）                                                                         |
+| `pnpm test:unit`             | **644 / 644 PASS**（18ファイル）                                                                          |
+| 検出確認（mutation check）   | allowlist を一時的に外すと `.offline` の color-contrast で**失敗**することを確認（空振りしない）          |
+| `pnpm test:e2e`（全体）      | **未実行**（ローカル DB / API を起動するため。サーバ不要の5件は `pnpm test:browser:approver` で実行済み） |
+
+### 7-6. 制限
+
+- axe-core の自動検査は、色・名前・構造など機械的に判定できる範囲だけ。読み上げ順の自然さ・業務文脈の分かりやすさ・キーボード操作の実走は検査しない。
+- 上表の7件は自動検査では検出されない（既知の負債）。Backlog 6 で解消する。
+- `moderate` / `minor` は合否にしないため、増えても気づかない。必要なら別途レポート化する。
