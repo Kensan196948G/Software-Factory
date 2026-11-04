@@ -2455,6 +2455,394 @@ const SF = (function () {
     if (!APPROVER_BY_ID.has(id)) return '選ばれている承認者は現在利用できません。承認者を選び直してください';
     return '';
   }
+  /* ---- 利用者管理（管理者のみ・サーバ接続時のみ。オフライン見本では出さない） ---- */
+  // 管理APIのロールは3種（依頼者・受付担当・承認者）。画面の7役は API では承認者に寄せる（W-03）が、
+  // 利用者管理ではサーバが扱うロールをそのまま表示・付与する。
+  const MANAGED_ROLES = [
+    { k: 'requester', l: '依頼者' },
+    { k: 'desk', l: '受付担当' },
+    { k: 'approver', l: '承認者' },
+  ];
+  const ADMIN = {
+    canManage: false, // 管理メニューを出してよいか（/api/auth/me の user.isAdmin で決める）
+    users: null, // 一覧（まだ読めていなければ null）
+    loading: false,
+    error: '', // 一覧を読めなかった理由
+    notice: '', // 直近の操作の結果
+    noticeNg: false,
+    busy: false, // 送信中（二重送信を止める）
+    search: '', // メール・表示名の絞り込み
+  };
+  // パスワードは ADMIN にも S にも localStorage にも入れない。入力欄の値をその場で読んで送るだけにする。
+  function adminMenuAllowed() {
+    return Boolean(MSF_CONNECTED && window.__MSF__ && ADMIN.canManage);
+  }
+  function syncAdminNav() {
+    const rail = $('#rail');
+    if (!rail) return;
+    const shown = rail.querySelector('button[data-v="adminUsers"]');
+    if (!adminMenuAllowed()) {
+      if (shown) shown.remove();
+      return;
+    }
+    if (shown) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.dataset.v = 'adminUsers';
+    btn.innerHTML = ico('i-users') + '利用者管理';
+    const sp = rail.querySelector('.sp');
+    rail.insertBefore(btn, sp || null);
+  }
+  /** 管理メニューの可否をサーバに確かめる。オフライン見本（接続なし）では何もしない。 */
+  async function initAdminUi() {
+    if (!MSF_CONNECTED || !window.__MSF__) return;
+    // ブート値はサーバが描いたもの。正は /api/auth/me（役割や管理者の変更を反映する）
+    ADMIN.canManage = Boolean(BOOT_USER && BOOT_USER.isAdmin);
+    syncAdminNav();
+    try {
+      const res = await window.__MSF__.api('GET', '/api/auth/me');
+      const u = res && res.user;
+      if (u && typeof u === 'object' && !Array.isArray(u)) ADMIN.canManage = u.isAdmin === true;
+    } catch (e) {
+      /* 読めないときはブート値のまま（見本モードへは戻さない） */
+    }
+    syncAdminNav();
+    if (S.view === 'adminUsers' && !adminMenuAllowed()) {
+      S.view = 'home';
+      render();
+    }
+  }
+  /** 失敗の表示。サーバの error.code（ERR-xxx）とメッセージを落とさずに見せる。 */
+  function adminErrorText(err, fallback) {
+    const code = (err && err.code) || '';
+    const status = Number((err && err.status) || 0);
+    if (!status && !code) return '通信できませんでした。接続を確かめて、もう一度お試しください';
+    const message = (err && err.message) || fallback || '操作できませんでした';
+    return (code ? code + '：' : '') + message + (status ? '（HTTP ' + status + '）' : '');
+  }
+  function setAdminMsg(el, text, ng) {
+    ADMIN.notice = text;
+    ADMIN.noticeNg = Boolean(ng);
+    if (!el) return;
+    el.className = text ? 'ban ' + (ng ? 'ng' : 'ok') : '';
+    el.innerHTML = text ? ico(ng ? 'i-alert' : 'i-check') + ' ' + E(text) : '';
+    el.setAttribute('role', ng ? 'alert' : 'status');
+  }
+  function listMsg(text, ng) {
+    setAdminMsg($('#auListMsg'), text, ng);
+  }
+  function formMsg(text, ng) {
+    setAdminMsg($('#auFormMsg'), text, ng);
+  }
+  function adminUserRow(u) {
+    const self = Boolean(BOOT_USER && u.id === BOOT_USER.id);
+    const dept = SF.deptOf(u.deptCode);
+    const deptLabel = dept ? dept.short : u.deptCode || '';
+    const deptExtra = dept && dept.short !== u.deptCode ? ' <span class="muted">' + E(u.deptCode) + '</span>' : '';
+    const roles = Array.isArray(u.roles) ? u.roles : [];
+    const boxes = MANAGED_ROLES.map(
+      (r) =>
+        '<label class="tgl" style="padding:3px 8px;font-size:12px"><input type="checkbox" data-urole="' +
+        E(u.id) +
+        '" value="' +
+        r.k +
+        '"' +
+        (roles.includes(r.k) ? ' checked' : '') +
+        '> ' +
+        E(r.l) +
+        '</label>',
+    ).join('');
+    return (
+      '<tr data-user="' +
+      E(u.id) +
+      '"><td style="font-family:ui-monospace,Consolas,monospace;white-space:nowrap">' +
+      E(u.email) +
+      '</td><td><b>' +
+      E(u.displayName) +
+      '</b>' +
+      (self ? ' <span class="myt">あなた</span>' : '') +
+      '</td><td style="white-space:nowrap">' +
+      E(deptLabel) +
+      deptExtra +
+      '</td><td><div class="chks" style="margin:0">' +
+      boxes +
+      '</div></td><td>' +
+      (u.isAdmin ? '<span class="st">管理者</span>' : '<span class="muted">－</span>') +
+      '</td><td style="white-space:nowrap">' +
+      (u.isActive ? '<b>有効</b>' : '<b class="muted">無効</b>') +
+      ' <button class="btn sm' +
+      (u.isActive ? ' dng' : '') +
+      '" type="button" data-uact="' +
+      E(u.id) +
+      '" data-next="' +
+      (u.isActive ? 'off' : 'on') +
+      '">' +
+      (u.isActive ? '無効化' : '有効化') +
+      '</button></td></tr>'
+    );
+  }
+  function adminRows() {
+    if (ADMIN.error) {
+      return '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">' + E(ADMIN.error) + '</td></tr>';
+    }
+    if (!ADMIN.users) {
+      return '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">読み込み中です…</td></tr>';
+    }
+    const q = ADMIN.search.trim().toLowerCase();
+    const items = ADMIN.users.filter((u) => !q || [u.email, u.displayName, u.deptCode].join(' ').toLowerCase().includes(q));
+    if (!items.length) {
+      return (
+        '<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">' +
+        (q ? '条件に合う利用者が居ません' : '利用者が登録されていません') +
+        '</td></tr>'
+      );
+    }
+    return items.map(adminUserRow).join('');
+  }
+  function refreshUsersTable() {
+    const tb = $('#auTb');
+    if (!tb) return;
+    tb.innerHTML = adminRows();
+    bindUserRows();
+  }
+  async function loadUsers(force) {
+    if (!adminMenuAllowed() || ADMIN.loading) return;
+    if (ADMIN.users && !force) return;
+    ADMIN.loading = true;
+    if (!ADMIN.users) refreshUsersTable();
+    try {
+      const res = await window.__MSF__.api('GET', '/api/admin/users');
+      ADMIN.users = Array.isArray(res && res.items) ? res.items : [];
+      ADMIN.error = '';
+    } catch (err) {
+      ADMIN.error = adminErrorText(err, '利用者の一覧を取得できませんでした');
+    } finally {
+      ADMIN.loading = false;
+    }
+    if (S.view === 'adminUsers') refreshUsersTable();
+  }
+  function applyUser(user) {
+    if (!user || typeof user !== 'object' || !user.id) return;
+    if (!Array.isArray(ADMIN.users)) ADMIN.users = [];
+    const i = ADMIN.users.findIndex((u) => u.id === user.id);
+    if (i >= 0) ADMIN.users[i] = user;
+    else ADMIN.users.push(user);
+    refreshUsersTable();
+  }
+  function bindUserRows() {
+    $$('#auTb [data-urole]').forEach((box) =>
+      box.addEventListener('change', () => {
+        void changeRoles(box.dataset.urole);
+      }),
+    );
+    $$('#auTb [data-uact]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        void toggleActive(btn.dataset.uact, btn.dataset.next === 'on');
+      }),
+    );
+  }
+  function clearAddForm() {
+    ['auEmail', 'auName', 'auPass'].forEach((id) => {
+      const el = $('#' + id);
+      if (el) el.value = '';
+    });
+    const adminBox = $('#auAdmin');
+    if (adminBox) adminBox.checked = false;
+    MANAGED_ROLES.forEach((r) => {
+      const box = $('#auRole-' + r.k);
+      if (box) box.checked = false;
+    });
+    const dept = $('#auDept');
+    if (dept && CATALOG.length) dept.value = CATALOG[0].id;
+  }
+  async function changeRoles(userId) {
+    if (!adminMenuAllowed() || ADMIN.busy) return;
+    const roles = $$('#auTb [data-urole="' + userId + '"]')
+      .filter((b) => b.checked)
+      .map((b) => b.value);
+    if (!roles.length) {
+      listMsg('ロールは1つ以上選んでください（変更していません）', true);
+      refreshUsersTable(); // チェックをサーバの値へ戻す
+      return;
+    }
+    ADMIN.busy = true;
+    try {
+      const res = await window.__MSF__.api('PATCH', '/api/admin/users/' + encodeURIComponent(userId), { roles });
+      applyUser(res && res.user);
+      listMsg('ロールを変更しました', false);
+    } catch (err) {
+      const text = adminErrorText(err, 'ロールを変更できませんでした');
+      listMsg(text, true);
+      toast(text, true);
+      await loadUsers(true);
+      refreshUsersTable();
+    } finally {
+      ADMIN.busy = false;
+    }
+  }
+  async function patchActive(userId, isActive) {
+    if (ADMIN.busy) return;
+    ADMIN.busy = true;
+    try {
+      const res = await window.__MSF__.api('PATCH', '/api/admin/users/' + encodeURIComponent(userId), { isActive });
+      applyUser(res && res.user);
+      listMsg(isActive ? '利用者を有効にしました' : '利用者を無効化しました（セッションも失効します）', false);
+    } catch (err) {
+      const text = adminErrorText(err, '有効・無効を変更できませんでした');
+      listMsg(text, true);
+      toast(text, true);
+      await loadUsers(true);
+      refreshUsersTable();
+    } finally {
+      ADMIN.busy = false;
+    }
+  }
+  async function toggleActive(userId, nextActive) {
+    if (!adminMenuAllowed() || ADMIN.busy) return;
+    const user = (ADMIN.users || []).find((u) => u.id === userId);
+    const label = user ? user.email : userId;
+    if (!nextActive && BOOT_USER && userId === BOOT_USER.id) {
+      // 自分自身の無効化はサーバが拒否する（ERR-003）。押し間違いでセッションを失わないよう、危険な確認をはさむ。
+      modal(
+        ico('i-alert') + '自分自身を無効化しますか？',
+        '<p style="margin:0">いま操作している利用者（' +
+          E(label) +
+          '）を無効化すると、このセッションは失効し、すぐにログインできなくなります。サーバは自分自身の無効化を拒否します（ERR-003）。ほかの管理者に依頼してください。</p>',
+        '<button class="btn" data-x type="button">やめる</button><button class="btn dng" id="auDangerOk" type="button">無効化を試す</button>',
+      );
+      $('#auDangerOk').addEventListener('click', () => {
+        closeModal();
+        void patchActive(userId, false);
+      });
+      return;
+    }
+    await patchActive(userId, nextActive);
+  }
+  async function submitNewUser() {
+    if (!adminMenuAllowed() || ADMIN.busy) return;
+    const emailEl = $('#auEmail');
+    const nameEl = $('#auName');
+    const deptEl = $('#auDept');
+    const passEl = $('#auPass');
+    const adminBox = $('#auAdmin');
+    if (!emailEl || !nameEl || !deptEl || !passEl) return;
+    const email = emailEl.value.trim();
+    const displayName = nameEl.value.trim();
+    const roles = MANAGED_ROLES.filter((r) => {
+      const box = $('#auRole-' + r.k);
+      return Boolean(box && box.checked);
+    }).map((r) => r.k);
+    const problems = [];
+    if (!email) problems.push('メールアドレスを入れてください');
+    if (!displayName) problems.push('表示名を入れてください');
+    if (!passEl.value) problems.push('パスワードを入れてください');
+    if (!roles.length) problems.push('ロールを1つ以上選んでください');
+    if (problems.length) {
+      formMsg(problems.join('／'), true);
+      return;
+    }
+    // パスワードはこの関数のローカル変数だけに持つ（S・localStorage・ログ・トーストへ写さない）
+    const password = passEl.value;
+    ADMIN.busy = true;
+    formMsg('', false);
+    try {
+      const res = await window.__MSF__.api('POST', '/api/admin/users', {
+        email,
+        displayName,
+        deptCode: deptEl.value,
+        password,
+        roles,
+        isAdmin: Boolean(adminBox && adminBox.checked),
+      });
+      passEl.value = ''; // 成功したら必ず空にする
+      clearAddForm();
+      applyUser(res && res.user);
+      formMsg('「' + email + '」を追加しました。パスワード欄は空にしました', false);
+      listMsg('利用者を追加しました（' + email + '）', false);
+    } catch (err) {
+      passEl.value = ''; // 失敗しても残さない（入力し直してもらう）
+      const text = adminErrorText(err, '利用者を追加できませんでした');
+      formMsg(text, true);
+      listMsg(text, true);
+      toast(text, true);
+    } finally {
+      ADMIN.busy = false;
+    }
+    await loadUsers(true);
+  }
+  function renderAdminUsers() {
+    if (!ADMIN.users && !ADMIN.loading && !ADMIN.error) void loadUsers();
+    const depts = CATALOG.map((c) => '<option value="' + E(c.id) + '">' + E(c.name) + '</option>').join('');
+    const roleBoxes = MANAGED_ROLES.map(
+      (r) =>
+        '<label class="tgl" style="padding:3px 8px;font-size:12.5px"><input type="checkbox" id="auRole-' +
+        r.k +
+        '" value="' +
+        r.k +
+        '"> ' +
+        E(r.l) +
+        '</label>',
+    ).join('');
+    const field =
+      'width:100%;border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;background:var(--surface)';
+    $('#view').innerHTML =
+      '<div class="btool"><h2 class="h2" style="margin:0">' +
+      ico('i-users') +
+      '利用者管理</h2><span class="sp"></span><input type="search" id="auq" aria-label="利用者を絞り込む" placeholder="メール・表示名で絞り込む" style="max-width:260px" value="' +
+      E(ADMIN.search) +
+      '"><button class="btn sm" type="button" id="auReload">' +
+      ico('i-undo') +
+      '再読み込み</button></div>' +
+      '<p class="hint" style="margin-top:0">管理者だけが利用者を作成・変更できます。操作はすべて監査ログに残ります。パスワードは追加した直後に画面から消し、ブラウザの保存・ログ・トーストには残しません。</p>' +
+      '<div id="auListMsg" class="' +
+      (ADMIN.notice ? 'ban ' + (ADMIN.noticeNg ? 'ng' : 'ok') : '') +
+      '" role="' +
+      (ADMIN.noticeNg ? 'alert' : 'status') +
+      '">' +
+      (ADMIN.notice ? ico(ADMIN.noticeNg ? 'i-alert' : 'i-check') + ' ' + E(ADMIN.notice) : '') +
+      '</div>' +
+      '<div class="card tw"><table class="t"><thead><tr><th>メール</th><th>表示名</th><th>部署</th><th>ロール</th><th>管理者</th><th>有効/無効</th></tr></thead><tbody id="auTb">' +
+      adminRows() +
+      '</tbody></table></div>' +
+      '<div class="card pad" style="margin-top:16px"><h2 class="h2">' +
+      ico('i-plus') +
+      '利用者を追加</h2><div id="auFormMsg" role="status"></div><div class="two"><div>' +
+      '<label class="fl" for="auEmail">メールアドレス<span class="req">必須</span></label>' +
+      '<input id="auEmail" type="email" autocomplete="off" spellcheck="false" style="' +
+      field +
+      '"><label class="fl" for="auName">表示名<span class="req">必須</span></label>' +
+      '<input id="auName" type="text" autocomplete="off" maxlength="80">' +
+      '<label class="fl" for="auDept">部署</label><select id="auDept">' +
+      depts +
+      '</select></div><div>' +
+      '<label class="fl" for="auPass">パスワード<span class="req">必須</span></label>' +
+      '<input id="auPass" type="password" autocomplete="new-password" style="' +
+      field +
+      '"><p class="hint">追加するとこの欄は空になります。値は画面の状態・ブラウザの保存・ログ・トーストに残しません。</p>' +
+      '<label class="fl">ロール（1つ以上）</label><div class="chks" id="auRoles">' +
+      roleBoxes +
+      '</div><label class="tgl" style="margin-top:10px"><input type="checkbox" id="auAdmin"> 管理者にする</label>' +
+      '</div></div><div class="data-row" style="margin-top:12px"><button class="btn pri" type="button" id="auSubmit">' +
+      ico('i-plus') +
+      '追加する</button><button class="btn" type="button" id="auClear">入力を消す</button></div>' +
+      '<p class="hint">部署はサーバに登録された部署から選びます。ロールは依頼者・受付担当・承認者の3つです（画面の7役は API では承認者として扱います）。</p></div>';
+    $('#auq').addEventListener('input', (e) => {
+      ADMIN.search = e.target.value;
+      refreshUsersTable();
+    });
+    $('#auReload').addEventListener('click', () => {
+      void loadUsers(true);
+    });
+    $('#auSubmit').addEventListener('click', () => {
+      void submitNewUser();
+    });
+    $('#auClear').addEventListener('click', () => {
+      clearAddForm();
+      formMsg('', false);
+    });
+    bindUserRows();
+  }
+
   const me = () => {
     const ro = SF.roleOf(S.role);
     if (!MSF_CONNECTED || !BOOT_USER) return ro;
@@ -2843,12 +3231,16 @@ const SF = (function () {
   });
   function go(v) {
     if (S.submitting && v !== 'new') return toast('送信中です。完了までお待ちください', true);
+    // 管理メニューは管理者（/api/auth/me の isAdmin）だけ。サーバ接続の無い見本モードでは開かない
+    if (v === 'adminUsers' && !adminMenuAllowed()) return;
     S.view = v;
     $$('#rail button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
     render();
     window.scrollTo({ top: 0 });
   }
   function render() {
+    // 管理者でなくなった（別の端末で変更された等）ときは管理画面を残さない
+    if (S.view === 'adminUsers' && !adminMenuAllowed()) S.view = 'home';
     const v = $('#view');
     v.style.animation = 'none';
     void v.offsetWidth;
@@ -2880,6 +3272,7 @@ const SF = (function () {
       ops: renderOps,
       devops: renderDevops,
       secops: renderSecops,
+      adminUsers: renderAdminUsers,
     })[S.view]();
   }
 
@@ -9624,4 +10017,6 @@ const SF = (function () {
 
   notice();
   render();
+  // 管理者の管理メニューは、サーバ接続時だけ・/api/auth/me の isAdmin で出す（オフライン見本では出さない）
+  void initAdminUi();
 })();
