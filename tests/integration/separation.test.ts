@@ -217,6 +217,39 @@ describe('利用者管理（複数ユーザー）', () => {
     expect(patch.statusCode).toBe(403);
   });
 
+  it('HTTP本文に role=system / localAuthority を混ぜてもローカル運用主体にはならない', async () => {
+    const admin = await loginAs(app);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/admin/users',
+      headers: authHeaders(admin),
+      payload: {
+        email: 'sep-inject@example.com',
+        displayName: '本文 注入',
+        deptCode: 'dx',
+        password: APPROVER_PASSWORD,
+        roles: ['approver'],
+        // ローカルCLI専用の主体を本文から偽装する試み。未知キーはスキーマで破棄される。
+        userId: null,
+        role: 'system',
+        isAdmin: true,
+        localAuthority: { method: 'local_db_owner', uid: 0, authorizationAdminId: admin.user.id, accessLogin: false },
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const targetId = await userIdOf('sep-inject@example.com');
+    const rows = await query<{ actor_user_id: string | null; role: string; diff: unknown }>(
+      'select actor_user_id, role, diff from audit_log where action = $1 and target_id = $2',
+      ['user.create', targetId],
+    );
+    expect(rows.rowCount).toBe(1);
+    expect(rows.rows[0]!.actor_user_id).toBe(admin.user.id);
+    expect(rows.rows[0]!.role).not.toBe('system');
+    expect((rows.rows[0]!.diff as { source?: string }).source).toBeUndefined();
+    const grants = await query<{ granted_by: string | null }>('select granted_by from user_role where user_id = $1', [targetId]);
+    expect(grants.rows.map((r) => r.granted_by)).toEqual([admin.user.id]);
+  });
+
   it('同じメールアドレス・不正な部署・短いパスワードは作成を拒否し、拒否も監査に残す', async () => {
     const admin = await loginAs(app);
     await createUser(admin);
