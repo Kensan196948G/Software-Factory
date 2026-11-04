@@ -162,8 +162,10 @@ pnpm exec playwright test --config playwright.approver.config.ts tests/browser/a
 pnpm test:e2e
 ```
 
-`playwright.approver.config.ts` の `testMatch` に `a11y.spec.ts` を追加したため、`pnpm test:browser:approver` は
-**承認者回帰 16 件 + アクセシビリティ 5 件 = 21 件**を実行する。CI の workflow は変更しない（`.github/workflows/` はポリシーで対象外）。
+`playwright.approver.config.ts` の `testMatch` は承認者・a11y・利用者管理を対象とし、`8a1ee99` 時点で
+**承認者回帰 16 件 + アクセシビリティ 5 件 + 利用者管理 9 件 = 30 件**を実行する。
+既存の `tests/e2e/approver.spec.ts` / `tests/e2e/a11y.spec.ts` に加え、`tests/e2e/admin-users.spec.ts` から同じ管理UI9件を読み込む。
+CIのworkflow・必須チェック規則は変更しない。通常のe2e設定でも各specを収集する（追加の9件は `--list` で確認）。
 CI の E2E ジョブは `pnpm install` で `@axe-core/playwright` を入れるため、追加の設定は要らない。
 
 ### 7-2. 対象と方式
@@ -203,15 +205,18 @@ CI の E2E ジョブは `pnpm install` で `@axe-core/playwright` を入れる�
 
 ### 7-5. 実測結果（2026-11-04）
 
-| 項目                         | 結果                                                                                                      |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `pnpm test:browser:approver` | **21 / 21 PASS**（既存16 + 新規5、skip 0）                                                                |
-| アクセシビリティ5画面        | **5 / 5 PASS**（serious/critical 0。除外は上表の7件のみ）                                                 |
-| `pnpm typecheck`             | **PASS**（エラー0）                                                                                       |
-| `pnpm lint`                  | **PASS**（警告0、max-warnings=0）                                                                         |
-| `pnpm test:unit`             | **644 / 644 PASS**（18ファイル）                                                                          |
-| 検出確認（mutation check）   | allowlist を一時的に外すと `.offline` の color-contrast で**失敗**することを確認（空振りしない）          |
-| `pnpm test:e2e`（全体）      | **未実行**（ローカル DB / API を起動するため。サーバ不要の5件は `pnpm test:browser:approver` で実行済み） |
+| 項目                         | 結果                                                                                                                                                                                                |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm test:browser:approver` | **30 / 30 PASS**（承認者16 + a11y5 + 管理UI9、skip 0。管理UI9は PR #86 で追加、PR #88 で必須E2Eへ読込み。旧 21/21 は管理UI追加前の記録）                                                            |
+| アクセシビリティ5画面        | **5 / 5 PASS**（serious/critical 0。除外は上表の7件のみ）                                                                                                                                           |
+| `pnpm typecheck`             | **PASS**（エラー0）                                                                                                                                                                                 |
+| `pnpm lint`                  | **PASS**（警告0、max-warnings=0）                                                                                                                                                                   |
+| `pnpm test:unit`             | **644 / 644 PASS**（18ファイル）                                                                                                                                                                    |
+| 検出確認（mutation check）   | allowlist を一時的に外すと `.offline` の color-contrast で**失敗**することを確認（空振りしない）                                                                                                    |
+| `pnpm test:e2e`（全体）      | 必須e2eジョブで実行（exact-head CI）。デフォルト収集139件＋管理UI9件の読込み＝**148件**（skip 1はAccess資格情報が無い既存項目）。ブラウザ設定の30件はサーバ不要で、うち管理UI9件を必須E2Eにも読込み |
+
+CI のステップ名は `E2E（9シナリオ）` のまま（workflow を変更しない方針）だが、実行内容は
+デフォルトの全 E2E＋読込み9件であり、名称は実態より小さい。workflow を触る別作業で名称を直す。
 
 ### 7-6. 制限
 
