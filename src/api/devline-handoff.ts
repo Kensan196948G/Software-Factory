@@ -28,6 +28,7 @@ import {
   canHandoff,
   canonicalJson,
   checkOrderForHandoff,
+  findTargetRepoInLedger,
   parseHandoffMarker,
   haltTarget,
   isOrderCurrent,
@@ -48,6 +49,7 @@ import type {
   IssueSummary,
   JobState,
   OrderEnvelopeV1,
+  RepoAllowEntry,
   RunnerKind,
 } from '../shared/devline.js';
 import { SIGNAL_LABEL } from '../shared/domain.js';
@@ -64,6 +66,8 @@ export interface DevlineDeps {
   httpTimeoutMs?: number;
   /** 作る job の runner。既定は fake。実 runner は1件実走の入口だけが指定する。 */
   runnerKind?: RunnerKind;
+  /** 許可台帳。既定は DEVLINE_REPO_LEDGER。試験の差し替えだけが渡す（画面・設定からは受けない）。 */
+  ledger?: readonly RepoAllowEntry[];
 }
 
 /**
@@ -335,7 +339,7 @@ async function assertRepoIdentity(deps: DevlineDeps): Promise<void> {
   if (!allowed) throw misconfigured('対象リポジトリが許可されていません（DEVLINE_TARGET_REPOS）');
   // 実 runner は DEVLINE_TARGET_REPOS だけでは足りない。定数の許可台帳（用途・repoId・private 前提）にも載っていること。
   // fake の経路は従来どおり（台帳は実 runner の許可先だけを扱う）。
-  if (deps.runnerKind === 'docker-claude' && !ledgerEntryFor(deps.targetRepo, allowed.repoId)) {
+  if (deps.runnerKind === 'docker-claude' && !ledgerEntryFor(deps.targetRepo, allowed.repoId, deps.ledger)) {
     throw misconfigured('対象リポジトリが実 runner の許可台帳にありません（DEVLINE_TARGET_REPOS と台帳の積集合）');
   }
   const got = await deps.issueAdapter.getRepoId(deps.targetRepo, timeoutSignal(deps));
@@ -345,6 +349,31 @@ async function assertRepoIdentity(deps: DevlineDeps): Promise<void> {
   const isPrivate = await deps.issueAdapter.getRepoPrivate(deps.targetRepo, timeoutSignal(deps));
   if (!isPrivate.ok) throw readFailure();
   if (!isPrivate.value) throw misconfigured('公開リポジトリへは投入できません（非公開のリポジトリを設定してください）');
+}
+
+/**
+ * 依頼ごとの投入先（L-12）を deps に反映する。
+ * - 未指定（NULL / 空）は従来どおり deps.targetRepo（DEVLINE_TARGET_REPOS の先頭）。既存の依頼はこの経路。
+ * - 指定ありは、設定と台帳の**積集合**に載っている名前だけを使う。外れていれば ERR-405（fail-closed）。
+ *   画面から来た値をそのまま使わないための決め直しで、ここが最終正本になる。
+ */
+function withRequestTarget(deps: DevlineDeps, requested: string | null): DevlineDeps {
+  const name = (requested ?? '').trim();
+  if (name === '') {
+    if (
+      !isRepoAllowed(
+        deps.targetRepo,
+        deps.allowedRepos.map((r) => r.name),
+      )
+    ) {
+      throw misconfigured('対象リポジトリが許可されていません（DEVLINE_TARGET_REPOS）');
+    }
+    return deps;
+  }
+  if (!findTargetRepoInLedger(name, deps.allowedRepos, deps.ledger)) {
+    throw misconfigured('この依頼の投入先が許可されていません（DEVLINE_TARGET_REPOS と台帳の積集合）');
+  }
+  return name === deps.targetRepo ? deps : { ...deps, targetRepo: name };
 }
 
 /**
@@ -1041,18 +1070,10 @@ export async function handoffOrder(
     confirmAbsent = input.confirmAbsent.reason.trim();
     if (confirmAbsent === '') throw Errors.reasonRequired();
   }
-  const deps = depsIn ?? defaultDevlineDeps();
-  if (
-    !isRepoAllowed(
-      deps.targetRepo,
-      deps.allowedRepos.map((r) => r.name),
-    )
-  ) {
-    throw misconfigured('対象リポジトリが許可されていません（DEVLINE_TARGET_REPOS）');
-  }
-
   const row = await getRequestRow(input.requestId, true);
   if (!row) throw Errors.notFound('依頼');
+  // 依頼ごとの投入先（L-12）。未指定は従来どおり既定（DEVLINE_TARGET_REPOS の先頭）。
+  const deps = withRequestTarget(depsIn ?? defaultDevlineDeps(), row.target_repo_id);
   if (input.orderVersion !== null && input.orderVersion !== row.order_version) {
     throw checkFailure('ERR-202', '指定された版は最新ではありません');
   }

@@ -111,6 +111,11 @@ export const requestInputSchema = z.object({
     .optional()
     .nullable(),
   approver: z.string().trim().min(1).max(80),
+  /**
+   * 開発ラインの投入先（L-12、`owner/name`）。未指定は従来どおり既定（DEVLINE_TARGET_REPOS の先頭）。
+   * null / 空は「未指定に戻す」。許可の判定（台帳と設定の積集合）はサーバが行い、ここでは形だけ見る。
+   */
+  targetRepoId: z.string().trim().max(120).optional().nullable(),
 });
 
 export type RequestInput = z.infer<typeof requestInputSchema>;
@@ -171,4 +176,9 @@ export const orderHandoffSchema = z.object({
 export const jobOperationSchema = z.object({
   reason: z.string().trim().max(1000).optional().default(''),
   expectedState: z.enum(JOB_STATES).optional(),
+});
+
+/* 依頼の投入先の変更（L-12）。null は「未指定（既定）へ戻す」。値の許可はサーバが決める。 */
+export const targetRepoSchema = z.object({
+  targetRepoId: z.string().trim().max(120).nullable(),
 });

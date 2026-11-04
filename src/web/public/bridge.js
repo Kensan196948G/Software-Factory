@@ -169,6 +169,8 @@
       __v: r.version,
       __orderVersion: r.orderVersion === null || r.orderVersion === undefined ? 0 : r.orderVersion,
       __issueNo: r.issueNo === null || r.issueNo === undefined ? null : r.issueNo,
+      // 依頼ごとの投入先（L-12）。null は未指定（サーバの既定＝DEVLINE_TARGET_REPOS の先頭）
+      __targetRepo: r.targetRepoId || null,
     };
   }
 
@@ -204,6 +206,8 @@
       approver: activeApprover ? activeApprover.displayName : String(it.approver || '').trim(),
       clientId: it.id && /^REQ-\d{4}-\d{4}$/.test(it.id) ? it.id : undefined,
     };
+    // 投入先（L-12）は内容の編集で消さない。未指定のままの依頼はキーを送らない（サーバは現状維持）
+    if (it.__targetRepo) server.targetRepoId = it.__targetRepo;
     if (it.approverUserId) server.approverUserId = it.approverUserId;
     return server;
   }
@@ -360,6 +364,7 @@
       it.signalFinal,
       it.__orderVersion,
       it.__issueNo,
+      it.__targetRepo,
       contentSignature(it),
       (it.history || []).length,
       (it.comments || []).length,
@@ -783,6 +788,65 @@
     }
   }
 
+  /* ── 依頼ごとの投入先（L-12） ── */
+
+  /**
+   * 投入先の候補。サーバが設定（DEVLINE_TARGET_REPOS）と許可台帳の積集合だけを返す。
+   * 取れなければ null（画面は選択欄を出さず、既定のまま投入する）。1 回だけ読んで使い回す。
+   */
+  let targetRepoCache = null;
+  let targetRepoPending = null;
+  async function targetRepos() {
+    if (targetRepoCache) return targetRepoCache;
+    if (!targetRepoPending) {
+      targetRepoPending = api('GET', '/api/devline/target-repos')
+        .then((res) => {
+          targetRepoCache = {
+            items: Array.isArray(res && res.items) ? res.items : [],
+            defaultRepo: (res && res.defaultRepo) || null,
+          };
+          return targetRepoCache;
+        })
+        .catch(() => null)
+        .finally(() => {
+          targetRepoPending = null;
+        });
+    }
+    return targetRepoPending;
+  }
+
+  /**
+   * 依頼の投入先を変える。内容の編集ではないので版（version・order_version）と承認は動かない
+   * （サーバの PATCH /api/requests/:id/devline-target）。必ず解決し、reject しない。
+   * 成功しても失敗してもサーバの依頼を取り直す（画面の選択を、サーバの値に合わせる）。
+   */
+  async function setTargetRepo(id, repoId) {
+    await roleSwitch;
+    while (running) await new Promise((r) => setTimeout(r, 50));
+    let done = () => undefined;
+    const mine = new Promise((r) => {
+      done = r;
+    });
+    handoffGate = handoffGate.then(() => mine);
+    try {
+      const value = repoId === undefined || repoId === null || repoId === '' ? null : String(repoId);
+      const result = await api('PATCH', `/api/requests/${encodeURIComponent(id)}/devline-target`, { targetRepoId: value });
+      targetRepoCache = null; // 設定が変わっていることがあるので次に読み直す
+      await refreshRequest(id);
+      return { ok: true, result };
+    } catch (err) {
+      await refreshRequest(id);
+      return {
+        ok: false,
+        code: (err && err.code) || null,
+        status: (err && err.status) || 0,
+        message: (err && err.message) || '投入先を変えられませんでした',
+      };
+    } finally {
+      done();
+    }
+  }
+
   let draftTimers = new Map();
   const draftCreating = new WeakMap(); // 下書きオブジェクト → 作成（POST）の Promise
   function saveDraft(o) {
@@ -876,5 +940,7 @@
     handoff,
     readJobs,
     refreshRequest,
+    targetRepos,
+    setTargetRepo,
   };
 })();

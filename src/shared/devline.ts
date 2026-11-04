@@ -889,6 +889,21 @@ export function allowedLedgerRepos(
   return out;
 }
 
+/**
+ * 依頼が選んだ投入先（L-12）を、設定と台帳の**積集合**で引く（純関数）。無ければ null。
+ * 画面から来た値をそのまま使わず、サーバがここで決め直す（最終正本）。
+ * 未指定（空文字・null・undefined）は null を返す（呼び出し側が「既定」と区別する）。
+ */
+export function findTargetRepoInLedger(
+  requested: string | null | undefined,
+  configured: readonly AllowedRepo[],
+  ledger: readonly RepoAllowEntry[] = DEVLINE_REPO_LEDGER,
+): RepoAllowEntry | null {
+  const name = (requested ?? '').trim();
+  if (name === '') return null;
+  return allowedLedgerRepos(configured, ledger).find((r) => r.name === name) ?? null;
+}
+
 const REPO_DIFF_POLICIES: Readonly<Record<string, RepoDiffPolicy>> = {
   'Kensan196948G/Software-Factory': FACTORY_DIFF_POLICY,
   [SANDBOX_REPO.name]: SANDBOX_DIFF_POLICY,

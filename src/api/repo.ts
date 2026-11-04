@@ -47,6 +47,8 @@ export interface RequestRow {
   deleted: boolean;
   issue_no: number | null;
   status_since: Date | null;
+  /** 依頼ごとの開発ラインの投入先（L-12）。NULL は未指定（既定＝DEVLINE_TARGET_REPOS の先頭）。 */
+  target_repo_id: string | null;
 }
 
 const SELECT_BASE = `
@@ -109,6 +111,7 @@ export function mapRequest(row: RequestRow): RequestRecord {
     version: row.version,
     deleted: row.deleted,
     issueNo: row.issue_no,
+    targetRepoId: row.target_repo_id ?? null,
   };
 }
 

@@ -66,8 +66,10 @@ import {
   orderHandoffSchema,
   requestInputSchema,
   roleSchema,
+  targetRepoSchema,
   transitionSchema,
 } from './schemas.js';
+import { listTargetRepos, readTargetRepoInput, setRequestTargetRepo } from './devline-target.js';
 import { staleDays } from '../shared/domain.js';
 import {
   cancelJob,
@@ -374,6 +376,9 @@ export async function buildApp(
   app.post('/api/requests', async (req, reply) => {
     const ctx = mutate(req);
     const body = requestInputSchema.parse(req.body);
+    // 投入先（L-12）。画面の値を信じず、サーバが台帳と設定の積集合で決め直す（外れていれば ERR-405）
+    const target = readTargetRepoInput(req.body, opts.devlineDeps);
+    if (target.provided) body.targetRepoId = target.value;
     const key = req.headers['idempotency-key'];
     void reply.status(201);
     const detail = await createRequest(
@@ -398,7 +403,24 @@ export async function buildApp(
     const body = requestInputSchema.parse(req.body);
     const version = Number((req.body as { version?: number }).version);
     if (!Number.isInteger(version) || version < 1) throw Errors.shape('version');
+    // 投入先（L-12）。本文に無ければ現状維持（既存のクライアントの後方互換）
+    const target = readTargetRepoInput(req.body, opts.devlineDeps);
+    if (target.provided) body.targetRepoId = target.value;
     return updateRequest(id, body, actorOf(ctx.user), version, correlationId(req), approverUserIdOf(req));
+  });
+
+  /* 依頼の投入先の変更（L-12）。内容の編集ではないので版と承認を動かさない（監査には残す） */
+  app.patch('/api/requests/:id/devline-target', async (req) => {
+    const ctx = mutate(req);
+    const { id } = req.params as { id: string };
+    const body = targetRepoSchema.parse(req.body ?? {});
+    const targetRepo = await setRequestTargetRepo(
+      { requestId: id, targetRepoId: body.targetRepoId },
+      actorOf(ctx.user),
+      correlationId(req),
+      opts.devlineDeps,
+    );
+    return { targetRepo };
   });
 
   app.post('/api/requests/:id/transitions', async (req) => {
@@ -448,7 +470,7 @@ export async function buildApp(
     const ctx = auth(req);
     const { id } = req.params as { id: string };
     const items = await listJobsForRequest(id, actorOf(ctx.user));
-    return { items, ...(await listDevlineTrace(id)), release: await listReleaseEvidence(id) };
+    return { items, ...(await listDevlineTrace(id, opts.devlineDeps)), release: await listReleaseEvidence(id) };
   });
 
   /* ───────── 人の承認 → merge → 検証環境への配備 → 戻し（仕様 4-9）。repo・イメージ・ポートはブラウザから受けない ───────── */
@@ -488,6 +510,12 @@ export async function buildApp(
   app.get('/api/devline/summary', async (req) => {
     auth(req);
     return devlineSummary();
+  });
+
+  /* 依頼ごとの投入先の候補（L-12）。設定と許可台帳の積集合だけで、値はサーバが決める */
+  app.get('/api/devline/target-repos', async (req) => {
+    auth(req);
+    return listTargetRepos(opts.devlineDeps);
   });
 
   app.post('/api/jobs/:id/cancel', async (req) => {

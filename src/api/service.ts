@@ -427,12 +427,12 @@ export async function createRequest(
         id, seq, year, applicant, applicant_user_id, dept_code, contact, title, kind, tool_id,
         problem, purpose, users, people, places, scope, out_of_scope, criteria, decides, data_handling,
         parties, constraints, constraints_other, requires_human_approval, frequency, minutes_per_time,
-        data_ready, spread, wish_date, approver, approver_user_id, status, created_by, updated_by
+        data_ready, spread, wish_date, approver, approver_user_id, status, created_by, updated_by, target_repo_id
       ) values (
         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
         $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
         $21,$22,$23,$24,$25,$26,
-        $27,$28,$29,$30,$31,'received',$32,$32
+        $27,$28,$29,$30,$31,'received',$32,$32,$33
       )`,
       [
         id,
@@ -467,6 +467,8 @@ export async function createRequest(
         input.approver,
         approverUserIdResolved,
         actor.userId,
+        // 投入先（L-12）。未指定は NULL（投入のときに既定を使う）。値は route が積集合で検証済み
+        input.targetRepoId ?? null,
       ],
     );
     await client.query(
@@ -488,7 +490,7 @@ export async function createRequest(
       targetId: id,
       result: 'success',
       correlationId,
-      diff: { title: input.title, dept: input.deptCode },
+      diff: { title: input.title, dept: input.deptCode, targetRepoId: input.targetRepoId ?? null },
     });
     return { id, created: true };
   });
@@ -563,6 +565,10 @@ export async function updateRequest(
     const nextStatus = afterApproval ? 'wait' : row.status;
     const signal = afterApproval ? null : row.signal_decided;
     if (afterApproval) warnings.push({ code: 'ERR-202', message: '承認後に内容を変えたため、承認をやり直す必要があります' });
+    // 投入先（L-12）。本文に targetRepoId が無ければ現状維持（既存のクライアントは触らない）。
+    // 値は route が台帳と設定の積集合で検証済み。ここでは「指定があったか」だけを見る（後方互換）。
+    const targetProvided = Object.hasOwn(input, 'targetRepoId');
+    const targetValue = targetProvided ? (input.targetRepoId ?? null) : null;
 
     await client.query(
       `update request set
@@ -571,7 +577,8 @@ export async function updateRequest(
         criteria=$15, decides=$16, data_handling=$17, parties=$18, constraints=$19, constraints_other=$20,
         requires_human_approval=$21, frequency=$22, minutes_per_time=$23, data_ready=$24, spread=$25,
         wish_date=$26, approver=$27, approver_user_id=$32, status=$28, signal_decided=$29, order_version=order_version + $30,
-        version=version+1, updated_at=now(), updated_by=$31
+        version=version+1, updated_at=now(), updated_by=$31,
+        target_repo_id = case when $33::boolean then $34::text else target_repo_id end
       where id=$1`,
       [
         id,
@@ -606,6 +613,8 @@ export async function updateRequest(
         afterApproval ? 1 : 0,
         actor.userId,
         resolvedApproverUserId,
+        targetProvided,
+        targetValue,
       ],
     );
     await client.query(
@@ -658,7 +667,7 @@ export async function updateRequest(
       targetId: id,
       result: 'success',
       correlationId,
-      diff: { version, afterApproval },
+      diff: { version, afterApproval, ...(targetProvided ? { targetRepoId: targetValue } : {}) },
     });
   });
   if (queuedMailId) await deliverQueuedMail(queuedMailId, warnings);
