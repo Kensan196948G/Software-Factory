@@ -7,23 +7,24 @@
 #   1. 多重実行防止（flock）
 #   2. git fetch → origin/main の commit を固定
 #   3. current と同一なら no-op（/healthz の commit・db.ok・environment のずれは異常として失敗）
-#   4. main・clean かつ HEAD==origin/main のチェックアウトからの実行を確認
-#      （ブランチ切替中・古い deploy logic を使わない）
-#   5. exact-main CI ゲート（check-release-ci.mjs）: 対象 SHA の push/main ci.yml の
+#   4. main・clean のチェックアウトを確認し、HEAD が対象の祖先なら fast-forward する
+#      （timer では常設チェックアウトが進まないため。diverged・dirty は配備しない）
+#   5. .ops.lock を取り、current を読み直す（CI ゲート中も保持する）
+#   6. exact-main CI ゲート（check-release-ci.mjs）: 対象 SHA の push/main ci.yml の
 #      最新 attempt で quality/e2e/docker と run が成功していることを必須にする。
-#      未完了・失敗・不明は 75、照会エラーは 1 で配備しない（bypass なし）
-#   6. .ops.lock を取る（手動の release/rollback 中は触らず exit 75）
+#      一時的な未確認（run なし・実行中）は 75、失敗・job 欠落・API 情報不足・照会エラーは 1 で配備しない
 #   7. 既存の release.sh で配備（切替・再起動・/healthz 確認・失敗時の戻しは release.sh に任せる）
 #   8. 配備後に /healthz を独立に確認し、だめなら直前のリリースへ戻す
 #   9. 成功後に古い releases を整理する（current/previous と直近 N 世代を保持）
 #
 # 終了コード:
 #   0  追従済み（no-op）または配備成功
-#   1  失敗（health 不一致、CI ゲートの gh/API エラー・不正応答など。直前のリリースへ戻した場合を含む）
+#   1  失敗（health 不一致、CI の恒久的な失敗・必須 job 欠落・API 情報不足・照会エラーなど。
+#      直前のリリースへ戻した場合を含む）
 #   2  失敗して直前のリリースへ戻せなかった（手動で復旧する）
 #   3  破壊的な可能性がある migration のため中止（release.sh の判定）
-#   75 配備しない: 別の実行（autofollow／手動 release/rollback）が進行中、実行元が
-#      main・clean でない／HEAD が対象 SHA でない、または exact-main CI が未確認・未完了・失敗
+#   75 配備しない（一時的）: 別の実行（autofollow／手動 release/rollback）が進行中、
+#      実行元が main・clean でない、diverged、または exact-main CI がまだ実行中・run 未作成
 #      （skip。timer は SuccessExitStatus=75 で成功扱い）
 #
 # 環境変数（release.sh と共通のものは lib.sh を参照）:
@@ -294,14 +295,40 @@ if [[ "$head" != main ]] || ! checkout_is_clean; then
   finish "skipped" 75
 fi
 
-# 古い deploy logic を使わない: checkout の HEAD が対象 SHA と一致することを要求する
+# 実行元を対象 SHA まで fast-forward する（main・clean で、HEAD が対象の祖先のときだけ）。
+# 常設チェックアウトは timer では進まないため、ここで進めないと自動追従が止まる。
+# 未追跡ファイル等で fast-forward できないときは、触らずに skip する（exit 75）。
 head_sha="$(git -C "$repo" rev-parse HEAD)"
 if [[ "$head_sha" != "$target" ]]; then
-  log "実行元の HEAD が対象 SHA と一致しません（HEAD=${head_sha:-不明} target=$target）。古い deploy logic を使わないため中止（exit 75）"
+  if ! git -C "$repo" merge-base --is-ancestor "$head_sha" "$target"; then
+    log "実行元の HEAD が対象 SHA の祖先ではありません（local commits/diverged。HEAD=$head_sha target=$target）。配備しません（exit 75）"
+    finish "skipped" 75
+  fi
+  log "実行元を fast-forward: $head_sha -> $target"
+  if ! git -C "$repo" merge --ff-only --quiet "$target"; then
+    log "実行元を fast-forward できません（未追跡ファイル等）。配備しません（exit 75）"
+    finish "skipped" 75
+  fi
+  head_sha="$(git -C "$repo" rev-parse HEAD)"
+  if [[ "$head_sha" != "$target" ]]; then
+    log "fast-forward 後も HEAD が対象 SHA と一致しません（HEAD=$head_sha target=$target）。配備しません（exit 75）"
+    finish "skipped" 75
+  fi
+fi
+
+# 手動の release/rollback と同じ .ops.lock を取る（競合したら触らず skip）。
+# CI ゲートの間も保持し、ゲート中に手動配備が進んで current が変わるのを防ぐ。
+exec 9>"$OPS_HOME/.ops.lock"
+if ! flock -n 9; then
+  log "手動の release/rollback が実行中です（触らない。終了コード 75）"
   finish "skipped" 75
 fi
 
-# exact-main CI ゲート。0=確認済み、75=未確認（deployしない）、1=照会エラー
+# ロック取得後に current を読み直す（ゲート中に current が変わった場合の取り違えを防ぐ）。
+previous="$(ops_current_sha)"
+log "current=${previous:-（なし）} origin/main=$target"
+
+# exact-main CI ゲート。0=確認済み、75=一時的な未確認（配備しない）、1=失敗/照会不能
 log "exact-main CI ゲート: $target"
 gate=0
 node "$ci_gate_script" "$target" || gate=$?
@@ -310,15 +337,8 @@ if [[ "$gate" == 75 ]]; then
   finish "skipped" 75
 fi
 if [[ "$gate" != 0 ]]; then
-  log "exact-main CI ゲートの照会に失敗しました（exit $gate）"
+  log "exact-main CI が失敗または照会不能のため配備しません（exit 1）"
   finish "failed" 1
-fi
-
-# 手動の release/rollback と同じ .ops.lock を取る（競合したら触らず skip）
-exec 9>"$OPS_HOME/.ops.lock"
-if ! flock -n 9; then
-  log "手動の release/rollback が実行中です（触らない。終了コード 75）"
-  finish "skipped" 75
 fi
 
 log "配備を開始: ${previous:-（なし）} → $target（release.sh）"

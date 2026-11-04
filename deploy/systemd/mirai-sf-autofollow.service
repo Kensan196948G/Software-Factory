@@ -3,9 +3,11 @@
 # Staging を origin/main に追従させる。main が進んだときだけ配備し、失敗時は直前の
 # リリースへ戻す（切替・再起動・healthz 確認は scripts/ops/release.sh に任せる）。
 # 実行元は current ではなく常設のチェックアウト（リリースのデプロイに依存しないため）。
-# ただしスクリプトは配備前に実行元が main・clean であることを確認し、違えば skip（exit 75）する。
+# ただしスクリプトは配備前に実行元が main・clean であることを確認し、遅れていれば fast-forward する。
+# diverged・dirty・feature ブランチは skip（exit 75）する。
 # dev ツリーを main に保つか、専用チェックアウトを作って WorkingDirectory を差し替えること。
-# 75 = 別の autofollow が実行中（多重実行防止）。failed にせず成功扱いにする。
+# 75 = 一時的な skip（別実行中、CI 待ち、作業ツリー不一致等）。failed にせず成功扱いにする。
+# CI の恒久的な失敗は 1 で failed になる（気づけるようにする）。
 [Unit]
 Description=Mirai SF staging auto-follow to origin/main
 After=network-online.target
@@ -20,7 +22,7 @@ ExecStart=/usr/bin/env bash scripts/ops/staging-autofollow.sh
 # 優先され、fetch が「Invalid username or token」で失敗するのを防ぐ。
 # 認証は gh auth git-credential（~/.config/gh/hosts.yml）に一本化する。
 UnsetEnvironment=GH_TOKEN GITHUB_TOKEN GITHUB_PAT_TOKEN GITHUB_PERSONAL_ACCESS_TOKEN
-# 75 は「別の実行が進行中」。timer の failed を増やさない
+# 75 は「一時的な skip」。timer の failed を増やさない
 SuccessExitStatus=75
 # pnpm install / build を含むため長めに取る（多重実行は flock で防ぐ）
 TimeoutStartSec=1800

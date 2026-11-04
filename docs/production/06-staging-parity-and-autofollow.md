@@ -80,21 +80,25 @@
 3. `current`（Staging の現行リリース）と比較し、同一なら **no-op**。ただし `/healthz` の `commit`・
    `environment`（既定 `staging`）・`db.ok` が一致しない場合は「追従済みなのに異常」として **exit 1**
    （黙って no-op にしない。別アプリ・誤 URL を成功と誤判定しないため environment も必須）。
-4. 配備前に、実行元のチェックアウトが **main・clean** であり、**HEAD が対象 SHA と一致**することを確認する
-   （ブランチ切替中のコードや古い deploy logic を使わない。違えば配備せず exit 75）。
-5. **exact-main CI ゲート**（`scripts/ops/check-release-ci.mjs`）を通す。固定の
+4. 配備前に、実行元のチェックアウトが **main・clean** であることを確認する。HEAD が対象 SHA より遅れている場合は
+   `git merge --ff-only <target>` で **fast-forward** する（timer は常設チェックアウトを進めないため、ここで進めないと
+   自動追従が止まる）。local commits で diverged、未追跡ファイル等で fast-forward できない、feature ブランチの間は
+   配備せず **exit 75**。
+5. 手動の `release.sh` / `rollback.sh` と同じ **`.ops.lock`** を取る。取れない（手動運用中）なら触らず exit 75。
+   ロックは CI ゲートの間も保持し、ゲート中に手動配備が進まないようにする。取った後に `current` を読み直す
+   （ゲート前の値を `previous` として使わない）。取れた場合は `OPS_LOCK_HELD=1` を子へ渡し、
+   `release.sh` 側でロックを取り直さない（親子で同じロックを二重に取ると自分自身と衝突するため）。
+6. **exact-main CI ゲート**（`scripts/ops/check-release-ci.mjs`）を通す。固定の
    `Kensan196948G/Software-Factory` / `ci.yml` / `event=push` / `branch=main` について、対象 SHA の
    最新 run の最新 attempt を `gh api --method GET` だけで取得し、次を必須にする:
-   run の SHA/event/branch/path（`.github/workflows/ci.yml` 必須、欠落不可）、attempt の
-   id/run_attempt/event/path/head_sha/head_branch が一覧と一致、attempt が `completed`/`success`、
+   run の SHA/event/branch/path（`.github/workflows/ci.yml` 必須、欠落不可）と `created_at`、
+   attempt の id/run_attempt/event/path/head_sha/head_branch が一覧と一致、attempt が `completed`/`success`、
    `quality` / `e2e` / `docker` の全 job が存在し `completed`/`success`、job 確認後の再取得でも
-   同じ run/attempt のまま成功（再 run race 検出）。未完了・失敗・job 欠落/未完了/skipped・API 情報不足は
-   **exit 75（配備しない）**、gh/API の照会エラー（JSON 不正を含む）は **exit 1**。
+   同じ run/attempt のまま成功（再 run race 検出）。
+   **まだ run が無い・実行中は exit 75（次の timer で再確認）**、run/attempt/job の失敗、必須 job の欠落/skipped、
+   `created_at` 欠落、API 情報不足、gh/API の照会エラー（JSON 不正を含む）は **exit 1（timer を failed にして気づける）**。
    gh の stderr 本文はログへ出さず、終了コード・シグナル・errno の固定分類だけを出す。
    手動 override / bypass は無い。
-6. 手動の `release.sh` / `rollback.sh` と同じ **`.ops.lock`** を取る。取れない（手動運用中）なら触らず exit 75。
-   取れた場合は `OPS_LOCK_HELD=1` を子へ渡し、`release.sh` 側でロックを取り直さない（親子で同じロックを
-   二重に取ると自分自身と衝突するため）。
 7. 更新があれば `release.sh <40桁SHA>` を実行（main に含まれることの確認、`git archive`、`pnpm install/build`、
    事前バックアップ、migration、`current` 切替、再起動、`/healthz` の commit 確認、失敗時の旧版への自動復帰）。
 8. 配備後に `/healthz` を**独立に**再確認し（最大 5 回・1 秒間隔、`commit`・`environment`・`db.ok`）、`current` も
@@ -107,13 +111,13 @@
 
 ### 3-2. 終了コード
 
-| コード | 意味                                                                                                                                   |
-| ------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| 0      | 追従済み（no-op）または配備成功                                                                                                        |
-| 1      | 失敗（health 不一致、CI ゲートの照会エラー/JSON 不正など。直前のリリースへ戻した場合を含む）                                           |
-| 2      | 失敗して直前のリリースへ戻せなかった（手動で復旧する）                                                                                 |
-| 3      | 破壊的な可能性がある migration のため中止（`release.sh` の判定）                                                                       |
-| 75     | 配備しない（実行中、main・clean でない／HEAD が対象 SHA でない、exact-main CI が未確認・未完了・失敗・API 情報不足。timer は成功扱い） |
+| コード | 意味                                                                                                                                                       |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0      | 追従済み（no-op）または配備成功                                                                                                                            |
+| 1      | 失敗（health 不一致、CI の恒久的な失敗・必須 job 欠落/skipped・created_at 欠落・API 情報不足・照会エラーなど。直前のリリースへ戻した場合を含む）             |
+| 2      | 失敗して直前のリリースへ戻せなかった（手動で復旧する）                                                                                                     |
+| 3      | 破壊的な可能性がある migration のため中止（`release.sh` の判定）                                                                                           |
+| 75     | 配備しない（一時的）: 実行中、main・clean でない／diverged、fast-forward 不能、exact-main CI の run がまだ無い・実行中（timer は成功扱い。次の回で再確認） |
 
 ### 3-3. 環境変数（検証用の差し替えを含む）
 
@@ -135,9 +139,12 @@
 
 `deploy/systemd/mirai-sf-autofollow.service` / `.timer`（10 分ごと、`Persistent=true`、`SuccessExitStatus=75`、
 `TimeoutStartSec=1800`）。実行元は `current` ではなく常設のチェックアウト（healthcheck と同じ理由）。
-ただし配備モードでは実行元が **main・clean** であることを確認する（dev ツリーが feature ブランチの間は skip=exit 75）。
+ただし配備モードでは実行元が **main・clean** であることを確認し、遅れていれば **fast-forward** する
+（feature ブランチ・dirty・diverged は skip=exit 75）。
 exact-main CI ゲートを通すため、配備は対象 SHA の push/main CI（quality / e2e / docker）が
 成功してからになる。CI が timer 間隔（10 分）より長い場合は次の回で再確認する（exit 75）。
+CI が失敗した場合・必須 job が欠落/skipped の場合は exit 1 になり、timer が failed になる
+（成功扱いの 75 と区別し、`systemctl --user --failed` で気づける）。
 push フックではなく定期確認なので、main の反映は CI 完了後に最大約 10 分遅れる。
 
 ## 4. 導入手順（2026-11-04 に実施済み。下記 4-1 に実測を記録）
@@ -189,7 +196,7 @@ autofollow は「origin/main への追従」を見る。役割が違うため両
 | `shellcheck -x scripts/ops/tests/staging-autofollow.test.sh`           | 指摘なし（exit 0）                                |
 | `node --check scripts/ops/check-release-ci.mjs`                        | 成功                                              |
 | `node scripts/ops/check-release-ci.mjs`（引数なし）                    | 終了コード 1（照会エラー）                        |
-| `bash scripts/ops/tests/staging-autofollow.test.sh`                    | **PASS 99 / FAIL 0**（28 シナリオ）               |
+| `bash scripts/ops/tests/staging-autofollow.test.sh`                    | **PASS 112 / FAIL 0**（31 シナリオ）              |
 | `pnpm test:ops`                                                        | 同上（単体テストを1コマンドで実行）               |
 | GitHub REST API 仕様                                                   | Context7（workflow runs / attempts / jobs）で確認 |
 | `node scripts/ops/check-release-ci.mjs 8a1ee99…`（read-only 実ゲート） | OK（run=41801003971 attempt=1、exit 0）           |
@@ -203,6 +210,7 @@ autofollow は「origin/main への追従」を見る。役割が違うため両
 
 1. 同一 commit は no-op（release.sh を呼ばない）
 2. 更新があれば `origin/main` の 40 桁 SHA で配備し、`current` と `/healthz` が一致する
+2b. 実行元が origin/main より遅れていれば fast-forward して配備する（常設チェックアウトが自動で進む）
 3. 配備後の `/healthz` 不一致は exit 1 で、`rollback.sh` により直前のリリースへ戻る
 4. 追従済みでも `db.ok=false` は異常（exit 1）
 5. ロック中の実行は exit 75 で、release.sh を呼ばない（多重実行防止）
@@ -215,21 +223,23 @@ autofollow は「origin/main への追従」を見る。役割が違うため両
 12. `/healthz` の `environment` が `production`（別アプリを想定）なら exit 1・直前へ戻す
 13. 成功後に古い releases を整理し、current/previous と直近5世代だけ残す
 14. exact-main CI: 別 SHA の run は exit 75・release.sh を呼ばない
-15. exact-main CI: event が push でない run は exit 75
-16. exact-main CI: branch が main でない run は exit 75
+15. exact-main CI: event が push でない run は exit 1（workflow 設定の異常として気づく）
+16. exact-main CI: branch が main でない run は exit 1
 17. exact-main CI: 過去 attempt が success でも最新 attempt が未完了なら exit 75
-18. exact-main CI: 必須 job が skipped なら exit 75
-19. exact-main CI: 必須 job が欠けていれば exit 75
+18. exact-main CI: 必須 job が skipped なら exit 1
+19. exact-main CI: 必須 job が欠けていれば exit 1
 20. exact-main CI: gh/API エラーは exit 1（75 ではない）・release.sh を呼ばない
-21. exact-main CI: run が failure なら exit 75
+21. exact-main CI: run が failure なら exit 1（timer が failed になり気づける）
 22. exact-main CI: 必須 job が未完了なら exit 75
-23. checkout の HEAD が対象 SHA でなければ exit 75
+23. 実行元が diverged（local commits）なら exit 75（fast-forward しない）
 24. exact SHA の run が無ければ exit 75
-25. run.path が欠落した応答は exit 75（fail-closed）
-26. attempt のメタデータ（id/run_attempt/event/path 等）が一覧と不一致なら exit 75
+25. run.path が欠落した応答は exit 1（fail-closed）
+26. attempt のメタデータ（id/run_attempt/event/path 等）が一覧と不一致なら exit 1
 27. job 確認後に新しい attempt が現れたら exit 75（再 run race）
-28. API 情報不足（attempt の必須項目欠落）は exit 75
-29. gh の stderr 本文（合成マーカー）が stdout/stderr に出ない（API エラー時）
+28. API 情報不足（attempt の必須項目欠落）は exit 1
+29. created_at が欠落した run は最新を決められないので exit 1
+30. job の head_sha が欠落したら exit 1
+31. gh の stderr 本文（合成マーカー）が stdout/stderr に出ない（API エラー時）
 
 ## 6. 運用
 
@@ -238,7 +248,7 @@ autofollow は「origin/main への追従」を見る。役割が違うため両
 | 状態を見る    | `cat ~/.local/state/mirai-sf/autofollow.json` / `journalctl --user -u mirai-sf-autofollow`                    |
 | 手動で追従    | `bash scripts/ops/staging-autofollow.sh`                                                                      |
 | 計画だけ確認  | `bash scripts/ops/staging-autofollow.sh --dry-run`（fetch と状態ファイルのみ更新。CI ゲートは照会しない）     |
-| CI ゲート確認 | `node scripts/ops/check-release-ci.mjs <SHA>`（0=可 / 75=未確認 / 1=照会エラー）                              |
+| CI ゲート確認 | `node scripts/ops/check-release-ci.mjs <SHA>`（0=可 / 75=一時的な未確認 / 1=失敗・照会不能） |
 | テスト        | `pnpm test:ops`                                                                                               |
 | 止める        | `systemctl --user disable --now mirai-sf-autofollow.timer`（unit は消さない）                                 |
 | 手動で戻す    | `pnpm ops:rollback --dry-run <SHA>` → `pnpm ops:rollback <SHA>`（DB は戻さない）                              |
@@ -246,21 +256,26 @@ autofollow は「origin/main への追従」を見る。役割が違うため両
 
 失敗時（exit 1/2）は autofollow が旧版を維持しようとするが、**exit 2 は戻せなかった**という意味なので、
 `/healthz` と `current` を確認し、runbook の一次対応に沿って手動で復旧する。
-exit 75 は「配備しない」で、CI 待ち・未完了・失敗・job 欠落、または実行中/作業ツリー不一致を含む。
+exit 1 は「CI の恒久的な失敗・必須 job 欠落/skipped・created_at 欠落・API 情報不足・照会エラー」で、
+timer が failed になる（確認できるまで配備しない）。
+exit 75 は「一時的に配備しない」で、CI の run 未作成・実行中、または実行中/作業ツリー不一致/diverged を含む
+（timer は成功扱い。次の回で再確認する）。
 CI の状態は `gh run list --workflow ci.yml --commit <SHA>` 等で確認できる。**CI 待ちを飛ばす bypass は無い。**
-exit 1 は gh 認証/API の照会エラーで、確認できるまで配備しない。
 
 ## 7. 既知の制約
 
 - push フックではないため、main の反映は最大約 10 分遅れる（timer の間隔）。
-- **exact-main CI が未完了・失敗・job 欠落/未完了/skipped の間は配備しない（exit 75）。** CI 完了まで
+- **exact-main CI の run がまだ無い・実行中の間は配備しない（exit 75）。** CI 完了まで
   最大で CI 所要時間（quality / e2e / docker）＋10 分待つ。CI 待ちを飛ばす override / bypass は無い。
+  **CI の失敗・必須 job の欠落/skipped は exit 1** で timer が failed になる（成功扱いの 75 と区別する）。
 - CI ゲートは `gh` の認証（gh auth / hosts.yml）に依存する。gh/API エラーは exit 1（failed）で、
   古い情報のまま配備しない。gh の stderr 本文（URL・トークン等を含み得る）はログへ出さず、
   終了コード・シグナル・errno の固定分類だけを出す。ゲートは repo / workflow（ci.yml）/
   event（push）/ branch（main）/ 必須 job（quality・e2e・docker）を固定しており、変更時は
   ゲートも更新する。
-- checkout の HEAD が対象 SHA でない間は配備しない（古い deploy logic を使わない）。
+- 実行元のチェックアウトが main・clean で、HEAD が対象 SHA の祖先なら **fast-forward** する。
+  local commits で diverged、dirty、feature ブランチの間は配備しない（exit 75）。fast-forward できない
+  （未追跡ファイル等）場合も触らずに skip する。
 - `release.sh` は main に含まれる commit だけを配備する。force push・履歴改変後の old commit には追従しない。
 - migration は additive 前提。破壊的候補があれば exit 3 で停止し、DB も `current` も変えない（`release.sh` の既存判定）。
 - 配備は `pnpm install` / `pnpm build` を含むため数分かかる。`TimeoutStartSec=1800` を超えると unit は失敗する。
@@ -284,7 +299,12 @@ exit 1 は gh 認証/API の照会エラーで、確認できるまで配備し�
 
 - **`.ops.lock` の信頼境界**: `scripts/ops/lib.sh` の `ops_lock_ops` は `OPS_LOCK_HELD=1` を信頼する
   助言的排他で、fd の実保持を検証しない。release.sh の子（pnpm install/build・backup・migration）へ
-  env と fd が継承される。CI ゲートはこの境界を変えない。
+  env と fd が継承される。autofollow は CI ゲートの間もロックを保持し、ゲート中の手動配備を防ぐが、
+  同一ユーザーの任意プロセスに対するセキュリティ境界ではない。
+- **CI 確認から配備開始までの TOCTOU**: 最後の run 一覧取得と `release.sh` 開始の間に re-run が
+  始まる可能性は残る（原子的ではない）。ゲートは「確認した時点で最新 attempt が success」を保証する。
+- **run/job 一覧のページング**: `per_page=100` の 1 ページだけを見る。現在の workflow は 3 job・
+  SHA あたり 1 run なので足りているが、job 数が 100 を超える workflow へ変える場合はページングが要る。
 - **RPO 1h の保証**: 55 分の開始間隔だけでは保証できない。`docs/production/07-slo-and-measurement.md`
   §3-4 は是正前の最大間隔 60.2 分・60 分超 4 回を記録し、是正後は未計測。`measure-slo.mjs` は最新 dump の
   鮮度のみで判定し、healthcheck の鮮度閾値は 90 分、外部通知は未実装。

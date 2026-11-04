@@ -100,6 +100,13 @@ assert_health_commit() {
   printf '  healthz の commit: 期待 %s / 実際 %s\n' "$1" "$actual" >&2
   return 1
 }
+assert_repo_head() {
+  local actual
+  actual="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || true)"
+  if [[ "$actual" == "$1" ]]; then return 0; fi
+  printf '  実行元の HEAD: 期待 %s / 実際 %s\n' "$1" "$actual" >&2
+  return 1
+}
 
 write_health() { # <sha> <db.ok: true|false>
   printf '{"status":"ok","environment":"staging","commit":"%s","db":{"ok":%s}}' "$1" "$2" >"$HEALTH_FILE"
@@ -329,6 +336,16 @@ check "current が新しい commit になる" assert_current "$NEW"
 check "healthz が新しい commit になる" assert_health_commit "$NEW"
 check "exact-main CI ゲートを通過する" assert_out_contains "[ci-gate] OK"
 
+printf '\n== 2b. 実行元が origin/main より遅れていれば fast-forward して配備する ==\n'
+setup_case behind
+git -C "$REPO" reset -q --hard "$OLD"
+run_case ok
+check "遅れていても配備成功で終了コード 0" assert_code 0
+check "fast-forward をログに出す" assert_out_contains "実行元を fast-forward"
+check "origin/main の commit で release.sh を呼ぶ" assert_release_called_with "$NEW"
+check "実行元の HEAD が対象 SHA になる" assert_repo_head "$NEW"
+check "current が新しい commit になる" assert_current "$NEW"
+
 printf '\n== 3. 配備後の health 不一致は失敗し、直前へ戻す ==\n'
 setup_case badhealth
 run_case bad-health
@@ -462,15 +479,17 @@ printf '\n== 15. event が push でない CI は通さない ==\n'
 setup_case gate_event
 write_gh_run "$NEW" pull_request main
 run_case ok
-check "event 不一致は終了コード 75" assert_code 75
+check "event 不一致は終了コード 1" assert_code 1
 check "event 不一致は release.sh を呼ばない" assert_no_release
+check "event 不一致をログに出す" assert_out_contains "event/branch/path が一致しません"
 
 printf '\n== 16. branch が main でない CI は通さない ==\n'
 setup_case gate_branch
 write_gh_run "$NEW" push feature
 run_case ok
-check "branch 不一致は終了コード 75" assert_code 75
+check "branch 不一致は終了コード 1" assert_code 1
 check "branch 不一致は release.sh を呼ばない" assert_no_release
+check "branch 不一致をログに出す" assert_out_contains "event/branch/path が一致しません"
 
 printf '\n== 17. 過去 attempt が success でも最新 attempt が未完了なら通さない ==\n'
 setup_case gate_attempt
@@ -491,7 +510,7 @@ printf '\n== 18. 必須 job が skipped なら通さない ==\n'
 setup_case gate_skip
 write_gh_jobs 1001 1 success skipped success
 run_case ok
-check "job skipped は終了コード 75" assert_code 75
+check "job skipped は終了コード 1" assert_code 1
 check "job skipped は release.sh を呼ばない" assert_no_release
 check "skipped をログに出す" assert_out_contains "e2e"
 
@@ -499,7 +518,7 @@ printf '\n== 19. 必須 job が欠けていれば通さない ==\n'
 setup_case gate_missing
 write_gh_jobs 1001 1 success success omit
 run_case ok
-check "job 欠落は終了コード 75" assert_code 75
+check "job 欠落は終了コード 1" assert_code 1
 check "job 欠落は release.sh を呼ばない" assert_no_release
 check "欠落 job をログに出す" assert_out_contains "必須 job がありません: docker"
 
@@ -518,7 +537,7 @@ cat >"$CASE/gh/attempt-1001-1.json" <<EOF
 {"id":1001,"head_sha":"$NEW","head_branch":"main","event":"push","path":".github/workflows/ci.yml","status":"completed","conclusion":"failure","run_attempt":1}
 EOF
 run_case ok
-check "run failure は終了コード 75" assert_code 75
+check "run failure は終了コード 1" assert_code 1
 check "run failure は release.sh を呼ばない" assert_no_release
 check "failure をログに出す" assert_out_contains "成功していません"
 
@@ -532,13 +551,16 @@ check "job 未完了は終了コード 75" assert_code 75
 check "job 未完了は release.sh を呼ばない" assert_no_release
 check "job 未完了をログに出す" assert_out_contains "quality"
 
-printf '\n== 23. checkout の HEAD が対象 SHA でなければ通さない ==\n'
+printf '\n== 23. 実行元が diverged（local commits）なら通さない ==\n'
 setup_case gate_head
-git -C "$REPO" reset --hard "$OLD" >/dev/null
+git -C "$REPO" reset -q --hard "$OLD"
+printf 'local\n' >"$REPO/local.txt"
+git -C "$REPO" add local.txt
+git -C "$REPO" commit -q -m "local only"
 run_case ok
-check "HEAD 不一致は終了コード 75" assert_code 75
-check "HEAD 不一致は release.sh を呼ばない" assert_no_release
-check "HEAD 不一致をログに出す" assert_out_contains "HEAD が対象 SHA"
+check "diverged は終了コード 75" assert_code 75
+check "diverged は release.sh を呼ばない" assert_no_release
+check "diverged をログに出す" assert_out_contains "祖先ではありません"
 
 printf '\n== 24. exact SHA の run が無ければ通さない ==\n'
 setup_case gate_norun
@@ -554,9 +576,9 @@ cat >"$CASE/gh/runs.json" <<EOF
 {"total_count":1,"workflow_runs":[{"id":1001,"run_attempt":1,"head_sha":"$NEW","event":"push","head_branch":"main","created_at":"2026-11-04T00:00:00Z","status":"completed","conclusion":"success"}]}
 EOF
 run_case ok
-check "path 欠落は終了コード 75" assert_code 75
+check "path 欠落は終了コード 1" assert_code 1
 check "path 欠落は release.sh を呼ばない" assert_no_release
-check "path 欠落をログに出す" assert_out_contains "run がありません"
+check "path 欠落をログに出す" assert_out_contains "event/branch/path が一致しません"
 
 printf '\n== 26. attempt のメタデータが一覧と一致しなければ通さない ==\n'
 setup_case gate_attempt_meta
@@ -564,7 +586,7 @@ cat >"$CASE/gh/attempt-1001-1.json" <<EOF
 {"id":1001,"head_sha":"$NEW","head_branch":"main","event":"push","path":".github/workflows/ci.yml","status":"completed","conclusion":"success","run_attempt":2}
 EOF
 run_case ok
-check "attempt メタデータ不一致は終了コード 75" assert_code 75
+check "attempt メタデータ不一致は終了コード 1" assert_code 1
 check "attempt メタデータ不一致は release.sh を呼ばない" assert_no_release
 check "メタデータ不一致をログに出す" assert_out_contains "一致しません"
 
@@ -578,15 +600,38 @@ check "再 run race は終了コード 75" assert_code 75
 check "再 run race は release.sh を呼ばない" assert_no_release
 check "再 run race をログに出す" assert_out_contains "再確認で不一致"
 
-printf '\n== 28. API 情報不足（attempt に必要な項目が無い）は 75 ==\n'
+printf '\n== 28. API 情報不足（attempt に必要な項目が無い）は 1 ==\n'
 setup_case gate_info
 cat >"$CASE/gh/attempt-1001-1.json" <<EOF
 {"id":1001,"head_sha":"$NEW","head_branch":"main","status":"completed","conclusion":"success","run_attempt":1}
 EOF
 run_case ok
-check "API 情報不足は終了コード 75" assert_code 75
+check "API 情報不足は終了コード 1" assert_code 1
 check "API 情報不足は release.sh を呼ばない" assert_no_release
 check "API 情報不足をログに出す" assert_out_contains "一致しません"
+
+printf '\n== 29. created_at が欠落した run は最新を決められないので通さない ==\n'
+setup_case gate_no_created
+cat >"$CASE/gh/runs.json" <<EOF
+{"total_count":2,"workflow_runs":[
+  {"id":1002,"run_attempt":1,"head_sha":"$NEW","event":"push","head_branch":"main","path":".github/workflows/ci.yml","status":"in_progress","conclusion":null},
+  {"id":1001,"run_attempt":1,"head_sha":"$NEW","event":"push","head_branch":"main","path":".github/workflows/ci.yml","created_at":"2026-11-04T00:00:00Z","status":"completed","conclusion":"success"}
+]}
+EOF
+run_case ok
+check "created_at 欠落は終了コード 1" assert_code 1
+check "created_at 欠落は release.sh を呼ばない" assert_no_release
+check "created_at 欠落をログに出す" assert_out_contains "created_at が不正"
+
+printf '\n== 30. job の head_sha が欠落したら通さない ==\n'
+setup_case gate_job_nosha
+cat >"$CASE/gh/jobs-1001-1.json" <<EOF
+{"total_count":3,"jobs":[{"name":"quality","status":"completed","conclusion":"success"},{"name":"e2e","status":"completed","conclusion":"success","head_sha":"$NEW"},{"name":"docker","status":"completed","conclusion":"success","head_sha":"$NEW"}]}
+EOF
+run_case ok
+check "job head_sha 欠落は終了コード 1" assert_code 1
+check "job head_sha 欠落は release.sh を呼ばない" assert_no_release
+check "job head_sha 欠落をログに出す" assert_out_contains "head_sha が一致しません"
 
 printf '\n== 結果: PASS %d / FAIL %d ==\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]]

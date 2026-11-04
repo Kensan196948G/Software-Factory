@@ -18,12 +18,13 @@
  *
  * 終了コード:
  *   0   確認できた（配備してよい）
- *   75  未確認（run/job が無い・未完了・失敗・不明・API 情報不足。配備しない）
- *   1   照会エラー（引数不正・gh/API エラー・JSON 不正）
+ *   75  一時的な未確認（run がまだ無い・実行中。配備しない。次の timer で再確認）
+ *   1   恒久的な失敗または照会不能（run/job の失敗、必須 job の欠落/未完了/skipped、
+ *       API 情報不足、JSON 不正、gh/API エラー。配備しない。timer を failed にする）
  *
  * 秘密情報は出力しない（gh の認証は gh 自身に任せ、トークンを引数・ログに出さない）。
  * gh の stderr 本文はログへ出さない（終了コード・シグナル・errno 名だけの固定分類を出す）。
- * API の応答に必要な項目が無い場合は「情報不足」として 75（クエリ失敗の 1 とは区別する）。
+ * API の応答に必要な項目が無い場合は「情報不足」として 1（クエリ失敗と同じ扱い）。
  * 依存パッケージは無く、`gh api --method GET` だけを使う。
  * 手動 override / bypass 用のフラグや環境変数は無い（fail-closed）。
  * API 仕様は Context7（GitHub REST API）で確認した:
@@ -50,6 +51,14 @@ const notReady = (message) => {
 };
 const queryError = (message) => {
   console.error(`[ci-gate] 照会エラー: ${message}`);
+  process.exit(1);
+};
+/**
+ * 恒久的な失敗（run/job の失敗、必須 job の欠落、API 情報の欠落など）。
+ * 「まだ始まっていない・実行中」と区別し、timer を failed にして気づけるようにする。
+ */
+const terminalFailure = (message) => {
+  console.error(`[ci-gate] 失敗: ${message}`);
   process.exit(1);
 };
 
@@ -114,14 +123,26 @@ function matchingRunsFor(runs, sha) {
 function latestRunOf(runs) {
   return runs.reduce((best, run) => {
     if (!best) return run;
-    const runCreated = Date.parse(run.created_at ?? '') || 0;
-    const bestCreated = Date.parse(best.created_at ?? '') || 0;
+    const runCreated = Date.parse(run.created_at);
+    const bestCreated = Date.parse(best.created_at);
     if (runCreated !== bestCreated) return runCreated > bestCreated ? run : best;
     const runAttempt = Number(run.run_attempt ?? 0);
     const bestAttempt = Number(best.run_attempt ?? 0);
     if (runAttempt !== bestAttempt) return runAttempt > bestAttempt ? run : best;
     return Number(run.id ?? 0) > Number(best.id ?? 0) ? run : best;
   }, null);
+}
+
+/**
+ * created_at が欠落・不正な run は「新しい/古い」を判定できない。epoch として扱うと
+ * 古い success が新しい未完了 run に勝つため、fail-closed で恒久失敗にする。
+ */
+function assertRunTimestamps(runs) {
+  for (const run of runs) {
+    if (!Number.isFinite(Date.parse(run.created_at))) {
+      terminalFailure(`run.created_at が不正です（id=${safeValue(String(run.id))}）。最新 run を決められません`);
+    }
+  }
 }
 
 const args = process.argv.slice(2);
@@ -132,21 +153,28 @@ const targetSha = args[0];
 
 const runsPath = `repos/${REPO}/actions/workflows/${WORKFLOW}/runs?head_sha=${targetSha}&event=${EVENT}&branch=${BRANCH}&per_page=100`;
 const initialRuns = runsFrom(ghApi(runsPath));
-if (!initialRuns) notReady('workflow_runs が応答にありません（API 情報不足）');
+if (!initialRuns) terminalFailure('workflow_runs が応答にありません（API 情報不足）');
 
 const initialMatches = matchingRunsFor(initialRuns, targetSha);
 if (initialMatches.length === 0) {
+  const exactShaRuns = initialRuns.filter((run) => isObject(run) && run.head_sha === targetSha);
+  if (exactShaRuns.length > 0) {
+    terminalFailure(
+      `exact SHA の run はありますが event/branch/path が一致しません（event=${safeValue(exactShaRuns[0].event)}, branch=${safeValue(exactShaRuns[0].head_branch)}, path=${safeValue(exactShaRuns[0].path)}）`,
+    );
+  }
   notReady(`exact SHA の ${WORKFLOW} push/${BRANCH}（path=${WORKFLOW_PATH}）run がありません（sha=${targetSha}）`);
 }
+assertRunTimestamps(initialMatches);
 
 const latestRun = latestRunOf(initialMatches);
 const runId = Number(latestRun.id);
 const attemptNumber = Number(latestRun.run_attempt);
-if (!Number.isInteger(runId) || runId <= 0) notReady('run id が不正です（API 情報不足）');
-if (!Number.isInteger(attemptNumber) || attemptNumber <= 0) notReady('run_attempt が不正です（API 情報不足）');
+if (!Number.isInteger(runId) || runId <= 0) terminalFailure('run id が不正です（API 情報不足）');
+if (!Number.isInteger(attemptNumber) || attemptNumber <= 0) terminalFailure('run_attempt が不正です（API 情報不足）');
 
 const attempt = ghApi(`repos/${REPO}/actions/runs/${runId}/attempts/${attemptNumber}`);
-if (!isObject(attempt)) notReady('attempt の応答が不正です（API 情報不足）');
+if (!isObject(attempt)) terminalFailure('attempt の応答が不正です（API 情報不足）');
 if (
   attempt.id !== runId ||
   attempt.run_attempt !== attemptNumber ||
@@ -155,7 +183,7 @@ if (
   attempt.head_sha !== targetSha ||
   attempt.head_branch !== BRANCH
 ) {
-  notReady(
+  terminalFailure(
     `最新 attempt のメタデータが一覧と一致しません（id=${safeValue(String(attempt.id))}, attempt=${safeValue(String(attempt.run_attempt))}, event=${safeValue(attempt.event)}, path=${safeValue(attempt.path)}）`,
   );
 }
@@ -163,25 +191,25 @@ if (attempt.status !== 'completed') {
   notReady(`最新 attempt が未完了です（status=${safeValue(attempt.status)}）`);
 }
 if (attempt.conclusion !== 'success') {
-  notReady(`最新 attempt が成功していません（conclusion=${safeValue(attempt.conclusion)}）`);
+  terminalFailure(`最新 attempt が成功していません（conclusion=${safeValue(attempt.conclusion)}）`);
 }
 
 const jobsResponse = ghApi(`repos/${REPO}/actions/runs/${runId}/attempts/${attemptNumber}/jobs?per_page=100`);
 const jobs = isObject(jobsResponse) && Array.isArray(jobsResponse.jobs) ? jobsResponse.jobs : null;
-if (!jobs) notReady('jobs が応答にありません（API 情報不足）');
+if (!jobs) terminalFailure('jobs が応答にありません（API 情報不足）');
 
 for (const requiredJob of REQUIRED_JOBS) {
   const namedJobs = jobs.filter((job) => isObject(job) && job.name === requiredJob);
-  if (namedJobs.length === 0) notReady(`必須 job がありません: ${requiredJob}`);
+  if (namedJobs.length === 0) terminalFailure(`必須 job がありません: ${requiredJob}`);
   for (const job of namedJobs) {
-    if (typeof job.head_sha === 'string' && job.head_sha !== targetSha) {
-      notReady(`job ${requiredJob} の head_sha が一致しません（sha=${safeValue(job.head_sha)}）`);
+    if (job.head_sha !== targetSha) {
+      terminalFailure(`job ${requiredJob} の head_sha が一致しません（sha=${safeValue(job.head_sha)}）`);
     }
     if (job.status !== 'completed') {
       notReady(`job ${requiredJob} が未完了です（status=${safeValue(job.status)}）`);
     }
     if (job.conclusion !== 'success') {
-      notReady(`job ${requiredJob} が成功していません（conclusion=${safeValue(job.conclusion)}）`);
+      terminalFailure(`job ${requiredJob} が成功していません（conclusion=${safeValue(job.conclusion)}）`);
     }
   }
 }
@@ -189,17 +217,19 @@ for (const requiredJob of REQUIRED_JOBS) {
 // 再 run race の確認: job を見ている間に新しい run/attempt が始まっていないか、もう一度一覧を取る。
 // 一覧の最新が検証済みの run/attempt と同一で、completed/success のままであること。
 const finalRuns = runsFrom(ghApi(runsPath));
-if (!finalRuns) notReady('再確認の workflow_runs が応答にありません（API 情報不足）');
+if (!finalRuns) terminalFailure('再確認の workflow_runs が応答にありません（API 情報不足）');
 const finalMatches = matchingRunsFor(finalRuns, targetSha);
-if (finalMatches.length === 0) notReady('再確認で exact SHA の run が見つかりません（API 情報不足）');
+if (finalMatches.length === 0) terminalFailure('再確認で exact SHA の run が見つかりません（API 情報不足）');
+assertRunTimestamps(finalMatches);
 const finalLatest = latestRunOf(finalMatches);
-if (
-  Number(finalLatest.id) !== runId ||
-  Number(finalLatest.run_attempt) !== attemptNumber ||
-  finalLatest.status !== 'completed' ||
-  finalLatest.conclusion !== 'success'
-) {
-  notReady('job 確認後に新しい run/attempt が現れたか、状態が変わりました（再確認で不一致）');
+if (Number(finalLatest.id) !== runId || Number(finalLatest.run_attempt) !== attemptNumber) {
+  notReady('job 確認後に新しい run/attempt が現れました（再確認で不一致）');
+}
+if (finalLatest.status !== 'completed') {
+  notReady(`job 確認後に attempt の状態が変わりました（status=${safeValue(finalLatest.status)}）`);
+}
+if (finalLatest.conclusion !== 'success') {
+  terminalFailure(`job 確認後に attempt が成功でなくなりました（conclusion=${safeValue(finalLatest.conclusion)}）`);
 }
 
 log(
