@@ -197,7 +197,7 @@ autofollow は「origin/main への追従」を見る。役割が違うため両
 | `shellcheck -x scripts/ops/tests/staging-autofollow.test.sh`           | 指摘なし（exit 0）                                |
 | `node --check scripts/ops/check-release-ci.mjs`                        | 成功                                              |
 | `node scripts/ops/check-release-ci.mjs`（引数なし）                    | 終了コード 1（照会エラー）                        |
-| `bash scripts/ops/tests/staging-autofollow.test.sh`                    | **PASS 114 / FAIL 0**（31 シナリオ、shellcheckあり。無しは112・静的2件skip）              |
+| `bash scripts/ops/tests/staging-autofollow.test.sh`                    | **PASS 122 / FAIL 0**（35 シナリオ、shellcheckあり。無しは120・静的2件skip）              |
 | `pnpm test:ops`                                                        | 同上（単体テストを1コマンドで実行）               |
 | GitHub REST API 仕様                                                   | Context7（workflow runs / attempts / jobs）で確認 |
 | `node scripts/ops/check-release-ci.mjs 8a1ee99…`（read-only 実ゲート） | OK（run=41801003971 attempt=1、exit 0）           |
@@ -240,6 +240,14 @@ autofollow は「origin/main への追従」を見る。役割が違うため両
 28. API 情報不足（attempt の必須項目欠落）は exit 1
 29. created_at が欠落した run は最新を決められないので exit 1
 30. job の head_sha が欠落したら exit 1
+31. JSON不正なら照会不能としてexit 1
+32. 新しいrunのhead_sha欠落を、古いsuccessで補わずexit 1
+33. runs一覧のtotal_count不一致（未取得ページ）はexit 1
+34. jobs一覧のtotal_count不一致（未取得ページ）はexit 1
+
+`tests/unit/staging-ci-gate.test.ts` がこの隔離shell suiteを呼ぶため、既存必須quality jobのunit testで
+全シナリオが毎回走る（workflow変更なし、実サービス・実DB・実GitHubへの接続なし）。
+
 補足: シナリオ20内で gh の stderr 本文（合成マーカー）が stdout/stderr に出ないことも確認する。
 シナリオ9はロック中にCIを照会しないこととcontrollerのHEAD不変も確認する。
 no-op / dry-run は配備を行わないためCIゲート対象外（exit 0 はCI合格を意味しない）。
@@ -311,8 +319,9 @@ CI の状態は `gh run list --workflow ci.yml --commit <SHA>` 等で確認で�
   appの配備対象はcontrollerより新しくてよい（targetのgit archiveを配備）。
 - **CI 確認から配備開始までの TOCTOU**: 最後の run 一覧取得と `release.sh` 開始の間に re-run が
   始まる可能性は残る（原子的ではない）。ゲートは「確認した時点で最新 attempt が success」を保証する。
-- **run/job 一覧のページング**: `per_page=100` の 1 ページだけを見る。現在の workflow は 3 job・
-  SHA あたり 1 run なので足りているが、job 数が 100 を超える workflow へ変える場合はページングが要る。
+- **run/job 一覧のページング**: `per_page=100` の1ページと `total_count` を照合し、不一致は配備しない（exit 1）。
+  100件超を扱うにはページング実装が必要だが、不完全な一覧の古いsuccessを使うことはない。
+  run必須メタデータ欠落はfilter前に拒否し、新しい不完全runを除外して古いsuccessに代替しない。
 - **RPO 1h の保証**: 55 分の開始間隔だけでは保証できない。`docs/production/07-slo-and-measurement.md`
   §3-4 は是正前の最大間隔 60.2 分・60 分超 4 回を記録し、是正後は未計測。`measure-slo.mjs` は最新 dump の
   鮮度のみで判定し、healthcheck の鮮度閾値は 90 分、外部通知は未実装。

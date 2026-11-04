@@ -108,7 +108,27 @@ function ghApi(path) {
 }
 
 function runsFrom(response) {
-  return isObject(response) && Array.isArray(response.workflow_runs) ? response.workflow_runs : null;
+  if (!isObject(response) || !Array.isArray(response.workflow_runs)) return null;
+  // 一部のページだけで古い success を選ばない。範囲を確認できない応答は fail-closed。
+  if (!Number.isSafeInteger(response.total_count) || response.total_count !== response.workflow_runs.length) {
+    terminalFailure('workflow runs の件数が不完全です（API 情報不足または未取得ページ）');
+  }
+  for (const run of response.workflow_runs) {
+    if (
+      !isObject(run) ||
+      typeof run.head_sha !== 'string' ||
+      !SHA_PATTERN.test(run.head_sha) ||
+      typeof run.event !== 'string' ||
+      typeof run.head_branch !== 'string' ||
+      typeof run.path !== 'string' ||
+      !Number.isSafeInteger(run.id) ||
+      run.id <= 0 ||
+      !Number.isSafeInteger(run.run_attempt) ||
+      run.run_attempt <= 0
+    )
+      terminalFailure('run メタデータが不完全です（API 情報不足）');
+  }
+  return response.workflow_runs;
 }
 
 /** API のクエリに加えて、応答側でも SHA/event/branch/workflow を検証する。path 欠落は不可。 */
@@ -197,6 +217,9 @@ if (attempt.conclusion !== 'success') {
 const jobsResponse = ghApi(`repos/${REPO}/actions/runs/${runId}/attempts/${attemptNumber}/jobs?per_page=100`);
 const jobs = isObject(jobsResponse) && Array.isArray(jobsResponse.jobs) ? jobsResponse.jobs : null;
 if (!jobs) terminalFailure('jobs が応答にありません（API 情報不足）');
+if (!Number.isSafeInteger(jobsResponse.total_count) || jobsResponse.total_count !== jobs.length) {
+  terminalFailure('jobs の件数が不完全です（API 情報不足または未取得ページ）');
+}
 
 for (const requiredJob of REQUIRED_JOBS) {
   const namedJobs = jobs.filter((job) => isObject(job) && job.name === requiredJob);

@@ -581,7 +581,7 @@ EOF
 run_case ok
 check "path 欠落は終了コード 1" assert_code 1
 check "path 欠落は release.sh を呼ばない" assert_no_release
-check "path 欠落をログに出す" assert_out_contains "event/branch/path が一致しません"
+check "path 欠落をログに出す" assert_out_contains "run メタデータが不完全"
 
 printf '\n== 26. attempt のメタデータが一覧と一致しなければ通さない ==\n'
 setup_case gate_attempt_meta
@@ -635,6 +635,38 @@ run_case ok
 check "job head_sha 欠落は終了コード 1" assert_code 1
 check "job head_sha 欠落は release.sh を呼ばない" assert_no_release
 check "job head_sha 欠落をログに出す" assert_out_contains "head_sha が一致しません"
+
+printf '\n== 31. JSON 不正なら照会不能として配備しない ==\n'
+setup_case gate_json
+printf 'not-json\n' >"$CASE/gh/runs.json"
+run_case ok
+check "JSON 不正は終了コード 1" assert_code 1
+check "JSON 不正は release.sh を呼ばない" assert_no_release
+
+printf '\n== 32. 新しいrunのSHA欠落を古いsuccessで補わない ==\n'
+setup_case gate_incomplete_newrun
+cat >"$CASE/gh/runs.json" <<EOF
+{"total_count":2,"workflow_runs":[
+ {"id":1002,"run_attempt":1,"event":"push","head_branch":"main","path":".github/workflows/ci.yml","created_at":"2026-11-04T01:00:00Z","status":"in_progress","conclusion":null},
+ {"id":1001,"run_attempt":1,"head_sha":"$NEW","event":"push","head_branch":"main","path":".github/workflows/ci.yml","created_at":"2026-11-04T00:00:00Z","status":"completed","conclusion":"success"}]}
+EOF
+run_case ok
+check "新runのSHA欠落は終了コード 1" assert_code 1
+check "新runのSHA欠落は release.sh を呼ばない" assert_no_release
+
+printf '\n== 33. runs一覧の未取得ページは配備しない ==\n'
+setup_case gate_runs_page
+node -e 'const fs=require("node:fs");const p=process.argv[1];const j=JSON.parse(fs.readFileSync(p));j.total_count=101;fs.writeFileSync(p,JSON.stringify(j));' "$CASE/gh/runs.json"
+run_case ok
+check "runs一覧不完全は終了コード 1" assert_code 1
+check "runs一覧不完全は release.sh を呼ばない" assert_no_release
+
+printf '\n== 34. jobs一覧の未取得ページは配備しない ==\n'
+setup_case gate_jobs_page
+node -e 'const fs=require("node:fs");const p=process.argv[1];const j=JSON.parse(fs.readFileSync(p));j.total_count=101;fs.writeFileSync(p,JSON.stringify(j));' "$CASE/gh/jobs-1001-1.json"
+run_case ok
+check "jobs一覧不完全は終了コード 1" assert_code 1
+check "jobs一覧不完全は release.sh を呼ばない" assert_no_release
 
 printf '\n== 結果: PASS %d / FAIL %d ==\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]]
