@@ -112,8 +112,10 @@ SLO の未達ではない）。
 - **最大間隔 60.2 分**は、timer の発火精度による。旧 unit は `OnCalendar=*-*-* *:05:00` で
   `AccuracySec` を指定しておらず、systemd の既定は **1 分**（`systemctl --user show -p AccuracyUSec` で `1min`）。
   このため発火が :05:00 から最大 1 分ほど遅れ、開始時刻の差が 60 分を超える回が出た（実測の最大 60.2 分＝12 秒超過が 4 回）。
-  → **2026-11-04 に unit を是正**した（PR #83）。固定時刻 + `AccuracySec=1s` でも実行時間の分だけ 60 分を超え得るため、
-  `OnBootSec=2min` + `OnUnitActiveSec=55min` + `AccuracySec=1s` の「前回実行から 55 分」に変え、60 分に 5 分の余裕を持たせた。
+  → **2026-11-04 に unit を是正**した（PR #83）。`OnBootSec=2min` + `OnUnitActiveSec=55min` + `AccuracySec=1s` の
+  「前回の起動から約55分」に変え、目標60分に対して約5分の運用余裕を持たせた。ただし、この変更だけでRPO 1時間を保証するものではない。
+  復元可能になる時点はdump・検証・R2送信の完了後であり、処理時間、実行遅延、失敗、ホスト停止も影響する。
+  定時起動の間隔と、最後に復元可能なスナップショットの鮮度を区別して評価する。
   `Persistent` は `OnCalendar` 前提のため外した。停止・サスペンドで飛んだ場合は healthcheck の鮮度警告（既定 90 分）が検知する。
   監視は 90 分で余裕を見ている（`MIRAI_SF_HEALTH_BACKUP_MAX_AGE_MIN` の既定 90。`02-runbook.md` §7）。
   **是正後の最大間隔は次の計測で確認する**（本節の 60.2 分は是正前の実測）。
