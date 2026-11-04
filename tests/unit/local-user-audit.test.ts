@@ -18,7 +18,7 @@ const input = {
   email: 'fake@example.com',
   displayName: '架空利用者',
   deptCode: 'dx',
-  password: 'fake-not-real-password',
+  password: 'test-pass-not-real',
   roles: ['approver'] as ['approver'],
   isAdmin: true,
 };

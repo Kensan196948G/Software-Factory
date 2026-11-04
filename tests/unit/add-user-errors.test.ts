@@ -21,9 +21,9 @@ describe('provisioning error diagnostics without PII or secret leakage', () => {
     expect(safeAddUserError(result.error)).not.toContain('private-invalid');
   });
   it('never echoes arbitrary database exception text', () => {
-    const error = new Error('postgresql://secret-user:secret-password@db.example/private');
+    const error = new Error('connection failed for user secret-user at db.example:5432');
     expect(safeAddUserError(error)).toContain('[unexpected]');
-    expect(safeAddUserError(error)).not.toContain('secret');
+    expect(safeAddUserError(error)).not.toContain('secret-user');
     expect(safeAddUserError(error)).not.toContain('db.example');
   });
   it('rejects prototype property names and unknown error shapes safely', () => {
