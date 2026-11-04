@@ -4,8 +4,8 @@
 目的: (1) 2026-11-04 時点の健全性を**読み取りのみ**で実測して証跡を残す、(2) main が進んだら Staging が自動で
 追従し、失敗時は旧版を維持する仕組みを用意する。
 
-> 本作業ではサービス再起動・配備・設定変更・Cloudflare 操作・DB 書込みをしていない。
-> 自動追従の **timer のインストールと有効化は未実施**（Lead が行う）。§4 の手順は「実施の許可」ではない。
+> 本作業（#78 のPR時点）ではサービス再起動・配備・設定変更・Cloudflare 操作・DB 書込みをしていない。
+> 自動追従の **timer は 2026-11-04 15:29 JST にインストール・有効化済み**（§4-1 に実施記録）。§1 の実測値は PR 作成時点のものである。
 
 ## 1. 実測値（2026-11-04 14:36〜14:37 JST）
 
@@ -128,7 +128,7 @@
 ただし配備モードでは実行元が **main・clean** であることを確認する（dev ツリーが feature ブランチの間は skip=exit 75）。
 push フックではなく定期確認なので、main の反映は最大約 10 分遅れる。
 
-## 4. 導入手順（Lead が実施。本 PR では未実施）
+## 4. 導入手順（2026-11-04 に実施済み。下記 4-1 に実測を記録）
 
 ```bash
 # 0. マージ後の main を常設チェックアウトへ反映（unit はチェックアウトから実行する）
@@ -155,6 +155,14 @@ systemctl --user list-timers mirai-sf-autofollow.timer
 
 有効化後は `mirai-sf-healthcheck.timer`（5 分ごと）と併用する。healthcheck は「配備済みの commit と healthz の一致」を、
 autofollow は「origin/main への追従」を見る。役割が違うため両方必要。
+
+### 4-1. 実施記録（2026-11-04 JST）
+
+- 15:25 に Staging を `207567b`（PR #77〜#79 マージ後の main）へ手動配備し、healthz の commit 一致を確認した。
+- 15:29 に `mirai-sf-autofollow.service` / `.timer` を `~/.config/systemd/user/` へ配置し、`enable --now` した。timer は 10 分間隔で active。
+- 15:26 の手動実行は **no-op / exit 0**（current と origin/main が同一、`status=ok environment=staging db.ok=true commit` 一致）。
+- 初回実行は `git fetch` が `Invalid username or token` で失敗した。原因は systemd --user の環境変数に残った失効済みの `GITHUB_TOKEN` が `gh auth git-credential`（`~/.config/gh/hosts.yml`）より優先されたこと。unit に `UnsetEnvironment=GH_TOKEN GITHUB_TOKEN GITHUB_PAT_TOKEN GITHUB_PERSONAL_ACCESS_TOKEN` を追加して解消した。
+- **別課題（セキュリティ）**: `systemctl --user show-environment` に複数の資格情報が残っている。autofollow は UnsetEnvironment で回避したが、恒久対策は「user manager の環境から秘密を外し、必要なサービスだけ EnvironmentFile（0600）で読む」こと。値は本書・リポジトリ・ログに書かない。トークンのローテーション要否は所有者が判断する。
 
 ## 5. 検証結果（2026-11-04）
 
