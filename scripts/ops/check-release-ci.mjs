@@ -6,7 +6,7 @@
  *
  * 対象リポジトリ・workflow・イベントは固定（Kensan196948G/Software-Factory / ci.yml / push / main）。
  * 指定 SHA の push/main の ci.yml run のうち最新 run の最新 attempt を取得し、次をすべて満たす
- * ときだけ 0 を返す。1 つでも欠ける・未完了・失敗・不明なら 75（配備しない）。
+ * ときだけ 0 を返す。それ以外は 75（一時的な未確認）または 1（失敗・照会不能）で配備しない。
  *
  *   - run の head_sha が指定 SHA と完全一致
  *   - run の event が push、head_branch が main、path が .github/workflows/ci.yml（欠落も不可）
@@ -19,7 +19,7 @@
  * 終了コード:
  *   0   確認できた（配備してよい）
  *   75  一時的な未確認（run がまだ無い・実行中。配備しない。次の timer で再確認）
- *   1   恒久的な失敗または照会不能（run/job の失敗、必須 job の欠落/未完了/skipped、
+ *   1   失敗または照会不能（run/job の失敗、必須 job の欠落/skipped、
  *       API 情報不足、JSON 不正、gh/API エラー。配備しない。timer を failed にする）
  *
  * 秘密情報は出力しない（gh の認証は gh 自身に任せ、トークンを引数・ログに出さない）。

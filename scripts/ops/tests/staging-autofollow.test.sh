@@ -336,14 +336,14 @@ check "current が新しい commit になる" assert_current "$NEW"
 check "healthz が新しい commit になる" assert_health_commit "$NEW"
 check "exact-main CI ゲートを通過する" assert_out_contains "[ci-gate] OK"
 
-printf '\n== 2b. 実行元が origin/main より遅れていれば fast-forward して配備する ==\n'
+printf '\n== 2b. controller が origin/main より遅れていても checkout を変更せず配備する ==\n'
 setup_case behind
 git -C "$REPO" reset -q --hard "$OLD"
 run_case ok
 check "遅れていても配備成功で終了コード 0" assert_code 0
-check "fast-forward をログに出す" assert_out_contains "実行元を fast-forward"
+check "controller 分離をログに出す" assert_out_contains "実行元は変更しません"
 check "origin/main の commit で release.sh を呼ぶ" assert_release_called_with "$NEW"
-check "実行元の HEAD が対象 SHA になる" assert_repo_head "$NEW"
+check "controller の HEAD は元のまま" assert_repo_head "$OLD"
 check "current が新しい commit になる" assert_current "$NEW"
 
 printf '\n== 3. 配備後の health 不一致は失敗し、直前へ戻す ==\n'
@@ -405,6 +405,7 @@ check "使い方を出す" assert_out_contains "不明なオプション"
 
 printf '\n== 9. 手動の release/rollback 中は触らない（.ops.lock） ==\n'
 setup_case opslock
+git -C "$REPO" reset -q --hard "$OLD"
 (
   exec 9>"$HOME_DIR/.ops.lock"
   flock 9
@@ -420,6 +421,8 @@ run_case ok
 check "手動 release 中は終了コード 75" assert_code 75
 check "手動 release 中は release.sh を呼ばない" assert_no_release
 check "手動 release 中はスキップをログに出す" assert_out_contains "手動の release/rollback が実行中"
+check "手動 release 中は CI も照会しない" assert_out_not_contains "[ci-gate]"
+check "手動 release 中は controller を変更しない" assert_repo_head "$OLD"
 kill "$OPS_LOCK_PID" 2>/dev/null || true
 wait "$OPS_LOCK_PID" 2>/dev/null || true
 

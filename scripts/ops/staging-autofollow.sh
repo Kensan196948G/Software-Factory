@@ -7,8 +7,8 @@
 #   1. 多重実行防止（flock）
 #   2. git fetch → origin/main の commit を固定
 #   3. current と同一なら no-op（/healthz の commit・db.ok・environment のずれは異常として失敗）
-#   4. main・clean のチェックアウトを確認し、HEAD が対象の祖先なら fast-forward する
-#      （timer では常設チェックアウトが進まないため。diverged・dirty は配備しない）
+#   4. main・clean の controller を確認し、HEAD が対象 SHA の祖先であることを確認する
+#      （controller を自己更新しない。target は git archive から配備。diverged・dirty は配備しない）
 #   5. .ops.lock を取り、current を読み直す（CI ゲート中も保持する）
 #   6. exact-main CI ゲート（check-release-ci.mjs）: 対象 SHA の push/main ci.yml の
 #      最新 attempt で quality/e2e/docker と run が成功していることを必須にする。
@@ -295,26 +295,16 @@ if [[ "$head" != main ]] || ! checkout_is_clean; then
   finish "skipped" 75
 fi
 
-# 実行元を対象 SHA まで fast-forward する（main・clean で、HEAD が対象の祖先のときだけ）。
-# 常設チェックアウトは timer では進まないため、ここで進めないと自動追従が止まる。
-# 未追跡ファイル等で fast-forward できないときは、触らずに skip する（exit 75）。
+# controller と配備対象を分離する。実行中の Bash / gate / helper を git merge で
+# 書き換えない。clean main の HEAD が target の祖先なら、checkout はそのままで
+# trusted controller のゲートを通し、release.sh が git archive target を配備する。
+# controller 自体の更新は停止・main CI確認・ff-only同期の保守手順で行う。
 head_sha="$(git -C "$repo" rev-parse HEAD)"
-if [[ "$head_sha" != "$target" ]]; then
-  if ! git -C "$repo" merge-base --is-ancestor "$head_sha" "$target"; then
-    log "実行元の HEAD が対象 SHA の祖先ではありません（local commits/diverged。HEAD=$head_sha target=$target）。配備しません（exit 75）"
-    finish "skipped" 75
-  fi
-  log "実行元を fast-forward: $head_sha -> $target"
-  if ! git -C "$repo" merge --ff-only --quiet "$target"; then
-    log "実行元を fast-forward できません（未追跡ファイル等）。配備しません（exit 75）"
-    finish "skipped" 75
-  fi
-  head_sha="$(git -C "$repo" rev-parse HEAD)"
-  if [[ "$head_sha" != "$target" ]]; then
-    log "fast-forward 後も HEAD が対象 SHA と一致しません（HEAD=$head_sha target=$target）。配備しません（exit 75）"
-    finish "skipped" 75
-  fi
+if ! git -C "$repo" merge-base --is-ancestor "$head_sha" "$target"; then
+  log "実行元の HEAD が対象 SHA の祖先ではありません（local commits/diverged。HEAD=$head_sha target=$target）。配備しません（exit 75）"
+  finish "skipped" 75
 fi
+log "controller=$head_sha target=$target（実行元は変更しません）"
 
 # 手動の release/rollback と同じ .ops.lock を取る（競合したら触らず skip）。
 # CI ゲートの間も保持し、ゲート中に手動配備が進んで current が変わるのを防ぐ。
