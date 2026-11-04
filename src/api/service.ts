@@ -306,9 +306,7 @@ export async function homeFor(actor: Actor) {
   // ホームの total / 承認待ちは、起動データの 5000 件窓ではなく DB 全体で数える。
   // yourTurn / stale3 は先頭 5000 件の要約から数える（5000 件超では過小になりうる）。
   const totalCount = (await listRequests({ limit: 1 })).total;
-  const waitingApprovalCount = (
-    await listRequests({ status: 'wait', approverUserId: actor.userId, limit: 1 })
-  ).total;
+  const waitingApprovalCount = (await listRequests({ status: 'wait', approverUserId: actor.userId, limit: 1 })).total;
 
   return {
     role: actor.role,

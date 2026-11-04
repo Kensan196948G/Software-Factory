@@ -486,8 +486,7 @@ const SF = (function () {
     const msf = window.__MSF__;
     return msf && msf.user && typeof msf.user.id === 'string' ? msf.user : null;
   };
-  const whoName = (who) =>
-    who && typeof who === 'object' ? String(who.displayName || who.name || '') : String(who || '');
+  const whoName = (who) => (who && typeof who === 'object' ? String(who.displayName || who.name || '') : String(who || ''));
   const whoId = (who) => {
     if (who && typeof who === 'object') return who.id || who.userId || null;
     const user = connectedUser();
@@ -607,17 +606,12 @@ const SF = (function () {
     if (r.status === 'cancel') return false;
     return role !== 'requester'
       ? !['done'].includes(r.status)
-      : ['received', 'back'].includes(r.status) &&
-          ((!window.__MSF__ && !whoName(who)) || isOwner(r, who));
+      : ['received', 'back'].includes(r.status) && ((!window.__MSF__ && !whoName(who)) || isOwner(r, who));
   }
   /* 依頼者は「自分の依頼」だけを動かせる。承認待ちの承認は、指定された承認者だけ。 */
   function canMoveR(role, r, to, who) {
     const targeted = role === 'approver' && r.status === 'wait' && ['approved', 'done'].includes(to);
-    return (
-      canMove(role, r.status, to) &&
-      (role !== 'requester' || isOwner(r, who)) &&
-      !(targeted && approverMismatch(r, who))
-    );
+    return canMove(role, r.status, to) && (role !== 'requester' || isOwner(r, who)) && !(targeted && approverMismatch(r, who));
   }
   function whyNotR(role, r, to, who) {
     if (role === 'approver' && r.status === 'wait' && ['approved', 'done'].includes(to) && approverMismatch(r, who))
@@ -2430,7 +2424,8 @@ const SF = (function () {
       : null;
   const APPROVER_STATE = (() => {
     if (!MSF_CONNECTED) return { available: false, reason: '', items: [] };
-    if (!window.__MSF__) return { available: false, reason: 'サーバ接続用の画面処理を読み込めませんでした。再読み込みしてください。', items: [] };
+    if (!window.__MSF__)
+      return { available: false, reason: 'サーバ接続用の画面処理を読み込めませんでした。再読み込みしてください。', items: [] };
     const state = window.__MSF__.approverState;
     if (state && state.available === true && Array.isArray(state.items))
       return { available: true, reason: '', items: state.items };
@@ -2448,7 +2443,8 @@ const SF = (function () {
   }
   function approverError(d) {
     if (!MSF_CONNECTED) return d.approver ? '' : '承認者を選んでください';
-    if (!APPROVER_STATE.available) return APPROVER_STATE.reason || '承認者一覧を取得できませんでした。画面を再読み込みしてください';
+    if (!APPROVER_STATE.available)
+      return APPROVER_STATE.reason || '承認者一覧を取得できませんでした。画面を再読み込みしてください';
     if (!APPROVER_STATE.items.length) return '有効な承認者が登録されていません。管理者に確認してください';
     const id = String(d.approverUserId || '');
     if (!id)
@@ -2786,8 +2782,7 @@ const SF = (function () {
         E(r.l) +
         '</label>',
     ).join('');
-    const field =
-      'width:100%;border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;background:var(--surface)';
+    const field = 'width:100%;border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;background:var(--surface)';
     $('#view').innerHTML =
       '<div class="btool"><h2 class="h2" style="margin:0">' +
       ico('i-users') +
@@ -3953,7 +3948,9 @@ const SF = (function () {
       '<option value=""' +
       (!id ? ' selected' : '') +
       '>' +
-      E(!id && d.approver ? '承認者を選択してください（現在: ' + d.approver + '／利用者IDが未設定）' : '承認者を選択してください') +
+      E(
+        !id && d.approver ? '承認者を選択してください（現在: ' + d.approver + '／利用者IDが未設定）' : '承認者を選択してください',
+      ) +
       '</option>';
     if (!APPROVER_STATE.available) {
       options = '<option value="" selected>承認者一覧を取得できません</option>';
@@ -3970,14 +3967,7 @@ const SF = (function () {
           options;
       options += APPROVER_STATE.items
         .map(
-          (a) =>
-            '<option value="' +
-            E(a.id) +
-            '"' +
-            (id === a.id ? ' selected' : '') +
-            '>' +
-            E(approverLabel(a)) +
-            '</option>',
+          (a) => '<option value="' + E(a.id) + '"' + (id === a.id ? ' selected' : '') + '>' + E(approverLabel(a)) + '</option>',
         )
         .join('');
     }
@@ -5064,12 +5054,12 @@ const SF = (function () {
   const listServerWanted = () =>
     Boolean(
       MSF_CONNECTED &&
-        window.__MSF__ &&
-        typeof window.__MSF__.toRecord === 'function' &&
-        // 絞り込みがあるとき、または起動データが取得上限（5000件）に達しているとき。
-        // 後者は 5000 件を超える依頼で起動データが切り詰められている可能性があるため、
-        // サーバの total とページ取得で正しい件数を出す。
-        (S.fd || S.fs || S.fc || S.data.items.length >= 5000),
+      window.__MSF__ &&
+      typeof window.__MSF__.toRecord === 'function' &&
+      // 絞り込みがあるとき、または起動データが取得上限（5000件）に達しているとき。
+      // 後者は 5000 件を超える依頼で起動データが切り詰められている可能性があるため、
+      // サーバの total とページ取得で正しい件数を出す。
+      (S.fd || S.fs || S.fc || S.data.items.length >= 5000),
     );
   const listServerKey = () => [S.fd, S.fs, S.fc, S.data.items.length >= 5000 ? 'cap' : ''].join('\u0001');
   let listServer = { key: null, items: null, total: 0, error: '', loading: '' };
@@ -5160,9 +5150,7 @@ const SF = (function () {
       const pending = local && window.__MSF__.sameAsServer && !window.__MSF__.sameAsServer(local);
       if (pending) {
         const merged =
-          window.__MSF__.mergeSummary && local
-            ? window.__MSF__.mergeSummary(local, item)
-            : Object.assign({}, local || {});
+          window.__MSF__.mergeSummary && local ? window.__MSF__.mergeSummary(local, item) : Object.assign({}, local || {});
         merged.signalServer = item.suggested;
         if (typeof item.staleDays === 'number') merged.staleDays = item.staleDays;
         return merged;
@@ -5268,9 +5256,7 @@ const SF = (function () {
               );
             })
             .join('')
-        : '<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">' +
-          E(emptyMsg) +
-          '</td></tr>') +
+        : '<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">' + E(emptyMsg) + '</td></tr>') +
       '</tbody></table></div><p class="hint">' +
       a.length +
       ' 件 ／ 全 ' +
