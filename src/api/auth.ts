@@ -506,13 +506,29 @@ function duplicateEmailError(): ApiError {
   return new ApiError('ERR-004', 'このメールアドレスは既に使われています', 400, { field: 'email' });
 }
 
-function requireAdmin(actor: AdminActor): void {
+/** Trusted local maintenance only; never accepted from HTTP request bodies. */
+export interface LocalAdminActor {
+  userId: null;
+  displayName: string;
+  role: 'system';
+  isAdmin: true;
+  localAuthority: { method: 'local_db_owner'; uid: number; authorizationAdminId: string; accessLogin: false };
+}
+type UserCreationActor = AdminActor | LocalAdminActor;
+
+function userAdminDiff(actor: UserCreationActor, diff: unknown): unknown {
+  return actor.role === 'system'
+    ? { ...(diff as Record<string, unknown>), source: 'local-cli', authority: actor.localAuthority }
+    : diff;
+}
+
+function requireAdmin(actor: UserCreationActor): void {
   if (!actor.isAdmin) throw Errors.noPermission();
 }
 
 async function auditUserAdmin(
   client: PoolClient,
-  actor: AdminActor,
+  actor: UserCreationActor,
   action: string,
   targetId: string | null,
   result: 'success' | 'denied' | 'error',
@@ -527,7 +543,7 @@ async function auditUserAdmin(
     actorUserId: actor.userId,
     actorName: actor.displayName,
     role: actor.role,
-    diff,
+    diff: userAdminDiff(actor, diff),
     correlationId,
   });
 }
@@ -580,11 +596,7 @@ export interface CreateUserInput {
 }
 
 /** 利用者を作る（scrypt）。作成は監査に actor と結果を残す。 */
-export async function createUser(
-  input: CreateUserInput,
-  actor: AdminActor,
-  correlationId: string,
-): Promise<ManagedUser> {
+export async function createUser(input: CreateUserInput, actor: UserCreationActor, correlationId: string): Promise<ManagedUser> {
   requireAdmin(actor);
   const email = input.email.trim().toLowerCase();
   const displayName = input.displayName.trim();
@@ -599,7 +611,7 @@ export async function createUser(
       actorUserId: actor.userId,
       actorName: actor.displayName,
       role: actor.role,
-      diff: { email, reason },
+      diff: userAdminDiff(actor, { email, reason }),
       correlationId,
     }).catch(() => undefined);
 
@@ -643,11 +655,7 @@ export async function createUser(
       const id = inserted.rows[0]?.id;
       if (!id) throw Errors.internal();
       for (const role of roles) {
-        await client.query('insert into user_role (user_id, role, granted_by) values ($1,$2,$3)', [
-          id,
-          role,
-          actor.userId,
-        ]);
+        await client.query('insert into user_role (user_id, role, granted_by) values ($1,$2,$3)', [id, role, actor.userId]);
       }
       await auditUserAdmin(
         client,
@@ -671,7 +679,7 @@ export async function createUser(
         actorUserId: actor.userId,
         actorName: actor.displayName,
         role: actor.role,
-        diff: { email, reason: 'duplicate_race' },
+        diff: userAdminDiff(actor, { email, reason: 'duplicate_race' }),
         correlationId,
       }).catch(() => undefined);
       throw duplicateEmailError();
@@ -704,9 +712,7 @@ export async function setUserRoles(
       return { error: Errors.notFound('利用者') };
     }
     const before = normalizeRoles(
-      (await client.query<{ role: Role }>('select role from user_role where user_id = $1', [userId])).rows.map(
-        (r) => r.role,
-      ),
+      (await client.query<{ role: Role }>('select role from user_role where user_id = $1', [userId])).rows.map((r) => r.role),
     );
     // 残すロールは消さない（付与日時を保つ）。
     await client.query('delete from user_role where user_id = $1 and role <> all($2::text[])', [userId, roles]);
@@ -716,7 +722,15 @@ export async function setUserRoles(
         [userId, role, actor.userId],
       );
     }
-    await auditUserAdmin(client, actor, 'user.roles', userId, 'success', { email: row.email, before, after: roles }, correlationId);
+    await auditUserAdmin(
+      client,
+      actor,
+      'user.roles',
+      userId,
+      'success',
+      { email: row.email, before, after: roles },
+      correlationId,
+    );
     return { ok: true as const };
   });
 
@@ -743,7 +757,15 @@ export async function setUserPassword(
     }
     const policyError = passwordPolicyError(password, row.email);
     if (policyError) {
-      await auditUserAdmin(client, actor, 'user.password', userId, 'denied', { email: row.email, reason: 'policy' }, correlationId);
+      await auditUserAdmin(
+        client,
+        actor,
+        'user.password',
+        userId,
+        'denied',
+        { email: row.email, reason: 'policy' },
+        correlationId,
+      );
       return { error: invalidUserField(policyError, 'password') };
     }
     const hash = await hashPassword(password);
@@ -792,7 +814,15 @@ export async function setUserActive(
     );
     const row = found.rows[0];
     if (!row) {
-      await auditUserAdmin(client, actor, isActive ? 'user.activate' : 'user.deactivate', userId, 'denied', { reason: 'not_found' }, correlationId);
+      await auditUserAdmin(
+        client,
+        actor,
+        isActive ? 'user.activate' : 'user.deactivate',
+        userId,
+        'denied',
+        { reason: 'not_found' },
+        correlationId,
+      );
       return { error: Errors.notFound('利用者') };
     }
 
@@ -823,7 +853,15 @@ export async function setUserActive(
         [userId],
       );
       if ((others.rows[0]?.count ?? 0) === 0) {
-        await auditUserAdmin(client, actor, 'user.deactivate', userId, 'denied', { email: row.email, reason: 'last_admin' }, correlationId);
+        await auditUserAdmin(
+          client,
+          actor,
+          'user.deactivate',
+          userId,
+          'denied',
+          { email: row.email, reason: 'last_admin' },
+          correlationId,
+        );
         return { error: invalidUserField('最後の管理者は無効化できません', 'isActive') };
       }
     }
