@@ -7,18 +7,24 @@
 #   1. 多重実行防止（flock）
 #   2. git fetch → origin/main の commit を固定
 #   3. current と同一なら no-op（/healthz の commit・db.ok・environment のずれは異常として失敗）
-#   4. main・clean のチェックアウトからの実行を確認（作業ツリーのブランチに依存させない）
-#   5. .ops.lock を取る（手動の release/rollback 中は触らず exit 75）
-#   6. 既存の release.sh で配備（切替・再起動・/healthz 確認・失敗時の戻しは release.sh に任せる）
-#   7. 配備後に /healthz を独立に確認し、だめなら直前のリリースへ戻す
-#   8. 成功後に古い releases を整理する（current/previous と直近 N 世代を保持）
+#   4. main・clean の controller を確認し、HEAD が対象 SHA の祖先であることを確認する
+#      （controller を自己更新しない。target は git archive から配備。diverged・dirty は配備しない）
+#   5. .ops.lock を取り、current を読み直す（CI ゲート中も保持する）
+#   6. exact-main CI ゲート（check-release-ci.mjs）: 対象 SHA の push/main ci.yml の
+#      最新 attempt で quality/e2e/docker と run が成功していることを必須にする。
+#      一時的な未確認（run なし・実行中）は 75、失敗・job 欠落・API 情報不足・照会エラーは 1 で配備しない
+#   7. 既存の release.sh で配備（切替・再起動・/healthz 確認・失敗時の戻しは release.sh に任せる）
+#   8. 配備後に /healthz を独立に確認し、だめなら直前のリリースへ戻す
+#   9. 成功後に古い releases を整理する（current/previous と直近 N 世代を保持）
 #
 # 終了コード:
 #   0  追従済み（no-op）または配備成功
-#   1  失敗（health 不一致など。直前のリリースへ戻した場合を含む）
+#   1  失敗（health 不一致、CI の恒久的な失敗・必須 job 欠落・API 情報不足・照会エラーなど。
+#      直前のリリースへ戻した場合を含む）
 #   2  失敗して直前のリリースへ戻せなかった（手動で復旧する）
 #   3  破壊的な可能性がある migration のため中止（release.sh の判定）
-#   75 別の実行（autofollow／手動 release/rollback）が進行中、または実行元が main・clean でない
+#   75 配備しない（一時的）: 別の実行（autofollow／手動 release/rollback）が進行中、
+#      実行元が main・clean でない、diverged、または exact-main CI がまだ実行中・run 未作成
 #      （skip。timer は SuccessExitStatus=75 で成功扱い）
 #
 # 環境変数（release.sh と共通のものは lib.sh を参照）:
@@ -60,6 +66,7 @@ health_url="${MIRAI_SF_HEALTH_URL:-http://127.0.0.1:8782/healthz}"
 expected_env="${MIRAI_SF_HEALTH_ENV:-staging}"
 release_script="${MIRAI_SF_RELEASE_SCRIPT:-$OPS_DIR/release.sh}"
 rollback_script="${MIRAI_SF_ROLLBACK_SCRIPT:-$OPS_DIR/rollback.sh}"
+ci_gate_script="$OPS_DIR/check-release-ci.mjs"
 state_file="${MIRAI_SF_AUTOFOLLOW_STATE_FILE:-$HOME/.local/state/mirai-sf/autofollow.json}"
 lock_file="$OPS_HOME/.autofollow.lock"
 
@@ -278,6 +285,7 @@ if [[ "$dry_run" == 1 ]]; then
   log "[dry-run] 更新あり: ${previous:-（なし）} → $target"
   log "[dry-run] 計画: fetch 済み → release.sh $target（切替・再起動・healthz 確認・失敗時は $previous へ戻す）"
   log "[dry-run] 変更するのは fetch した refs と状態ファイルだけ（配備・DB・サービスは変更しない）"
+  log "[dry-run] exact-main CI ゲートは配備モードでのみ実行する（--dry-run では照会しない）"
   finish "dry-run" 0
 fi
 
@@ -287,11 +295,40 @@ if [[ "$head" != main ]] || ! checkout_is_clean; then
   finish "skipped" 75
 fi
 
-# 手動の release/rollback と同じ .ops.lock を取る（競合したら触らず skip）
+# controller と配備対象を分離する。実行中の Bash / gate / helper を git merge で
+# 書き換えない。clean main の HEAD が target の祖先なら、checkout はそのままで
+# trusted controller のゲートを通し、release.sh が git archive target を配備する。
+# controller 自体の更新は停止・main CI確認・ff-only同期の保守手順で行う。
+head_sha="$(git -C "$repo" rev-parse HEAD)"
+if ! git -C "$repo" merge-base --is-ancestor "$head_sha" "$target"; then
+  log "実行元の HEAD が対象 SHA の祖先ではありません（local commits/diverged。HEAD=$head_sha target=$target）。配備しません（exit 75）"
+  finish "skipped" 75
+fi
+log "controller=$head_sha target=$target（実行元は変更しません）"
+
+# 手動の release/rollback と同じ .ops.lock を取る（競合したら触らず skip）。
+# CI ゲートの間も保持し、ゲート中に手動配備が進んで current が変わるのを防ぐ。
 exec 9>"$OPS_HOME/.ops.lock"
 if ! flock -n 9; then
   log "手動の release/rollback が実行中です（触らない。終了コード 75）"
   finish "skipped" 75
+fi
+
+# ロック取得後に current を読み直す（ゲート中に current が変わった場合の取り違えを防ぐ）。
+previous="$(ops_current_sha)"
+log "current=${previous:-（なし）} origin/main=$target"
+
+# exact-main CI ゲート。0=確認済み、75=一時的な未確認（配備しない）、1=失敗/照会不能
+log "exact-main CI ゲート: $target"
+gate=0
+node "$ci_gate_script" "$target" || gate=$?
+if [[ "$gate" == 75 ]]; then
+  log "exact-main CI が未確認のため配備しません（exit 75。bypass はありません）"
+  finish "skipped" 75
+fi
+if [[ "$gate" != 0 ]]; then
+  log "exact-main CI が失敗または照会不能のため配備しません（exit 1）"
+  finish "failed" 1
 fi
 
 log "配備を開始: ${previous:-（なし）} → $target（release.sh）"
