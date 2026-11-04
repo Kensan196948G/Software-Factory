@@ -133,6 +133,8 @@ interface MountOptions {
    * 条件を A→B→A と変えたあとに古い応答を返し、それが採用されないことを確かめるための門。
    */
   holdFirstSignal?: string;
+  /** 指定した id の詳細 GET を、releaseDetail() まで保留する。 */
+  holdDetail?: string;
 }
 
 function filterRecords(records: ApiRecord[], url: URL): { items: ApiRecord[]; total: number; page: number; pageSize: number } {
@@ -154,6 +156,8 @@ interface Mounted {
   calls: Call[];
   /** holdFirstSignal で保留した最初の応答を返す（古い応答をあとから届かせる）。 */
   releaseHold: () => void;
+  /** holdDetail で保留した詳細応答を返す。 */
+  releaseDetail: () => void;
 }
 
 async function mount(page: Page, options: MountOptions = {}): Promise<Mounted> {
@@ -161,6 +165,10 @@ async function mount(page: Page, options: MountOptions = {}): Promise<Mounted> {
   let release = () => {};
   const gate = new Promise<void>((resolve) => {
     release = resolve;
+  });
+  let releaseDetail = () => {};
+  const detailGate = new Promise<void>((resolve) => {
+    releaseDetail = resolve;
   });
   const signalCounts = new Map<string, number>();
   const boot = {
@@ -223,6 +231,7 @@ async function mount(page: Page, options: MountOptions = {}): Promise<Mounted> {
         const id = decodeURIComponent(url.pathname.slice('/api/requests/'.length).split('/')[0] ?? '');
         const found = options.details?.[id];
         if (!found) return route.fulfill({ status: 404, json: { error: { code: 'ERR-404', message: '見つかりません' } } });
+        if (options.holdDetail === id) await detailGate;
         return route.fulfill({ json: { request: found } });
       }
       return route.fulfill({ json: { items: [], version: 1 } });
@@ -231,7 +240,7 @@ async function mount(page: Page, options: MountOptions = {}): Promise<Mounted> {
   });
   await page.goto('http://list.test/');
   await expect(page.locator('button[data-v="home"]')).toBeVisible();
-  return { calls, releaseHold: () => release() };
+  return { calls, releaseHold: () => release(), releaseDetail: () => releaseDetail() };
 }
 
 const listCalls = (calls: Call[]) => calls.filter((c) => c.method === 'GET' && c.url.startsWith('/api/requests?'));
@@ -515,4 +524,141 @@ test('取り込んだ行は、キーワードを打っても・絞り込みを�
   await page.selectOption('#lc', 'r');
   await expect(page.locator('#ltb')).toContainText('REQ-2026-0009');
   expect(postCalls(calls)).toHaveLength(0);
+});
+
+test('未同期の編集があっても、サーバの新しい状態・決定色・滞留を反映する', async ({ page }) => {
+  const stale = apiRecord({
+    id: 'REQ-2026-0002',
+    title: '古い題名',
+    status: 'received',
+    signalDecided: null,
+    suggested: 'g',
+  });
+  const fresh = apiRecord({
+    id: 'REQ-2026-0002',
+    title: 'サーバの題名',
+    status: 'wait',
+    signalDecided: 'r',
+    suggested: 'y',
+    version: 2,
+    staleDays: 9,
+  });
+  await mount(page, { bootItems: [stale], list: (url) => filterRecords([fresh], url), details: { 'REQ-2026-0002': fresh } });
+  await openList(page);
+
+  // 題名だけ未送信の編集にする（base と異なる項目）
+  await page.evaluate(() => {
+    const w = window as unknown as { __MSF_UI__: { data: () => { items: { id: string; title: string }[] } } };
+    const item = w.__MSF_UI__.data().items.find((x) => x.id === 'REQ-2026-0002');
+    if (item) item.title = '未送信の題名';
+  });
+
+  await page.selectOption('#lc', 'r');
+  // 未送信の題名は残し、状態・色・滞留はサーバの最新にする（古い「受付・青」を出さない）
+  await expect(page.locator('#ltb')).toContainText('未送信の題名');
+  await expect(page.locator('#ltb')).not.toContainText('古い題名');
+  await expect(page.locator('#ltb')).toContainText('承認待ち');
+  await expect(page.locator('#ltb tr', { hasText: '未送信の題名' })).toContainText('赤');
+  await expect(page.locator('#ltb tr', { hasText: '未送信の題名' })).toContainText('9日');
+});
+
+test('版が同じでも更新時刻が新しければ詳細を取り直す（投入先の変更）', async ({ page }) => {
+  const boot = apiRecord({
+    id: 'REQ-2026-0002',
+    title: '投入先の依頼',
+    suggested: 'r',
+    version: 1,
+    updatedAt: '2026-11-02T00:00:00.000Z',
+    targetRepoId: null,
+  });
+  const fresh = apiRecord({
+    id: 'REQ-2026-0002',
+    title: '投入先の依頼',
+    suggested: 'r',
+    version: 1,
+    updatedAt: '2026-11-03T00:00:00.000Z',
+    targetRepoId: 'repo-new',
+  });
+  const { calls } = await mount(page, {
+    bootItems: [boot],
+    list: (url) => filterRecords([fresh], url),
+    details: { 'REQ-2026-0002': fresh },
+  });
+  await openList(page);
+  await page.selectOption('#lc', 'r');
+  await page.locator('#ltb tr', { hasText: 'REQ-2026-0002' }).click();
+
+  await expect(page.locator('#drawer')).toContainText('投入先の依頼');
+  expect(detailCalls(calls).some((c) => c.url === '/api/requests/REQ-2026-0002')).toBe(true);
+  const target = await page.evaluate(() => {
+    const w = window as unknown as { __MSF_UI__: { data: () => { items: { id: string; __targetRepo: string | null }[] } } };
+    return w.__MSF_UI__.data().items.find((x) => x.id === 'REQ-2026-0002')?.__targetRepo ?? null;
+  });
+  expect(target).toBe('repo-new');
+});
+
+test('一覧にだけある依頼の詳細を閉じても、次の同期で取り消さない', async ({ page }) => {
+  const onlyInList = apiRecord({ id: 'REQ-2026-0009', title: '別端末で作られた依頼', suggested: 'r' });
+  const detail = apiRecord({
+    id: 'REQ-2026-0009',
+    title: '別端末で作られた依頼',
+    suggested: 'r',
+    history: [{ at: '2026-11-03T00:00:00.000Z', actorName: '架空 花子', role: 'desk', action: '受付', note: null }],
+  });
+  const { calls, releaseDetail } = await mount(page, {
+    bootItems: [],
+    list: (url) => filterRecords([onlyInList], url),
+    details: { 'REQ-2026-0009': detail },
+    holdDetail: 'REQ-2026-0009',
+  });
+  await openList(page);
+  await page.selectOption('#lc', 'r');
+  await page.locator('#ltb tr', { hasText: 'REQ-2026-0009' }).click();
+  await page.waitForTimeout(100);
+  await page.locator('#dx').click(); // 詳細を読み込む前に閉じる
+  releaseDetail();
+  await page.waitForTimeout(400);
+
+  // 次の同期を明示的に走らせる。base にだけある依頼を「画面から消えた」と誤判定して
+  // 取消（POST /transitions to=cancel）しないこと。
+  await page.evaluate(async () => {
+    const w = window as unknown as {
+      __MSF_UI__: { data: () => unknown };
+      __MSF__: { persist: (d: unknown) => Promise<unknown> };
+    };
+    await w.__MSF__.persist(w.__MSF_UI__.data());
+  });
+  await page.waitForTimeout(300);
+  const transitions = calls.filter((c) => c.method === 'POST' && c.url.includes('/transitions'));
+  expect(transitions).toHaveLength(0);
+  const count = await page.evaluate(() => {
+    const w = window as unknown as { __MSF_UI__: { data: () => { items: { id: string }[] } } };
+    return w.__MSF_UI__.data().items.filter((x) => x.id === 'REQ-2026-0009').length;
+  });
+  expect(count).toBe(1);
+});
+
+test('起動データが5000件に達しているときは、絞り込み無しでもサーバの total を使う', async ({ page }) => {
+  const total = 5200;
+  const virtual = Array.from({ length: total }, (_, i) =>
+    apiRecord({ id: `REQ-2026-${String(i + 1).padStart(4, '0')}`, suggested: 'g', title: `合成 ${i + 1}` }),
+  );
+  await mount(page, {
+    bootItems: [],
+    list: (url) => {
+      const pageSize = Math.min(Math.max(Number(url.searchParams.get('pageSize') ?? '50'), 1), 500);
+      const page = Math.max(Number(url.searchParams.get('page') ?? '1'), 1);
+      const start = (page - 1) * pageSize;
+      return { items: virtual.slice(start, start + pageSize), total, page, pageSize };
+    },
+  });
+  // 起動データが取得上限（5000件）に達した状態を作る（画面はサーバの total を使うべき）
+  await page.evaluate(() => {
+    const w = window as unknown as { __MSF_UI__: { data: () => { items: unknown[] } } };
+    const data = w.__MSF_UI__.data();
+    while (data.items.length < 5000) data.items.push({});
+  });
+  await openList(page);
+  await expect(page.locator('#view')).toContainText('全 5200 件');
+  await expect(page.locator('#view')).toContainText('一覧に出せる上限（5000 件）までを表示しています');
 });

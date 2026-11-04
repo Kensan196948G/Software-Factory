@@ -379,4 +379,30 @@ describe('一覧: サーバ側のページ取得（LIMIT / OFFSET）', () => {
     expect(red.total).toBe(0);
     expect(red.items).toHaveLength(0);
   });
+
+  it('page / pageSize の不正値は有限の整数へ丸め、500 を返さない', async () => {
+    const desk = await loginAs(app);
+    await insertSynthetic(3);
+
+    for (const query of ['?page=abc&pageSize=50', '?page=1.1&pageSize=2.5', '?page=Infinity&pageSize=Infinity']) {
+      const res = await list(desk.cookie, query);
+      expect(Number.isInteger(res.page)).toBe(true);
+      expect(res.page).toBeGreaterThanOrEqual(1);
+      expect(Number.isInteger(res.pageSize)).toBe(true);
+      expect(res.pageSize).toBeGreaterThanOrEqual(1);
+      expect(res.pageSize).toBeLessThanOrEqual(500);
+      expect(res.items.length).toBeLessThanOrEqual(res.pageSize);
+    }
+  });
+
+  it('ホームの total は 5000 件を超えても全件を数える', async () => {
+    const desk = await loginAs(app);
+    await insertSynthetic(5100);
+
+    const res = await app.inject({ method: 'GET', url: '/api/home', headers: { cookie: desk.cookie } });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { counts: { total: number; waitingApproval: number } };
+    expect(body.counts.total).toBe(5100);
+    expect(body.counts.waitingApproval).toBe(0);
+  });
 });

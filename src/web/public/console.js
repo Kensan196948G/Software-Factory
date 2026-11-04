@@ -5063,21 +5063,29 @@ const SF = (function () {
   const LIST_PAGE_MAX = 10; // 従来の取得上限（5000件 = 500 × 10）に合わせる
   const listServerWanted = () =>
     Boolean(
-      MSF_CONNECTED && window.__MSF__ && typeof window.__MSF__.toRecord === 'function' && (S.fd || S.fs || S.fc),
+      MSF_CONNECTED &&
+        window.__MSF__ &&
+        typeof window.__MSF__.toRecord === 'function' &&
+        // 絞り込みがあるとき、または起動データが取得上限（5000件）に達しているとき。
+        // 後者は 5000 件を超える依頼で起動データが切り詰められている可能性があるため、
+        // サーバの total とページ取得で正しい件数を出す。
+        (S.fd || S.fs || S.fc || S.data.items.length >= 5000),
     );
-  const listServerKey = () => [S.fd, S.fs, S.fc].join('\u0001');
-  let listServer = { key: '', items: null, total: 0, error: '', loading: '' };
-  // 一覧の応答に入っていた依頼の版（id → version）。詳細を開くときの判定に使う。
+  const listServerKey = () => [S.fd, S.fs, S.fc, S.data.items.length >= 5000 ? 'cap' : ''].join('\u0001');
+  let listServer = { key: null, items: null, total: 0, error: '', loading: '' };
+  // 一覧の応答に入っていた依頼の版と更新時刻（id → version / updatedAt）。詳細を開くときの判定に使う。
   let listServerVersions = new Map();
+  let listServerUpdatedAt = new Map();
   // 取得の世代。条件を行き来したとき（A→B→A）に、古い応答を新しい結果として採用しないための番号。
   let listServerGen = 0;
 
   /** 絞り込み条件が変わった（同期で依頼が変わった）ときに、取り直させる。 */
   function resetListServer() {
-    if (!listServer.key && !listServer.loading && !listServer.items) return; // 既に空
+    if (listServer.key === null && !listServer.loading && !listServer.items) return; // 既に空
     listServerGen += 1; // 飛んでいる取得の応答は捨てる
-    listServer = { key: '', items: null, total: 0, error: '', loading: '' };
+    listServer = { key: null, items: null, total: 0, error: '', loading: '' };
     listServerVersions = new Map();
+    listServerUpdatedAt = new Map();
   }
 
   /** サーバの絞り込み結果を取る。件数が 500 を超えるときは、表示の上限（5000件）までページを辿る。 */
@@ -5091,19 +5099,34 @@ const SF = (function () {
     if (S.fc) base.set('signal', S.fc);
     const done = (state) => {
       listServer = state;
-      // 一覧の応答に入っていた版。詳細を開くときに「手元より新しいか」を比べる。
+      // 一覧の応答に入っていた版・更新時刻。詳細を開くときに「手元より新しいか」を比べる。
       listServerVersions = new Map((state.items || []).map((x) => [x.id, Number(x.version) || 0]));
+      listServerUpdatedAt = new Map((state.items || []).map((x) => [x.id, String(x.updatedAt || '')]));
       if (S.view === 'list') renderList();
     };
-    const load = (page, acc, total) =>
+    const load = (page, acc, total, restarted) =>
       window.__MSF__
         .api('GET', '/api/requests?' + base.toString() + '&page=' + page)
         .then((res) => {
           if (!current()) return; // 条件が変わった（新しい取得が始まった）。古い応答は捨てる
           const items = Array.isArray(res && res.items) ? res.items : [];
-          const all = acc.concat(items);
+          // ページをまたいだ取得中に依頼が増減すると、OFFSET の窓がずれて同じ行が再び来る。
+          // 重複を検出したら一度だけ先頭から取り直し、それでも重複する分は捨てる（一覧の二重表示を防ぐ）。
+          const seen = new Set(acc.map((x) => x.id));
+          const fresh = [];
+          let duplicate = false;
+          for (const item of items) {
+            if (item && seen.has(item.id)) {
+              duplicate = true;
+              continue;
+            }
+            if (item) seen.add(item.id);
+            fresh.push(item);
+          }
+          const all = acc.concat(fresh);
           const t = Number(res && res.total) || 0;
-          if (items.length && all.length < t && page < LIST_PAGE_MAX) return load(page + 1, all, t);
+          if (duplicate && !restarted) return load(1, [], 0, true);
+          if (items.length && all.length < t && page < LIST_PAGE_MAX) return load(page + 1, all, t, restarted);
           done({ key: key, items: all, total: t, error: '', loading: '' });
           return undefined;
         })
@@ -5117,7 +5140,7 @@ const SF = (function () {
             loading: '',
           });
         });
-    load(1, [], 0);
+    load(1, [], 0, false);
   }
 
   /** キーワード検索の対象（画面側で行う）。サーバ応答と起動データで同じ並びにする。 */
@@ -5132,9 +5155,18 @@ const SF = (function () {
     const byId = new Map(S.data.items.map((r) => [r.id, r]));
     return (listServer.items || []).map((item) => {
       const local = item && byId.get(item.id);
-      // 未同期の編集がある行は、その編集を消さない（同期が済めば次の取得でサーバの値になる）
+      // 未同期の編集がある行は、その編集を消さない。ただしサーバの新しい状態・決定色・滞留日数は
+      // 項目単位で反映する（古い status / 色を「最新」として出さない）。
       const pending = local && window.__MSF__.sameAsServer && !window.__MSF__.sameAsServer(local);
-      if (pending) return Object.assign({}, local, { signalServer: item.suggested });
+      if (pending) {
+        const merged =
+          window.__MSF__.mergeSummary && local
+            ? window.__MSF__.mergeSummary(local, item)
+            : Object.assign({}, local || {});
+        merged.signalServer = item.suggested;
+        if (typeof item.staleDays === 'number') merged.staleDays = item.staleDays;
+        return merged;
+      }
       // それ以外はサーバの最新（状態・件名・決定色）で描く。履歴の無い行でも滞留日数はサーバの値を使う。
       const record = window.__MSF__.toRecord(item);
       record.signalServer = item.suggested;
@@ -5530,14 +5562,16 @@ const SF = (function () {
     }
     adopt(id)
       .then((rec) => {
+        // 詳細を閉じた・別の依頼へ移った後でも、採用した依頼は画面のデータへ残す。
+        // base にだけ存在する状態にすると、次の同期で「画面から消えた＝取消」と誤判定される。
+        if (rec) {
+          if (!find(rec.id)) S.data.items.push(rec);
+          SF.save(KEY, S.data);
+        }
         if (S.open !== id) return; // 別の依頼へ移った・閉じた
         if (!rec) {
           drawerFailed(id);
           return;
-        }
-        if (!find(rec.id)) {
-          S.data.items.push(rec);
-          SF.save(KEY, S.data);
         }
         renderDrawer();
         refreshRequestMail(id);
@@ -5585,10 +5619,14 @@ const SF = (function () {
       adoptIntoDrawer(id);
       return;
     }
-    // 一覧の応答の方が新しい（別の端末で状態・決定が進んだ等）→ 詳細を取り直してから描く。
+    // 一覧の応答の方が新しい（別の端末で状態・決定・投入先が進んだ等）→ 詳細を取り直してから描く。
+    // version は投入先の変更では上がらないため、updatedAt の差も見る。
     // 取り直さずに古い手元の内容を「最新」として出さない。
     const serverVersion = listServerVersions.get(id);
-    if (typeof serverVersion === 'number' && serverVersion > Number(local.__v || 0)) {
+    const serverUpdatedAt = listServerUpdatedAt.get(id);
+    const newerByVersion = typeof serverVersion === 'number' && serverVersion > Number(local.__v || 0);
+    const newerByUpdatedAt = typeof serverUpdatedAt === 'string' && serverUpdatedAt !== '' && serverUpdatedAt !== local.updatedAt;
+    if (newerByVersion || newerByUpdatedAt) {
       hydrateThenDrawer(id);
       return;
     }

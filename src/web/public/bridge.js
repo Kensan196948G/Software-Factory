@@ -290,6 +290,8 @@
   const base = new Map(boot.items.map((r) => [r.id, r]));
   // 画面から外したあと、取消の対象にならなかった依頼（完了・見送り）。後の同期の失敗で画面へ戻さない
   const retired = new Set();
+  // 画面に無い依頼を詳細から採用した直後、画面への反映が遅れても取消の対象にしないための印。
+  const adopted = new Set();
 
   async function api(method, path, body, extraHeaders) {
     const headers = { ...(extraHeaders || {}) };
@@ -535,9 +537,14 @@
     // コンソールから消えた依頼は取消にする。取消はサーバで戻せないので、同じ同期に 1 件でも失敗があれば行わず、
     // 消えた依頼を画面へ戻す（取り込みなどの全件置換は、全部の保存が成功したときだけ成立する）。
     const present = new Set(results.map((r) => r.ctx.id));
+    // 画面に現れた採用済みの依頼は、以後は通常の削除判定に戻す。
+    for (const id of present) adopted.delete(id);
     const restore = [];
     for (const [id, s] of [...base.entries()]) {
       if (present.has(id)) continue;
+      // 詳細から採用したが、まだ画面のデータへ反映されていない依頼を取消さない
+      // （詳細を閉じた・別の依頼へ移った直後の競合で、依頼を消してしまうのを防ぐ）。
+      if (adopted.has(id)) continue;
       if (failures.length) {
         if (s.status !== 'cancel' && !retired.has(id)) restore.push(id);
         continue;
@@ -738,7 +745,39 @@
     if (!ok) return null;
     const s = base.get(id);
     if (!s) return null;
-    return toConsole(s);
+    const rec = toConsole(s);
+    // 採用した依頼を画面のデータへも入れる。呼び出し側が詳細を閉じた・別の依頼へ移った
+    // 直後でも、base だけに存在して次の同期で「画面から消えた＝取消」と誤判定されるのを防ぐ。
+    adopted.add(id);
+    const ui = window.__MSF_UI__;
+    const data = ui && ui.data ? ui.data() : null;
+    if (data && Array.isArray(data.items) && !data.items.some((x) => x.id === id)) {
+      data.items.push(rec);
+    }
+    return rec;
+  }
+
+  /**
+   * 一覧の要約（サーバの最新）と、未同期の編集を項目単位でマージする。
+   * サーバの新しい status / 決定色 / 滞留日数 / 更新時刻は反映し、利用者がまだ送れていない
+   * 項目（base と異なる項目）だけ手元を残す。履歴・コメントは一覧に含まれないため手元を残す。
+   */
+  function mergeSummary(local, item) {
+    const fresh = toConsole(item);
+    const s = base.get(local.id);
+    if (!s) return fresh;
+    const prev = toConsole(s);
+    const merged = { ...fresh };
+    delete merged.history;
+    delete merged.comments;
+    for (const key of Object.keys(merged)) {
+      if (Object.prototype.hasOwnProperty.call(local, key) && !same(local[key], prev[key])) {
+        merged[key] = local[key];
+      }
+    }
+    merged.history = Array.isArray(local.history) ? local.history : [];
+    merged.comments = Array.isArray(local.comments) ? local.comments : [];
+    return merged;
   }
 
   /**
@@ -975,5 +1014,7 @@
     adoptRequest,
     // 画面の依頼がサーバの base と同じか（未同期の編集が無いか）
     sameAsServer,
+    // 一覧の要約（サーバの最新）と未同期の編集を項目単位でマージする
+    mergeSummary,
   };
 })();
