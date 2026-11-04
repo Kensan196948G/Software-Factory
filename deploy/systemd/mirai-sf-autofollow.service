@@ -1,0 +1,23 @@
+# 雛形: ~/.config/systemd/user/ へコピーして使う（有効化は Lead が行う。手順は
+# docs/production/06-staging-parity-and-autofollow.md）。
+# Staging を origin/main に追従させる。main が進んだときだけ配備し、失敗時は直前の
+# リリースへ戻す（切替・再起動・healthz 確認は scripts/ops/release.sh に任せる）。
+# 実行元は current ではなく常設のチェックアウト（リリースのデプロイに依存しないため）。
+# 75 = 別の autofollow が実行中（多重実行防止）。failed にせず成功扱いにする。
+[Unit]
+Description=Mirai SF staging auto-follow to origin/main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.nvm/versions/node/v22.22.3/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/Projects/Software-Factory-Project
+ExecStart=/usr/bin/env bash scripts/ops/staging-autofollow.sh
+# 75 は「別の実行が進行中」。timer の failed を増やさない
+SuccessExitStatus=75
+# pnpm install / build を含むため長めに取る（多重実行は flock で防ぐ）
+TimeoutStartSec=1800
+SyslogIdentifier=mirai-sf-autofollow
+StandardOutput=journal
+StandardError=journal
