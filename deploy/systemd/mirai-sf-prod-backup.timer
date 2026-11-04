@@ -2,9 +2,14 @@
 Description=Hourly database backup for Mirai SF production (RPO 1h)
 
 [Timer]
-# RPO 1 時間（ADR §8-6 の決定）。毎時 :05 に取る。日次ではなく毎時にした理由は runbook §5。
-OnCalendar=*-*-* *:05:00
-Persistent=true
+# RPO 1 時間（ADR §8-6）。固定時刻 (*:05) + AccuracySec 既定 1 分では、遅延と実行時間で
+# 間隔が 60 分を超える実測（最大 60.2 分、docs/production/07）が出た。
+# 前回の実行から 55 分で回し、起動直後は 2 分後に 1 回取る。
+# Persistent は OnCalendar 前提のため使わない。停止・サスペンド中は healthcheck の
+# 鮮度警告（RPO）が検知する。
+OnBootSec=2min
+OnUnitActiveSec=55min
+AccuracySec=1s
 
 [Install]
 WantedBy=timers.target

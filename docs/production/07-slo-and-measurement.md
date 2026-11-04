@@ -109,12 +109,14 @@ SLO の未達ではない）。
 
 - 本番は `mirai-sf-prod-backup.timer` が毎時 :05 に動き（`02-runbook.md` §5。ADR §8-6 の RPO 1 時間）、
   journal 内でも 4 回成功（最終 2026-11-04 15:05:14 JST、所要 14.8 秒）。
-- **最大間隔 60.2 分**は、timer の発火精度による。`deploy/systemd/mirai-sf-prod-backup.timer` は
-  `OnCalendar=*-*-* *:05:00` だが `AccuracySec` を指定しておらず、systemd の既定は **1 分**
-  （`systemctl --user show -p AccuracyUSec` で `1min`）。このため発火が :05:00 から最大 1 分ほど遅れ、
-  開始時刻の差が 60 分を超える回が出る（実測の最大 60.2 分＝12 秒超過が 4 回）。
-  目標「1 時間」を厳密に守るなら unit に `AccuracySec=1s` を足す（**未実施**。unit の変更は運用変更なので承認後）。
+- **最大間隔 60.2 分**は、timer の発火精度による。旧 unit は `OnCalendar=*-*-* *:05:00` で
+  `AccuracySec` を指定しておらず、systemd の既定は **1 分**（`systemctl --user show -p AccuracyUSec` で `1min`）。
+  このため発火が :05:00 から最大 1 分ほど遅れ、開始時刻の差が 60 分を超える回が出た（実測の最大 60.2 分＝12 秒超過が 4 回）。
+  → **2026-11-04 に unit を是正**した（PR #83）。固定時刻 + `AccuracySec=1s` でも実行時間の分だけ 60 分を超え得るため、
+  `OnBootSec=2min` + `OnUnitActiveSec=55min` + `AccuracySec=1s` の「前回実行から 55 分」に変え、60 分に 5 分の余裕を持たせた。
+  `Persistent` は `OnCalendar` 前提のため外した。停止・サスペンドで飛んだ場合は healthcheck の鮮度警告（既定 90 分）が検知する。
   監視は 90 分で余裕を見ている（`MIRAI_SF_HEALTH_BACKUP_MAX_AGE_MIN` の既定 90。`02-runbook.md` §7）。
+  **是正後の最大間隔は次の計測で確認する**（本節の 60.2 分は是正前の実測）。
 - Staging は日次（02:30）＋リリース前バックアップなので、間隔の最大 727.4 分は仕様どおり。
   **Staging に本番と同じ RPO を課さない**（課すなら timer を毎時に変える別の決定が要る）。
 - `mirai-sf-prodr` は runbook に記載の無い古いディレクトリ（検証時のものと見られる）。合計に混ぜず、参考として出すだけにした。
