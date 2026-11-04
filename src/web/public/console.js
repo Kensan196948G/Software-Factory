@@ -687,6 +687,9 @@ const SF = (function () {
     return (h.length ? h[h.length - 1].at : r.createdAt) || r.updatedAt || '';
   }
   function stayDays(r, now) {
+    // 一覧のサーバ絞り込みでは、サーバが計算した滞留日数（status_since から）を使う。
+    // 画面の履歴を持たない行（起動後に別の端末で作られた依頼）でも、同じ値になる。
+    if (typeof r.staleDays === 'number') return r.staleDays;
     const t = new Date(since(r)).getTime();
     if (isNaN(t)) return 0;
     return Math.max(0, Math.floor(((now || Date.now()) - t) / 86400000));
@@ -5064,14 +5067,23 @@ const SF = (function () {
     );
   const listServerKey = () => [S.fd, S.fs, S.fc].join('\u0001');
   let listServer = { key: '', items: null, total: 0, error: '', loading: '' };
+  // 一覧の応答に入っていた依頼の版（id → version）。詳細を開くときの判定に使う。
+  let listServerVersions = new Map();
+  // 取得の世代。条件を行き来したとき（A→B→A）に、古い応答を新しい結果として採用しないための番号。
+  let listServerGen = 0;
 
   /** 絞り込み条件が変わった（同期で依頼が変わった）ときに、取り直させる。 */
   function resetListServer() {
+    if (!listServer.key && !listServer.loading && !listServer.items) return; // 既に空
+    listServerGen += 1; // 飛んでいる取得の応答は捨てる
     listServer = { key: '', items: null, total: 0, error: '', loading: '' };
+    listServerVersions = new Map();
   }
 
-  /** サーバの絞り込み結果を取る。件数が 500 を超えるときは、従来の上限（5000件）までページを辿る。 */
+  /** サーバの絞り込み結果を取る。件数が 500 を超えるときは、表示の上限（5000件）までページを辿る。 */
   function requestListServer(key) {
+    const gen = ++listServerGen;
+    const current = () => gen === listServerGen;
     listServer = { key: key, items: null, total: 0, error: '', loading: key };
     const base = new URLSearchParams({ pageSize: String(LIST_PAGE) });
     if (S.fd) base.set('dept', S.fd);
@@ -5079,13 +5091,15 @@ const SF = (function () {
     if (S.fc) base.set('signal', S.fc);
     const done = (state) => {
       listServer = state;
+      // 一覧の応答に入っていた版。詳細を開くときに「手元より新しいか」を比べる。
+      listServerVersions = new Map((state.items || []).map((x) => [x.id, Number(x.version) || 0]));
       if (S.view === 'list') renderList();
     };
     const load = (page, acc, total) =>
       window.__MSF__
         .api('GET', '/api/requests?' + base.toString() + '&page=' + page)
         .then((res) => {
-          if (listServer.key !== key) return; // 条件が変わった。古い応答は捨てる
+          if (!current()) return; // 条件が変わった（新しい取得が始まった）。古い応答は捨てる
           const items = Array.isArray(res && res.items) ? res.items : [];
           const all = acc.concat(items);
           const t = Number(res && res.total) || 0;
@@ -5094,7 +5108,7 @@ const SF = (function () {
           return undefined;
         })
         .catch((err) => {
-          if (listServer.key !== key) return;
+          if (!current()) return;
           done({
             key: key,
             items: [],
@@ -5118,9 +5132,13 @@ const SF = (function () {
     const byId = new Map(S.data.items.map((r) => [r.id, r]));
     return (listServer.items || []).map((item) => {
       const local = item && byId.get(item.id);
-      const record = local ? Object.assign({}, local) : window.__MSF__.toRecord(item);
-      // 色はサーバが判定した候補を使う（起動データのカタログとサーバのカタログがずれても、食い違わない）
+      // 未同期の編集がある行は、その編集を消さない（同期が済めば次の取得でサーバの値になる）
+      const pending = local && window.__MSF__.sameAsServer && !window.__MSF__.sameAsServer(local);
+      if (pending) return Object.assign({}, local, { signalServer: item.suggested });
+      // それ以外はサーバの最新（状態・件名・決定色）で描く。履歴の無い行でも滞留日数はサーバの値を使う。
+      const record = window.__MSF__.toRecord(item);
       record.signalServer = item.suggested;
+      record.staleDays = item.staleDays;
       return record;
     });
   }
@@ -5129,6 +5147,8 @@ const SF = (function () {
     const useServer = listServerWanted();
     const serverKey = useServer ? listServerKey() : '';
     if (useServer && listServer.key !== serverKey) requestListServer(serverKey);
+    // 絞り込みを外したら、次に同じ条件を選んだときに取り直す（古い結果を使い回さない）
+    if (!useServer) resetListServer();
     const q = S.fq.toLowerCase();
     const source = useServer ? listServerRows() : S.data.items;
     const a = source
@@ -5141,6 +5161,8 @@ const SF = (function () {
       })
       .sort((x, y) => (x.id < y.id ? 1 : -1));
     const totalLabel = useServer ? listServer.total : S.data.items.length;
+    const loadedLabel = useServer && listServer.items ? listServer.items.length : 0;
+    const capped = useServer && listServer.total > loadedLabel; // 表示の上限までしか出していない
     const emptyMsg =
       useServer && listServer.loading
         ? '絞り込みの結果を読み込んでいます…'
@@ -5221,7 +5243,14 @@ const SF = (function () {
       a.length +
       ' 件 ／ 全 ' +
       totalLabel +
-      ' 件</p>';
+      ' 件</p>' +
+      (capped
+        ? '<p class="hint">全 ' +
+          listServer.total +
+          ' 件のうち、一覧に出せる上限（' +
+          loadedLabel +
+          ' 件）までを表示しています。絞り込むと残りを確認できます。</p>'
+        : '');
     const re = () => {
       const p = $('#lq').selectionStart;
       renderList();
@@ -5455,9 +5484,114 @@ const SF = (function () {
   });
 
   /* ---- drawer ---- */
+  /** 取り直しの途中の表示。古い内容を最新として出さない（読み込み中であることを見せる）。 */
+  function drawerPending(id) {
+    $('#drawer').classList.add('show');
+    $('#dmask').classList.add('show');
+    $('#drawer').innerHTML =
+      '<div class="dh"><div class="r1"><span class="no">' +
+      E(id) +
+      '</span></div><button class="x" id="dx" type="button" title="閉じる">' +
+      ico('i-x') +
+      '</button></div><div class="box"><h4>' +
+      ico('i-inbox') +
+      '依頼を読み込んでいます</h4><p class="hint">サーバから最新の内容を取り直しています。</p></div>';
+    $('#dx').addEventListener('click', closeDrawer);
+  }
+
+  /** 取り直しに失敗したときの表示。古い内容を最新として出さず、閉じられるようにする。 */
+  function drawerFailed(id) {
+    toast('依頼を読み込めませんでした', true);
+    $('#drawer').classList.add('show');
+    $('#dmask').classList.add('show');
+    $('#drawer').innerHTML =
+      '<div class="dh"><div class="r1"><span class="no">' +
+      E(id) +
+      '</span></div><button class="x" id="dx" type="button" title="閉じる">' +
+      ico('i-x') +
+      '</button></div><div class="box"><h4>' +
+      ico('i-alert') +
+      '依頼を読み込めませんでした</h4><p class="hint">サーバから最新の内容を取れませんでした。少し待って、一覧から開き直してください。</p></div>';
+    $('#dx').addEventListener('click', closeDrawer);
+  }
+
+  /**
+   * 一覧のサーバ絞り込みで出たが、起動データに無い依頼（別の端末で作られた等）を、
+   * サーバの詳細を取り直して画面の依頼に加える。ブリッジが base も同じ内容で揃えるので、
+   * 次の同期で作り直し（POST）や空の履歴での上書きは起きない。
+   */
+  function adoptIntoDrawer(id) {
+    S.open = id;
+    drawerPending(id);
+    const adopt = window.__MSF__ && typeof window.__MSF__.adoptRequest === 'function' ? window.__MSF__.adoptRequest : null;
+    if (!adopt) {
+      drawerFailed(id);
+      return;
+    }
+    adopt(id)
+      .then((rec) => {
+        if (S.open !== id) return; // 別の依頼へ移った・閉じた
+        if (!rec) {
+          drawerFailed(id);
+          return;
+        }
+        if (!find(rec.id)) {
+          S.data.items.push(rec);
+          SF.save(KEY, S.data);
+        }
+        renderDrawer();
+        refreshRequestMail(id);
+      })
+      .catch(() => {
+        if (S.open !== id) return;
+        drawerFailed(id);
+      });
+  }
+
+  /**
+   * 一覧の応答の方が手元より新しいとき、詳細を取り直してから描く。
+   * 正規の取り直し（refreshRequest）は、未同期の編集を mergeServer で残す。
+   * 取れなかったときは、古い内容を最新として出さずに理由を出す。
+   */
+  function hydrateThenDrawer(id) {
+    S.open = id;
+    drawerPending(id);
+    const refresh = window.__MSF__ && typeof window.__MSF__.refreshRequest === 'function' ? window.__MSF__.refreshRequest : null;
+    if (!refresh) {
+      drawerFailed(id);
+      return;
+    }
+    refresh(id)
+      .then((ok) => {
+        if (S.open !== id) return;
+        if (!ok || !find(id)) {
+          drawerFailed(id);
+          return;
+        }
+        renderDrawer();
+        refreshRequestMail(id);
+      })
+      .catch(() => {
+        if (S.open !== id) return;
+        drawerFailed(id);
+      });
+  }
+
   function openDrawer(id) {
     S.open = id;
     S.dtab = 'sum';
+    const local = find(id);
+    if (!local) {
+      adoptIntoDrawer(id);
+      return;
+    }
+    // 一覧の応答の方が新しい（別の端末で状態・決定が進んだ等）→ 詳細を取り直してから描く。
+    // 取り直さずに古い手元の内容を「最新」として出さない。
+    const serverVersion = listServerVersions.get(id);
+    if (typeof serverVersion === 'number' && serverVersion > Number(local.__v || 0)) {
+      hydrateThenDrawer(id);
+      return;
+    }
     renderDrawer();
     $('#drawer').classList.add('show');
     $('#dmask').classList.add('show');

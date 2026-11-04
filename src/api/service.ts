@@ -254,8 +254,12 @@ export interface ListQuery {
 }
 
 export async function listForActor(actor: Actor, filter: ListQuery) {
+  const pageSize = Math.min(Math.max(filter.pageSize ?? 50, 1), 500);
+  const page = Math.max(filter.page ?? 1, 1);
+  const offset = (page - 1) * pageSize;
   // 信号の色の絞り込みは SQL（WHERE）で行う（L-08）。取得後に全件を JS で濾さない。
-  // 件数も同じ条件で数えるので、ページングと total がずれない。
+  // ページも SQL の LIMIT/OFFSET で取る（以前は 5000 件まで取ってから JS で切っていたため、
+  // 5001 件目以降のページが空になっていた）。件数は LIMIT を付けない同じ条件で数える。
   const { rows, total } = await listRequests({
     q: filter.q,
     dept: filter.dept,
@@ -263,17 +267,15 @@ export async function listForActor(actor: Actor, filter: ListQuery) {
     signal: filter.signal,
     includeDeleted: filter.includeDeleted,
     applicantUserId: filter.mine ? actor.userId : undefined,
-    limit: 5000,
+    limit: pageSize,
+    offset,
   });
   const cache = new Map<string, Signal>();
   const signals = await getCatalogSignals(rows.map((r) => r.tool_id).filter((v): v is string => Boolean(v)));
   for (const [k, v] of signals) cache.set(k, v);
 
-  const summaries = rows.map((r) => summaryOf(r, r.tool_id ? (cache.get(r.tool_id) ?? null) : null, actor));
-  const pageSize = Math.min(Math.max(filter.pageSize ?? 50, 1), 500);
-  const page = Math.max(filter.page ?? 1, 1);
-  const start = (page - 1) * pageSize;
-  return { items: summaries.slice(start, start + pageSize), total, page, pageSize };
+  const items = rows.map((r) => summaryOf(r, r.tool_id ? (cache.get(r.tool_id) ?? null) : null, actor));
+  return { items, total, page, pageSize };
 }
 
 export async function homeFor(actor: Actor) {

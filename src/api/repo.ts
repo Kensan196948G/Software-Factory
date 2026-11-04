@@ -131,13 +131,16 @@ export interface ListFilters {
   approverUserId?: string;
   order?: 'newest' | 'oldest';
   limit?: number;
+  /** ページの先頭から読み飛ばす行数（SQL の OFFSET）。一覧のページ取得に使う。 */
+  offset?: number;
 }
 
 /**
  * 信号の色（`signalDecided ?? suggested`）を SQL で表した式。
  *
  * 候補色の正本は `shared/domain.ts` の `evaluateSignal`（詳細仕様書 3-4、R1〜R6）。
- * R1 の `decides` だけが赤まで上げ、R2〜R6（カタログの色・データ・社外・安全）は黄まで。
+ * 赤まで上げるのは R1（`decides = 'r'`）と R2（カタログの色が赤）の 2 つ。
+ * R2 が黄・赤のとき、および R3〜R6（データ・社外・安全）は黄まで。
  * 「引き上げるだけ（下げない）」なので、最大値を取る CASE と等しくなる。
  *
  * `decides` / `catalog_tool.signal` は CHECK 制約で g/y/r に限られ、`parties` は NOT NULL で
@@ -206,19 +209,28 @@ export async function listRequests(filters: ListFilters): Promise<{ rows: Reques
     where.push(`coalesce(r.signal_decided, ${suggestedSignalCaseSql(dataIdx, safetyIdx)}) = $${params.length}`);
   }
 
-  const order = filters.order === 'oldest' ? 'asc' : 'desc';
-  const limit = filters.limit ?? 5000;
-  params.push(limit);
-  const rows = await many<RequestRow>(
-    `${SELECT_BASE} where ${where.join(' and ')} order by r.created_at ${order} limit $${params.length}`,
-    params,
-  );
-  // 件数も同じ条件で数える（ページングの整合）。signal の条件は catalog_tool を参照するため、
-  // そのときだけ結合を足す。件数は LIMIT の影響を受けない全件（これまでは取得窓 5000 件の中だけ数えていた）。
+  // 件数は LIMIT/OFFSET を付ける前の条件だけで数える（ページングの整合）。
+  const countParams = params.slice();
   const countJoin = filters.signal ? ' left join catalog_tool t on t.id = r.tool_id' : '';
   const countRow = await one<{ count: number }>(
     `select count(*)::int as count from request r${countJoin} where ${where.map((w) => w.replace(/\br\./g, 'r.')).join(' and ')}`,
-    params.slice(0, -1),
+    countParams,
+  );
+
+  const order = filters.order === 'oldest' ? 'asc' : 'desc';
+  const limit = filters.limit ?? 5000;
+  const offset = Math.max(0, filters.offset ?? 0);
+  params.push(limit);
+  let paging = `limit $${params.length}`;
+  if (offset > 0) {
+    params.push(offset);
+    paging += ` offset $${params.length}`;
+  }
+  const rows = await many<RequestRow>(
+    // created_at だけでは同じ時刻の行の順序が不定になり、ページの継ぎ目で行が重複・欠落する。
+    // id を第2キーにして安定させる（第1キーの並びは変えない）。
+    `${SELECT_BASE} where ${where.join(' and ')} order by r.created_at ${order}, r.id ${order} ${paging}`,
+    params,
   );
   return { rows, total: countRow?.count ?? rows.length };
 }

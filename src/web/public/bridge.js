@@ -727,6 +727,31 @@
     return true;
   }
 
+  /**
+   * 画面に無い依頼（別の端末で作られた等）を、詳細ごと取り直して画面のレコードにする。
+   * 正規の取り直し（refreshRequest）を通すので base も同じ内容で揃う。画面の依頼を詳細で
+   * 置き換えるだけなので、次の同期で作り直し（POST）や空の履歴での上書きは起きない。
+   * 取れないときは null（画面の依頼は増やさない）。
+   */
+  async function adoptRequest(id) {
+    const ok = await refreshRequest(id);
+    if (!ok) return null;
+    const s = base.get(id);
+    if (!s) return null;
+    return toConsole(s);
+  }
+
+  /**
+   * 画面の依頼がサーバの base と同じ内容か（未同期の編集が無いか）。
+   * 一覧のサーバ絞り込みで、サーバの最新を表示してよいかの判定に使う。
+   */
+  function sameAsServer(it) {
+    if (!it || typeof it.id !== 'string') return false;
+    const s = base.get(it.id);
+    if (!s) return false; // サーバに無い（まだ作っていない）→ 未同期として扱う
+    return contentSignature(it) === contentSignature(toConsole(s));
+  }
+
   /** 失敗を画面が扱う種類に分ける。ERR-304 は details.handoffState でしか区別できない。 */
   function handoffFailure(err) {
     const code = (err && err.code) || null;
@@ -946,5 +971,9 @@
     // サーバの一覧応答（GET /api/requests の items）を画面の依頼レコードへ直す。
     // 一覧の絞り込みをサーバへ任せたとき（L-08）、起動データに無い依頼も同じ形で描くために使う。
     toRecord: toConsole,
+    // 画面に無い依頼の詳細を取り直して画面へ加える（base も揃える）
+    adoptRequest,
+    // 画面の依頼がサーバの base と同じか（未同期の編集が無いか）
+    sameAsServer,
   };
 })();

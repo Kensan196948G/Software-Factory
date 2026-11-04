@@ -299,3 +299,84 @@ describe('信号の色: ページング・並び順・既存パラメータと�
     expect(q.items.map((i) => i.title)).toEqual(['海の現場の赤']);
   });
 });
+
+/**
+ * 一覧のページ取得。以前は「最大 5000 件を取ってから JS で切る」だったため、
+ * 5001 件目以降のページが空になっていた。SQL の LIMIT/OFFSET で取ることの確認。
+ */
+describe('一覧: サーバ側のページ取得（LIMIT / OFFSET）', () => {
+  /** 合成の依頼を N 件、直接入れる（API を N 回叩かずに 5000 件超を作る）。 */
+  async function insertSynthetic(count: number): Promise<void> {
+    await query(
+      `insert into request (id, seq, year, created_at, updated_at, applicant, dept_code, title, kind,
+                            problem, purpose, users, scope, criteria, decides, parties, approver, status)
+       select 'SYN-' || lpad(i::text, 5, '0'), i, 2026,
+              timestamptz '2026-01-01 00:00:00+09' - (i * interval '1 minute'),
+              timestamptz '2026-01-01 00:00:00+09',
+              '合成 太郎', 'dx', '合成 ' || i, 'consult', '合成', '合成',
+              array['現場の担当者'], array['合成'], array['合成'], 'g', 'internal', '鈴木 一郎', 'received'
+         from generate_series(1, $1::int) as i`,
+      [count],
+    );
+  }
+
+  it('5000 件を超えても、後ろのページが取れる（件数は全件）', async () => {
+    const desk = await loginAs(app);
+    await insertSynthetic(5100);
+
+    const first = await list(desk.cookie, '?page=1&pageSize=50');
+    expect(first.total).toBe(5100);
+    expect(first.items).toHaveLength(50);
+    expect(first.items[0]?.id).toBe('SYN-00001'); // created_at の新しい順
+
+    const p101 = await list(desk.cookie, '?page=101&pageSize=50');
+    expect(p101.items.map((i) => i.id)).toEqual(Array.from({ length: 50 }, (_, k) => `SYN-${String(5001 + k).padStart(5, '0')}`));
+
+    // 以前はここが空だった（取得上限 5000 件の外）
+    const p102 = await list(desk.cookie, '?page=102&pageSize=50');
+    expect(p102.total).toBe(5100);
+    expect(p102.items).toHaveLength(50);
+    expect(p102.items[0]?.id).toBe('SYN-05051');
+    expect(p102.items.at(-1)?.id).toBe('SYN-05100');
+
+    const beyond = await list(desk.cookie, '?page=103&pageSize=50');
+    expect(beyond.items).toHaveLength(0);
+    expect(beyond.total).toBe(5100);
+
+    // 既定（pageSize 未指定）は 50 件のまま。返す形は変えない。
+    const noParams = await list(desk.cookie);
+    expect(noParams.items).toHaveLength(50);
+    expect(noParams.page).toBe(1);
+    expect(noParams.pageSize).toBe(50);
+  });
+
+  it('同じ時刻の行があっても、ページの継ぎ目で重複・欠落しない（created_at + id の安定ソート）', async () => {
+    const desk = await loginAs(app);
+    await insertSynthetic(12);
+    await query(`update request set created_at = timestamptz '2026-01-01 00:00:00+09'`);
+
+    const seen: string[] = [];
+    for (const page of [1, 2, 3]) {
+      const res = await list(desk.cookie, `?page=${page}&pageSize=5`);
+      expect(res.total).toBe(12);
+      seen.push(...res.items.map((i) => i.id));
+    }
+    expect(seen).toHaveLength(12);
+    expect(new Set(seen).size).toBe(12);
+    expect(seen).toEqual([...seen].sort((a, b) => (a < b ? 1 : -1))); // id の降順で安定
+  });
+
+  it('色で絞ったページも、同じ条件の total と一致する', async () => {
+    const desk = await loginAs(app);
+    await insertSynthetic(5100);
+
+    const blue = await list(desk.cookie, '?signal=g&page=102&pageSize=50');
+    expect(blue.total).toBe(5100);
+    expect(blue.items).toHaveLength(50);
+    for (const item of blue.items) expect(item.signalDecided ?? item.suggested).toBe('g');
+
+    const red = await list(desk.cookie, '?signal=r&page=1&pageSize=50');
+    expect(red.total).toBe(0);
+    expect(red.items).toHaveLength(0);
+  });
+});

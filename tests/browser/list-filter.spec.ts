@@ -12,7 +12,10 @@ import { resolve } from 'node:path';
  * 確かめること:
  * - 部署・状態・色の絞り込みは、`GET /api/requests` のクエリとしてサーバへ送る
  * - 取得した全件を画面で濾さない（サーバが返した行をそのまま描く）
- * - 件数（全 N 件）はサーバの total を使う
+ * - 表示はサーバの最新（状態・件名・決定色）。ただし未同期の編集は消さない
+ * - 起動データに無い依頼（別の端末で作られた等）でも、詳細を開ける（作り直しの POST をしない）
+ * - 条件を行き来したとき、遅れて届いた古い応答を採用しない
+ * - 表示の上限までしか出していないときは、そのことを隠さない
  * - サーバが失敗したら、空の一覧にせず理由を出す
  */
 
@@ -27,7 +30,10 @@ interface ApiRecord {
   suggested: string;
 }
 
-/** サーバの一覧応答（`GET /api/requests` の items）と同じ形の作り物。 */
+/**
+ * サーバのレコード（一覧の items / 詳細の request）と同じ形の作り物。
+ * 起動データにも同じ形で置く（画面はブリッジの変換を通して読む）。
+ */
 function apiRecord(over: Record<string, unknown>): ApiRecord {
   return {
     id: 'REQ-2026-0001',
@@ -73,6 +79,8 @@ function apiRecord(over: Record<string, unknown>): ApiRecord {
     deleted: false,
     issueNo: null,
     targetRepoId: null,
+    history: [],
+    comments: [],
     // 一覧の summary が付ける項目
     suggested: 'g',
     measure: 1,
@@ -111,10 +119,50 @@ interface Call {
 
 interface MountOptions {
   failList?: boolean;
+  /** 起動データ（ブリッジが画面の依頼へ変換する）。省略すると空。 */
+  bootItems?: ApiRecord[];
+  /** 詳細（`GET /api/requests/:id`）の応答。無い id は 404。 */
+  details?: Record<string, ApiRecord>;
+  /**
+   * 一覧の応答。省略すると RECORDS をサーバの絞り込みと同じ規則で返す。
+   * `seq` は同じ signal での取得回数（1 が最初）。
+   */
+  list?: (url: URL, seq: number) => { items: ApiRecord[]; total: number; page: number; pageSize: number };
+  /**
+   * 指定した signal の**最初の**一覧取得を、releaseHold() まで保留する。
+   * 条件を A→B→A と変えたあとに古い応答を返し、それが採用されないことを確かめるための門。
+   */
+  holdFirstSignal?: string;
 }
 
-async function mount(page: Page, options: MountOptions = {}): Promise<Call[]> {
+function filterRecords(records: ApiRecord[], url: URL): { items: ApiRecord[]; total: number; page: number; pageSize: number } {
+  let items = records.slice();
+  const dept = url.searchParams.get('dept');
+  if (dept) items = items.filter((r) => r.deptCode === dept);
+  const status = url.searchParams.get('status');
+  if (status) items = items.filter((r) => status.split(',').includes(r.status));
+  const signal = url.searchParams.get('signal');
+  if (signal) items = items.filter((r) => (r.signalDecided ?? r.suggested) === signal);
+  const total = items.length;
+  const pageSize = Math.min(Math.max(Number(url.searchParams.get('pageSize') ?? '50'), 1), 500);
+  const page = Math.max(Number(url.searchParams.get('page') ?? '1'), 1);
+  const start = (page - 1) * pageSize;
+  return { items: items.slice(start, start + pageSize), total, page, pageSize };
+}
+
+interface Mounted {
+  calls: Call[];
+  /** holdFirstSignal で保留した最初の応答を返す（古い応答をあとから届かせる）。 */
+  releaseHold: () => void;
+}
+
+async function mount(page: Page, options: MountOptions = {}): Promise<Mounted> {
   const calls: Call[] = [];
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const signalCounts = new Map<string, number>();
   const boot = {
     user: {
       id: USER_ID,
@@ -128,8 +176,7 @@ async function mount(page: Page, options: MountOptions = {}): Promise<Call[]> {
     role: 'desk',
     csrf: 'synthetic-csrf',
     seq: 3,
-    // 起動データは空にして、一覧はサーバの絞り込み結果だけで描かせる（変換の経路も通す）
-    items: [],
+    items: options.bootItems ?? [],
     drafts: [],
     ops: null,
     approvers: [],
@@ -165,21 +212,18 @@ async function mount(page: Page, options: MountOptions = {}): Promise<Call[]> {
             json: { error: { code: 'ERR-900', message: '一覧を取得できませんでした（試験）' } },
           });
         }
-        // サーバの絞り込みと同じ規則（部署・状態・色は AND、色は「決定 ?? 候補」）
-        let items = RECORDS.slice();
-        const dept = url.searchParams.get('dept');
-        if (dept) items = items.filter((r) => r.deptCode === dept);
-        const status = url.searchParams.get('status');
-        if (status) items = items.filter((r) => status.split(',').includes(r.status));
-        const signal = url.searchParams.get('signal');
-        if (signal) items = items.filter((r) => (r.signalDecided ?? r.suggested) === signal);
-        const total = items.length;
-        const pageSize = Math.min(Math.max(Number(url.searchParams.get('pageSize') ?? '50'), 1), 500);
-        const page = Math.max(Number(url.searchParams.get('page') ?? '1'), 1);
-        const start = (page - 1) * pageSize;
-        return route.fulfill({
-          json: { items: items.slice(start, start + pageSize), total, page, pageSize },
-        });
+        const signal = url.searchParams.get('signal') ?? '';
+        const seq = (signalCounts.get(signal) ?? 0) + 1;
+        signalCounts.set(signal, seq);
+        if (options.holdFirstSignal === signal && seq === 1) await gate; // 古い応答は release まで届けない
+        const res = options.list ? options.list(url, seq) : filterRecords(RECORDS, url);
+        return route.fulfill({ json: res });
+      }
+      if (url.pathname.startsWith('/api/requests/') && req.method() === 'GET') {
+        const id = decodeURIComponent(url.pathname.slice('/api/requests/'.length).split('/')[0] ?? '');
+        const found = options.details?.[id];
+        if (!found) return route.fulfill({ status: 404, json: { error: { code: 'ERR-404', message: '見つかりません' } } });
+        return route.fulfill({ json: { request: found } });
       }
       return route.fulfill({ json: { items: [], version: 1 } });
     }
@@ -187,10 +231,15 @@ async function mount(page: Page, options: MountOptions = {}): Promise<Call[]> {
   });
   await page.goto('http://list.test/');
   await expect(page.locator('button[data-v="home"]')).toBeVisible();
-  return calls;
+  return { calls, releaseHold: () => release() };
 }
 
 const listCalls = (calls: Call[]) => calls.filter((c) => c.method === 'GET' && c.url.startsWith('/api/requests?'));
+const detailCalls = (calls: Call[]) =>
+  calls.filter(
+    (c) => c.method === 'GET' && c.url.startsWith('/api/requests/') && /^\/api\/requests\/REQ-\d{4}-\d{4}$/.test(c.url),
+  );
+const postCalls = (calls: Call[]) => calls.filter((c) => c.method === 'POST' && c.url === '/api/requests');
 
 async function openList(page: Page): Promise<void> {
   await page.locator('button[data-v="list"]').click();
@@ -198,7 +247,7 @@ async function openList(page: Page): Promise<void> {
 }
 
 test('色の絞り込みはサーバへ signal で送り、返った行をそのまま描く（画面では濾さない）', async ({ page }) => {
-  const calls = await mount(page);
+  const { calls } = await mount(page, { bootItems: [] });
   await openList(page);
 
   // 絞り込み無しでは、サーバへ一覧を取りに行かない（従来どおり起動データを描く）
@@ -218,7 +267,7 @@ test('色の絞り込みはサーバへ signal で送り、返った行をその
 });
 
 test('承認者の決定は候補より優先される（決定黄の依頼が黄で出る）', async ({ page }) => {
-  await mount(page);
+  await mount(page, { bootItems: [] });
   await openList(page);
   await page.selectOption('#lc', 'y');
   await expect(page.locator('#ltb')).toContainText('REQ-2026-0002');
@@ -228,7 +277,7 @@ test('承認者の決定は候補より優先される（決定黄の依頼が�
 });
 
 test('部署と状態の絞り込みもサーバへ送り、AND になる', async ({ page }) => {
-  const calls = await mount(page);
+  const { calls } = await mount(page, { bootItems: [] });
   await openList(page);
 
   await page.selectOption('#ld', 'kaijo');
@@ -245,8 +294,225 @@ test('部署と状態の絞り込みもサーバへ送り、AND になる', asyn
 });
 
 test('サーバが失敗したら、空の一覧にせず理由を出す', async ({ page }) => {
-  await mount(page, { failList: true });
+  await mount(page, { bootItems: [], failList: true });
   await openList(page);
   await page.selectOption('#lc', 'r');
   await expect(page.locator('#view')).toContainText('一覧を取得できませんでした（試験）');
+});
+
+test('表示はサーバの最新（状態・件名・決定色）。手元の古い写しを優先しない', async ({ page }) => {
+  // 起動データは古い（受付・決定なし・題名も古い）。一覧のサーバ応答は最新（承認待ち・赤・題名も新しい）。
+  const stale = apiRecord({
+    id: 'REQ-2026-0002',
+    title: '古い題名',
+    status: 'received',
+    signalDecided: null,
+    suggested: 'g',
+  });
+  const fresh = apiRecord({
+    id: 'REQ-2026-0002',
+    title: '新しい題名',
+    status: 'wait',
+    signalDecided: 'r',
+    suggested: 'y',
+    version: 2, // サーバの方が版が進んでいる
+  });
+  const { calls } = await mount(page, {
+    bootItems: [stale],
+    list: (url) => filterRecords([fresh], url),
+    details: { 'REQ-2026-0002': fresh },
+  });
+  await openList(page);
+
+  // 絞り込み前（起動データ）は、手元の値のまま
+  await expect(page.locator('#ltb')).toContainText('古い題名');
+
+  await page.selectOption('#lc', 'r');
+  // サーバの最新で描く（古い「受付・青・古い題名」を残さない）
+  await expect(page.locator('#ltb')).toContainText('新しい題名');
+  await expect(page.locator('#ltb')).not.toContainText('古い題名');
+  await expect(page.locator('#ltb')).toContainText('承認待ち');
+  expect(detailCalls(calls)).toHaveLength(0); // 一覧の応答だけで描く（依頼ごとの取り直しはしない）
+
+  // 詳細も、版が進んでいれば取り直してから開く（古い手元を最新として出さない）
+  await page.locator('#ltb tr', { hasText: 'REQ-2026-0002' }).click();
+  await expect(page.locator('#drawer')).toContainText('新しい題名');
+  expect(detailCalls(calls).some((c) => c.url === '/api/requests/REQ-2026-0002')).toBe(true);
+  expect(postCalls(calls)).toHaveLength(0);
+});
+
+test('詳細の取り直しに失敗したら、古い内容を最新として出さない', async ({ page }) => {
+  const stale = apiRecord({
+    id: 'REQ-2026-0002',
+    title: '古い題名',
+    status: 'received',
+    signalDecided: null,
+    suggested: 'g',
+  });
+  const fresh = apiRecord({
+    id: 'REQ-2026-0002',
+    title: '新しい題名',
+    status: 'wait',
+    signalDecided: 'r',
+    suggested: 'y',
+    version: 2,
+  });
+  // 詳細は取れない（404）
+  await mount(page, { bootItems: [stale], list: (url) => filterRecords([fresh], url) });
+  await openList(page);
+  await page.selectOption('#lc', 'r');
+  await expect(page.locator('#ltb')).toContainText('新しい題名');
+
+  await page.locator('#ltb tr', { hasText: 'REQ-2026-0002' }).click();
+  // 読み込み中のまま古い内容を出さず、失敗を理由つきで出す
+  await expect(page.locator('#drawer')).toContainText('依頼を読み込めませんでした');
+  await expect(page.locator('#drawer')).not.toContainText('古い題名');
+});
+
+test('起動データに無い依頼でも詳細を開ける（作り直しの POST をしない）', async ({ page }) => {
+  const existing = apiRecord({
+    id: 'REQ-2026-0001',
+    title: '既存の依頼',
+    suggested: 'g',
+    history: [{ at: '2026-11-01T00:00:00.000Z', actorName: '架空 太郎', role: 'desk', action: '受付', note: null }],
+  });
+  const onlyInList = apiRecord({ id: 'REQ-2026-0009', title: '別端末で作られた依頼', suggested: 'r' });
+  const detail = apiRecord({
+    id: 'REQ-2026-0009',
+    title: '別端末で作られた依頼',
+    suggested: 'r',
+    history: [{ at: '2026-11-03T00:00:00.000Z', actorName: '架空 花子', role: 'desk', action: '受付', note: null }],
+    comments: [{ at: '2026-11-03T01:00:00.000Z', by: '架空 承認者', text: '合成のコメント' }],
+  });
+  const { calls } = await mount(page, {
+    bootItems: [existing],
+    list: (url) => filterRecords([onlyInList], url),
+    details: { 'REQ-2026-0009': detail },
+  });
+  await openList(page);
+
+  // 既存の依頼は、これまでどおり起動データから開く
+  await page.locator('#ltb tr', { hasText: 'REQ-2026-0001' }).click();
+  await expect(page.locator('#drawer')).toContainText('既存の依頼');
+  await page.locator('#dx').click();
+
+  // 一覧にだけ出る依頼は、詳細を取り直して開く（閉じない・履歴とコメントが欠けない）
+  await page.selectOption('#lc', 'r');
+  await page.locator('#ltb tr', { hasText: 'REQ-2026-0009' }).click();
+  await expect(page.locator('#drawer')).toContainText('別端末で作られた依頼');
+  // コメントと履歴も詳細から来ている（空で上書きしない）
+  await page.locator('#drawer [data-dt="log"]').click();
+  await expect(page.locator('#drawer')).toContainText('合成のコメント');
+  await expect(page.locator('#drawer')).toContainText('受付');
+  expect(detailCalls(calls).some((c) => c.url === '/api/requests/REQ-2026-0009')).toBe(true);
+  expect(postCalls(calls)).toHaveLength(0); // 作り直し（二重の POST）をしない
+
+  // 画面の依頼に 1 件だけ加わり、2 回目も開ける（増殖しない）
+  const countLocal = () =>
+    page.evaluate(
+      () =>
+        (window as unknown as { __MSF_UI__: { data: () => { items: { id: string }[] } } }).__MSF_UI__
+          .data()
+          .items.filter((x) => x.id === 'REQ-2026-0009').length,
+    );
+  expect(await countLocal()).toBe(1);
+  await page.locator('#dx').click();
+  await page.locator('#ltb tr', { hasText: 'REQ-2026-0009' }).click();
+  await expect(page.locator('#drawer')).toContainText('別端末で作られた依頼');
+  expect(await countLocal()).toBe(1);
+});
+
+test('A→B→A と切り替えたあと、保留していた古い応答を返しても採用しない', async ({ page }) => {
+  const oldRed = apiRecord({ id: 'REQ-2026-0001', title: '古い赤', suggested: 'r' });
+  const newRed = apiRecord({ id: 'REQ-2026-0001', title: '新しい赤', suggested: 'r', version: 3 });
+  // 赤の「1 回目」の応答だけを門で止める。2 回目の赤はすぐに新しい内容を返す。
+  const { releaseHold } = await mount(page, {
+    bootItems: [],
+    holdFirstSignal: 'r',
+    list: (url, seq) => {
+      const items = url.searchParams.get('signal') === 'r' ? (seq === 1 ? [oldRed] : [newRed]) : RECORDS;
+      return filterRecords(items, url);
+    },
+  });
+  await openList(page);
+
+  // A（赤・1回目）は保留される
+  await page.selectOption('#lc', 'r');
+  await page.waitForTimeout(150);
+  // B（黄）はすぐ返る
+  await page.selectOption('#lc', 'y');
+  await expect(page.locator('#ltb')).toContainText('REQ-2026-0002');
+  await expect(page.locator('#ltb')).toContainText('REQ-2026-0003');
+  // A へ戻す（2回目の赤は新しい内容）
+  await page.selectOption('#lc', 'r');
+  await expect(page.locator('#ltb')).toContainText('新しい赤');
+  await expect(page.locator('#view')).toContainText('全 1 件');
+
+  // 保留していた 1 回目の赤（古い topic）を、あとから返す
+  releaseHold();
+  await page.waitForTimeout(500);
+  await expect(page.locator('#ltb')).toContainText('新しい赤');
+  await expect(page.locator('#ltb')).not.toContainText('古い赤');
+  await expect(page.locator('#view')).toContainText('全 1 件');
+});
+
+test('表示の上限（5000 件）までしか出していないときは、全件でないことを出す', async ({ page }) => {
+  const total = 5200;
+  const virtual = Array.from({ length: total }, (_, i) =>
+    apiRecord({ id: `REQ-2026-${String(i + 1).padStart(4, '0')}`, suggested: 'r', title: `合成 ${i + 1}` }),
+  );
+  await mount(page, {
+    bootItems: [],
+    list: (url) => {
+      const pageSize = Math.min(Math.max(Number(url.searchParams.get('pageSize') ?? '50'), 1), 500);
+      const page = Math.max(Number(url.searchParams.get('page') ?? '1'), 1);
+      const start = (page - 1) * pageSize;
+      return { items: virtual.slice(start, start + pageSize), total, page, pageSize };
+    },
+  });
+  await openList(page);
+  await page.selectOption('#lc', 'r');
+  await expect(page.locator('#view')).toContainText('全 5200 件');
+  await expect(page.locator('#view')).toContainText('一覧に出せる上限（5000 件）までを表示しています');
+});
+
+test('取り込んだ行は、キーワードを打っても・絞り込みを外しても消えない', async ({ page }) => {
+  const onlyInList = apiRecord({ id: 'REQ-2026-0009', title: '別端末で作られた依頼', suggested: 'r' });
+  const detail = apiRecord({
+    id: 'REQ-2026-0009',
+    title: '別端末で作られた依頼',
+    suggested: 'r',
+    history: [{ at: '2026-11-03T00:00:00.000Z', actorName: '架空 花子', role: 'desk', action: '受付', note: null }],
+  });
+  const { calls } = await mount(page, {
+    bootItems: [],
+    list: (url) => filterRecords([onlyInList], url),
+    details: { 'REQ-2026-0009': detail },
+  });
+  await openList(page);
+
+  // 色で絞って、一覧にだけ出る依頼を取り込む（詳細を開く）
+  await page.selectOption('#lc', 'r');
+  await page.locator('#ltb tr', { hasText: 'REQ-2026-0009' }).click();
+  await expect(page.locator('#drawer')).toContainText('別端末で作られた依頼');
+  await page.locator('#dx').click();
+
+  // キーワードを打っても残る（該当する語）
+  await page.locator('#lq').fill('別端末');
+  await page.waitForTimeout(200);
+  await expect(page.locator('#ltb')).toContainText('REQ-2026-0009');
+  // 該当しない語では消える（検索は従来どおり画面側）
+  await page.locator('#lq').fill('該当なし-zzzz');
+  await page.waitForTimeout(200);
+  await expect(page.locator('#ltb')).not.toContainText('REQ-2026-0009');
+  await page.locator('#lq').fill('');
+  await page.waitForTimeout(200);
+
+  // 絞り込みを外しても消えない（画面の依頼に入っている）
+  await page.selectOption('#lc', '');
+  await expect(page.locator('#ltb')).toContainText('REQ-2026-0009');
+  // もう一度絞っても出る
+  await page.selectOption('#lc', 'r');
+  await expect(page.locator('#ltb')).toContainText('REQ-2026-0009');
+  expect(postCalls(calls)).toHaveLength(0);
 });
