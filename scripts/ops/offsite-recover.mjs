@@ -38,8 +38,22 @@
  *   書込み・削除の API は呼ばない。SIGINT / SIGTERM では子プロセスへ転送し、一時領域を消してから終わる。
  */
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  fsyncSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -320,11 +334,28 @@ async function fetchByGuess({ bucket, prefix, db, opts }) {
 }
 
 /**
- * --out の置き場所。無ければ 0700 で新規作成（親は作らない）。既にあるなら「本物のディレクトリ」だけを受け、
- * シンボリックリンク・ディレクトリ以外は拒否する。既存ディレクトリの権限は変えない（chmod しない）。
+ * --out の置き場所。無ければ 0700 で新規作成（親は作らない）。既にあるなら「本物のディレクトリ」で、
+ * 本人所有・group/other に書込み権限なし、のものだけを受ける（他者が中のファイルを差し替え・削除できないこと）。
+ * シンボリックリンク・ディレクトリ以外・他人所有・group/other 書込み可は拒否する。既存ディレクトリの権限は変えない。
  */
 export function prepareOutDir(dir) {
   const outDir = resolve(dir);
+  // 親ディレクトリが他人に書込み可能だと、検査後に --out を差し替えられる。親も本人所有か root 所有で go-w を要求する
+  const parent = dirname(outDir);
+  let pst;
+  try {
+    pst = lstatSync(parent);
+  } catch (error) {
+    throw new Error(`--out の親ディレクトリを確認できません（${error?.code ?? 'error'}）`);
+  }
+  if (pst.isSymbolicLink() || !pst.isDirectory()) throw new Error('--out の親がディレクトリではありません（symlink 不可）');
+  const myUid = typeof process.getuid === 'function' ? process.getuid() : null;
+  if (myUid !== null && pst.uid !== myUid && pst.uid !== 0) {
+    throw new Error('--out の親ディレクトリが本人所有でも root 所有でもありません');
+  }
+  if ((pst.mode & 0o022) !== 0 && (pst.mode & 0o1000) === 0) {
+    throw new Error('--out の親ディレクトリが group/other に書込み可能です（sticky なし）');
+  }
   let st = null;
   try {
     st = lstatSync(outDir);
@@ -341,7 +372,86 @@ export function prepareOutDir(dir) {
   }
   if (st.isSymbolicLink()) throw new Error('--out がシンボリックリンクです（追わない）');
   if (!st.isDirectory()) throw new Error('--out がディレクトリではありません');
+  if (typeof process.getuid === 'function' && st.uid !== process.getuid()) {
+    throw new Error('--out が本人所有のディレクトリではありません');
+  }
+  if ((st.mode & 0o022) !== 0) throw new Error('--out が group/other に書込み可能です（chmod go-w してください）');
   return outDir;
+}
+
+/**
+ * fd へ bytes を全部書き切る。writeSync は要求より少なく書くことがある（ulimit -f・ディスク逼迫など）ので、
+ * 0 バイトの書込み（進まない）や例外は失敗にする。writer は試験用に差し替えられる（既定は fs.writeSync）。
+ */
+export function writeAllSync(fd, bytes, writer = writeSync) {
+  const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+  let offset = 0;
+  while (offset < buffer.length) {
+    const written = writer(fd, buffer, offset, buffer.length - offset);
+    if (!Number.isSafeInteger(written) || written <= 0 || written > buffer.length - offset) {
+      const error = new Error('短い書込み（途中で書けなくなりました）');
+      error.code = 'ESHORTWRITE';
+      throw error;
+    }
+    offset += written;
+  }
+  return offset;
+}
+
+/** --out へ書くファイル名（`<db>-<stamp>.dump` / `.manifest.tsv`）。区切り文字・先頭ドットを許さない */
+const NAME_FILE_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,200}$/;
+
+/**
+ * --out へ確認済みの複数ファイル（dump と manifest）を「全部そろうか、何も残さないか」で書く。
+ *   1. 各ファイルを一時名（`.<name>.tmp-<pid>-<乱数>`、0600、wx）へ全バイト書き切り（短い書込みは失敗）、
+ *      fsync し、サイズが元と一致することを確かめる
+ *   2. 一時名から最終名へ hard link（既存の最終名は上書きしない。あれば EEXIST で失敗）→ 一時名を削除
+ *   3. 途中で失敗したら、今回作った一時名と最終名だけを削除して例外を投げる（既存のファイルには触らない）
+ * rename ではなく link を使うのは、既存の同名ファイルを黙って置き換えないため（従来の wx と同じ扱い）。
+ * 返り値: 書いた最終名のパス（files の順）。options.writer は試験用（短い書込みの再現。既定は fs.writeSync）。
+ */
+export function writeFilesAtomically(outDir, files, { writer = writeSync } = {}) {
+  const temps = [];
+  const finals = [];
+  try {
+    for (const { name, bytes } of files) {
+      if (!NAME_FILE_RE.test(name)) throw new Error('--out へ書くファイル名が不正です');
+      const temp = join(outDir, `.${name}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`);
+      const fd = openSync(temp, 'wx', 0o600);
+      temps.push(temp);
+      try {
+        writeAllSync(fd, bytes, writer);
+        fsyncSync(fd);
+        if (fstatSync(fd).size !== bytes.length) {
+          const error = new Error('書込み後のサイズが一致しません');
+          error.code = 'ESIZE';
+          throw error;
+        }
+      } finally {
+        closeSync(fd);
+      }
+    }
+    files.forEach(({ name }, index) => {
+      const final = join(outDir, name);
+      try {
+        linkSync(temps[index], final);
+      } catch (error) {
+        throw new Error(
+          error?.code === 'EEXIST'
+            ? `--out に同名のファイルがあります（上書きしない）: ${name}`
+            : `--out へ書き込めません（${error?.code ?? 'error'}）: ${name}`,
+        );
+      }
+      finals.push(final);
+    });
+    return finals;
+  } catch (error) {
+    for (const path of [...finals, ...temps]) rmSync(path, { force: true });
+    if (error instanceof Error && error.message.startsWith('--out')) throw error;
+    throw new Error(`--out へ書き込めません（${error?.code ?? 'error'}。今回作ったファイルは削除しました）`);
+  } finally {
+    for (const temp of temps) rmSync(temp, { force: true });
+  }
 }
 
 // ───────── 本体 ─────────
@@ -377,9 +487,12 @@ async function main(opts, work) {
 
   if (opts.out) {
     const outDir = prepareOutDir(opts.out);
-    writeFileSync(join(outDir, basename(dumpPath)), dumpBytes, { mode: 0o600, flag: 'wx' });
-    writeFileSync(join(outDir, basename(manifestPath)), manifestBytes, { mode: 0o600, flag: 'wx' });
-    info(`確認済みのファイルを残しました: ${join(outDir, basename(dumpPath))}`);
+    // 2 ファイルを一時名→link でそろえて置く。片方だけ残る状態を作らない（失敗時は今回作成分を削除）
+    const [savedDump] = writeFilesAtomically(outDir, [
+      { name: basename(dumpPath), bytes: dumpBytes },
+      { name: basename(manifestPath), bytes: manifestBytes },
+    ]);
+    info(`確認済みのファイルを残しました: ${savedDump}`);
   }
   if (opts.verifyOnly) {
     info('verify-only: restore-drill.sh は実行しません');

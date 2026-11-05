@@ -377,6 +377,8 @@ export function classifyFetchError(error) {
 /**
  * タイムゾーン明示（`Z` か `±HH:MM`、±14:00 まで）の ISO 8601 日時だけを受ける。
  * 実在しない日時（2026-02-30、25 時など）は、オフセットを当てる前の各欄の往復で拒否する。秒の小数は 3 桁まで。
+ * 年の許容範囲は入力・UTC 変換後とも 0100〜9999。0000〜0099 は Date.UTC が 1900 年代へ読み替えるため
+ * 往復の検査で拒否される（ここで受けると別の年を指してしまう）。
  */
 export function parseIsoWithZone(value) {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(String(value));
@@ -401,7 +403,13 @@ export function parseIsoWithZone(value) {
     if (om > 59 || oh * 60 + om > 14 * 60) return null;
     offsetMinutes = (m[9] === '+' ? 1 : -1) * (oh * 60 + om);
   }
-  return new Date(local.getTime() - offsetMinutes * 60_000);
+  const utc = new Date(local.getTime() - offsetMinutes * 60_000);
+  // オフセットを当てた後の UTC も 0100〜9999 年に収める（入力側の許容範囲と同じ）。
+  // 例: 9999-12-31T23:59:59-14:00 は UTC で 10000 年になり、toISOString が +010000-… の拡張形式になる。
+  //     0100-01-01T00:00:00+01:00 は UTC で 0099 年になる。
+  const utcYear = utc.getUTCFullYear();
+  if (!Number.isFinite(utc.getTime()) || utcYear < 100 || utcYear > 9999) return null;
+  return utc;
 }
 
 /**

@@ -442,6 +442,21 @@ describe('--from / --to の日時（タイムゾーン明示・実在する日�
       expect(parseIsoWithZone(bad), bad).toBeNull();
     }
   });
+  it('年の許容範囲は入力・UTC 変換後とも 0100〜9999（範囲外は拒否）', () => {
+    // UTC で 10000-01-01T13:59:59Z になる（toISOString が +010000-… の拡張形式になる）
+    expect(parseIsoWithZone('9999-12-31T23:59:59-14:00')).toBeNull();
+    expect(parseIsoWithZone('9999-12-31T23:59:59-00:01')).toBeNull();
+    // 0000〜0099 は Date.UTC が 1900 年代へ読み替えるので受けない（別の年を指さない）
+    expect(parseIsoWithZone('0000-01-01T00:00:00Z')).toBeNull();
+    expect(parseIsoWithZone('0050-06-15T12:00:00Z')).toBeNull();
+    expect(parseIsoWithZone('0099-12-31T23:59:59Z')).toBeNull();
+    // UTC へ変換すると 0099 年になる
+    expect(parseIsoWithZone('0100-01-01T00:00:00+01:00')).toBeNull();
+    // 境界内は受ける
+    expect(parseIsoWithZone('0100-01-01T00:00:00Z')?.toISOString()).toBe('0100-01-01T00:00:00.000Z');
+    expect(parseIsoWithZone('9999-12-31T23:59:59Z')?.toISOString()).toBe('9999-12-31T23:59:59.000Z');
+    expect(parseIsoWithZone('9999-12-31T23:59:59+14:00')?.toISOString()).toBe('9999-12-31T09:59:59.000Z');
+  });
   it('引数でも同じ規則で拒否する', () => {
     expect(() => parseArgs(['--source', 'guess', '--from', '2026-02-30T00:00:00Z'])).toThrow(/タイムゾーン/);
     expect(() => parseArgs(['--source', 'guess', '--to', '2026-11-05T07:00:00'])).toThrow(/タイムゾーン/);
