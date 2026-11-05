@@ -107,7 +107,7 @@ cloudflared tunnel route dns --overwrite-dns mirai-sf sf.mirai-dx-platform.com
 - 切替後の拒否の確認（2026-11-06）: メールヘッダ単独・偽の JWT・偽の Client-Id・偽の Cookie ＋ メールヘッダはいずれも 401 だった。session と app_user は増えていない。
   - Cookie のみ（JWT なし）の拒否は、隔離したテストで確認したもの（`tests/integration/access-jwt.test.ts`「発行済みの Cookie だけでは通らない」）。実環境で確かめたのは**偽の Cookie** が 401 になることまでで、正規の経路で発行された実 Cookie を JWT なしで送った場合は未確認。
 - **未完了**: Access の正規の経路（ブラウザで OTP ログイン → 有効な JWT → コンソール表示）は人の確認が済んでいない。上の「切替手順」3 の「Access ログイン後の画面表示」は 2026-11-06 時点で未確認のまま。
-- ヘルスとの境界: `/healthz`・`/readyz` は JWT 検証の対象外で、切替後も 200 を返す。health が正常でもログインできるとは限らないので、ログイン後の画面確認を省略しない。
+- ヘルスとの境界: `/healthz`・`/readyz` は JWT なしでも認証不要で 200 を返す。JWT が付いた要求は onRequest フックが検証する（`src/api/app.ts`）が、ルート自体は認証を要求しない。したがって health の 200 をログイン合格の証拠にしない。ログイン後の画面確認を省略しない。
 - 切り戻すと再びヘッダを信頼する状態に戻る（Issue #102）。切り戻したらセッションを再度失効し、所有者へ申告する。
 
 ## 4. デプロイ後の確認（実測済み／残り）
