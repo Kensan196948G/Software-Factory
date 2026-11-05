@@ -111,6 +111,19 @@ journalctl --user -u mirai-sf-prod-backup -u mirai-sf-prod-restore-drill -n 40 -
 
 2 回目以降は `pnpm ops:prod:release "$SHA"` だけでよい。`/healthz` が失敗すると**前のリリースへ自動で戻る**（DB は戻さない）。
 
+**本番 release は exact-main CI 成功が必須**（2026-11-05 追加）。`prod-release.sh`（→ `release.sh`）は main に含まれることを確認した後、解決した 40 桁 SHA で `scripts/ops/check-release-ci.mjs` を実行し、その SHA の push/main `ci.yml` の最新 attempt と必須 job（quality / e2e / docker）が成功していなければ、リリース成果物・DB・サービスを変更せずに終了する（変更は `git fetch` による refs 更新のみ）。
+
+| ゲートの結果                                               | 本番 release の終了コード | 対応                                                     |
+| ---------------------------------------------------------- | ------------------------- | -------------------------------------------------------- |
+| 0（確認済み）                                              | 展開へ進む                | —                                                        |
+| 75（run 未作成・実行中・再 run race）                      | 75（配備しない）          | CI の完了を待って同じ SHA で再実行する                   |
+| 1（失敗・必須 job 欠落/skipped・API 情報不足・照会エラー） | 1（配備しない）           | CI を直して main へ入れ直す。`gh auth status` も確認する |
+
+- `--dry-run` でもゲートを照会し、結果を `[dry-run] exact-main CI ゲート: …` として表示するだけ（終了コードには反映しない）。配備前の確認に使う。
+- override / bypass のフラグ・環境変数は無い（fail-closed）。`MIRAI_SF_RELEASE_CI_GATE=0` を渡しても、`prod-release.sh` と本番ホーム（`*-prod`）では無効化できない。
+- Staging の `release.sh` 単独利用（手動）は従来どおりゲートを実行しない。Staging 自動配備は `staging-autofollow.sh` が同じゲートを通してから `release.sh` を呼ぶ（`06-staging-parity-and-autofollow.md`）。
+- 検証: `pnpm test:ops`（`scripts/ops/tests/prod-release-ci-gate.test.sh`。偽 gh で 0 / 75 / 1・dry-run・Staging 非適用を確認）。
+
 ## 4. 受入チェックリスト（本番切替後）
 
 | #   | 確認                                       | 期待                                                        |
