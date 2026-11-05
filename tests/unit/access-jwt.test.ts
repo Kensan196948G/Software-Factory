@@ -2,7 +2,13 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { createHmac, createSign, generateKeyPairSync, type KeyObject } from 'node:crypto';
 import { createAccessJwtVerifier } from '../../src/api/access-jwt.js';
 import { resolveAccessIdentity } from '../../src/api/auth.js';
-import { accessJwtStartupWarning, config, isAccessJwtEnabled, loadConfig } from '../../src/api/config.js';
+import {
+  accessJwtStartupWarning,
+  config,
+  isAccessHeaderTrustEnabled,
+  isAccessJwtEnabled,
+  loadConfig,
+} from '../../src/api/config.js';
 
 const TEAM = 'https://unit-team.cloudflareaccess.example';
 const AUD = 'unit-test-aud';
@@ -297,6 +303,9 @@ describe('resolveAccessIdentity', () => {
     emails: config.accessAllowedEmails,
     domain: config.accessAllowedDomain,
     tokens: config.accessServiceTokenIds,
+    trustEmailHeader: config.accessTrustEmailHeader,
+    appEnv: config.appEnv,
+    isProduction: config.isProduction,
   };
   const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => {
     return new Response(JSON.stringify({ keys: [jwkOf(main.publicKey, 'main')] }), { status: 200 });
@@ -314,6 +323,10 @@ describe('resolveAccessIdentity', () => {
     config.accessServiceTokenIds = ['allowed-client.access'];
     config.accessTeamDomain = TEAM;
     config.accessAud = AUD;
+    // ヘッダ信頼の opt-in は既定で無効。本番相当でない開発環境として扱う。
+    config.accessTrustEmailHeader = false;
+    config.appEnv = 'development';
+    config.isProduction = false;
     fetchMock.mockClear();
     vi.stubGlobal('fetch', fetchMock);
   });
@@ -325,6 +338,9 @@ describe('resolveAccessIdentity', () => {
     config.accessAllowedEmails = restore.emails;
     config.accessAllowedDomain = restore.domain;
     config.accessServiceTokenIds = restore.tokens;
+    config.accessTrustEmailHeader = restore.trustEmailHeader;
+    config.appEnv = restore.appEnv;
+    config.isProduction = restore.isProduction;
   });
 
   it('JWT のメールを使い、ヘッダのメールは使わない', async () => {
@@ -376,19 +392,19 @@ describe('resolveAccessIdentity', () => {
     expect(await resolveAccessIdentity({ 'cf-access-jwt-assertion': token })).toBeNull();
   });
 
-  describe('未設定なら従来どおり', () => {
+  describe('JWT 未設定は fail-closed（opt-in がない限りヘッダを信頼しない）', () => {
     beforeEach(() => {
       config.accessTeamDomain = '';
       config.accessAud = '';
     });
 
-    it('ヘッダのメールを使い、公開鍵を取りに行かない', async () => {
-      expect(await resolveAccessIdentity({ 'cf-access-authenticated-user-email': 'User@Example.com' })).toBe('user@example.com');
+    it('許可メールのヘッダがあっても拒否する（公開鍵も取りに行かない）', async () => {
+      expect(await resolveAccessIdentity({ 'cf-access-authenticated-user-email': 'User@Example.com' })).toBeNull();
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('クライアントIDのヘッダでサービストークンとして通る', async () => {
-      expect(await resolveAccessIdentity({ 'cf-access-client-id': 'allowed-client.access' })).toBe('admin@example.com');
+    it('クライアントIDのヘッダがあっても拒否する', async () => {
+      expect(await resolveAccessIdentity({ 'cf-access-client-id': 'allowed-client.access' })).toBeNull();
       expect(await resolveAccessIdentity({ 'cf-access-client-id': 'other' })).toBeNull();
     });
 
@@ -397,6 +413,39 @@ describe('resolveAccessIdentity', () => {
         await resolveAccessIdentity({ 'cf-access-jwt-assertion': signed(realClaims({ email: 'a@example.com' })) }),
       ).toBeNull();
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('既定ではヘッダ信頼の判定が false（fail-closed）', () => {
+      expect(isAccessHeaderTrustEnabled(config)).toBe(false);
+    });
+
+    describe('明示 opt-in（ACCESS_TRUST_EMAIL_HEADER=1）があるときだけ従来動作', () => {
+      beforeEach(() => {
+        config.accessTrustEmailHeader = true;
+      });
+
+      it('ヘッダのメールを使い、正規化する', async () => {
+        expect(await resolveAccessIdentity({ 'cf-access-authenticated-user-email': 'User@Example.com' })).toBe(
+          'user@example.com',
+        );
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
+
+      it('クライアントIDのヘッダでサービストークンとして通る', async () => {
+        expect(await resolveAccessIdentity({ 'cf-access-client-id': 'allowed-client.access' })).toBe('admin@example.com');
+        expect(await resolveAccessIdentity({ 'cf-access-client-id': 'other' })).toBeNull();
+      });
+
+      it.each(['staging', 'production'] as const)('APP_ENV=%s では opt-in を無視して拒否する', async (appEnv) => {
+        config.appEnv = appEnv;
+        expect(await resolveAccessIdentity({ 'cf-access-authenticated-user-email': 'admin@example.com' })).toBeNull();
+        expect(await resolveAccessIdentity({ 'cf-access-client-id': 'allowed-client.access' })).toBeNull();
+      });
+
+      it('NODE_ENV=production 相当（isProduction）でも opt-in を無視して拒否する', async () => {
+        config.isProduction = true;
+        expect(await resolveAccessIdentity({ 'cf-access-authenticated-user-email': 'admin@example.com' })).toBeNull();
+      });
     });
   });
 });
@@ -413,6 +462,7 @@ describe('ACCESS_TEAM_DOMAIN / ACCESS_AUD の設定', () => {
       AUTH_MODE: 'access',
       ACCESS_TEAM_DOMAIN: undefined,
       ACCESS_AUD: undefined,
+      ACCESS_TRUST_EMAIL_HEADER: undefined,
     });
   });
 
@@ -435,6 +485,7 @@ describe('ACCESS_TEAM_DOMAIN / ACCESS_AUD の設定', () => {
       const cfg = loadConfig();
       expect(isAccessJwtEnabled(cfg)).toBe(false);
       expect(accessJwtStartupWarning(cfg)).toMatch(/ACCESS_TEAM_DOMAIN/);
+      expect(accessJwtStartupWarning(cfg)).toMatch(/信頼しません/);
     }
   });
 
@@ -465,5 +516,69 @@ describe('ACCESS_TEAM_DOMAIN / ACCESS_AUD の設定', () => {
     const cfg = loadConfig();
     expect(cfg.accessTeamDomain).toBe('');
     expect(isAccessJwtEnabled(cfg)).toBe(false);
+  });
+});
+
+describe('ACCESS_TRUST_EMAIL_HEADER（ヘッダ信頼の明示 opt-in・Issue #102）', () => {
+  function stub(env: Record<string, string | undefined>): void {
+    for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+  }
+
+  beforeEach(() => {
+    stub({
+      MIRAI_SF_CONFIG_FILE: undefined,
+      NODE_ENV: 'test',
+      APP_ENV: undefined,
+      AUTH_MODE: 'access',
+      ACCESS_TEAM_DOMAIN: undefined,
+      ACCESS_AUD: undefined,
+      ACCESS_TRUST_EMAIL_HEADER: undefined,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('既定は無効（未設定）', () => {
+    const cfg = loadConfig();
+    expect(cfg.accessTrustEmailHeader).toBe(false);
+    expect(isAccessHeaderTrustEnabled(cfg)).toBe(false);
+  });
+
+  it('0 は無効として扱う', () => {
+    stub({ ACCESS_TRUST_EMAIL_HEADER: '0' });
+    const cfg = loadConfig();
+    expect(cfg.accessTrustEmailHeader).toBe(false);
+    expect(isAccessHeaderTrustEnabled(cfg)).toBe(false);
+  });
+
+  it('開発・テストでは 1 で有効になる', () => {
+    stub({ NODE_ENV: 'development', ACCESS_TRUST_EMAIL_HEADER: '1' });
+    const cfg = loadConfig();
+    expect(cfg.accessTrustEmailHeader).toBe(true);
+    expect(isAccessHeaderTrustEnabled(cfg)).toBe(true);
+  });
+
+  it.each(['staging', 'production'] as const)('APP_ENV=%s では 1 を起動エラーにする', (appEnv) => {
+    stub({ APP_ENV: appEnv, ACCESS_TRUST_EMAIL_HEADER: '1' });
+    expect(() => loadConfig()).toThrow(/ACCESS_TRUST_EMAIL_HEADER/);
+  });
+
+  it('NODE_ENV=production では 1 を起動エラーにする（APP_ENV 省略時）', () => {
+    stub({ NODE_ENV: 'production', ACCESS_TRUST_EMAIL_HEADER: '1' });
+    expect(() => loadConfig()).toThrow(/ACCESS_TRUST_EMAIL_HEADER/);
+  });
+
+  it('0 / 1 以外は起動エラーにする', () => {
+    stub({ ACCESS_TRUST_EMAIL_HEADER: 'true' });
+    expect(() => loadConfig()).toThrow(/ACCESS_TRUST_EMAIL_HEADER/);
+  });
+
+  it('AUTH_MODE=password では opt-in が立っていてもヘッダ信頼は無効', () => {
+    stub({ AUTH_MODE: 'password', ACCESS_TRUST_EMAIL_HEADER: '1' });
+    const cfg = loadConfig();
+    expect(isAccessJwtEnabled(cfg)).toBe(false);
+    expect(isAccessHeaderTrustEnabled(cfg)).toBe(false);
   });
 });
