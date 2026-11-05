@@ -64,6 +64,6 @@ pnpm db:verify
 
 ## 8. 既知の制限（詳細は `docs/limitations.md`）
 
-- 1ユーザー・3役の切替。自己承認は既定で許可（本番は SSO＋複数ユーザーで禁止）。
-- 添付はメタ情報のみ。通知・Entra ID は未実装。開発ラインの到達点は `docs/limitations.md` を参照。
+- 複数ユーザー（パスワード認証）と3役の切替。自己承認は本番（`APP_ENV=production`）の既定で拒否、開発・テスト・staging の既定は許可（L-01/L-02）。
+- 添付はメタ情報のみ。通知は承認依頼メールと滞留通知まで（L-04）。Entra ID SSO は未実装。開発ラインの到達点は `docs/limitations.md` を参照。
 - 数値目標は 2026-11-04 に実測済み（`docs/production/07-slo-and-measurement.md`）。目標値の最終確定は所有者確認待ち。
