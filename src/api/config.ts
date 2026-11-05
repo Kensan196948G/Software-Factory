@@ -5,7 +5,10 @@ import { parseDevlineTargetRepos, type AllowedRepo } from '../shared/devline.js'
 export interface AppConfig {
   /** 実行モード。isProduction など、セキュリティ挙動の既定値はこちらで決める。 */
   nodeEnv: 'development' | 'test' | 'production';
-  /** 環境名（表示用）。挙動の判定には使わない。 */
+  /**
+   * 環境名。主に表示用だが、ACCESS_TRUST_EMAIL_HEADER の許可判定（Issue #102）だけは appEnv も見る。
+   * Cookie の Secure など他のセキュリティ既定値は nodeEnv / isProduction で決める。
+   */
   appEnv: 'development' | 'test' | 'staging' | 'production';
   isProduction: boolean;
   port: number;
@@ -173,9 +176,10 @@ function appEnvOf(raw: string | undefined, nodeEnv: AppConfig['nodeEnv']): AppCo
 
 /**
  * ACCESS_TRUST_EMAIL_HEADER の解釈（Issue #102）。既定は無効。
- * 1 は「APP_ENV を明示した開発・テスト環境」だけ許可する。本番・staging、APP_ENV 未設定、
- * password モードでは無効（password モードは JWT 設定と同じく対象外）。
- * 設定ミスを黙って受け入れず、1 が意味を持たない構成では起動エラーにする（fail-closed）。
+ * 1 は「APP_ENV を明示した開発・テスト環境」だけ許可する。本番・staging、APP_ENV 未設定では
+ * 起動エラーにする（fail-closed）。
+ * password モードは JWT 設定と同じく対象外で、値があっても無言で無効にする（起動エラーにはしない）。
+ * 1 を許可できない構成のうち、設定ミスとみなせるものだけを起動エラーにする。
  */
 function accessTrustEmailHeaderOf(
   raw: string | undefined,

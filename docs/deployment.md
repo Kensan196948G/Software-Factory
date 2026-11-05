@@ -72,14 +72,14 @@ cloudflared tunnel route dns --overwrite-dns mirai-sf sf.mirai-dx-platform.com
 | --------------------------- | ---------------------------------------------------------------------- |
 | `ACCESS_TEAM_DOMAIN`        | `https://<team>.cloudflareaccess.com`。JWT の `iss` と公開鍵の取得先   |
 | `ACCESS_AUD`                | Access アプリの Application Audience (AUD) タグ。JWT の `aud` と照合   |
-| `ACCESS_TRUST_EMAIL_HEADER` | `1` で「JWT 未設定時のヘッダ信頼」を明示 opt-in。既定は未設定＝無効。APP_ENV を明示した development / test だけで有効。staging / production と APP_ENV 未設定では起動エラー（Issue #102） |
+| `ACCESS_TRUST_EMAIL_HEADER` | `1` で「JWT 未設定時のヘッダ信頼」を明示 opt-in。既定は未設定＝無効。この値が `1` のときだけ APP_ENV の明示が必須で、許可されるのは development / test だけ。`APP_ENV=staging` / `production`、または `1` かつ APP_ENV 未設定では起動エラー（Issue #102） |
 
 実値は `preview.conf`（0600）だけに置き、リポジトリへ書かない。
 
 | 設定                                 | 動作                                                            |
 | ------------------------------------ | --------------------------------------------------------------- |
 | 両方あり（`AUTH_MODE=access`）       | JWT 必須。下記の検証に通らなければ未認証（`/healthz` は応答）   |
-| 両方なし                             | **fail-closed**。ヘッダを信頼せず未認証（401）。`NODE_ENV=production` なら起動時に warn。ヘッダ信頼は `ACCESS_TRUST_EMAIL_HEADER=1` の明示 opt-in があり、APP_ENV を明示した開発・テスト環境だけ（staging / production と APP_ENV 未設定では起動エラー。Issue #102） |
+| 両方なし                             | **fail-closed**。ヘッダを信頼せず未認証（401）。`NODE_ENV=production` なら起動時に warn。`ACCESS_TRUST_EMAIL_HEADER=1` を明示した場合だけヘッダ信頼を opt-in でき、許可されるのは APP_ENV を明示した development / test。`APP_ENV=staging` / `production`、または `1` かつ APP_ENV 未設定では起動エラー（Issue #102） |
 | 片方だけ、またはドメインの形式が不正 | 起動エラー（`AUTH_MODE=access` のとき）                         |
 
 検証内容:

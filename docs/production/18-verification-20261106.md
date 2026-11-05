@@ -44,6 +44,10 @@
 - 内容: JWT 未設定時の Access ヘッダ信頼を**既定で無効**（fail-closed）。`ACCESS_TRUST_EMAIL_HEADER=1` の明示 opt-in がある、**APP_ENV を明示した**開発・テスト環境だけ従来動作。`APP_ENV=staging` / `production`、`NODE_ENV=production`、**APP_ENV 未設定**での `1` は起動エラー。`AUTH_MODE=password` では値自体を使わない（JWT 設定と同じ扱い）。JWT が有効なときの経路は不変。
 - 独立レビュー（実装者とは別担当）の結果: **PASS-WITH-LIMITS（Critical 0 / High 0 / Medium 3 / Low 6）**。Medium のうち次を本 PR で反映した: (a) 配備前に発行済みセッションを失効させる手順の明記、(b) APP_ENV 未設定時の opt-in を起動エラーに変更（実測で development 扱いになっていたため）、(c) Issue #102 の残り半分（JWT 有効時の Staging 自動管理者作成）は未修正であることの明記。残る Low は将来の改善（`AUTH_MODE` の typo フォールバック等）。
 - 検証（Lead が同一 commit で再実行）: `tsc`（tsconfig.json / tsconfig.api.json）exit 0、`eslint . --max-warnings=0`（`.agents/**` を ignore に追加後）exit 0、`vitest` の access-jwt + config = **74/74 pass**（レビュー反映後に再実行）。担当の実測では単体全 850 件・対象結合 14 件も pass（全結合スイート・build・e2e は未実行）。
+- 独立レビュー（第 2 回・PR head `cd8c09a`、読み取り専用の別担当）: **PASS-WITH-LIMITS（Critical 0 / High 0 / Medium 0 / Low 7）**。要求観点 (a)〜(i) をコード読取りと `loadConfig` プローブで確認し、CI run 42116689994（head 一致）の成功と、独立再実行（tsc 2 構成・eslint・unit 74/74）を照合した。Low の内訳と対応:
+  - 対応した: 切り戻し手順（`17` §7）が本修正の配備後は誤りになる点、`APP_ENV` 未設定の限定条件が暗黙である点（`api.md` / `deployment.md`）、起動時テストの欠落（`NODE_ENV=production` × `APP_ENV` 明示で拒否・`APP_ENV=test` 明示で許可）、`config.ts` のコメント不整合 2 件、`setup-preview.mjs` が JWT 未設定のまま「ログイン全断」の conf を無言で作る点（警告と環境変数注入を追加）。
+  - 残す: fail-closed は新規認証のみで既存 Cookie は TTL（既定 12h）内有効。失効は配備手順（`deployment.md` の切替手順 4）で行う。コードによる自動失効はしない。
+  - 残す: 本番で JWT が欠落しても `/healthz` は 200 を返すため、外形監視では「認証全断」を検知できない。監視項目の追加は別タスク（Batch 2 候補）。
 - **未配備**: 本番・Staging の設定・サービス・DB は変更していない。配備するまで稼働中の挙動は変わらない。
 - 残り: 正規 JWT 経路で Staging の未登録メールを管理者として自動作成する点は未修正（別タスク）。
 

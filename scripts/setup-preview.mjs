@@ -32,6 +32,13 @@ if (!githubToken) {
 
 const local = existsSync(resolve(dir, 'local.json')) ? JSON.parse(readFileSync(resolve(dir, 'local.json'), 'utf8')) : {};
 
+// Issue #102: Access の JWT が未設定だと fail-closed になり、誰もログインできない。
+// 生成物へ値を書くのは「環境変数で明示的に渡されたとき」だけにし、未設定なら警告する（黙って壊れた設定を作らない）。
+const accessTeamDomain = (process.env.MIRAI_SF_ACCESS_TEAM_DOMAIN ?? '').trim();
+const accessAud = (process.env.MIRAI_SF_ACCESS_AUD ?? '').trim();
+const accessJwtComplete = Boolean(accessTeamDomain && accessAud);
+const accessJwtPartial = Boolean(accessTeamDomain) !== Boolean(accessAud);
+
 const lines = [
   '# みらいSF 受付ステーション Preview 環境（0600・commit しない）',
   'NODE_ENV=production',
@@ -44,6 +51,9 @@ const lines = [
   'ACCESS_ALLOWED_DOMAIN=mirai-const.co.jp',
   'ACCESS_ALLOWED_EMAILS=',
   'ACCESS_SERVICE_TOKEN_IDS=',
+  ...(accessJwtComplete
+    ? [`ACCESS_TEAM_DOMAIN=${accessTeamDomain}`, `ACCESS_AUD=${accessAud}`]
+    : ['# ACCESS_TEAM_DOMAIN=（未設定: Access の JWT を検証できないため、このままではログイン不可）', '# ACCESS_AUD=']),
   'SESSION_TTL_HOURS=12',
   'COOKIE_SECURE=1',
   'TRUST_PROXY=1',
@@ -65,3 +75,10 @@ writeFileSync(file, lines.join('\n'), { mode: 0o600 });
 chmodSync(file, 0o600);
 console.log(`Preview 設定を生成しました: ${file}`);
 console.log(`GitHub 連携: ${githubToken ? '有効' : '無効（gh auth token が取得できません）'}`);
+if (accessJwtComplete) {
+  console.log('Access JWT 検証: 設定済み（ACCESS_TEAM_DOMAIN / ACCESS_AUD）');
+} else {
+  console.warn('警告: Access JWT の 2 項目が未設定です。Issue #102 の fail-closed により、この設定では誰もログインできません。');
+  console.warn('      MIRAI_SF_ACCESS_TEAM_DOMAIN と MIRAI_SF_ACCESS_AUD を設定して --force で再生成してください。');
+  if (accessJwtPartial) console.warn('      2 項目のうち片方だけが指定されています（両方必要）。');
+}

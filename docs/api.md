@@ -5,7 +5,7 @@
 ## 1. 共通
 
 - 認証: `msf_session` Cookie（HttpOnly / SameSite=Lax / Secure は本番）。セッションはDB。
-- `AUTH_MODE=access`: `ACCESS_TEAM_DOMAIN` と `ACCESS_AUD` を設定すると、毎回 `Cf-Access-Jwt-Assertion` の JWT を検証する（`docs/deployment.md` §3-1）。未設定の場合は **fail-closed** で、`Cf-Access-Authenticated-User-Email` / `Cf-Access-Client-Id` ヘッダを信頼しない（401）。ヘッダ信頼は `ACCESS_TRUST_EMAIL_HEADER=1` の明示 opt-in があり、**APP_ENV を明示した**開発・テスト環境だけ。staging / production と APP_ENV 未設定では起動エラーになる（Issue #102。2026-11-06）。
+- `AUTH_MODE=access`: `ACCESS_TEAM_DOMAIN` と `ACCESS_AUD` を設定すると、毎回 `Cf-Access-Jwt-Assertion` の JWT を検証する（`docs/deployment.md` §3-1）。未設定の場合は **fail-closed** で、`Cf-Access-Authenticated-User-Email` / `Cf-Access-Client-Id` ヘッダを信頼しない（401）。このとき `ACCESS_TRUST_EMAIL_HEADER=1` を明示するとヘッダ信頼を opt-in できるが、許可されるのは **`APP_ENV` を明示した** development / test だけ。`APP_ENV=staging` / `production`、または `ACCESS_TRUST_EMAIL_HEADER=1` かつ `APP_ENV` 未設定のときは**起動エラー**になる（Issue #102。2026-11-06）。
 - CSRF: 更新系は `X-CSRF-Token` ヘッダが必要（`msf_csrf` Cookie と一致）。`Origin` も検証。
 - 役割: サーバ側で毎回判定。クライアントの「いまの役割」は信用しない。
 - エラー: `{ "error": { "code": "ERR-xxx", "message": "...", "details"?, "correlationId"? } }`
