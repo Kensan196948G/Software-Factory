@@ -149,7 +149,7 @@ describe('rpo-report.mjs', () => {
     expect(json.local.overThresholdCount).toBe(0);
     expect(json.offsite.overThresholdCount).toBe(0);
     expect(json.local.maxGapClock).toBe('59:59.000');
-    expect(json.restorable.minutesSinceUpload).toBeCloseTo(9.8, 1);
+    expect(json.latestOffsiteRecorded.minutesSinceUpload).toBeCloseTo(9.8, 1);
     expect(json.healthcheck).toMatchObject({ available: true, totalFailures: 3, lastFailureAt: '2026-11-04T01:00:00.000Z' });
     expect(json.healthcheck).not.toHaveProperty('lastFailureReason');
     expectNoSecrets(out);
@@ -200,12 +200,12 @@ describe('rpo-report.mjs', () => {
     expect(json.counts).toMatchObject({ dumps: 4, offsiteRecords: 3 });
   }, 40_000);
 
-  it('未完了の間隔: 最新の復元可能 snapshot から閾値超が経過していれば gap', async () => {
+  it('未完了の間隔: 最新の R2 送信成功記録から閾値超が経過していれば gap', async () => {
     series(4, 50 * MIN, 61 * MIN);
     const { code, json, out } = await run(['--days', '1']);
     expect(code, out).toBe(1);
     expect(json.offsite.openGapOverThreshold).toBe(true);
-    expect(json.restorable.minutesSinceUpload).toBeGreaterThan(60);
+    expect(json.latestOffsiteRecorded.minutesSinceUpload).toBeGreaterThan(60);
   }, 40_000);
 
   it('--since で対象外期間を除く: 開始前の空白は数えず、開始をまたぐ間隔は数える', async () => {
@@ -253,6 +253,7 @@ describe('rpo-report.mjs', () => {
     writeFileSync(at(made, 1).record, `{"bucket":"${BUCKET}", broken`);
     const { code, json, out } = await run(['--days', '1']);
     expect(code, out).toBe(2);
+    expect(json.verdict).toBe('unverifiable');
     expect(json.errors).toEqual([{ file: `${at(made, 1).name}.dump.r2.json`, reason: 'JSON として解釈できません' }]);
     expectNoSecrets(out);
   }, 40_000);
@@ -309,6 +310,7 @@ describe('rpo-report.mjs', () => {
     dir = join(root, 'no-such-dir');
     const missing = await run(['--days', '1']);
     expect(missing.code, missing.out).toBe(2);
+    expect(missing.json.verdict).toBe('unverifiable');
     expect(missing.json.reasons).toContain('保存先がありません（または状態を取得できません）');
 
     dir = join(root, `file-${Math.random().toString(36).slice(2)}`);
@@ -354,11 +356,133 @@ describe('rpo-report.mjs', () => {
     }
   }, 60_000);
 
-  it('--until が実行時刻より未来ならデータ不足（判定しない）', async () => {
+  it('--until が実行時刻より未来なら引数不正（終了コード 3）', async () => {
     series(3, 30 * MIN);
     base = Date.now() + 60 * MIN;
-    const { code, json, out } = await run([]);
+    const { code, out } = await run([], false);
+    expect(code, out).toBe(3);
+    expect(out).toContain('--until が実行時刻より未来です');
+  }, 40_000);
+
+  it('H1: manifest がシンボリックリンクなら完成世代として数えず検証不能（終了コード 2）', async () => {
+    const made = series(3, 30 * MIN);
+    const manifest = join(dir, `${at(made, 1).name}.manifest.tsv`);
+    const target = join(root, `outside-manifest-${Math.random().toString(36).slice(2)}.tsv`);
+    writeFileSync(target, '#audit_tip\t\nrequests\t1\n');
+    rmSync(manifest);
+    symlinkSync(target, manifest);
+    const { code, json, out } = await run(['--days', '1']);
     expect(code, out).toBe(2);
-    expect(json.reasons).toContain('--until が実行時刻より未来です');
+    expect(json.verdict).toBe('unverifiable');
+    expect(json.errors).toEqual([
+      { file: `${at(made, 1).name}.dump`, reason: 'manifest が通常ファイルではありません（シンボリックリンク等は不可）' },
+    ]);
+    expect(out).not.toContain(target);
+  }, 40_000);
+
+  it('H1: manifest がディレクトリ・空なら検証不能', async () => {
+    const made = series(3, 30 * MIN);
+    const asDir = join(dir, `${at(made, 0).name}.manifest.tsv`);
+    rmSync(asDir);
+    mkdirSync(asDir);
+    writeFileSync(join(dir, `${at(made, 2).name}.manifest.tsv`), '');
+    const { code, json, out } = await run(['--days', '1']);
+    expect(code, out).toBe(2);
+    const reasons = json.errors.map((error: { reason: string }) => error.reason).sort();
+    expect(reasons).toEqual(['manifest が空です', 'manifest が通常ファイルではありません（シンボリックリンク等は不可）']);
+  }, 40_000);
+
+  it('M1: 時刻が 1 点でも、最新から 119 分経過していればデータ不足より閾値超（gap）を優先', async () => {
+    generation({ doneAt: base - 119 * MIN });
+    const { code, json, out } = await run(['--days', '1']);
+    expect(code, out).toBe(1);
+    expect(json.verdict).toBe('gap');
+    expect(json.local).toMatchObject({ sufficient: false, openGapOverThreshold: true, overThresholdCount: 1 });
+    expect(json.offsite).toMatchObject({ sufficient: false, openGapOverThreshold: true });
+    expect(json.reasons.join('\n')).toContain('データ不足');
+  }, 40_000);
+
+  it('M1: 時刻が 1 点で経過が閾値内ならデータ不足（終了コード 2）のまま', async () => {
+    generation({ doneAt: base - 59 * MIN });
+    const { code, json, out } = await run(['--days', '1']);
+    expect(code, out).toBe(2);
+    expect(json.verdict).toBe('insufficient');
+  }, 40_000);
+
+  it('M2: 実在しない日時の引数（2026-02-31 など）は Date.parse の正規化に頼らず引数不正（3）', async () => {
+    const cases = [
+      '2026-02-31T00:00:00Z',
+      '2026-11-05T24:00:00Z',
+      '2026-11-05T23:60:00Z',
+      '2026-11-05T23:00:60Z',
+      '2026-13-01T00:00:00Z',
+      '2026-11-05T00:00:00+25:00',
+      '2026-11-05T00:00:00+09:60',
+    ];
+    for (const value of cases) {
+      const { code, out } = await run(['--since', value], false);
+      expect(code, `${value}\n${out}`).toBe(3);
+      expect(out).not.toContain(value);
+    }
+    // 正しいオフセット付きは受理し、UTC に正しく換算する
+    series(3, 30 * MIN);
+    const since = new Date(base - 3 * 60 * MIN);
+    const jst = new Date(since.getTime() + 9 * 60 * MIN).toISOString().replace('Z', '+09:00');
+    const ok = await run(['--since', jst]);
+    expect(ok.code, ok.out).toBe(0);
+    expect(ok.json.window.start).toBe(since.toISOString());
+  }, 60_000);
+
+  it('M2: 送信記録の uploadedAt が実在しない日時（2026-02-31）なら検証不能（2）', async () => {
+    const made = series(3, 30 * MIN);
+    writeFileSync(at(made, 2).record, JSON.stringify({ bucket: BUCKET, uploadedAt: '2026-02-31T00:00:00.000Z' }));
+    const { code, json, out } = await run(['--days', '1']);
+    expect(code, out).toBe(2);
+    expect(json.errors[0].reason).toBe('uploadedAt が実在する日時の ISO 8601（タイムゾーン付き）ではありません');
+    expectNoSecrets(out);
+  }, 40_000);
+
+  it('M2: 名前の snapshot 時刻が実在しない dump・送信記録は検証不能（2）', async () => {
+    series(3, 30 * MIN);
+    writeFileSync(join(dir, 'mirai_sf_prod-20260231T000000Z.dump'), 'x');
+    const { code, json, out } = await run(['--days', '1']);
+    expect(code, out).toBe(2);
+    expect(json.errors).toEqual([
+      { file: 'mirai_sf_prod-20260231T000000Z.dump', reason: '名前の snapshot 時刻が実在する日時ではありません' },
+    ]);
+  }, 40_000);
+
+  it('M3: --dir / --health-state のフルパスを JSON・表のどちらにも出さない（固定表現）', async () => {
+    series(3, 30 * MIN);
+    const json = await run(['--days', '1']);
+    expect(json.code, json.out).toBe(0);
+    expect(json.json.backupDir).toEqual({ label: 'BACKUP_DIR', source: 'argument' });
+    expect(json.json.healthcheck).toMatchObject({ label: 'HEALTH_STATE', source: 'argument', available: true });
+    expect(json.out).not.toContain(dir);
+    expect(json.out).not.toContain(healthState);
+    expect(json.out).not.toContain(root);
+
+    const text = await run(['--days', '1'], false);
+    expect(text.out).toContain('保存先     : BACKUP_DIR（--dir 指定）');
+    expect(text.out).toContain('HEALTH_STATE: ok=true');
+    expect(text.out).not.toContain(root);
+
+    // 状態ファイル・保存先が読めないときもパスは出さない
+    rmSync(healthState);
+    dir = join(root, 'no-such-dir-for-path-check');
+    const missing = await run(['--days', '1'], false);
+    expect(missing.code, missing.out).toBe(2);
+    expect(missing.out).toContain('HEALTH_STATE: 読めません');
+    expect(missing.out).not.toContain(root);
+  }, 40_000);
+
+  it('M4: 最新の記録は「R2 送信成功記録あり（実体・復元可否は未確認）」として出し、restorable キーは使わない', async () => {
+    series(3, 30 * MIN);
+    const json = await run(['--days', '1']);
+    expect(json.json).not.toHaveProperty('restorable');
+    expect(json.json.latestOffsiteRecorded).toMatchObject({ name: expect.stringMatching(/\.dump$/) });
+    const text = await run(['--days', '1'], false);
+    expect(text.out).toContain('最新の R2 送信成功記録あり snapshot（R2 実体の存在・復元可否は未確認）');
+    expect(text.out).not.toContain('復元可能');
   }, 40_000);
 });
