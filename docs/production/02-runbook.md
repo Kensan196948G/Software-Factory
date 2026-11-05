@@ -85,7 +85,7 @@ cd /mnt/storage/Software-Factory/Software-Factory
 git switch main && git pull --ff-only
 SHA=$(git rev-parse HEAD)
 
-# 1. 計画の確認（何も変えない）
+# 1. 計画の確認（リリース成果物・DB・サービスを変更しない。fetch による refs 更新のみ）
 pnpm ops:prod:release --dry-run "$SHA"
 
 # 2. 展開・ビルド・事前バックアップ・migration・current 作成（再起動しない）

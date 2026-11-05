@@ -168,6 +168,7 @@
 | CI の内容         | `quality`（typecheck / lint / unit / migration 空DB・冪等 / seed / db:verify / integration / build / secret scan）と `e2e`（Postgres service + Playwright）、`docker`（実 runner イメージ）                                   |
 
 **注意**: branch protection は「main への merge」を守るが、**本番リリース（どの commit を本番へ出すか）を守る仕組みは別にない**。`release.sh` は CI の結果も成果物のハッシュも確認しない（3.5・5.1）。
+（2026-11-05 追記: CI 結果の確認は範囲を限定して訂正する。Staging での `release.sh` の直接利用は CI 結果を確認しない。本番 wrapper（`prod-release.sh`）は exact-main CI を確認する（PR #92、§7.2）。成果物ハッシュ・承認の確認は引き続き無い）
 
 ### 1.9 本番用の成果物がないこと（実測）
 

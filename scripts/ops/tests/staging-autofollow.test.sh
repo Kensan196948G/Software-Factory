@@ -295,8 +295,11 @@ fi
 if command -v shellcheck >/dev/null 2>&1; then
   if shellcheck -x "$SCRIPT"; then pass "shellcheck staging-autofollow.sh"; else fail "shellcheck staging-autofollow.sh"; fi
   if shellcheck -x "${BASH_SOURCE[0]}"; then pass "shellcheck テストスクリプト"; else fail "shellcheck テストスクリプト"; fi
+elif [[ "${CI:-}" == true ]]; then
+  # CI では静的検査を省略させない（不在を成功扱いにしない）
+  fail "shellcheck が見つかりません（CI=true では必須）"
 else
-  printf 'SKIP: shellcheck が無いため bash -n のみ\n'
+  printf 'SKIP: shellcheck が無いため bash -n のみ（ローカルのみ許容。CI=true では FAIL）\n'
 fi
 
 printf '\n== 偽 /healthz サーバー ==\n'
