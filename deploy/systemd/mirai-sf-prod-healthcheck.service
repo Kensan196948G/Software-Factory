@@ -19,7 +19,8 @@ Environment=MIRAI_SF_HEALTH_STATE_FILE=%h/.local/state/mirai-sf-prod/healthcheck
 Environment=MIRAI_SF_HEALTH_BACKUP_DIR=%h/.local/state/mirai-sf-prod/backups
 Environment=MIRAI_SF_HEALTH_BACKUP_MAX_AGE_MIN=90
 # R2 送信記録（<dump>.r2.json）の鮮度。ローカル dump が新しくても R2 送信が止まっていれば失敗にする。
-# 記録の時刻は JSON の uploadedAt（無ければ mtime）。記録の中身は出力しない。RPO の保証ではなく検知範囲の拡大
+# 記録の時刻は JSON の uploadedAt（キーが無いときだけ mtime）。壊れた・未来時刻・symlink の記録は NG（fail-closed）。
+# 記録の中身と保存先のパスは出力しない。RPO の保証ではなく検知範囲の拡大
 Environment=MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN=90
 Environment=MIRAI_SF_HEALTH_UNIT=mirai-sf-prod-healthcheck
 WorkingDirectory=%h/Projects/Software-Factory-Project

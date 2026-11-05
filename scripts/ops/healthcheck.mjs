@@ -30,13 +30,24 @@
  *   MIRAI_SF_HEALTH_BACKUP_DIR   （任意）最新 dump の鮮度を見るディレクトリ
  *   MIRAI_SF_HEALTH_BACKUP_MAX_AGE_MIN   dump 鮮度の閾値（分、既定 90）
  *   MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN  （任意）最新の `*.dump.r2.json`（R2 送信記録）の鮮度の閾値（分）。
- *                                未設定なら確認しない。記録の時刻は JSON の uploadedAt（無ければ mtime）。
- *                                記録の中身（バケット・キー・ハッシュ）は出力しない。
+ *                                未設定なら確認しない。記録の時刻は JSON の uploadedAt（キーが無いときだけ mtime）。
+ *                                最新記録が読めない・壊れている・未来時刻・シンボリックリンクなら NG（fail-closed）。
+ *                                記録の中身（バケット・キー・ハッシュ）と保存先のパスは出力しない。
  *
  * 終了コード: 0=正常（warning を含む）/ 1=異常
  */
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,9 +72,9 @@ const backupMaxAgeMin = Number.parseInt(process.env.MIRAI_SF_HEALTH_BACKUP_MAX_A
  * R2 送信が止まっていれば失敗にするため。値の書式が不正なときは設定ミスとして失敗にする（値は出さない）。
  */
 const offsiteMaxAgeRaw = (process.env.MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN ?? '').trim();
-/** 送信記録の uploadedAt が未来に寄りすぎているときは信用せず mtime を使う（時計ずれの許容）。 */
+/** 送信記録の uploadedAt・mtime の未来方向の許容幅（時計ずれ）。超えたら NG（負の経過分を正常扱いしない）。 */
 const OFFSITE_FUTURE_SKEW_MS = 5 * 60 * 1000;
-/** 送信記録として読む最大サイズ。これを超えるものは中身を読まず mtime を使う。 */
+/** 送信記録として読む最大サイズ。超えたら NG。 */
 const OFFSITE_RECORD_MAX_BYTES = 64 * 1024;
 /** 障害時の案内に出す unit 名（本番は mirai-sf-prod-healthcheck）。 */
 const unitName = process.env.MIRAI_SF_HEALTH_UNIT || 'mirai-sf-healthcheck';
@@ -243,54 +254,91 @@ function checkBackupFreshness(dir, maxAgeMin) {
 }
 
 /**
- * 送信記録の時刻。JSON の uploadedAt（offsite-r2.mjs が書く ISO 時刻）が妥当ならそれを、無ければ mtime を使う。
- * 記録の中身（バケット・キー・ハッシュ）は返さない・出さない。
+ * 送信記録 1 件を検証して時刻を返す（fail-closed）。記録の中身（バケット・キー・ハッシュ）は返さない・出さない。
+ *   - サイズが 0 または上限超過、読めない、JSON オブジェクトでない → 失敗
+ *   - uploadedAt があるのに文字列でない・時刻として解釈できない → 失敗
+ *   - uploadedAt が無いオブジェクトだけ mtime を使う
+ *   - 採用した時刻・mtime のどちらかが現在より許容幅（5 分）を超えて未来 → 失敗
+ * 失敗理由は内部で組み立てた固定文言だけ（例外の文言・パス・値は出さない）。
  */
-function offsiteRecordTime(path, mtimeMs, size) {
-  if (size > 0 && size <= OFFSITE_RECORD_MAX_BYTES) {
-    try {
-      const parsed = JSON.parse(readFileSync(path, 'utf8'));
-      const uploadedAt = parsed && typeof parsed === 'object' ? parsed.uploadedAt : undefined;
-      const at = typeof uploadedAt === 'string' ? Date.parse(uploadedAt) : Number.NaN;
-      if (Number.isFinite(at) && at <= Date.now() + OFFSITE_FUTURE_SKEW_MS) return { at, source: 'uploadedAt' };
-    } catch {
-      // 読めない・JSON でない記録は mtime で判断する（理由の詳細は出さない）
-    }
+function readOffsiteRecordTime(path, stat, now) {
+  if (stat.mtimeMs > now + OFFSITE_FUTURE_SKEW_MS) {
+    return { failure: '更新時刻が未来です（時計ずれの許容 5 分を超過）' };
   }
-  return { at: mtimeMs, source: 'mtime' };
+  if (stat.size <= 0 || stat.size > OFFSITE_RECORD_MAX_BYTES) {
+    return { failure: `サイズが想定外です（0 バイト、または ${OFFSITE_RECORD_MAX_BYTES} バイト超）` };
+  }
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    return { failure: '読めません' };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { failure: 'JSON として解釈できません' };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { failure: 'JSON オブジェクトではありません' };
+  }
+  if (!Object.hasOwn(parsed, 'uploadedAt')) return { at: stat.mtimeMs, source: 'mtime' };
+  const at = typeof parsed.uploadedAt === 'string' ? Date.parse(parsed.uploadedAt) : Number.NaN;
+  if (!Number.isFinite(at)) return { failure: 'uploadedAt を時刻として解釈できません' };
+  if (at > now + OFFSITE_FUTURE_SKEW_MS) return { failure: 'uploadedAt が未来です（時計ずれの許容 5 分を超過）' };
+  return { at, source: 'uploadedAt' };
 }
 
-/** 最新のオフサイト送信記録（`*.dump.r2.json`）の経過時間を調べる。R2 送信が黙って止まっていないかの確認。 */
+/**
+ * 最新のオフサイト送信記録（`*.dump.r2.json`）の経過時間を調べる。R2 送信が黙って止まっていないかの確認。
+ * 「最新」は lstat の mtime が最も新しい記録。その記録を検証できなければ NG（fail-closed）。
+ * 記録名に一致するエントリが通常ファイルでない（シンボリックリンク等）・lstat できない場合も NG。
+ * 保存先のパスはログへ出さない（固定表現）。
+ */
 function checkOffsiteFreshness(dir, maxAgeMin) {
-  if (!existsSync(dir)) return { failure: `バックアップの保存先がありません: ${dir}` };
-  let newest = null;
+  const where = 'MIRAI_SF_HEALTH_BACKUP_DIR';
+  let dirStat;
+  try {
+    dirStat = lstatSync(dir);
+  } catch {
+    return { failure: `オフサイト送信記録の保存先がありません（${where}）` };
+  }
+  if (!dirStat.isDirectory()) return { failure: `オフサイト送信記録の保存先がディレクトリではありません（${where}）` };
   let entries;
   try {
     entries = readdirSync(dir);
   } catch {
-    return { failure: `バックアップの保存先を読めません: ${dir}` };
+    return { failure: `オフサイト送信記録の保存先を読めません（${where}）` };
   }
+  const now = Date.now();
+  let newest = null;
   for (const entry of entries) {
     if (!entry.endsWith('.dump.r2.json')) continue;
     const path = join(dir, entry);
     let stat;
     try {
-      stat = statSync(path);
+      stat = lstatSync(path);
     } catch {
-      continue;
+      return { failure: `オフサイト送信記録の状態を取得できません: ${safeValue(entry)}` };
     }
-    if (!stat.isFile()) continue;
-    const time = offsiteRecordTime(path, stat.mtimeMs, stat.size);
-    if (!newest || time.at > newest.at) newest = { ...time, name: entry };
+    if (!stat.isFile()) {
+      return { failure: `オフサイト送信記録が通常ファイルではありません（シンボリックリンク等は不可）: ${safeValue(entry)}` };
+    }
+    if (!newest || stat.mtimeMs > newest.stat.mtimeMs) newest = { name: entry, path, stat };
   }
-  if (!newest) return { failure: `オフサイト送信記録（*.dump.r2.json）がありません: ${dir}` };
-  const ageMinutes = Math.round((Date.now() - newest.at) / 60000);
+  if (!newest) return { failure: `オフサイト送信記録（*.dump.r2.json）がありません（${where}）` };
+  const name = safeValue(newest.name);
+  const time = readOffsiteRecordTime(newest.path, newest.stat, now);
+  if (time.failure) return { failure: `最新のオフサイト送信記録を検証できません（${time.failure}）: ${name}` };
+  // 許容幅内の未来（時計ずれ）は 0 分として扱う。許容幅を超える未来は上で NG にしている
+  const ageMinutes = Math.max(0, Math.round((now - time.at) / 60000));
   if (ageMinutes > maxAgeMin) {
     return {
-      failure: `最新のオフサイト送信記録が古すぎます（${ageMinutes} 分前 > ${maxAgeMin} 分、${newest.source} 基準）: ${newest.name}`,
+      failure: `最新のオフサイト送信記録が古すぎます（${ageMinutes} 分前 > ${maxAgeMin} 分、${time.source} 基準）: ${name}`,
     };
   }
-  return { info: `最新オフサイト送信記録: ${newest.name}（${ageMinutes} 分前、${newest.source} 基準）` };
+  return { info: `最新オフサイト送信記録: ${name}（${ageMinutes} 分前、${time.source} 基準）` };
 }
 
 async function main() {
