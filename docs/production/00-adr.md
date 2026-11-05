@@ -606,7 +606,7 @@ Browser
 | レビュー必須                   | required pull request reviews は未設定。所有者 1 名では自分の PR を承認できないため（SC-01）                                     | 意図的に未設定。本番の承認は別の仕組みで担保する         |
 | CODEOWNERS                     | なし                                                                                                                             | 未実装                                                   |
 | CI の内容                      | typecheck / lint / unit / migration（空DB・冪等）/ seed / db:verify / integration / build / secret scan / e2e / docker           | 実装済み                                                 |
-| 本番リリースのゲート           | `release.sh` は CI 結果・成果物ハッシュ・承認を確認しない                                                                        | **未実装**                                               |
+| 本番リリースのゲート           | exact-main CI ゲートは実装済み（PR #92。`prod-release.sh` → `release.sh` が `check-release-ci.mjs` で push/main `ci.yml` の最新 attempt と quality/e2e/docker の成功を必須にする。bypass なし）。承認ゲート・成果物ハッシュの照合は確認しない | CI ゲートは**実装済み**。承認ゲート・成果物同一性照合は**未実装** |
 | 成果物の同一性                 | `release.sh` はホスト上で `pnpm install` / `pnpm build` を再実行する。CI で検査した成果物をそのまま配備する仕様（4-9）とは異なる | **未実装**。当面は「再ビルド」のリスクを受容し、記録する |
 | Actions の権限                 | `allowed_actions=all`、SHA pinning なし                                                                                          | 改善余地                                                 |
 

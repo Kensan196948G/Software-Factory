@@ -111,7 +111,7 @@ journalctl --user -u mirai-sf-prod-backup -u mirai-sf-prod-restore-drill -n 40 -
 
 2 回目以降は `pnpm ops:prod:release "$SHA"` だけでよい。`/healthz` が失敗すると**前のリリースへ自動で戻る**（DB は戻さない）。
 
-**本番 release は exact-main CI 成功が必須**（2026-11-05 追加）。`prod-release.sh`（→ `release.sh`）は main に含まれることを確認した後、解決した 40 桁 SHA で `scripts/ops/check-release-ci.mjs` を実行し、その SHA の push/main `ci.yml` の最新 attempt と必須 job（quality / e2e / docker）が成功していなければ、ファイル・DB・サービスを変更せずに終了する。
+**本番 release は exact-main CI 成功が必須**（2026-11-05 追加）。`prod-release.sh`（→ `release.sh`）は main に含まれることを確認した後、解決した 40 桁 SHA で `scripts/ops/check-release-ci.mjs` を実行し、その SHA の push/main `ci.yml` の最新 attempt と必須 job（quality / e2e / docker）が成功していなければ、リリース成果物・DB・サービスを変更せずに終了する（変更は `git fetch` による refs 更新のみ）。
 
 | ゲートの結果                                               | 本番 release の終了コード | 対応                                                     |
 | ---------------------------------------------------------- | ------------------------- | -------------------------------------------------------- |

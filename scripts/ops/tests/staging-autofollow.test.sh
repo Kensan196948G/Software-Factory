@@ -119,6 +119,8 @@ write_fakes() {
 set -euo pipefail
 sha="$1"
 printf '%s\n' "$sha" >>"$CASE/release-invocations"
+# 本番用 CI ゲートの有効化変数が release.sh へ渡っていないかを記録する
+printf '%s\n' "${MIRAI_SF_RELEASE_CI_GATE-unset}" >>"$CASE/release-ci-gate-env"
 mode="${FAKE_RELEASE_MODE:-ok}"
 if [[ "$mode" == "fail" ]]; then
   echo "fake release: ビルド失敗を模擬" >&2
@@ -274,10 +276,12 @@ run_case() { # <FAKE_RELEASE_MODE> [script args...]
       MIRAI_SF_AUTOFOLLOW_STATE_FILE="$CASE/state/autofollow.json" \
       MIRAI_SF_AUTOFOLLOW_HEALTH_RETRIES=2 \
       MIRAI_SF_NODE_BIN_DIR="$CASE/no-node" \
+      ${EXTRA_ENV[@]+"${EXTRA_ENV[@]}"} \
       bash "$SCRIPT" "$@" 2>&1
   )"
   CODE=$?
 }
+EXTRA_ENV=()
 
 printf '== 静的検査 ==\n'
 if bash -n "$SCRIPT"; then pass "bash -n staging-autofollow.sh"; else fail "bash -n staging-autofollow.sh"; fi
@@ -667,6 +671,19 @@ node -e 'const fs=require("node:fs");const p=process.argv[1];const j=JSON.parse(
 run_case ok
 check "jobs一覧不完全は終了コード 1" assert_code 1
 check "jobs一覧不完全は release.sh を呼ばない" assert_no_release
+
+printf '\n== 35. 呼び出し元の MIRAI_SF_RELEASE_CI_GATE=1 を release.sh へ渡さない（二重照会防止） ==\n'
+setup_case gate_env_unset
+EXTRA_ENV=(MIRAI_SF_RELEASE_CI_GATE=1)
+run_case ok
+EXTRA_ENV=()
+check "配備成功で終了コード 0" assert_code 0
+check "origin/main の commit で release.sh を呼ぶ" assert_release_called_with "$NEW"
+if grep -qx "unset" "$CASE/release-ci-gate-env" 2>/dev/null; then
+  pass "release.sh には MIRAI_SF_RELEASE_CI_GATE を渡さない"
+else
+  fail "release.sh には MIRAI_SF_RELEASE_CI_GATE を渡さない（実際: $(cat "$CASE/release-ci-gate-env" 2>/dev/null)）"
+fi
 
 printf '\n== 結果: PASS %d / FAIL %d ==\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]]

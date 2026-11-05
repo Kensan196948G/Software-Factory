@@ -13,7 +13,8 @@
 #   6. exact-main CI ゲート（check-release-ci.mjs）: 対象 SHA の push/main ci.yml の
 #      最新 attempt で quality/e2e/docker と run が成功していることを必須にする。
 #      一時的な未確認（run なし・実行中）は 75、失敗・job 欠落・API 情報不足・照会エラーは 1 で配備しない
-#   7. 既存の release.sh で配備（切替・再起動・/healthz 確認・失敗時の戻しは release.sh に任せる）
+#   7. 既存の release.sh で配備（切替・再起動・/healthz 確認・失敗時の戻しは release.sh に任せる。
+#      ゲートは 6 で済んでいるので MIRAI_SF_RELEASE_CI_GATE は渡さない）
 #   8. 配備後に /healthz を独立に確認し、だめなら直前のリリースへ戻す
 #   9. 成功後に古い releases を整理する（current/previous と直近 N 世代を保持）
 #
@@ -333,8 +334,10 @@ fi
 
 log "配備を開始: ${previous:-（なし）} → $target（release.sh）"
 code=0
-# .ops.lock はこのプロセスが保持しているので、release.sh 側では取り直さない
-OPS_LOCK_HELD=1 bash "$release_script" "$target" || code=$?
+# .ops.lock はこのプロセスが保持しているので、release.sh 側では取り直さない。
+# CI ゲートはこのスクリプトで実施済み。呼び出し元の環境に MIRAI_SF_RELEASE_CI_GATE が残っていても
+# release.sh で二重照会しない（照会結果の 75 が release.sh 失敗→1 に化けるのを防ぐ）
+env -u MIRAI_SF_RELEASE_CI_GATE OPS_LOCK_HELD=1 bash "$release_script" "$target" || code=$?
 if [[ "$code" == 3 ]]; then
   log "破壊的な可能性がある migration のため中止しました（DB も current も変更していません）"
   finish "failed" 3
