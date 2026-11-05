@@ -34,7 +34,8 @@ if mkdir -p "$dir" && printf '{"at":"%s","unit":"%s","result":"%s"}\n' "$ts" "$u
 envf="$HOME/.config/mirai-sf/notify.env";
 if [ ! -e "$envf" ] && [ ! -L "$envf" ]; then echo "[mirai-sf-onfailure] 外部送信なし（notify.env が無い）: unit=$unit"; exit 0; fi;
 if [ -L "$envf" ] || [ ! -f "$envf" ]; then echo "<3>[mirai-sf-onfailure] notify.env が通常ファイルではないため外部送信しません（symlink・ディレクトリ等は不可）: unit=$unit" >&2; exit 4; fi;
-if [ ! -O "$envf" ]; then echo "<3>[mirai-sf-onfailure] notify.env が本人所有ではないため外部送信しません: unit=$unit" >&2; exit 4; fi;
+own="$(find "$envf" -maxdepth 0 -user "$(id -u)" 2>/dev/null)" || own="";
+if [ -z "$own" ]; then echo "<3>[mirai-sf-onfailure] notify.env が本人所有ではないため外部送信しません: unit=$unit" >&2; exit 4; fi;
 perm_bad="$(find "$envf" -maxdepth 0 -perm /077 2>/dev/null)" || perm_bad=error;
 if [ -n "$perm_bad" ]; then echo "<3>[mirai-sf-onfailure] notify.env の権限が group/other に開いているため外部送信しません（chmod 600 にする）: unit=$unit" >&2; exit 4; fi;
 if [ ! -r "$envf" ]; then echo "<3>[mirai-sf-onfailure] notify.env を読めないため外部送信しません: unit=$unit" >&2; exit 4; fi;

@@ -52,7 +52,16 @@ rto_usage() {
   awk 'NR > 1 && /^set -euo pipefail$/ { exit } NR > 1 { print }' "${BASH_SOURCE[0]}"
 }
 
-rto_now_ms() { date +%s%3N; }
+# 時刻（ミリ秒）。壁時計は NTP 補正等で逆行しうる（CI ランナーで実測）ため、前回値を下回らないよう丸めて
+# RTO_NOW に入れる（サブシェルでは前回値を更新できないので $(...) で呼ばない）。
+RTO_LAST_MS=0
+rto_tick() {
+  local t
+  t="$(date +%s%3N)"
+  ((t >= RTO_LAST_MS)) || t="$RTO_LAST_MS"
+  RTO_LAST_MS="$t"
+  RTO_NOW="$t"
+}
 
 rto_main() {
   local dry_run=0 source_kind=r2 arg
@@ -91,7 +100,8 @@ rto_main() {
   RTO_SOURCE="$source_kind"
   RTO_RESULT=failed
   RTO_DECISION=""
-  RTO_STARTED_MS="$(rto_now_ms)"
+  rto_tick
+  RTO_STARTED_MS="$RTO_NOW"
   RTO_BACKUP=""
   RTO_BACKUP_AGE_MIN=""
   RTO_COMMIT=""
@@ -280,7 +290,8 @@ rto_main() {
 
   # ───── 7. 切替判断 ─────
   rto_stage_begin switch_decision "切替判断（判断の記録だけ。本番の切替はしない）"
-  local elapsed_s=$((($(rto_now_ms) - RTO_STARTED_MS) / 1000))
+  rto_tick
+  local elapsed_s=$(((RTO_NOW - RTO_STARTED_MS) / 1000))
   RTO_DECISION="切替可能（復元・検証・API 起動が成功。本番の切替・DNS・Access は未実施）"
   rto_stage_end true "宣言から ${elapsed_s} 秒で切替判断（目標 ${RTO_TARGET_MIN} 分）"
   RTO_RESULT=ok
@@ -290,13 +301,15 @@ rto_main() {
 rto_stage_begin() {
   RTO_STAGE="$1"
   RTO_STAGE_LABEL="$2"
-  RTO_STAGE_START="$(rto_now_ms)"
+  rto_tick
+  RTO_STAGE_START="$RTO_NOW"
   log "[$1] 開始: $2"
 }
 
 rto_stage_end() { # <ok: true|false> <note>
   local end
-  end="$(rto_now_ms)"
+  rto_tick
+  end="$RTO_NOW"
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$RTO_STAGE" "$RTO_STAGE_LABEL" "$RTO_STAGE_START" "$end" "$1" "$2" >>"$RTO_WORK/stages.tsv"
   log "[$RTO_STAGE] 終了（$(((end - RTO_STAGE_START) / 1000)) 秒）: $2"
   RTO_STAGE=""
@@ -401,7 +414,8 @@ rto_finish() {
   if [[ "$RTO_MODE" == run ]]; then
     RTO_STAGE=cleanup
     RTO_STAGE_LABEL="一時 API の停止・一時DBの削除"
-    RTO_STAGE_START="$(rto_now_ms)"
+    rto_tick
+    RTO_STAGE_START="$RTO_NOW"
     rto_stop_api
     local cleanup_ok=true cleanup_note="一時 API なし"
     if [[ "$RTO_CREATED" == 1 ]]; then
@@ -424,7 +438,8 @@ rto_finish() {
   # レポートの保存（実行モードだけ）。保存は任意: 失敗しても終了コードは変えず、
   # JSON の reportSaved=false と標準エラーの注意で示す（標準出力の JSON が正本）。
   local finished json report_file="" report_saved=null
-  finished="$(rto_now_ms)"
+  rto_tick
+  finished="$RTO_NOW"
   if [[ "$RTO_MODE" == run ]]; then
     report_file="$RTO_REPORT_DIR/rto-drill-$(date -u +%Y%m%dT%H%M%SZ).json"
     report_saved=false
