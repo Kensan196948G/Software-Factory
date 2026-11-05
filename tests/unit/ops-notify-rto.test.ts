@@ -14,8 +14,10 @@ const run = (script: string) => {
   } catch (error) {
     // 失敗した検査項目（FAIL 行）を CI のログに残す。秘密は扱わない隔離テストなので出力してよい
     const out = String((error as { stdout?: unknown }).stdout ?? '');
+    const err = String((error as { stderr?: unknown }).stderr ?? '');
     const failed = out.split('\n').filter((line) => line.startsWith('FAIL') || line.startsWith('== 結果'));
-    throw new Error(`${script} が失敗しました:\n${failed.join('\n')}`);
+    const errTail = err.split('\n').slice(-60).join('\n');
+    throw new Error(`${script} が失敗しました:\n${failed.join('\n')}\n--- stderr（末尾）---\n${errTail}`);
   }
 };
 
