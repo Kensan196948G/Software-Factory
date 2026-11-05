@@ -553,11 +553,16 @@ describe('ACCESS_TRUST_EMAIL_HEADER（ヘッダ信頼の明示 opt-in・Issue #1
     expect(isAccessHeaderTrustEnabled(cfg)).toBe(false);
   });
 
-  it('開発・テストでは 1 で有効になる', () => {
-    stub({ NODE_ENV: 'development', ACCESS_TRUST_EMAIL_HEADER: '1' });
+  it('APP_ENV=development を明示した開発環境では 1 で有効になる', () => {
+    stub({ NODE_ENV: 'development', APP_ENV: 'development', ACCESS_TRUST_EMAIL_HEADER: '1' });
     const cfg = loadConfig();
     expect(cfg.accessTrustEmailHeader).toBe(true);
     expect(isAccessHeaderTrustEnabled(cfg)).toBe(true);
+  });
+
+  it('APP_ENV 未設定のまま 1 を指定すると起動エラー（開発とみなして黙認しない）', () => {
+    stub({ NODE_ENV: 'development', ACCESS_TRUST_EMAIL_HEADER: '1' });
+    expect(() => loadConfig()).toThrow(/APP_ENV を明示/);
   });
 
   it.each(['staging', 'production'] as const)('APP_ENV=%s では 1 を起動エラーにする', (appEnv) => {
@@ -575,7 +580,7 @@ describe('ACCESS_TRUST_EMAIL_HEADER（ヘッダ信頼の明示 opt-in・Issue #1
     expect(() => loadConfig()).toThrow(/ACCESS_TRUST_EMAIL_HEADER/);
   });
 
-  it('AUTH_MODE=password では opt-in が立っていてもヘッダ信頼は無効', () => {
+  it('AUTH_MODE=password では opt-in が立っていてもヘッダ信頼は無効（対象外なので起動エラーにもしない）', () => {
     stub({ AUTH_MODE: 'password', ACCESS_TRUST_EMAIL_HEADER: '1' });
     const cfg = loadConfig();
     expect(isAccessJwtEnabled(cfg)).toBe(false);

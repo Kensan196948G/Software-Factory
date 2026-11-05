@@ -173,16 +173,30 @@ function appEnvOf(raw: string | undefined, nodeEnv: AppConfig['nodeEnv']): AppCo
 
 /**
  * ACCESS_TRUST_EMAIL_HEADER の解釈（Issue #102）。既定は無効。
- * 本番・staging で 1 を明示した場合は、設定ミスを黙って受け入れずに起動エラーにする（fail-closed）。
+ * 1 は「APP_ENV を明示した開発・テスト環境」だけ許可する。本番・staging、APP_ENV 未設定、
+ * password モードでは無効（password モードは JWT 設定と同じく対象外）。
+ * 設定ミスを黙って受け入れず、1 が意味を持たない構成では起動エラーにする（fail-closed）。
  */
-function accessTrustEmailHeaderOf(raw: string | undefined, appEnv: AppConfig['appEnv'], isProduction: boolean): boolean {
+function accessTrustEmailHeaderOf(
+  raw: string | undefined,
+  authMode: AppConfig['authMode'],
+  appEnv: AppConfig['appEnv'],
+  appEnvExplicit: boolean,
+  isProduction: boolean,
+): boolean {
   const value = raw?.trim();
   if (value === undefined || value === '') return false;
+  if (authMode !== 'access') return false;
   if (value !== '0' && value !== '1') throw new Error('ACCESS_TRUST_EMAIL_HEADER が不正です（0 / 1 のいずれか）');
   if (value === '0') return false;
   if (isProduction || appEnv === 'staging' || appEnv === 'production') {
     throw new Error(
       'ACCESS_TRUST_EMAIL_HEADER=1 は本番・staging では使えません。Access の JWT 検証（ACCESS_TEAM_DOMAIN / ACCESS_AUD）を設定してください',
+    );
+  }
+  if (!appEnvExplicit) {
+    throw new Error(
+      'ACCESS_TRUST_EMAIL_HEADER=1 は APP_ENV を明示した development / test でのみ使えます（APP_ENV 未設定は development とみなしますが opt-in は許可しません）',
     );
   }
   return true;
@@ -203,9 +217,17 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
 
   const sessionSecret = pick(file, 'SESSION_SECRET') ?? randomBytes(32).toString('base64url');
   const originSharedSecret = pick(file, 'ORIGIN_SHARED_SECRET') ?? '';
-  const appEnv = appEnvOf(pick(file, 'APP_ENV'), nodeEnv);
+  const rawAppEnv = pick(file, 'APP_ENV');
+  const appEnv = appEnvOf(rawAppEnv, nodeEnv);
+  const appEnvExplicit = Boolean(rawAppEnv?.trim());
   const authMode: AppConfig['authMode'] = (pick(file, 'AUTH_MODE') ?? 'password') === 'access' ? 'access' : 'password';
-  const accessTrustEmailHeader = accessTrustEmailHeaderOf(pick(file, 'ACCESS_TRUST_EMAIL_HEADER'), appEnv, isProduction);
+  const accessTrustEmailHeader = accessTrustEmailHeaderOf(
+    pick(file, 'ACCESS_TRUST_EMAIL_HEADER'),
+    authMode,
+    appEnv,
+    appEnvExplicit,
+    isProduction,
+  );
 
   // 自己承認の既定は環境で決める。本番だけ既定で禁止し、明示の 1 は警告つきで許可する。
   const rawSelfApproval = pick(file, 'ALLOW_SELF_APPROVAL')?.trim();
