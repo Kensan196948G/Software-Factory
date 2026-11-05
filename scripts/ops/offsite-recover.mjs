@@ -340,6 +340,22 @@ async function fetchByGuess({ bucket, prefix, db, opts }) {
  */
 export function prepareOutDir(dir) {
   const outDir = resolve(dir);
+  // 親ディレクトリが他人に書込み可能だと、検査後に --out を差し替えられる。親も本人所有か root 所有で go-w を要求する
+  const parent = dirname(outDir);
+  let pst;
+  try {
+    pst = lstatSync(parent);
+  } catch (error) {
+    throw new Error(`--out の親ディレクトリを確認できません（${error?.code ?? 'error'}）`);
+  }
+  if (pst.isSymbolicLink() || !pst.isDirectory()) throw new Error('--out の親がディレクトリではありません（symlink 不可）');
+  const myUid = typeof process.getuid === 'function' ? process.getuid() : null;
+  if (myUid !== null && pst.uid !== myUid && pst.uid !== 0) {
+    throw new Error('--out の親ディレクトリが本人所有でも root 所有でもありません');
+  }
+  if ((pst.mode & 0o022) !== 0 && (pst.mode & 0o1000) === 0) {
+    throw new Error('--out の親ディレクトリが group/other に書込み可能です（sticky なし）');
+  }
   let st = null;
   try {
     st = lstatSync(outDir);

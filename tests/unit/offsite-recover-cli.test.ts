@@ -176,7 +176,7 @@ describe('--out の置き場所', () => {
     const file = join(root, 'out-file');
     writeFileSync(file, 'x');
     expect(() => prepareOutDir(file)).toThrow(/ディレクトリではありません/);
-    expect(() => prepareOutDir(join(root, 'no-parent', 'child'))).toThrow(/作れません/);
+    expect(() => prepareOutDir(join(root, 'no-parent', 'child'))).toThrow(/親ディレクトリを確認できません/);
   });
   it('既存のディレクトリが group/other に書込み可能なら拒否する（本人所有・go-w だけ受ける）', () => {
     for (const mode of [0o770, 0o757, 0o777, 0o722]) {
@@ -191,6 +191,30 @@ describe('--out の置き場所', () => {
       chmodSync(dir, mode);
       expect(prepareOutDir(dir), mode.toString(8)).toBe(dir);
     }
+  });
+});
+
+describe('--out の親ディレクトリ', () => {
+  it('親が group/other に書込み可能（sticky なし）なら拒否する', () => {
+    const parent = join(root, 'parent-open');
+    mkdirSync(parent);
+    chmodSync(parent, 0o777);
+    expect(() => prepareOutDir(join(parent, 'out'))).toThrow(/親ディレクトリが group\/other に書込み可能/);
+    chmodSync(parent, 0o700);
+  });
+  it('親が sticky 付き（/tmp 型）なら受ける', () => {
+    const parent = join(root, 'parent-sticky');
+    mkdirSync(parent);
+    chmodSync(parent, 0o1777);
+    expect(prepareOutDir(join(parent, 'out'))).toBe(join(parent, 'out'));
+    chmodSync(parent, 0o700);
+  });
+  it('親がシンボリックリンクなら拒否する', () => {
+    const real = join(root, 'parent-real');
+    mkdirSync(real, { mode: 0o700 });
+    const link = join(root, 'parent-link');
+    symlinkSync(real, link);
+    expect(() => prepareOutDir(join(link, 'out'))).toThrow(/親がディレクトリではありません/);
   });
 });
 
@@ -275,6 +299,13 @@ describe('--out への書込み（一時名→link。全部そろうか何も残
       return n;
     };
     expect(() => writeFilesAtomically(dir, files, { writer })).toThrow(/--out へ書き込めません（ESHORTWRITE/);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+  it('書いたと報告したのに実際は書いていない（サイズ不一致）なら失敗し、何も残さない', () => {
+    const dir = join(root, 'atomic-size-mismatch');
+    mkdirSync(dir, { mode: 0o700 });
+    const writer = (_fd: number, _buffer: Buffer, _offset: number, length: number) => length;
+    expect(() => writeFilesAtomically(dir, files, { writer })).toThrow(/ESIZE/);
     expect(readdirSync(dir)).toEqual([]);
   });
   it('2 つ目の短い書込みでも、1 つ目を含め今回作成分を全部消す', () => {

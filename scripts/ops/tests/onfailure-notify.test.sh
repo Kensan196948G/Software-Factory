@@ -70,6 +70,7 @@ setup_case() { # <name>
   CASE="$TMP/$1"
   HOME_DIR="$CASE/home"
   mkdir -p "$HOME_DIR"
+  chmod 700 "$HOME_DIR" # umask に依らず本人専用の HOME にする（HOME の go-w 検査があるため）
 }
 # unit の ExecStart と同じ形（/bin/sh -c <本文> mirai-sf-onfailure <unit>）で実行する
 run_notify() { # <unit 名> [MONITOR_SERVICE_RESULT]
@@ -367,6 +368,29 @@ mkdir -p "$HOME_DIR/.config"
 chmod 700 "$HOME_DIR/.config"
 run_notify mirai-sf-prod-backup.service exit-code
 check "HOME/.config/mirai-sf が無ければ終了コード 0" assert_code 0
+
+printf '\n== O11k. HOME が group/other に書込み可能・symlink なら送信しない（~/.config の差し替え対策） ==\n'
+for mode in 777 775 757; do
+  setup_case "home_$mode"
+  write_fake_cmd 0
+  write_notify_env "$CASE/notify-cmd.sh"
+  chmod 700 "$HOME_DIR/.config" "$HOME_DIR/.config/mirai-sf"
+  chmod "$mode" "$HOME_DIR"
+  run_notify mirai-sf-prod-backup.service exit-code
+  check "HOME $mode は終了コード 4" assert_code 4
+  check "HOME $mode は理由を表示する" assert_out_contains "HOME が本人所有のディレクトリでない"
+  if [[ ! -e "$CASE/notify-invocations" ]]; then pass "HOME $mode は送信しない"; else fail "HOME $mode で送信した"; fi
+  chmod 700 "$HOME_DIR"
+done
+setup_case home_symlink
+write_fake_cmd 0
+write_notify_env "$CASE/notify-cmd.sh"
+chmod 700 "$HOME_DIR/.config" "$HOME_DIR/.config/mirai-sf"
+ln -s "$HOME_DIR" "$CASE/home-link"
+HOME_DIR="$CASE/home-link"
+run_notify mirai-sf-prod-backup.service exit-code
+check "HOME が symlink なら終了コード 4" assert_code 4
+if [[ ! -e "$CASE/notify-invocations" ]]; then pass "HOME が symlink なら送信しない"; else fail "HOME が symlink で送信した"; fi
 
 printf '\n== O12. 相対パスの MIRAI_SF_NOTIFY_CMD は実行しない ==\n'
 setup_case env_relative
