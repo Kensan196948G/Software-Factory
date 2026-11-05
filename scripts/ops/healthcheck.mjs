@@ -8,6 +8,10 @@
  *   3. environment が期待どおり（既定 staging。本番は MIRAI_SF_HEALTH_ENV=production）
  *   4. /healthz の commit が current/release.env の COMMIT_SHA と一致する
  *   5. （任意）git rev-parse origin/main と一致しない場合は warning（失敗にはしない）
+ *   6. （任意）最新 dump の鮮度（MIRAI_SF_HEALTH_BACKUP_DIR 設定時）
+ *   7. （任意）最新のオフサイト送信記録 `*.dump.r2.json` の鮮度（MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN 設定時）
+ *
+ * 6・7 はどちらも「検知範囲の拡大」であって RPO の保証ではない（docs/production/07-slo-and-measurement.md）。
  *
  * 失敗時は exit 1（oneshot unit が failed になり `systemctl --user --failed` で見える）。
  * 連続失敗と最終状態は ~/.local/state/mirai-sf/healthcheck.json に残し、復旧時に1行ログを出す。
@@ -23,11 +27,27 @@
  *   MIRAI_SF_HOME                current/release.env を置く場所（既定 ~/.local/share/mirai-sf）
  *   MIRAI_SF_REPO                ⑤ の git リポジトリ（既定: カレント → このスクリプトの2階層上）
  *   MIRAI_SF_HEALTH_STATE_FILE   状態ファイル（既定 ~/.local/state/mirai-sf/healthcheck.json。検証用）
+ *   MIRAI_SF_HEALTH_BACKUP_DIR   （任意）最新 dump の鮮度を見るディレクトリ
+ *   MIRAI_SF_HEALTH_BACKUP_MAX_AGE_MIN   dump 鮮度の閾値（分、既定 90）
+ *   MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN  （任意）最新の `*.dump.r2.json`（R2 送信記録）の鮮度の閾値（分）。
+ *                                未設定なら確認しない。記録の時刻は JSON の uploadedAt（キーが無いときだけ mtime）。
+ *                                最新記録が読めない・壊れている・未来時刻・シンボリックリンクなら NG（fail-closed）。
+ *                                記録の中身（バケット・キー・ハッシュ）と保存先のパスは出力しない。
  *
  * 終了コード: 0=正常（warning を含む）/ 1=異常
  */
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,6 +66,16 @@ const stateFile = process.env.MIRAI_SF_HEALTH_STATE_FILE || resolve(homedir(), '
 /** 任意: バックアップの鮮度確認（RPO 1 時間に対して既定 90 分）。未設定なら確認しない。 */
 const backupDir = process.env.MIRAI_SF_HEALTH_BACKUP_DIR || '';
 const backupMaxAgeMin = Number.parseInt(process.env.MIRAI_SF_HEALTH_BACKUP_MAX_AGE_MIN ?? '90', 10) || 90;
+/**
+ * 任意: オフサイト（R2）送信記録 `<dump>.r2.json` の鮮度確認（分）。未設定・空なら確認しない（従来どおり）。
+ * 設定時は MIRAI_SF_HEALTH_BACKUP_DIR 内の最新の `*.dump.r2.json` を見る。ローカル dump が新しくても
+ * R2 送信が止まっていれば失敗にするため。値の書式が不正なときは設定ミスとして失敗にする（値は出さない）。
+ */
+const offsiteMaxAgeRaw = (process.env.MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN ?? '').trim();
+/** 送信記録の uploadedAt・mtime の未来方向の許容幅（時計ずれ）。超えたら NG（負の経過分を正常扱いしない）。 */
+const OFFSITE_FUTURE_SKEW_MS = 5 * 60 * 1000;
+/** 送信記録として読む最大サイズ。超えたら NG。 */
+const OFFSITE_RECORD_MAX_BYTES = 64 * 1024;
 /** 障害時の案内に出す unit 名（本番は mirai-sf-prod-healthcheck）。 */
 const unitName = process.env.MIRAI_SF_HEALTH_UNIT || 'mirai-sf-healthcheck';
 const repoHint = process.env.MIRAI_SF_REPO || '';
@@ -207,9 +237,22 @@ function checkBackupFreshness(dir, maxAgeMin) {
   if (!existsSync(dir)) return { failure: `バックアップの保存先がありません: ${dir}` };
   let newest = 0;
   let name = '';
-  for (const entry of readdirSync(dir)) {
+  // 保存先が読めない・ディレクトリでない・dump の stat に失敗した場合に例外で落ちると、構造化された NG にならず
+  // stack にパスが出る。例外は捕捉して固定文言の失敗へ変える（例外の文言・パスは出さない）
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return { failure: 'バックアップの保存先を読めません（MIRAI_SF_HEALTH_BACKUP_DIR。ディレクトリでない・権限不足など）' };
+  }
+  for (const entry of entries) {
     if (!entry.endsWith('.dump')) continue;
-    const at = statSync(join(dir, entry)).mtimeMs;
+    let at;
+    try {
+      at = statSync(join(dir, entry)).mtimeMs;
+    } catch {
+      return { failure: `バックアップ（dump）の状態を取得できません: ${safeValue(entry)}` };
+    }
     if (at > newest) {
       newest = at;
       name = entry;
@@ -221,6 +264,98 @@ function checkBackupFreshness(dir, maxAgeMin) {
     return { failure: `最新のバックアップが古すぎます（${ageMinutes} 分前 > ${maxAgeMin} 分）: ${name}` };
   }
   return { info: `最新バックアップ: ${name}（${ageMinutes} 分前）` };
+}
+
+/**
+ * 送信記録 1 件を検証して時刻を返す（fail-closed）。記録の中身（バケット・キー・ハッシュ）は返さない・出さない。
+ *   - サイズが 0 または上限超過、読めない、JSON オブジェクトでない → 失敗
+ *   - uploadedAt があるのに文字列でない・時刻として解釈できない → 失敗
+ *   - uploadedAt が無いオブジェクトだけ mtime を使う
+ *   - 採用した時刻・mtime のどちらかが現在より許容幅（5 分）を超えて未来 → 失敗
+ * 失敗理由は内部で組み立てた固定文言だけ（例外の文言・パス・値は出さない）。
+ */
+function readOffsiteRecordTime(path, stat, now) {
+  if (stat.mtimeMs > now + OFFSITE_FUTURE_SKEW_MS) {
+    return { failure: '更新時刻が未来です（時計ずれの許容 5 分を超過）' };
+  }
+  if (stat.size <= 0 || stat.size > OFFSITE_RECORD_MAX_BYTES) {
+    return { failure: `サイズが想定外です（0 バイト、または ${OFFSITE_RECORD_MAX_BYTES} バイト超）` };
+  }
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    return { failure: '読めません' };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { failure: 'JSON として解釈できません' };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { failure: 'JSON オブジェクトではありません' };
+  }
+  if (!Object.hasOwn(parsed, 'uploadedAt')) return { at: stat.mtimeMs, source: 'mtime' };
+  const at = typeof parsed.uploadedAt === 'string' ? Date.parse(parsed.uploadedAt) : Number.NaN;
+  if (!Number.isFinite(at)) return { failure: 'uploadedAt を時刻として解釈できません' };
+  if (at > now + OFFSITE_FUTURE_SKEW_MS) return { failure: 'uploadedAt が未来です（時計ずれの許容 5 分を超過）' };
+  return { at, source: 'uploadedAt' };
+}
+
+/**
+ * 最新のオフサイト送信記録（`*.dump.r2.json`）の経過時間を調べる。R2 送信が黙って止まっていないかの確認。
+ * 「最新」は lstat の mtime が最も新しい記録。その記録を検証できなければ NG（fail-closed）。
+ * 記録名に一致するエントリが通常ファイルでない（シンボリックリンク等）・lstat できない場合も NG。
+ * 保存先のパスはログへ出さない（固定表現）。
+ */
+function checkOffsiteFreshness(dir, maxAgeMin) {
+  const where = 'MIRAI_SF_HEALTH_BACKUP_DIR';
+  let dirStat;
+  try {
+    dirStat = lstatSync(dir);
+  } catch {
+    return { failure: `オフサイト送信記録の保存先がありません（${where}）` };
+  }
+  if (!dirStat.isDirectory()) return { failure: `オフサイト送信記録の保存先がディレクトリではありません（${where}）` };
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return { failure: `オフサイト送信記録の保存先を読めません（${where}）` };
+  }
+  const now = Date.now();
+  let newest = null;
+  for (const entry of entries) {
+    if (!entry.endsWith('.dump.r2.json')) continue;
+    const path = join(dir, entry);
+    let stat;
+    try {
+      stat = lstatSync(path);
+    } catch {
+      return { failure: `オフサイト送信記録の状態を取得できません: ${safeValue(entry)}` };
+    }
+    if (!stat.isFile()) {
+      return { failure: `オフサイト送信記録が通常ファイルではありません（シンボリックリンク等は不可）: ${safeValue(entry)}` };
+    }
+    if (!newest || stat.mtimeMs > newest.stat.mtimeMs) newest = { name: entry, path, stat };
+  }
+  if (!newest) return { failure: `オフサイト送信記録（*.dump.r2.json）がありません（${where}）` };
+  const name = safeValue(newest.name);
+  const time = readOffsiteRecordTime(newest.path, newest.stat, now);
+  if (time.failure) return { failure: `最新のオフサイト送信記録を検証できません（${time.failure}）: ${name}` };
+  // 許容幅内の未来（時計ずれ）は 0 として扱う。許容幅を超える未来は上で NG にしている。
+  // 閾値との比較はミリ秒で行う（丸めた分で比べると 90 分 29 秒が通ってしまう）。丸めるのは表示だけ
+  const ageMs = Math.max(0, now - time.at);
+  const ageMinutes = Math.round(ageMs / 60000);
+  if (ageMs > maxAgeMin * 60000) {
+    const ageSeconds = Math.floor(ageMs / 1000);
+    const shown = `${Math.floor(ageSeconds / 60)} 分 ${ageSeconds % 60} 秒前`;
+    return {
+      failure: `最新のオフサイト送信記録が古すぎます（${shown} > ${maxAgeMin} 分、${time.source} 基準）: ${name}`,
+    };
+  }
+  return { info: `最新オフサイト送信記録: ${name}（${ageMinutes} 分前、${time.source} 基準）` };
 }
 
 async function main() {
@@ -292,6 +427,23 @@ async function main() {
       failures.push(backup.failure);
     } else if (backup.info) {
       log(backup.info);
+    }
+  }
+
+  // 7. （任意）オフサイト（R2）送信記録の鮮度。MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN があるときだけ
+  if (offsiteMaxAgeRaw) {
+    const offsiteMaxAgeMin = /^[1-9][0-9]{0,5}$/.test(offsiteMaxAgeRaw) ? Number(offsiteMaxAgeRaw) : null;
+    if (offsiteMaxAgeMin === null) {
+      failures.push('MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN が正の整数（分）ではありません（値はログへ出しません）');
+    } else if (!backupDir) {
+      failures.push('MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN の確認には MIRAI_SF_HEALTH_BACKUP_DIR が必要です');
+    } else {
+      const offsite = checkOffsiteFreshness(backupDir, offsiteMaxAgeMin);
+      if (offsite.failure) {
+        failures.push(offsite.failure);
+      } else if (offsite.info) {
+        log(offsite.info);
+      }
     }
   }
 
