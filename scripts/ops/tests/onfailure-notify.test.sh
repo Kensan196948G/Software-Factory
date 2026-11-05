@@ -127,7 +127,10 @@ elif [[ "${CI:-}" == true ]]; then
 else
   printf 'SKIP: shellcheck が無いため構文検査のみ（ローカルのみ許容。CI=true では FAIL）\n'
 fi
-if command -v systemd-analyze >/dev/null 2>&1; then
+if command -v systemd-analyze >/dev/null 2>&1 && [[ -n "${XDG_RUNTIME_DIR:-}" && -d "${XDG_RUNTIME_DIR:-}" ]]; then
+  # --user verify は user manager の RuntimeDirectory を要する。CI ランナー（ユーザーセッション無し）では
+  # 「Failed to lookup RuntimeDirectory path」で必ず失敗するため、セッションがある環境だけで実行する。
+  # 構文の正しさは ExecStart と正本の一致検査（上）とローカル実行で担保する
   mkdir -p "$TMP/analyze"
   cp "$UNIT" "$TMP/analyze/mirai-sf-onfailure@test.service"
   if systemd-analyze --user verify "$TMP/analyze/mirai-sf-onfailure@test.service" >"$TMP/analyze/out" 2>&1; then
@@ -136,7 +139,7 @@ if command -v systemd-analyze >/dev/null 2>&1; then
     fail "systemd-analyze verify（instance=test）: $(head -n 3 "$TMP/analyze/out")"
   fi
 else
-  printf 'SKIP: systemd-analyze が無いため unit の構文検査は省略\n'
+  printf 'SKIP: systemd-analyze かユーザーセッション（XDG_RUNTIME_DIR）が無いため unit の構文検査は省略\n'
 fi
 
 printf '\n== O1. 偽 unit の失敗を alerts.jsonl に 1 行記録する（notify.env なし） ==\n'
