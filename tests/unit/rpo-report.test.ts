@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -15,6 +15,8 @@ const BUCKET = 'rpo-test-bucket-should-not-appear';
 const KEY_PREFIX = 'prod/rpo-test-key-should-not-appear';
 const SHA = 'e'.repeat(64);
 const FAILURE_REASON = 'secret-failure-reason-should-not-appear';
+/** pg_dump -Fc のマジック（PGDMP）で始まる合成 dump。中身は作り物。 */
+const DUMP_BODY = 'PGDMP synthetic dump for tests';
 
 let root = '';
 let dir = '';
@@ -72,7 +74,7 @@ function generation({ doneAt, uploadedAt, manifest = true }: GenOptions) {
   const snapshotAt = Math.floor((doneAt - 10_000) / 1000) * 1000;
   const name = stampName(snapshotAt);
   const dump = join(dir, `${name}.dump`);
-  writeFileSync(dump, 'dummy dump');
+  writeFileSync(dump, DUMP_BODY);
   setMtime(dump, doneAt);
   if (manifest) {
     const path = join(dir, `${name}.manifest.tsv`);
@@ -392,6 +394,44 @@ describe('rpo-report.mjs', () => {
     expect(reasons).toEqual(['manifest が空です', 'manifest が通常ファイルではありません（シンボリックリンク等は不可）']);
   }, 40_000);
 
+  it('dump が 0 バイトなら検証不能（2）', async () => {
+    const made = series(3, 30 * MIN);
+    writeFileSync(at(made, 1).dump, '');
+    setMtime(at(made, 1).dump, base - 40 * MIN);
+    const { code, json, out } = await run(['--days', '1']);
+    expect(code, out).toBe(2);
+    expect(json.verdict).toBe('unverifiable');
+    expect(json.errors).toEqual([{ file: `${at(made, 1).name}.dump`, reason: 'dump が空です（0 バイト）' }]);
+  }, 40_000);
+
+  it('dump が読めない（chmod 000）なら検証不能（2）', async () => {
+    const made = series(3, 30 * MIN);
+    chmodSync(at(made, 0).dump, 0o000);
+    try {
+      const { code, json, out } = await run(['--days', '1']);
+      expect(code, out).toBe(2);
+      expect(json.errors).toEqual([{ file: `${at(made, 0).name}.dump`, reason: 'dump を読めません' }]);
+    } finally {
+      chmodSync(at(made, 0).dump, 0o600);
+    }
+  }, 40_000);
+
+  it('dump の先頭が PGDMP でない（NUL のみ・短すぎる）なら検証不能（2）', async () => {
+    const made = series(3, 30 * MIN);
+    writeFileSync(at(made, 0).dump, Buffer.alloc(1024));
+    setMtime(at(made, 0).dump, base - 70 * MIN);
+    writeFileSync(at(made, 2).dump, 'PGDM');
+    setMtime(at(made, 2).dump, base - 10 * MIN);
+    const { code, json, out } = await run(['--days', '1']);
+    expect(code, out).toBe(2);
+    const reasons = json.errors.map((error: { file: string; reason: string }) => `${error.file}: ${error.reason}`).sort();
+    expect(reasons).toEqual(
+      [at(made, 0).name, at(made, 2).name]
+        .sort()
+        .map((name) => `${name}.dump: dump の先頭が pg_dump -Fc の形式（PGDMP）ではありません`),
+    );
+  }, 40_000);
+
   it('M1: 時刻が 1 点でも、最新から 119 分経過していればデータ不足より閾値超（gap）を優先', async () => {
     generation({ doneAt: base - 119 * MIN });
     const { code, json, out } = await run(['--days', '1']);
@@ -418,6 +458,10 @@ describe('rpo-report.mjs', () => {
       '2026-13-01T00:00:00Z',
       '2026-11-05T00:00:00+25:00',
       '2026-11-05T00:00:00+09:60',
+      '2026-11-05T00:00:00+14:01',
+      '2026-11-05T00:00:00-14:01',
+      '2026-11-05T00:00:00+14:59',
+      '2026-11-05T00:00:00-14:59',
     ];
     for (const value of cases) {
       const { code, out } = await run(['--since', value], false);
@@ -433,6 +477,21 @@ describe('rpo-report.mjs', () => {
     expect(ok.json.window.start).toBe(since.toISOString());
   }, 60_000);
 
+  it('M2: オフセット ±14:00 は受理し、UTC に正しく換算する', async () => {
+    series(3, 30 * MIN);
+    const since = new Date(base - 3 * 60 * MIN);
+    for (const [sign, hours] of [
+      ['+', 14],
+      ['-', 14],
+    ] as const) {
+      const shifted = new Date(since.getTime() + (sign === '+' ? 1 : -1) * hours * 60 * MIN);
+      const value = shifted.toISOString().replace('Z', `${sign}14:00`);
+      const { code, json, out } = await run(['--since', value]);
+      expect(code, `${value}\n${out}`).toBe(0);
+      expect(json.window.start).toBe(since.toISOString());
+    }
+  }, 40_000);
+
   it('M2: 送信記録の uploadedAt が実在しない日時（2026-02-31）なら検証不能（2）', async () => {
     const made = series(3, 30 * MIN);
     writeFileSync(at(made, 2).record, JSON.stringify({ bucket: BUCKET, uploadedAt: '2026-02-31T00:00:00.000Z' }));
@@ -444,7 +503,7 @@ describe('rpo-report.mjs', () => {
 
   it('M2: 名前の snapshot 時刻が実在しない dump・送信記録は検証不能（2）', async () => {
     series(3, 30 * MIN);
-    writeFileSync(join(dir, 'mirai_sf_prod-20260231T000000Z.dump'), 'x');
+    writeFileSync(join(dir, 'mirai_sf_prod-20260231T000000Z.dump'), DUMP_BODY);
     const { code, json, out } = await run(['--days', '1']);
     expect(code, out).toBe(2);
     expect(json.errors).toEqual([

@@ -55,7 +55,8 @@ export function parseStrictIso(value) {
   if (sign !== undefined) {
     const offsetHours = Number(oh);
     const offsetMinutes = Number(om);
-    if (offsetHours > 14 || offsetMinutes > 59) return null;
+    // 実在するオフセットは -12:00〜+14:00 だが、ここでは ±14:00 までを受け付ける（14 時台は 14:00 ちょうどだけ）
+    if (offsetHours > 14 || offsetMinutes > 59 || (offsetHours === 14 && offsetMinutes !== 0)) return null;
     offsetMs = (sign === '+' ? 1 : -1) * (offsetHours * 60 + offsetMinutes) * MINUTE_MS;
   }
   return wall - offsetMs;

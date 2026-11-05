@@ -4,7 +4,7 @@
  * fail-closed: 検証できないものは黙って捨てず errors に入れる。シンボリックリンクは追跡しない（lstat）。
  * 返す値に記録の中身（bucket / key / sha256）・失敗理由の本文・パス・例外の文言は含めない。
  */
-import { closeSync, lstatSync, openSync, readdirSync, readFileSync } from 'node:fs';
+import { closeSync, lstatSync, openSync, readdirSync, readFileSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import { JSON_MAX_BYTES, SKEW_MS, iso, parseStrictIso, safeName } from './common.mjs';
 
@@ -17,6 +17,35 @@ function snapshotTimeOf(dumpName) {
   const [, , year, month, day, hour, minute, second] = matched;
   const at = parseStrictIso(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`);
   return { matched: true, at };
+}
+
+/** pg_dump -Fc（custom 形式）のファイル先頭のマジック。 */
+const PG_DUMP_MAGIC = Buffer.from('PGDMP', 'ascii');
+
+/**
+ * dump の中身を軽く確かめる: 空でない・読める・先頭 5 バイトが "PGDMP"。
+ * pg_restore は呼ばない（読取り専用・軽量を保つ）。ヘッダの確認だけで、dump 全体の完全性は保証しない。
+ */
+function checkDumpHeader(path, size) {
+  if (size <= 0) return { error: 'dump が空です（0 バイト）' };
+  let fd;
+  try {
+    fd = openSync(path, 'r');
+  } catch {
+    return { error: 'dump を読めません' };
+  }
+  try {
+    const head = Buffer.alloc(PG_DUMP_MAGIC.length);
+    const read = readSync(fd, head, 0, head.length, 0);
+    if (read !== head.length || !head.equals(PG_DUMP_MAGIC)) {
+      return { error: 'dump の先頭が pg_dump -Fc の形式（PGDMP）ではありません' };
+    }
+    return { ok: true };
+  } catch {
+    return { error: 'dump を読めません' };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** 通常ファイルとして開けるか（lstat で通常ファイルと確かめた後に、読取りで開けることを確かめる）。 */
@@ -141,6 +170,11 @@ export function scanBackupDir(dir, now) {
     }
     if (stat.mtimeMs < snapshot.at - SKEW_MS) {
       fail(name, 'dump の更新時刻が名前の snapshot 時刻より前です（世代と矛盾）');
+      continue;
+    }
+    const header = checkDumpHeader(join(dir, name), stat.size);
+    if (header.error) {
+      fail(name, header.error);
       continue;
     }
     // backup.sh は manifest → dump の順に置く。manifest の無い dump は完成した世代として数えない
