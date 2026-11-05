@@ -73,8 +73,11 @@ cloudflared tunnel route dns --overwrite-dns mirai-sf sf.mirai-dx-platform.com
 | `ACCESS_TEAM_DOMAIN`        | `https://<team>.cloudflareaccess.com`。JWT の `iss` と公開鍵の取得先   |
 | `ACCESS_AUD`                | Access アプリの Application Audience (AUD) タグ。JWT の `aud` と照合   |
 | `ACCESS_TRUST_EMAIL_HEADER` | `1` で「JWT 未設定時のヘッダ信頼」を明示 opt-in。既定は未設定＝無効。この値が `1` のときだけ APP_ENV の明示が必須で、許可されるのは development / test だけ。`APP_ENV=staging` / `production`、または `1` かつ APP_ENV 未設定では起動エラー（Issue #102） |
+| `ACCESS_AUTO_PROVISION`      | `1` で「未登録の Access 利用者を初回ログイン時に自動作成」を明示 opt-in。既定は未設定＝無効（401・`auth.access_denied` / reason=`user_not_registered`）。有効時も作るのは `is_admin=false`・`requester` のみで、`user.provisioned` を監査に残す。`0` / `1` 以外、`APP_ENV=staging` / `production`、`NODE_ENV=production` では起動エラー（Issue #102 完了条件 3） |
 
 実値は `preview.conf`（0600）だけに置き、リポジトリへ書かない。
+
+未登録の利用者は、JWT が有効でも既定では作成しない（401）。staging / production では `ACCESS_AUTO_PROVISION=1` 自体が起動エラーになるため、新規利用者は管理API（`/api/admin/users`、`docs/api.md` §6）で事前に作成する。開発・テストでだけ opt-in を使う。
 
 | 設定                                 | 動作                                                            |
 | ------------------------------------ | --------------------------------------------------------------- |

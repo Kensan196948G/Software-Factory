@@ -49,7 +49,7 @@
   - 残す: fail-closed は新規認証のみで既存 Cookie は TTL（既定 12h）内有効。失効は配備手順（`deployment.md` の切替手順 4）で行う。コードによる自動失効はしない。
   - 残す: 本番で JWT が欠落しても `/healthz` は 200 を返すため、外形監視では「認証全断」を検知できない。監視項目の追加は別タスク（Batch 2 候補）。
 - **未配備**: 本番・Staging の設定・サービス・DB は変更していない。配備するまで稼働中の挙動は変わらない。
-- 残り: 正規 JWT 経路で Staging の未登録メールを管理者として自動作成する点は未修正（別タスク）。
+- 残り: 正規 JWT 経路で Staging の未登録メールを管理者として自動作成する点は未修正（別タスク）。→ §7 の別 PR で是正した（既定 off・opt-in 時も最小権限）。
 
 ## 4. 他リポジトリ連携の実測（06:24〜06:31 JST）
 
@@ -70,9 +70,21 @@
 | 区分 | 内容 |
 | ---- | ---- |
 | 未確認 | 正規 OTP ログイン（Staging / 本番）、Access 側 AUD と conf の値の一致、R2 バケット上のオブジェクト実在、別ホストでの DR |
-| 残リスク | Staging の未登録メール自動管理者作成（正規 JWT 経路）、単一ホスト障害点、業務受入（ケース S / B）未実施 |
+| 残リスク | Staging の未登録メール自動管理者作成（正規 JWT 経路。§7 でコード是正・未配備）、単一ホスト障害点、業務受入（ケース S / B）未実施 |
 | 人間判断 | Sandbox の main 保護（N8）、Sandbox PR #3 の扱い、N6 資格情報 rotation、N7 R2 保持、外部通知先、別ホスト DR の要否、DD / ACCC 連携の範囲 |
 
 ## 6. 変更していないもの
 
 本番・Staging の設定ファイル、systemd unit、DB、Cloudflare（Access / DNS / Tunnel / R2）、GitHub のリポジトリ設定・ブランチ保護、他リポジトリ。コードは PR のブランチのみで、main へは正規の CI・レビュー後にマージする。
+
+## 7. 未登録利用者の自動作成を最小権限・opt-in 化（2026-11-06・コードのみ）
+
+Issue #102 完了条件 3 の残り（正規 JWT 経路で Staging の未登録メールを管理者として自動作成する点）を、別 PR のコードで是正した。本番・Staging の設定・サービス・DB は変更していない。
+
+- 変更: `src/api/config.ts` / `src/api/auth.ts` / `tests/unit/access-jwt.test.ts` / `tests/integration/access-jwt.test.ts` / `docs`。
+- 設定: `ACCESS_AUTO_PROVISION` を追加。既定 `0`（未設定＝無効）。`0` / `1` 以外と、本番・staging（`NODE_ENV=production` を含む）での `1` は起動エラー。runtime 側でも同じ条件で無効化し、起動時判定と二重に守る。
+- 無効時: 未登録の利用者は 401 とし、`auth.access_denied`（reason=`user_not_registered`）を監査に残す（従来の本番挙動と同じ）。
+- 有効時: 作るのは `is_admin=false`・`requester` のみ（最小権限）。`user.provisioned`（isAdmin=false, roles=['requester']）を監査に残す。利用者・ロール・監査は同一トランザクション。
+- 回帰試験（隔離したローカル test DB）: 既定 off で未登録 → 401・`app_user` / `session` 非作成・`auth.access_denied`。`APP_ENV=staging` でも同様。opt-in で作成され `is_admin=false` / `requester` のみ / `user.provisioned`。opt-in を無効に戻しても既存利用者はログイン可。
+- 起動時エラー: 単体テストで `APP_ENV=staging` / `production`、`NODE_ENV=production`、`0` / `1` 以外を固定。
+- 配備上の注意: 配備後は Staging でも未登録の利用者が 401 になる。必要な利用者は管理API（`/api/admin/users`）で事前に作成する。`ACCESS_AUTO_PROVISION=1` は開発・テスト専用で、staging / production では設定しない（起動エラーになる）。

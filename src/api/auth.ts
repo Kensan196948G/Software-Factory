@@ -2,7 +2,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { PoolClient } from 'pg';
 import { query, withTransaction } from './db.js';
-import { config, isAccessHeaderTrustEnabled, isAccessJwtEnabled } from './config.js';
+import { config, isAccessAutoProvisionEnabled, isAccessHeaderTrustEnabled, isAccessJwtEnabled } from './config.js';
 import { createAccessJwtVerifier, type AccessJwtVerifier } from './access-jwt.js';
 import { hashPassword, verifyPassword, passwordPolicyError } from './password.js';
 import { ApiError, Errors } from './http.js';
@@ -246,7 +246,9 @@ export function isAccessEmailAllowed(email: string): boolean {
 
 /**
  * Cloudflare Access の認証済みメールからセッションを作る（AUTH_MODE=access）。
- * 初回は利用者を作成する（個人MVP・検証環境）。本番は Entra ID のグループで役割を決める。
+ * 未登録の利用者は、明示 opt-in（ACCESS_AUTO_PROVISION=1・本番/staging 以外）があるときだけ
+ * 最小権限（is_admin=false・requester のみ）で作る。既定は作らずに拒否する（Issue #102 の完了条件 3）。
+ * 本番は Entra ID のグループで役割を決める（現状は未実装）。
  */
 export async function accessLogin(
   email: string,
@@ -257,9 +259,10 @@ export async function accessLogin(
 
   let user = (await query<UserRow>(USER_WITH_ROLES, [normalized])).rows[0] ?? null;
   if (!user) {
-    // 本番は未登録の利用者を自動で作らない（ADR §8-9「管理者の自動付与の廃止」）。
-    // Access を通れば誰でも管理者になれる経路を塞ぎ、利用者は管理API（/api/admin/users）で作る。
-    if (config.appEnv === 'production') {
+    // 未登録の利用者は既定で作らない（ADR §8-9「管理者の自動付与の廃止」）。
+    // Access を通れば誰でも利用者になれる経路を塞ぎ、利用者は管理API（/api/admin/users）で作る。
+    // 開発・テストで利便性が必要な場合だけ ACCESS_AUTO_PROVISION=1 を明示する（本番・staging は起動エラー）。
+    if (!isAccessAutoProvisionEnabled(config)) {
       await appendAudit({
         action: 'auth.access_denied',
         targetType: 'user',
@@ -271,17 +274,36 @@ export async function accessLogin(
       });
       throw Errors.noPermission();
     }
+    // opt-in でも最小権限にする（is_admin=false・requester のみ）。作った事実は監査に残す。
     const randomHash = await hashPassword(randomBytes(32).toString('base64url'));
-    const inserted = await query<{ id: string }>(
-      `insert into app_user (email, display_name, dept_code, password_hash, is_admin)
-       values ($1,$2,$3,$4,true) returning id`,
-      [normalized, normalized.split('@')[0] ?? normalized, 'dx', randomHash],
-    );
-    const id = inserted.rows[0]?.id;
+    const id = await withTransaction(async (client) => {
+      const inserted = await client.query<{ id: string }>(
+        `insert into app_user (email, display_name, dept_code, password_hash, is_admin)
+         values ($1,$2,$3,$4,false) returning id`,
+        [normalized, normalized.split('@')[0] ?? normalized, 'dx', randomHash],
+      );
+      const newId = inserted.rows[0]?.id;
+      if (!newId) throw Errors.internal();
+      await client.query(`insert into user_role (user_id, role) values ($1,'requester') on conflict do nothing`, [newId]);
+      await appendAuditTx(client, {
+        action: 'user.provisioned',
+        targetType: 'user',
+        targetId: newId,
+        result: 'success',
+        actorUserId: null,
+        actorName: 'system',
+        role: 'system',
+        diff: {
+          email: normalized,
+          isAdmin: false,
+          roles: ['requester'],
+          source: 'access_auto_provision',
+          appEnv: config.appEnv,
+        },
+      });
+      return newId;
+    });
     if (!id) throw Errors.internal();
-    for (const role of ['requester', 'desk', 'approver']) {
-      await query('insert into user_role (user_id, role) values ($1,$2) on conflict do nothing', [id, role]);
-    }
     user = (await query<UserRow>(USER_WITH_ROLES, [normalized])).rows[0] ?? null;
     if (!user) throw Errors.internal();
   }

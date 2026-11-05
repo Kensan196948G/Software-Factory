@@ -5,6 +5,7 @@ import { resolveAccessIdentity } from '../../src/api/auth.js';
 import {
   accessJwtStartupWarning,
   config,
+  isAccessAutoProvisionEnabled,
   isAccessHeaderTrustEnabled,
   isAccessJwtEnabled,
   loadConfig,
@@ -463,6 +464,7 @@ describe('ACCESS_TEAM_DOMAIN / ACCESS_AUD の設定', () => {
       ACCESS_TEAM_DOMAIN: undefined,
       ACCESS_AUD: undefined,
       ACCESS_TRUST_EMAIL_HEADER: undefined,
+      ACCESS_AUTO_PROVISION: undefined,
     });
   });
 
@@ -533,6 +535,7 @@ describe('ACCESS_TRUST_EMAIL_HEADER（ヘッダ信頼の明示 opt-in・Issue #1
       ACCESS_TEAM_DOMAIN: undefined,
       ACCESS_AUD: undefined,
       ACCESS_TRUST_EMAIL_HEADER: undefined,
+      ACCESS_AUTO_PROVISION: undefined,
     });
   });
 
@@ -585,5 +588,76 @@ describe('ACCESS_TRUST_EMAIL_HEADER（ヘッダ信頼の明示 opt-in・Issue #1
     const cfg = loadConfig();
     expect(isAccessJwtEnabled(cfg)).toBe(false);
     expect(isAccessHeaderTrustEnabled(cfg)).toBe(false);
+  });
+});
+
+describe('ACCESS_AUTO_PROVISION（未登録利用者の最小権限・自動登録の opt-in・Issue #102）', () => {
+  function stub(env: Record<string, string | undefined>): void {
+    for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+  }
+
+  beforeEach(() => {
+    stub({
+      MIRAI_SF_CONFIG_FILE: undefined,
+      NODE_ENV: 'test',
+      APP_ENV: 'test',
+      AUTH_MODE: 'access',
+      ACCESS_TEAM_DOMAIN: undefined,
+      ACCESS_AUD: undefined,
+      ACCESS_TRUST_EMAIL_HEADER: undefined,
+      ACCESS_AUTO_PROVISION: undefined,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('既定は無効（未設定なら false）', () => {
+    const cfg = loadConfig();
+    expect(cfg.accessAutoProvision).toBe(false);
+    expect(isAccessAutoProvisionEnabled(cfg)).toBe(false);
+  });
+
+  it('0 は無効として扱う', () => {
+    stub({ ACCESS_AUTO_PROVISION: '0' });
+    const cfg = loadConfig();
+    expect(cfg.accessAutoProvision).toBe(false);
+    expect(isAccessAutoProvisionEnabled(cfg)).toBe(false);
+  });
+
+  it.each(['development', 'test'] as const)('APP_ENV=%s を明示した開発・テストでは 1 で有効になる', (appEnv) => {
+    stub({ NODE_ENV: 'development', APP_ENV: appEnv, ACCESS_AUTO_PROVISION: '1' });
+    const cfg = loadConfig();
+    expect(cfg.accessAutoProvision).toBe(true);
+    expect(isAccessAutoProvisionEnabled(cfg)).toBe(true);
+  });
+
+  it.each(['staging', 'production'] as const)('APP_ENV=%s では 1 を起動エラーにする（fail-closed）', (appEnv) => {
+    stub({ NODE_ENV: 'development', APP_ENV: appEnv, ACCESS_AUTO_PROVISION: '1' });
+    expect(() => loadConfig()).toThrow(/ACCESS_AUTO_PROVISION=1 は本番・staging では使えません/);
+  });
+
+  it('NODE_ENV=production では APP_ENV=test でも 1 を起動エラーにする', () => {
+    stub({ NODE_ENV: 'production', APP_ENV: 'test', ACCESS_AUTO_PROVISION: '1' });
+    expect(() => loadConfig()).toThrow(/ACCESS_AUTO_PROVISION=1 は本番・staging では使えません/);
+  });
+
+  it('0 / 1 以外は起動エラーにする', () => {
+    stub({ ACCESS_AUTO_PROVISION: 'true' });
+    expect(() => loadConfig()).toThrow(/ACCESS_AUTO_PROVISION が不正/);
+  });
+
+  it('AUTH_MODE=password でも誤った値は起動エラーにする（使わない設定の取り違えを残さない）', () => {
+    stub({ AUTH_MODE: 'password', ACCESS_AUTO_PROVISION: 'yes' });
+    expect(() => loadConfig()).toThrow(/ACCESS_AUTO_PROVISION が不正/);
+  });
+
+  it('実行時にも本番・staging では無効（起動時の判定と二重に守る）', () => {
+    const cfg = { accessAutoProvision: true, appEnv: 'staging' as const, isProduction: false };
+    expect(isAccessAutoProvisionEnabled(cfg)).toBe(false);
+    expect(isAccessAutoProvisionEnabled({ ...cfg, appEnv: 'production', isProduction: true })).toBe(false);
+    expect(isAccessAutoProvisionEnabled({ ...cfg, appEnv: 'test', isProduction: true })).toBe(false);
+    expect(isAccessAutoProvisionEnabled({ ...cfg, appEnv: 'development' })).toBe(true);
   });
 });
