@@ -2,16 +2,16 @@
 
 状態: **道具と手順を用意した段階**（2026-11-05）。別ホストでの通し訓練は**未実施**（Lead が行う）。
 背景: `offsite-drill.mjs` はローカルの送信記録 `*.dump.r2.json` を起点にする。ホストを失うとこの記録も無くなる（`10-release-verification-20261104.md` §10）。
-道具: `scripts/ops/offsite-recover.mjs`。送信記録を使わず、R2 の中身だけから最新の dump と同名の manifest を選び、整合を確かめてから `restore-drill.sh` に渡す。
+道具: `scripts/ops/offsite-recover.mjs`（実行部）と `scripts/ops/lib/offsite-recover-core.mjs`（解析・選択・照合の純粋ロジック）。送信記録を使わず、R2 の中身だけから最新の dump と同名の manifest を選び、整合を確かめてから `restore-drill.sh` に渡す。
 
 ## 1. R2 の一覧を取る方法（2026-11-05 に確認）
 
-| 方法                                                      | 可否                                                                                                       | 認証                                                                              |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `wrangler r2 object list`                                 | **無い**（wrangler 4.122.0 の `r2 object` は get / put / delete だけ。公式の Wrangler コマンド一覧と一致） | －                                                                                |
-| REST `GET /accounts/{id}/r2/buckets/{bucket}/objects`     | **可**（prefix・cursor・per_page=1000。結果に key / size / etag / last_modified）                          | API トークン。**Workers R2 Storage Bucket Item Read**（読取り・一覧だけ）で足りる |
-| REST `GET .../objects/{key}`                              | **可**（本体をそのまま返す）                                                                               | 同上                                                                              |
-| キー推定（`<prefix>/<db>-YYYYMMDDTHHMMSSZ.manifest.tsv`） | **可（代替）**。1 秒刻みに新しい順で `wrangler r2 object get`。「無い」以外の失敗で即停止                  | wrangler の OAuth                                                                 |
+| 方法                                                      | 可否                                                                                                                                            | 認証                                                                              |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `wrangler r2 object list`                                 | **無い**（wrangler 4.122.0 の `r2 object` は get / put / delete だけ。公式の Wrangler コマンド一覧と一致）                                      | －                                                                                |
+| REST `GET /accounts/{id}/r2/buckets/{bucket}/objects`     | **可**（prefix・cursor・per_page=1000。最終ページは `result_info` が付かない＝実測。満杯なら `start_after` で 0 件を確認）                      | API トークン。**Workers R2 Storage Bucket Item Read**（読取り・一覧だけ）で足りる |
+| REST `GET .../objects/{key}`                              | **可**（本体をそのまま返す）                                                                                                                    | 同上                                                                              |
+| キー推定（`<prefix>/<db>-YYYYMMDDTHHMMSSZ.manifest.tsv`） | **可（代替）**。先に `r2 bucket info` でバケットを確認（`object get` はバケットが無くても「キーが無い」と返すため）。「無い」以外の失敗で即停止 | wrangler の OAuth                                                                 |
 
 - 一覧の試行（読取りのみ）: prefix `mirai_sf_prod/` に 134 件（dump 67 + manifest 67、2026-11-03〜11-05）。etag はすべて 32 桁 hex（単一パート＝MD5）で、ローカル同名ファイルの MD5 と一致した。
 - wrangler の OAuth は REST の一覧には使わない（OAuth のトークンを取り出してスクリプトに渡す運用は作らない）。一覧は**読取り専用のスコープ付きトークン**で行い、書込み権限を持たせない。
@@ -28,19 +28,20 @@ node scripts/ops/offsite-recover.mjs --source guess --verify-only --from 2026-11
 node scripts/ops/offsite-recover.mjs --verify-only --out ~/recovered
 ```
 
-- 選び方: `<prefix>/<db>-<時刻>.dump` と同名 `.manifest.tsv` が**両方ある**最新。manifest の無い dump（送信途中）・サイズ 0・未来の時刻（10 分超）は飛ばす。最新が 24 時間より古ければ失敗（`--max-age-hours`）。
+- 選び方: `<prefix>/<db>-<時刻>.dump` と同名 `.manifest.tsv` が**両方ある**最新。A は manifest の無い dump（送信途中）・サイズ 0・未来の時刻（10 分超）を飛ばす。**A・B とも**、選んだ組が未来（10 分超）または 24 時間より古ければ失敗（`--max-age-hours`、0〜2160。B は古いものへ黙って進まない）。
+- 失敗の表示: wrangler の stderr 本文は出さず、`kind`（not_found / bucket_not_found / auth / rate_limited / network / signal / unknown）・終了コード・HTTP 状態・Cloudflare のエラーコードだけを出す（アカウント ID やトークン様の文字列を出さない）。`--max-probes` は 1〜86401。Ctrl-C / SIGTERM は子プロセスへ転送し、一時領域を消して 130 / 143 で終わる。
 - 推定の窓を広げすぎない: 1 件およそ 3.5 秒（wrangler の起動を含む）。1 時間の窓を全部試すと最悪 3.5 時間。**時刻が分かるなら窓を絞る**。毎時のバックアップ（55 分間隔）なので、直近 1 時間に通常 1 件ある。
 - 実測（読取りのみ）: B で `--from 07:50:00Z --to 07:50:30Z` → 9 回目で `20261105T075022Z` を発見、TOC 28 テーブル＝manifest 28 テーブル、取得した dump / manifest の SHA-256 はローカル送信記録と一致（33.6 秒）。A は読取りトークンが未発行のため未実行（一覧そのものは REST で確認済み）。
 
 ## 3. 確かめること（ローカルのハッシュ記録の代わり）と保証の弱さ
 
-| 確認                                                                                    | 一覧（A） | 推定（B） |
-| --------------------------------------------------------------------------------------- | --------- | --------- |
-| 取得サイズ＝一覧の size                                                                 | ○         | ×         |
-| MD5＝一覧の etag（単一パートのとき）                                                    | ○         | ×         |
-| manifest の形（`#audit_tip` ＋ 64 桁 hex か空、テーブル名の昇順・重複なし・件数は整数） | ○         | ○         |
-| `pg_restore --list` が通る。TOC の `TABLE DATA public` の集合＝manifest のテーブル集合  | ○         | ○         |
-| 一時DBへ復元し、件数・監査ログ末尾ハッシュが manifest と完全一致、`db:verify`（連鎖）   | ○         | ○         |
+| 確認                                                                                                | 一覧（A） | 推定（B） |
+| --------------------------------------------------------------------------------------------------- | --------- | --------- |
+| 取得サイズ＝一覧の size                                                                             | ○         | ×         |
+| MD5＝一覧の etag（単一パート）。etag 欠落・不明形は失敗、`<hex>-N` のマルチパートだけ照合不能と明示 | ○         | ×         |
+| manifest の形（`#audit_tip` ＋ 64 桁 hex か空、テーブル名の昇順・重複なし・件数は整数）             | ○         | ○         |
+| `pg_restore --list` が通る。TOC の `TABLE DATA public` が重複なしで manifest のテーブル集合と一致   | ○         | ○         |
+| 一時DBへ復元し、件数・監査ログ末尾ハッシュが manifest と完全一致、`db:verify`（連鎖）               | ○         | ○         |
 
 - **弱さ 1（同じ場所の改ざん）**: 基準は R2 自身の中にある。dump と manifest を**両方**書き換えられる者（R2 の書込み権限）がいれば、整合した偽物を作れる。ローカル記録の SHA-256 は「送った時点の値」という外部の基準だったが、それが無い。etag は R2 が計算する値で、置き換え後の内容と一致してしまう。
 - **弱さ 2（取り違え）**: manifest は件数と監査ログ末尾ハッシュだけ。dump の中身全体のハッシュは持たない。ただし監査ログはハッシュ連鎖で、`db:verify` が連鎖全体を検算するため、監査ログの改ざんは検出できる。業務テーブルの内容の改ざんは件数が同じなら検出できない。
