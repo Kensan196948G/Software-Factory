@@ -78,7 +78,7 @@ cloudflared tunnel route dns --overwrite-dns mirai-sf sf.mirai-dx-platform.com
 | 設定                                 | 動作                                                            |
 | ------------------------------------ | --------------------------------------------------------------- |
 | 両方あり（`AUTH_MODE=access`）       | JWT 必須。下記の検証に通らなければ未認証（`/healthz` は応答）   |
-| 両方なし                             | 従来どおりヘッダを信頼。`NODE_ENV=production` なら起動時に warn |
+| 両方なし                             | **fail-closed**。ヘッダを信頼せず未認証（401）。`NODE_ENV=production` なら起動時に warn。ヘッダ信頼は `ACCESS_TRUST_EMAIL_HEADER=1` の明示 opt-in がある開発・テスト環境だけで、staging / production では起動エラー（Issue #102） |
 | 片方だけ、またはドメインの形式が不正 | 起動エラー（`AUTH_MODE=access` のとき）                         |
 
 検証内容:
@@ -95,7 +95,7 @@ cloudflared tunnel route dns --overwrite-dns mirai-sf sf.mirai-dx-platform.com
 2. `preview.conf` に2つの変数を追加し、`systemctl --user restart mirai-sf-api`。
 3. `journalctl --user -u mirai-sf-api` に warn がないこと、Access ログイン後の画面表示、Tunnel を経由しない `127.0.0.1:8782` への `Cf-Access-Authenticated-User-Email` 付きリクエストが `/api/auth/me` で 401 になることを確認する。
 
-切り戻し: 2つの変数を削除して再起動する。
+切り戻し: 2つの変数を削除して再起動する。ただし 2026-11-06 以降は **fail-closed**（ヘッダ信頼なし）なので、2 変数を外すと誰もログインできなくなる。staging / production では `ACCESS_TRUST_EMAIL_HEADER=1` による回避は起動エラーになる。戻す必要がある場合は、先に JWT の 2 項目を再設定するか、旧セッションを失効したうえで Access を外した状態を所有者へ申告する（`docs/production/17` §7）。
 
 **2026-11-06 追記（Staging で実施。記録は `docs/production/17-staging-access-jwt-rollout-20261106.md`）**:
 

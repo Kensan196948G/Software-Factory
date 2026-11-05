@@ -75,5 +75,7 @@ SQL の要約には秘密やセッション ID を含めていない。また、
 
 ## 8. Issue #102 との関係
 
-- [Issue #102](https://github.com/Kensan196948G/Software-Factory/issues/102)（Access JWT 未検証時に許可メールヘッダを信頼し、管理者を自動登録しうる）は**未解決のまま**とする。
-- 今回確認できたのは、Staging で**メールヘッダ単体の経路が 401 になる改善**まで。正規の OTP ログインの成功と、自動での管理者作成の問題は未解決。
+- [Issue #102](https://github.com/Kensan196948G/Software-Factory/issues/102)（Access JWT 未検証時に許可メールヘッダを信頼し、管理者を自動登録しうる）について、2026-11-06 に**コード側の恒久修正**を行った（`auto/issue-102-docs`、`src/api/config.ts` / `src/api/auth.ts`）。JWT 未設定時は fail-closed でヘッダを信頼せず、`ACCESS_TRUST_EMAIL_HEADER=1` の明示 opt-in がある開発・テスト環境だけ従来動作、staging / production では起動エラーにする。
+- ただし本番・Staging への**配備は未実施**。配備されるまで、稼働中の 2d0766b の挙動は変わらない（両環境とも JWT の 2 項目は設定済みなので、実運用の経路は JWT 検証）。
+- もう半分（正規 JWT 経路で Staging の未登録メールを管理者として自動作成する点）は**未修正**。Issue #102 は配備とこの点の判断までクローズしない。
+- 今回確認できたのは、Staging で**メールヘッダ単体の経路が 401 になる改善**まで。正規の OTP ログインの成功は未確認。
