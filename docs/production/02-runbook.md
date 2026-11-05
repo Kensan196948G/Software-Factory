@@ -173,7 +173,7 @@ pnpm ops:prod:rollback <戻し先SHA>
   `最新バックアップ: …（3 分前）`、空ディレクトリと 3 時間前の dump でいずれも NG（終了コード 1）。
 - 設定ファイル `prod.conf` は読まない（release.env の COMMIT_SHA だけを照合）。秘密は出力しない。
 - 失敗は `systemctl --user --failed` と `journalctl --user -u mirai-sf-prod-healthcheck` で見る。
-  外部通知（Slack 等）は未実装（通知先・送信方式の承認待ち）。通知送信自体に Access サービストークンは不要。Access 認証付きの公開経路監視は別課題であり、最小権限の機械認証を設計してから追加する。現行のサービストークン認証は ACCESS_ALLOWED_EMAILS の先頭（なければ seed 管理者メール）の利用者へマッピングし、その権限を引き継ぐため、本番監視用として安易に有効化しない。
+  失敗はローカル記録（`alerts.jsonl`＋journal err）へ残る（§10）。外部通知（Slack 等）は未設定（通知先・送信方式の承認待ち。§10 の `MIRAI_SF_NOTIFY_CMD` で後から有効化できる）。通知送信自体に Access サービストークンは不要。Access 認証付きの公開経路監視は別課題であり、最小権限の機械認証を設計してから追加する。現行のサービストークン認証は ACCESS_ALLOWED_EMAILS の先頭（なければ seed 管理者メール）の利用者へマッピングし、その権限を引き継ぐため、本番監視用として安易に有効化しない。
 - Staging は従来どおり `mirai-sf-healthcheck.timer`（8782・`environment=staging`）。本番と混在させない。
 
 ```bash
@@ -244,3 +244,71 @@ cat ~/.local/state/mirai-sf-prod/healthcheck.json                          # ok=
 | 認証できない             | `AUTH_MODE` と `ACCESS_TEAM_DOMAIN` / `ACCESS_AUD`、Access アプリの AUD を確認             |
 | リリース後に画面が古い   | `dist` の版（`asset-version`）とブラウザのキャッシュを確認                                 |
 | バックアップが失敗       | `journalctl --user -u mirai-sf-prod-backup`、空DBでは失敗する（仕様）                      |
+
+## 10. 失敗通知
+
+監視・バックアップ・復元訓練・自動配備の unit が failed になったら、`mirai-sf-onfailure@.service` で記録する（2026-11-05 追加。配置・有効化は Lead が行う）。
+
+- **対象**: 本番の `mirai-sf-prod-healthcheck` / `mirai-sf-prod-backup` / `mirai-sf-prod-restore-drill`、Staging の `mirai-sf-healthcheck` / `mirai-sf-autofollow`。各 `.service` の `[Unit]` に `OnFailure=mirai-sf-onfailure@%n.service` がある。
+- **既定の通知先はローカル記録だけ**（外部へは勝手に送らない）:
+  1. `~/.local/state/mirai-sf/alerts.jsonl` へ 1 行追記（`{"at","unit","result"}` のみ。0600。秘密は書かない）
+  2. journal へ priority=err で 1 行（`journalctl --user -p err -t mirai-sf-onfailure`）
+- **任意の外部送信**: `~/.config/mirai-sf/notify.env`（本人所有・0600）に `MIRAI_SF_NOTIFY_CMD=<絶対パス>` があるときだけ、そのコマンドを `<unit> <result> <at>` の引数で実行する（30 秒で打ち切り）。値・コマンドの出力は表示しない。ファイルや変数が無ければスキップして exit 0。外部送信先の追加は所有者の承認後に行う。
+- **終了コード**: 0=記録済み（外部送信なし／OK）、2=unit 名が不正（改行・記号。記録しない）、3=ローカル記録に失敗、4=外部送信の設定不正・失敗（ローカル記録は済み）。2〜4 では通知 unit 自身が failed になる（`systemctl --user --failed` に `mirai-sf-onfailure@…` が出ていれば、通知経路の異常）。
+- ExecStart は `/bin/sh` と coreutils だけで完結し、git ワークツリーのスクリプトに依存しない（ツリーが壊れているときこそ通知が要るため）。正本は `deploy/systemd/mirai-sf-onfailure.body.sh`。unit の ExecStart 行は手で書かず、`node scripts/ops/tests/onfailure-execstart.mjs` で生成する。`pnpm test:ops` が正本と unit の一致を検証する。
+
+```bash
+# 配置（Lead。初回だけ。監視対象の .service も OnFailure 付きの版へ更新する）
+cp deploy/systemd/mirai-sf-onfailure@.service \
+   deploy/systemd/mirai-sf-prod-{healthcheck,backup,restore-drill}.service \
+   deploy/systemd/mirai-sf-{healthcheck,autofollow}.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+
+# 疎通確認（監視対象を落とさずに通知 unit だけ起動する）
+systemctl --user start mirai-sf-onfailure@test.service
+systemctl --user show -p Result -p ExecMainStatus mirai-sf-onfailure@test.service   # success / 0
+tail -n 1 ~/.local/state/mirai-sf/alerts.jsonl                                      # {"at":…,"unit":"test","result":"unknown"}
+journalctl --user -p err -t mirai-sf-onfailure -n 5 --no-pager
+
+# 日常の確認
+tail -n 20 ~/.local/state/mirai-sf/alerts.jsonl
+systemctl --user --failed
+```
+
+`alerts.jsonl` に記録が増えていたら、記録された unit の journal を見て §9 の一次対応へ進む。疎通確認で書いた `test` の行は残してよい（記録は追記のみ。消す場合は手で編集する）。
+
+## 11. RTO 訓練
+
+`scripts/ops/rto-drill.sh`（`pnpm ops:prod:rto-drill`）は、本番を止めずに「検知→判断→別DBへ最新の R2 dump を復元→検証→切替判断」までの所要時間を段階ごとに計測するリハーサル（2026-11-05 追加。実施は Lead）。
+
+| 段階              | 内容                                                                                                                                         |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `detect`          | 監視の状態（prod の `healthcheck.json`・`alerts.jsonl`）を読む。訓練では実行開始（宣言）を検知時刻とする                                     |
+| `decide`          | current リリース・最新の R2 送信記録・一時ポート・一時DB名（`mirai_sf_rto_<ts>`）を確定。前提が欠けていればここで止まる                      |
+| `fetch`           | R2 から dump と manifest を取得し、送信記録の SHA-256・サイズと照合（`offsite-drill` と同等）。`--local` ならローカルの最新 dump             |
+| `restore`         | 一時DBを作って `pg_restore`                                                                                                                  |
+| `verify`          | manifest（件数・監査ログ末尾ハッシュ）との完全一致と `scripts/db.ts verify`（ハッシュ連鎖）                                                  |
+| `api`             | current リリースの API を一時DB・`127.0.0.1:8789`（`MAIL_MODE=off`）で起動し、`/healthz` が `status=ok`・`db.ok=true`・commit 一致になるまで |
+| `switch_decision` | 切替判断の記録だけ（本番の切替・DNS・Access・サービスは変更しない）                                                                          |
+| `cleanup`         | 一時 API を停止し、一時DBを削除（名前が `mirai_sf_rto_` で始まり本番DB名と異なることを検査してから DROP）                                    |
+
+```bash
+cd /mnt/storage/Software-Factory/Software-Factory
+
+# 1. 前提の確認（R2 取得・DB 作成・API 起動はしない。レポートも書かない）
+pnpm ops:prod:rto-drill --dry-run
+
+# 2. 実施（標準出力に JSON。進行ログは標準エラー。レポートは ~/.local/state/mirai-sf-prod/rto-drill/ に 0600 で保存）
+pnpm --silent ops:prod:rto-drill > /tmp/rto-drill.json
+node -e 'const r=require("/tmp/rto-drill.json"); console.log(r.result, r.totalSeconds, r.withinTarget); for (const s of r.stages) console.log(s.name, s.seconds, s.ok)'
+
+# R2 の認証（wrangler login）が使えないときの代替（ローカルの最新 dump を使う）
+pnpm ops:prod:rto-drill --local
+```
+
+- 出力 JSON: `result`（ok/failed）、`totalSeconds`、`targetMinutes`（既定 30。`MIRAI_SF_RTO_TARGET_MIN`）、`withinTarget`、`stages[]`（`name`・`startedAt`・`endedAt`・`seconds`・`ok`・`note`）、`release.commit`、`backup.file`・`ageMinutes`、`tempDb`。
+- prod.conf の値は `with-env.mjs` 経由で読むだけで表示しない。一時 API には `DATABASE_URL`（一時DB）・`PORT`・`HOST=127.0.0.1`・`MAIL_MODE=off` を上書きして渡す。API と wrangler の出力本文は表示しない。
+- 終了コード: 0=成功、1=失敗（一時DBは削除済み）、2=一時DBを削除できなかった（ログとレポートに出る名前で `dropdb --maintenance-db=postgres --force mirai_sf_rto_…` を手動で実行する）。
+- 一時ポートは既定 8789（`MIRAI_SF_RTO_PORT`）。8781/8782/8783 と使用中のポートは拒否する。
+- **範囲**: これは「復元して検証し、切替できると判断するまで」の計測。本番の受付停止・切替・Access 確認・受付再開は含まない。全体の RTO（検知から受付再開まで）は、この結果に切替手順（§6 の rollback・§3 の切替）の実測を足して見積もる。結果は `docs/production/07-slo-and-measurement.md` の RTO 欄へ記録する。
+- 検証: `pnpm test:ops`（`scripts/ops/tests/rto-drill.test.sh`。偽 pg クライアント・偽 wrangler・偽 API で、DB 名ガード・dry-run・各段階・失敗時の後片付けを確認）。
