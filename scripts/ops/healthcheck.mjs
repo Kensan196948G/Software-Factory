@@ -8,6 +8,10 @@
  *   3. environment が期待どおり（既定 staging。本番は MIRAI_SF_HEALTH_ENV=production）
  *   4. /healthz の commit が current/release.env の COMMIT_SHA と一致する
  *   5. （任意）git rev-parse origin/main と一致しない場合は warning（失敗にはしない）
+ *   6. （任意）最新 dump の鮮度（MIRAI_SF_HEALTH_BACKUP_DIR 設定時）
+ *   7. （任意）最新のオフサイト送信記録 `*.dump.r2.json` の鮮度（MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN 設定時）
+ *
+ * 6・7 はどちらも「検知範囲の拡大」であって RPO の保証ではない（docs/production/07-slo-and-measurement.md）。
  *
  * 失敗時は exit 1（oneshot unit が failed になり `systemctl --user --failed` で見える）。
  * 連続失敗と最終状態は ~/.local/state/mirai-sf/healthcheck.json に残し、復旧時に1行ログを出す。
@@ -23,6 +27,11 @@
  *   MIRAI_SF_HOME                current/release.env を置く場所（既定 ~/.local/share/mirai-sf）
  *   MIRAI_SF_REPO                ⑤ の git リポジトリ（既定: カレント → このスクリプトの2階層上）
  *   MIRAI_SF_HEALTH_STATE_FILE   状態ファイル（既定 ~/.local/state/mirai-sf/healthcheck.json。検証用）
+ *   MIRAI_SF_HEALTH_BACKUP_DIR   （任意）最新 dump の鮮度を見るディレクトリ
+ *   MIRAI_SF_HEALTH_BACKUP_MAX_AGE_MIN   dump 鮮度の閾値（分、既定 90）
+ *   MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN  （任意）最新の `*.dump.r2.json`（R2 送信記録）の鮮度の閾値（分）。
+ *                                未設定なら確認しない。記録の時刻は JSON の uploadedAt（無ければ mtime）。
+ *                                記録の中身（バケット・キー・ハッシュ）は出力しない。
  *
  * 終了コード: 0=正常（warning を含む）/ 1=異常
  */
@@ -46,6 +55,16 @@ const stateFile = process.env.MIRAI_SF_HEALTH_STATE_FILE || resolve(homedir(), '
 /** 任意: バックアップの鮮度確認（RPO 1 時間に対して既定 90 分）。未設定なら確認しない。 */
 const backupDir = process.env.MIRAI_SF_HEALTH_BACKUP_DIR || '';
 const backupMaxAgeMin = Number.parseInt(process.env.MIRAI_SF_HEALTH_BACKUP_MAX_AGE_MIN ?? '90', 10) || 90;
+/**
+ * 任意: オフサイト（R2）送信記録 `<dump>.r2.json` の鮮度確認（分）。未設定・空なら確認しない（従来どおり）。
+ * 設定時は MIRAI_SF_HEALTH_BACKUP_DIR 内の最新の `*.dump.r2.json` を見る。ローカル dump が新しくても
+ * R2 送信が止まっていれば失敗にするため。値の書式が不正なときは設定ミスとして失敗にする（値は出さない）。
+ */
+const offsiteMaxAgeRaw = (process.env.MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN ?? '').trim();
+/** 送信記録の uploadedAt が未来に寄りすぎているときは信用せず mtime を使う（時計ずれの許容）。 */
+const OFFSITE_FUTURE_SKEW_MS = 5 * 60 * 1000;
+/** 送信記録として読む最大サイズ。これを超えるものは中身を読まず mtime を使う。 */
+const OFFSITE_RECORD_MAX_BYTES = 64 * 1024;
 /** 障害時の案内に出す unit 名（本番は mirai-sf-prod-healthcheck）。 */
 const unitName = process.env.MIRAI_SF_HEALTH_UNIT || 'mirai-sf-healthcheck';
 const repoHint = process.env.MIRAI_SF_REPO || '';
@@ -223,6 +242,57 @@ function checkBackupFreshness(dir, maxAgeMin) {
   return { info: `最新バックアップ: ${name}（${ageMinutes} 分前）` };
 }
 
+/**
+ * 送信記録の時刻。JSON の uploadedAt（offsite-r2.mjs が書く ISO 時刻）が妥当ならそれを、無ければ mtime を使う。
+ * 記録の中身（バケット・キー・ハッシュ）は返さない・出さない。
+ */
+function offsiteRecordTime(path, mtimeMs, size) {
+  if (size > 0 && size <= OFFSITE_RECORD_MAX_BYTES) {
+    try {
+      const parsed = JSON.parse(readFileSync(path, 'utf8'));
+      const uploadedAt = parsed && typeof parsed === 'object' ? parsed.uploadedAt : undefined;
+      const at = typeof uploadedAt === 'string' ? Date.parse(uploadedAt) : Number.NaN;
+      if (Number.isFinite(at) && at <= Date.now() + OFFSITE_FUTURE_SKEW_MS) return { at, source: 'uploadedAt' };
+    } catch {
+      // 読めない・JSON でない記録は mtime で判断する（理由の詳細は出さない）
+    }
+  }
+  return { at: mtimeMs, source: 'mtime' };
+}
+
+/** 最新のオフサイト送信記録（`*.dump.r2.json`）の経過時間を調べる。R2 送信が黙って止まっていないかの確認。 */
+function checkOffsiteFreshness(dir, maxAgeMin) {
+  if (!existsSync(dir)) return { failure: `バックアップの保存先がありません: ${dir}` };
+  let newest = null;
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return { failure: `バックアップの保存先を読めません: ${dir}` };
+  }
+  for (const entry of entries) {
+    if (!entry.endsWith('.dump.r2.json')) continue;
+    const path = join(dir, entry);
+    let stat;
+    try {
+      stat = statSync(path);
+    } catch {
+      continue;
+    }
+    if (!stat.isFile()) continue;
+    const time = offsiteRecordTime(path, stat.mtimeMs, stat.size);
+    if (!newest || time.at > newest.at) newest = { ...time, name: entry };
+  }
+  if (!newest) return { failure: `オフサイト送信記録（*.dump.r2.json）がありません: ${dir}` };
+  const ageMinutes = Math.round((Date.now() - newest.at) / 60000);
+  if (ageMinutes > maxAgeMin) {
+    return {
+      failure: `最新のオフサイト送信記録が古すぎます（${ageMinutes} 分前 > ${maxAgeMin} 分、${newest.source} 基準）: ${newest.name}`,
+    };
+  }
+  return { info: `最新オフサイト送信記録: ${newest.name}（${ageMinutes} 分前、${newest.source} 基準）` };
+}
+
 async function main() {
   try {
     new URL(healthUrl);
@@ -292,6 +362,23 @@ async function main() {
       failures.push(backup.failure);
     } else if (backup.info) {
       log(backup.info);
+    }
+  }
+
+  // 7. （任意）オフサイト（R2）送信記録の鮮度。MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN があるときだけ
+  if (offsiteMaxAgeRaw) {
+    const offsiteMaxAgeMin = /^[1-9][0-9]{0,5}$/.test(offsiteMaxAgeRaw) ? Number(offsiteMaxAgeRaw) : null;
+    if (offsiteMaxAgeMin === null) {
+      failures.push('MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN が正の整数（分）ではありません（値はログへ出しません）');
+    } else if (!backupDir) {
+      failures.push('MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN の確認には MIRAI_SF_HEALTH_BACKUP_DIR が必要です');
+    } else {
+      const offsite = checkOffsiteFreshness(backupDir, offsiteMaxAgeMin);
+      if (offsite.failure) {
+        failures.push(offsite.failure);
+      } else if (offsite.info) {
+        log(offsite.info);
+      }
     }
   }
 
