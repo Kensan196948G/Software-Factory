@@ -15,8 +15,19 @@
 #   MIRAI_SF_REPO          git リポジトリ（既定はこのスクリプトを含むリポジトリ）
 #   MIRAI_SF_HEALTH_URL    既定 http://127.0.0.1:8782/healthz
 #   MIRAI_SF_RESTART_HOOK  systemctl の代わりに実行するファイル（検証用）
+#   MIRAI_SF_RELEASE_CI_GATE  1 で exact-main CI ゲートを有効にする（prod-release.sh が必ず 1 にする）。
+#                          MIRAI_SF_HOME の末尾ディレクトリ名に -prod を含む場合は、未設定・0 でも常に有効。
 #
-# 終了コード: 0=成功 / 1=失敗（切替前、または前のリリースへ戻した）/ 2=戻せなかった / 3=破壊的 migration
+# exact-main CI ゲート（本番）:
+#   main 確認の後、解決した 40 桁 SHA で check-release-ci.mjs を実行する（このスクリプトと同じ
+#   controller 側のものを使う）。0 以外なら何も変更せずに終了する（75=CI 未完了・run 未作成、
+#   1=CI 失敗・照会不能）。--dry-run ではゲート結果を表示するだけで、終了コードには反映しない。
+#   override / bypass のフラグ・環境変数は無い（fail-closed）。
+#   Staging の release.sh 単独利用（MIRAI_SF_RELEASE_CI_GATE 未設定・非本番ホーム）ではゲートを実行しない
+#   （Staging 自動配備は staging-autofollow.sh が同じゲートを通してから release.sh を呼ぶ）。
+#
+# 終了コード: 0=成功 / 1=失敗（切替前、または前のリリースへ戻した。CI ゲートの失敗・照会不能を含む）
+#             / 2=戻せなかった / 3=破壊的 migration / 75=exact-main CI が未完了のため配備しない（本番のみ）
 set -euo pipefail
 umask 077
 
@@ -52,6 +63,32 @@ git -C "$repo" fetch --quiet origin main || die "origin main を取得できま�
 git -C "$repo" merge-base --is-ancestor "$sha" refs/remotes/origin/main ||
   die "main に含まれない commit は展開しません: $sha"
 log "main に含まれることを確認: $sha"
+
+# 本番の exact-main CI ゲート（ファイル・DB・サービスを変更する前に実行する）
+ci_gate=0
+if [[ "${MIRAI_SF_RELEASE_CI_GATE:-}" == 1 || "$(basename "$OPS_HOME")" == *-prod* ]]; then
+  ci_gate=1
+fi
+if [[ "$ci_gate" == 1 ]]; then
+  log "exact-main CI ゲート: $sha"
+  gate=0
+  node "$OPS_DIR/check-release-ci.mjs" "$sha" || gate=$?
+  if [[ "$dry_run" == 1 ]]; then
+    case "$gate" in
+      0) log "[dry-run] exact-main CI ゲート: 確認済み（exit 0）" ;;
+      75) log "[dry-run] exact-main CI ゲート: 未確認（exit 75）。配備モードでは配備しません" ;;
+      *) log "[dry-run] exact-main CI ゲート: 失敗または照会不能（exit $gate）。配備モードでは配備しません" ;;
+    esac
+  elif [[ "$gate" == 75 ]]; then
+    log "exact-main CI が未確認のため配備しません（exit 75。bypass はありません。DB も current も変更していません）"
+    exit 75
+  elif [[ "$gate" != 0 ]]; then
+    log "exact-main CI が失敗または照会不能のため配備しません（exit 1。bypass はありません。DB も current も変更していません）"
+    exit 1
+  else
+    log "exact-main CI ゲートを通過: $sha"
+  fi
+fi
 
 with_env=(node "$OPS_DIR/with-env.mjs")
 releases="$OPS_HOME/releases"
