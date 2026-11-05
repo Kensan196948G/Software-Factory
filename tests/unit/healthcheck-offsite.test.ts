@@ -228,6 +228,39 @@ describe('healthcheck.mjs のオフサイト送信記録の鮮度確認', () => 
     expectNoRecordContents(out);
   }, 40_000);
 
+  it('境界: 閾値 90 分 + 1 秒は（分に丸めると 90 分でも）NG', async () => {
+    writeRecord('mirai_sf_prod-new.dump', 90 + 1 / 60, 5);
+    const { code, out } = await run({ MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN: '90' });
+    expect(code, out).toBe(1);
+    expect(out).toMatch(/最新のオフサイト送信記録が古すぎます（90 分 \d+ 秒前 > 90 分、uploadedAt 基準）/);
+    expect(out).toContain('healthcheck NG');
+  }, 40_000);
+
+  it('境界: 閾値 90 分 - 30 秒は OK', async () => {
+    writeRecord('mirai_sf_prod-new.dump', 89.5, 5);
+    const { code, out } = await run({ MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN: '90' });
+    expect(code, out).toBe(0);
+    expect(out).toContain('healthcheck OK');
+  }, 40_000);
+
+  it('BACKUP_DIR が通常ファイルでも例外で落ちず、既存の dump 鮮度確認も含め固定文言の NG（パス・stack を出さない）', async () => {
+    const file = join(root, `backups-as-file-${Math.random().toString(36).slice(2)}`);
+    writeFileSync(file, 'not a directory');
+    backupDir = file;
+    for (const offsite of [undefined, '90']) {
+      const { code, out } = await run({ MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN: offsite });
+      expect(code, out).toBe(1);
+      expect(out).toContain(
+        'NG: バックアップの保存先を読めません（MIRAI_SF_HEALTH_BACKUP_DIR。ディレクトリでない・権限不足など）',
+      );
+      expect(out).toContain('healthcheck NG');
+      expect(out).not.toContain(file);
+      expect(out).not.toContain('ENOTDIR');
+      expect(out).not.toMatch(/\n\s+at /);
+      if (offsite) expect(out).toContain('オフサイト送信記録の保存先がディレクトリではありません（MIRAI_SF_HEALTH_BACKUP_DIR）');
+    }
+  }, 40_000);
+
   it('BACKUP_DIR が無ければ NG（オフサイトの行に保存先のパスを出さない）', async () => {
     const missing = join(root, 'no-such-backups');
     backupDir = missing;

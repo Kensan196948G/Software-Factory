@@ -237,9 +237,22 @@ function checkBackupFreshness(dir, maxAgeMin) {
   if (!existsSync(dir)) return { failure: `バックアップの保存先がありません: ${dir}` };
   let newest = 0;
   let name = '';
-  for (const entry of readdirSync(dir)) {
+  // 保存先が読めない・ディレクトリでない・dump の stat に失敗した場合に例外で落ちると、構造化された NG にならず
+  // stack にパスが出る。例外は捕捉して固定文言の失敗へ変える（例外の文言・パスは出さない）
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return { failure: 'バックアップの保存先を読めません（MIRAI_SF_HEALTH_BACKUP_DIR。ディレクトリでない・権限不足など）' };
+  }
+  for (const entry of entries) {
     if (!entry.endsWith('.dump')) continue;
-    const at = statSync(join(dir, entry)).mtimeMs;
+    let at;
+    try {
+      at = statSync(join(dir, entry)).mtimeMs;
+    } catch {
+      return { failure: `バックアップ（dump）の状態を取得できません: ${safeValue(entry)}` };
+    }
     if (at > newest) {
       newest = at;
       name = entry;
@@ -331,11 +344,15 @@ function checkOffsiteFreshness(dir, maxAgeMin) {
   const name = safeValue(newest.name);
   const time = readOffsiteRecordTime(newest.path, newest.stat, now);
   if (time.failure) return { failure: `最新のオフサイト送信記録を検証できません（${time.failure}）: ${name}` };
-  // 許容幅内の未来（時計ずれ）は 0 分として扱う。許容幅を超える未来は上で NG にしている
-  const ageMinutes = Math.max(0, Math.round((now - time.at) / 60000));
-  if (ageMinutes > maxAgeMin) {
+  // 許容幅内の未来（時計ずれ）は 0 として扱う。許容幅を超える未来は上で NG にしている。
+  // 閾値との比較はミリ秒で行う（丸めた分で比べると 90 分 29 秒が通ってしまう）。丸めるのは表示だけ
+  const ageMs = Math.max(0, now - time.at);
+  const ageMinutes = Math.round(ageMs / 60000);
+  if (ageMs > maxAgeMin * 60000) {
+    const ageSeconds = Math.floor(ageMs / 1000);
+    const shown = `${Math.floor(ageSeconds / 60)} 分 ${ageSeconds % 60} 秒前`;
     return {
-      failure: `最新のオフサイト送信記録が古すぎます（${ageMinutes} 分前 > ${maxAgeMin} 分、${time.source} 基準）: ${name}`,
+      failure: `最新のオフサイト送信記録が古すぎます（${shown} > ${maxAgeMin} 分、${time.source} 基準）: ${name}`,
     };
   }
   return { info: `最新オフサイト送信記録: ${name}（${ageMinutes} 分前、${time.source} 基準）` };
