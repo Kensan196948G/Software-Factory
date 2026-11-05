@@ -10,11 +10,12 @@ import {
   statSync,
   symlinkSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { prepareOutDir, writeFilesAtomically } from '../../scripts/ops/offsite-recover.mjs';
+import { prepareOutDir, writeAllSync, writeFilesAtomically } from '../../scripts/ops/offsite-recover.mjs';
 
 // scripts/ops/offsite-recover.mjs の実行部を、偽の wrangler と一時ディレクトリだけで試す。
 // ネットワーク・R2・DB には触らない（list はトークンの検査で止まり、guess は偽の wrangler を呼ぶ）。
@@ -177,6 +178,38 @@ describe('--out の置き場所', () => {
     expect(() => prepareOutDir(file)).toThrow(/ディレクトリではありません/);
     expect(() => prepareOutDir(join(root, 'no-parent', 'child'))).toThrow(/作れません/);
   });
+  it('既存のディレクトリが group/other に書込み可能なら拒否する（本人所有・go-w だけ受ける）', () => {
+    for (const mode of [0o770, 0o757, 0o777, 0o722]) {
+      const dir = join(root, `out-writable-${mode.toString(8)}`);
+      mkdirSync(dir);
+      chmodSync(dir, mode);
+      expect(() => prepareOutDir(dir), mode.toString(8)).toThrow(/group\/other に書込み可能/);
+    }
+    for (const mode of [0o700, 0o750, 0o755, 0o711]) {
+      const dir = join(root, `out-ok-${mode.toString(8)}`);
+      mkdirSync(dir);
+      chmodSync(dir, mode);
+      expect(prepareOutDir(dir), mode.toString(8)).toBe(dir);
+    }
+  });
+});
+
+describe('全バイト書き切り（短い書込みの検出）', () => {
+  it('writer が少しずつ書いても全部書き切る', () => {
+    const chunks: string[] = [];
+    const writer = (_fd: number, buffer: Buffer, offset: number, length: number) => {
+      const n = Math.min(3, length);
+      chunks.push(buffer.subarray(offset, offset + n).toString('utf8'));
+      return n;
+    };
+    expect(writeAllSync(99, Buffer.from('abcdefghij'), writer)).toBe(10);
+    expect(chunks.join('')).toBe('abcdefghij');
+  });
+  it('0 バイト（進まない）・負数・要求超過・非整数は失敗にする', () => {
+    for (const ret of [0, -1, 999, 1.5, Number.NaN]) {
+      expect(() => writeAllSync(99, Buffer.from('abc'), () => ret), String(ret)).toThrow(/短い書込み/);
+    }
+  });
 });
 
 describe('--out への書込み（一時名→link。全部そろうか何も残さない）', () => {
@@ -229,5 +262,30 @@ describe('--out への書込み（一時名→link。全部そろうか何も残
     expect(() => writeFilesAtomically(dir, [{ name: '.hidden', bytes: Buffer.from('x') }])).toThrow(/ファイル名が不正/);
     expect(readdirSync(dir)).toEqual([]);
     expect(existsSync(join(root, 'escape.dump'))).toBe(false);
+  });
+  it('短い書込み（途中で書けなくなる）は失敗し、切り詰めた dump を最終名に置かない', () => {
+    const dir = join(root, 'atomic-short');
+    mkdirSync(dir, { mode: 0o700 });
+    // ulimit -f やディスク逼迫を模擬: 実際に 4 バイトだけ書いたあと、0 バイト（進まない）を返す
+    let total = 0;
+    const writer = (fd: number, buffer: Buffer, offset: number, length: number) => {
+      if (total >= 4) return 0;
+      const n = writeSync(fd, buffer, offset, Math.min(4 - total, length));
+      total += n;
+      return n;
+    };
+    expect(() => writeFilesAtomically(dir, files, { writer })).toThrow(/--out へ書き込めません（ESHORTWRITE/);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+  it('2 つ目の短い書込みでも、1 つ目を含め今回作成分を全部消す', () => {
+    const dir = join(root, 'atomic-short-second');
+    mkdirSync(dir, { mode: 0o700 });
+    let calls = 0;
+    const writer = (fd: number, buffer: Buffer, offset: number, length: number) => {
+      calls += 1;
+      return calls === 1 ? writeSync(fd, buffer, offset, length) : 0;
+    };
+    expect(() => writeFilesAtomically(dir, files, { writer })).toThrow(/ESHORTWRITE/);
+    expect(readdirSync(dir)).toEqual([]);
   });
 });

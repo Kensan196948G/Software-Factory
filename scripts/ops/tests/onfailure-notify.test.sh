@@ -334,6 +334,40 @@ run_notify mirai-sf-prod-backup.service exit-code
 check "HOME/.config/mirai-sf の symlink は終了コード 4" assert_code 4
 if [[ ! -s "$CASE/notify-invocations" ]]; then pass "HOME/.config/mirai-sf の symlink では送信コマンドを実行しない"; else fail "HOME/.config/mirai-sf の symlink なのに送信コマンドを実行した"; fi
 
+printf '\n== O11i. 親ディレクトリを探索できない（x 権限なし）なら「無い」と誤認せず exit 4 ==\n'
+for target in mirai-sf config; do
+  for mode in 600 400 000; do
+    setup_case "cfgdir_noexec_${target}_$mode"
+    write_fake_cmd 0
+    write_notify_env "$CASE/notify-cmd.sh"
+    if [[ "$target" == mirai-sf ]]; then dpath="$HOME_DIR/.config/mirai-sf"; else dpath="$HOME_DIR/.config"; fi
+    chmod "$mode" "$dpath"
+    run_notify mirai-sf-prod-backup.service exit-code
+    chmod 700 "$dpath" # 後片付け（rm -rf できるように戻す）
+    label="HOME/.$([[ "$target" == config ]] && echo config || echo config/mirai-sf) $mode"
+    if [[ "$(id -u)" == 0 ]]; then
+      # root は x 権限が無くても探索できるため、この経路は検証できない
+      if [[ "${CI:-}" == true ]]; then fail "$label: 探索不能 fixture を作れません（root 実行。CI=true では非 root で実行する）"; else printf 'SKIP: %s（root 実行）\n' "$label"; fi
+      continue
+    fi
+    check "$label（探索不能）は終了コード 4（外部送信なしの 0 ではない）" assert_code 4
+    check "$label でもローカル記録は 1 行" assert_alert_lines 1
+    check "$label は探索不能を表示する" assert_out_contains "探索できない"
+    check "$label は「notify.env が無い」と表示しない" assert_out_not_contains "notify.env が無い"
+  done
+done
+
+printf '\n== O11j. ~/.config・~/.config/mirai-sf 自体が無ければ「設定なし」で exit 0 ==\n'
+setup_case no_config_root
+run_notify mirai-sf-prod-backup.service exit-code
+check "HOME/.config が無ければ終了コード 0" assert_code 0
+check "HOME/.config が無ければ外部送信なしを表示する" assert_out_contains "notify.env が無い"
+setup_case no_cfgdir
+mkdir -p "$HOME_DIR/.config"
+chmod 700 "$HOME_DIR/.config"
+run_notify mirai-sf-prod-backup.service exit-code
+check "HOME/.config/mirai-sf が無ければ終了コード 0" assert_code 0
+
 printf '\n== O12. 相対パスの MIRAI_SF_NOTIFY_CMD は実行しない ==\n'
 setup_case env_relative
 write_notify_env "notify-cmd.sh"

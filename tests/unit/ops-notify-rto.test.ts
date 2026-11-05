@@ -36,6 +36,11 @@ it('失敗通知（OnFailure template）の隔離shell回帰が全て成功す�
   expect(output).toContain('PASS: symlink では送信コマンドを実行しない');
   expect(output).toContain('PASS: HOME/.config/mirai-sf 775 では送信コマンドを実行しない');
   expect(output).toContain('PASS: HOME/.config/mirai-sf の symlink では送信コマンドを実行しない');
+  // 親ディレクトリを探索できない（x なし）ときは「notify.env が無い」と誤認しない（root では作れない fixture）
+  if (process.getuid?.() !== 0) {
+    expect(output).toContain('PASS: HOME/.config/mirai-sf 600（探索不能）は終了コード 4（外部送信なしの 0 ではない）');
+    expect(output).toContain('PASS: HOME/.config 600 は「notify.env が無い」と表示しない');
+  }
 }, 250_000);
 
 it('全体RTO訓練（rto-drill.sh）の隔離shell回帰が全て成功する', () => {

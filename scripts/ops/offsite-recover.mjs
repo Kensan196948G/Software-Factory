@@ -42,6 +42,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
   linkSync,
   lstatSync,
@@ -333,8 +334,9 @@ async function fetchByGuess({ bucket, prefix, db, opts }) {
 }
 
 /**
- * --out の置き場所。無ければ 0700 で新規作成（親は作らない）。既にあるなら「本物のディレクトリ」だけを受け、
- * シンボリックリンク・ディレクトリ以外は拒否する。既存ディレクトリの権限は変えない（chmod しない）。
+ * --out の置き場所。無ければ 0700 で新規作成（親は作らない）。既にあるなら「本物のディレクトリ」で、
+ * 本人所有・group/other に書込み権限なし、のものだけを受ける（他者が中のファイルを差し替え・削除できないこと）。
+ * シンボリックリンク・ディレクトリ以外・他人所有・group/other 書込み可は拒否する。既存ディレクトリの権限は変えない。
  */
 export function prepareOutDir(dir) {
   const outDir = resolve(dir);
@@ -354,7 +356,30 @@ export function prepareOutDir(dir) {
   }
   if (st.isSymbolicLink()) throw new Error('--out がシンボリックリンクです（追わない）');
   if (!st.isDirectory()) throw new Error('--out がディレクトリではありません');
+  if (typeof process.getuid === 'function' && st.uid !== process.getuid()) {
+    throw new Error('--out が本人所有のディレクトリではありません');
+  }
+  if ((st.mode & 0o022) !== 0) throw new Error('--out が group/other に書込み可能です（chmod go-w してください）');
   return outDir;
+}
+
+/**
+ * fd へ bytes を全部書き切る。writeSync は要求より少なく書くことがある（ulimit -f・ディスク逼迫など）ので、
+ * 0 バイトの書込み（進まない）や例外は失敗にする。writer は試験用に差し替えられる（既定は fs.writeSync）。
+ */
+export function writeAllSync(fd, bytes, writer = writeSync) {
+  const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+  let offset = 0;
+  while (offset < buffer.length) {
+    const written = writer(fd, buffer, offset, buffer.length - offset);
+    if (!Number.isSafeInteger(written) || written <= 0 || written > buffer.length - offset) {
+      const error = new Error('短い書込み（途中で書けなくなりました）');
+      error.code = 'ESHORTWRITE';
+      throw error;
+    }
+    offset += written;
+  }
+  return offset;
 }
 
 /** --out へ書くファイル名（`<db>-<stamp>.dump` / `.manifest.tsv`）。区切り文字・先頭ドットを許さない */
@@ -362,13 +387,14 @@ const NAME_FILE_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,200}$/;
 
 /**
  * --out へ確認済みの複数ファイル（dump と manifest）を「全部そろうか、何も残さないか」で書く。
- *   1. 各ファイルを一時名（`.<name>.tmp-<pid>-<乱数>`、0600、wx）へ書き、fsync する
+ *   1. 各ファイルを一時名（`.<name>.tmp-<pid>-<乱数>`、0600、wx）へ全バイト書き切り（短い書込みは失敗）、
+ *      fsync し、サイズが元と一致することを確かめる
  *   2. 一時名から最終名へ hard link（既存の最終名は上書きしない。あれば EEXIST で失敗）→ 一時名を削除
  *   3. 途中で失敗したら、今回作った一時名と最終名だけを削除して例外を投げる（既存のファイルには触らない）
  * rename ではなく link を使うのは、既存の同名ファイルを黙って置き換えないため（従来の wx と同じ扱い）。
- * 返り値: 書いた最終名のパス（files の順）。
+ * 返り値: 書いた最終名のパス（files の順）。options.writer は試験用（短い書込みの再現。既定は fs.writeSync）。
  */
-export function writeFilesAtomically(outDir, files) {
+export function writeFilesAtomically(outDir, files, { writer = writeSync } = {}) {
   const temps = [];
   const finals = [];
   try {
@@ -378,8 +404,13 @@ export function writeFilesAtomically(outDir, files) {
       const fd = openSync(temp, 'wx', 0o600);
       temps.push(temp);
       try {
-        writeSync(fd, bytes);
+        writeAllSync(fd, bytes, writer);
         fsyncSync(fd);
+        if (fstatSync(fd).size !== bytes.length) {
+          const error = new Error('書込み後のサイズが一致しません');
+          error.code = 'ESIZE';
+          throw error;
+        }
       } finally {
         closeSync(fd);
       }
