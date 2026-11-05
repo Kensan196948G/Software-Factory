@@ -17,7 +17,8 @@ const run = (script: string) => {
     const err = String((error as { stderr?: unknown }).stderr ?? '');
     const failed = out.split('\n').filter((line) => line.startsWith('FAIL') || line.startsWith('== 結果'));
     const errTail = err.split('\n').slice(-60).join('\n');
-    throw new Error(`${script} が失敗しました:\n${failed.join('\n')}\n--- stderr（末尾）---\n${errTail}`);
+    const outTail = out.split('\n').filter((line) => !line.startsWith('PASS')).slice(-60).join('\n');
+    throw new Error(`${script} が失敗しました:\n${failed.join('\n')}\n--- stdout（PASS 以外の末尾）---\n${outTail}\n--- stderr（末尾）---\n${errTail}`);
   }
 };
 
