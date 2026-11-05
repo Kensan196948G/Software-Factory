@@ -227,8 +227,11 @@ if command -v shellcheck >/dev/null 2>&1; then
   for f in "$PROD_SCRIPT" "$RELEASE_SCRIPT" "${BASH_SOURCE[0]}"; do
     if shellcheck -x "$f"; then pass "shellcheck $(basename "$f")"; else fail "shellcheck $(basename "$f")"; fi
   done
+elif [[ "${CI:-}" == true ]]; then
+  # CI では静的検査を省略させない（不在を成功扱いにしない）
+  fail "shellcheck が見つかりません（CI=true では必須）"
 else
-  printf 'SKIP: shellcheck が無いため bash -n のみ\n'
+  printf 'SKIP: shellcheck が無いため bash -n のみ（ローカルのみ許容。CI=true では FAIL）\n'
 fi
 
 printf '\n== P1. CI 成功（gate=0）なら展開へ進む ==\n'

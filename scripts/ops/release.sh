@@ -3,7 +3,7 @@
 #
 #   scripts/ops/release.sh [--dry-run] [--no-restart] <commit-sha>
 #
-#   --dry-run     検査と計画の表示だけ（ファイル・DB・サービスを変更しない）
+#   --dry-run     検査と計画の表示だけ（リリース成果物・DB・サービスを変更しない。fetch による refs 更新のみ）
 #   --no-restart  current の切替までで止める（初回の切替で unit を入れ替える前に使う）
 #
 # 手順: main 確認 → git archive → pnpm install/build → 事前バックアップ → migration
