@@ -39,7 +39,7 @@
  */
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -47,12 +47,16 @@ import {
   BUCKET_RE,
   NAME_RE,
   assertFresh,
+  buildR2Url,
   candidateManifestKeys,
+  classifyFetchError,
   classifyEtag,
   classifyWranglerFailure,
   compareTocWithManifest,
   describeFailure,
   formatStamp,
+  isHeaderSafeToken,
+  nextSignalAction,
   normalizePrefix,
   parseArgs,
   parseBackupKey,
@@ -63,7 +67,6 @@ import {
 } from './lib/offsite-recover-core.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
-const API_BASE = 'https://api.cloudflare.com/client/v4';
 const PER_PAGE = 1000;
 const MAX_PAGES = 50;
 
@@ -74,17 +77,33 @@ class Interrupted extends Error {
   }
 }
 
-// ───────── 中断（SIGINT / SIGTERM）: 子プロセスへ転送し、後始末を確実に走らせる ─────────
+// ───────── 中断（SIGINT / SIGTERM）: 子のプロセスグループへ転送し、後始末を確実に走らせる ─────────
+// 子は detached（独立したプロセスグループ）で起動し、孫（wrangler が起こす node や pg_restore の子）まで届くよう
+// process.kill(-pid, sig) で送る。1 回目は受けたシグナルを 1 回だけ、2 回目以降は SIGKILL へ格上げする。
 
 const running = new Set();
 const abort = new AbortController();
 let interruptedBy = null;
+let signalState = { first: null, escalated: false };
+
+function killGroup(child, signal) {
+  if (!child.pid) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    // 既に終わっている（ESRCH）
+  }
+}
 
 function onSignal(signal) {
-  if (interruptedBy) return;
-  interruptedBy = signal;
-  for (const child of running) child.kill(signal);
-  abort.abort(new Interrupted(signal));
+  const next = nextSignalAction(signalState, signal);
+  signalState = next.state;
+  if (next.action.kind === 'none') return;
+  for (const child of running) killGroup(child, next.action.signal);
+  if (!interruptedBy) {
+    interruptedBy = signal;
+    abort.abort(new Interrupted(signal));
+  }
 }
 
 function checkInterrupted() {
@@ -95,7 +114,8 @@ function checkInterrupted() {
 function run(cmd, args, { env = process.env, inherit = false, maxBytes = 512 * 1024 * 1024 } = {}) {
   checkInterrupted();
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(cmd, args, { env, stdio: inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'] });
+    // detached: 独立したプロセスグループにする（端末の Ctrl-C は親だけが受け、親が 1 回だけ転送する）
+    const child = spawn(cmd, args, { env, detached: true, stdio: inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'] });
     running.add(child);
     const out = [];
     const err = [];
@@ -105,7 +125,7 @@ function run(cmd, args, { env = process.env, inherit = false, maxBytes = 512 * 1
       outBytes += chunk.length;
       if (outBytes > maxBytes) {
         overflow = true;
-        child.kill('SIGTERM');
+        killGroup(child, 'SIGTERM');
       } else out.push(chunk);
     });
     child.stderr?.on('data', (chunk) => {
@@ -160,15 +180,27 @@ const md5 = (b) => createHash('md5').update(b).digest('hex');
 
 // ───────── list: Cloudflare REST API（GET のみ） ─────────
 
-/** REST API の GET。リダイレクトは追わない。失敗時は HTTP 状態と数値のエラーコードだけを返す（本文・パスは出さない）。 */
-async function apiGet(path, token, { asBytes = false } = {}) {
+/**
+ * REST API の GET。URL は buildR2Url で組み立て・検証したものだけを受ける。リダイレクトは追わない。
+ * 失敗時は HTTP 状態と数値のエラーコード、または fetch の失敗の種別だけを返す（例外の文面・URL・ヘッダ値は出さない）。
+ */
+async function apiGet(url, token, { asBytes = false } = {}) {
   checkInterrupted();
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${token}` },
-    redirect: 'error',
-    signal: AbortSignal.any([abort.signal, AbortSignal.timeout(60_000)]),
-  });
+  if (!(url instanceof URL)) throw new Error('内部エラー: URL は buildR2Url で組み立てる');
+  if (!isHeaderSafeToken(token))
+    throw new Error('MIRAI_SF_R2_READ_TOKEN の形が不正です（可視 ASCII 20〜512 文字。空白・改行は不可）');
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+      redirect: 'error',
+      signal: AbortSignal.any([abort.signal, AbortSignal.timeout(60_000)]),
+    });
+  } catch (error) {
+    checkInterrupted();
+    throw new Error(`Cloudflare API へ接続できません（kind=${classifyFetchError(error)}）`);
+  }
   if (!res.ok) {
     let codes = '';
     try {
@@ -182,19 +214,21 @@ async function apiGet(path, token, { asBytes = false } = {}) {
     } catch {}
     throw new Error(`Cloudflare API が失敗しました http=${res.status}${codes ? ` cf_code=${codes}` : ''}`);
   }
-  return asBytes ? Buffer.from(await res.arrayBuffer()) : res.json();
+  try {
+    return asBytes ? Buffer.from(await res.arrayBuffer()) : await res.json();
+  } catch (error) {
+    checkInterrupted();
+    throw new Error(`Cloudflare API の応答を読めません（kind=${classifyFetchError(error)}）`);
+  }
 }
 
-const encodeKey = (key) => key.split('/').map(encodeURIComponent).join('/');
-
 async function listAll({ accountId, bucket, prefix, token }) {
-  const base = `/accounts/${accountId}/r2/buckets/${bucket}/objects`;
   const objects = [];
   let cursor = null;
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    const q = new URLSearchParams({ prefix: prefix ? `${prefix}/` : '', per_page: String(PER_PAGE) });
-    if (cursor) q.set('cursor', cursor);
-    const parsed = parseListingPage(await apiGet(`${base}?${q}`, token), { perPage: PER_PAGE });
+    const query = { prefix: prefix ? `${prefix}/` : '', per_page: String(PER_PAGE) };
+    if (cursor) query.cursor = cursor;
+    const parsed = parseListingPage(await apiGet(buildR2Url({ accountId, bucket, query }), token), { perPage: PER_PAGE });
     objects.push(...parsed.objects);
     if (parsed.cursor) {
       cursor = parsed.cursor;
@@ -202,8 +236,8 @@ async function listAll({ accountId, bucket, prefix, token }) {
     }
     if (parsed.needsConfirm) {
       // result_info が無く満杯のページ: 最後のキーの後ろが 0 件であることを確かめる（黙って打ち切らない）
-      const after = new URLSearchParams({ prefix: prefix ? `${prefix}/` : '', per_page: '1', start_after: objects.at(-1).key });
-      const rest = parseListingPage(await apiGet(`${base}?${after}`, token), { perPage: 1 });
+      const query = { prefix: prefix ? `${prefix}/` : '', per_page: '1', start_after: objects.at(-1).key };
+      const rest = parseListingPage(await apiGet(buildR2Url({ accountId, bucket, query }), token), { perPage: 1 });
       if (rest.objects.length > 0) throw new Error('一覧が途中なのに続きの cursor がありません（応答が矛盾）');
     }
     return objects;
@@ -217,17 +251,18 @@ async function fetchByList({ bucket, prefix, db, opts }) {
   if (!/^[0-9a-f]{32}$/.test(accountId)) throw new Error('CLOUDFLARE_ACCOUNT_ID が無いか形が不正です');
   if (!token)
     throw new Error('MIRAI_SF_R2_READ_TOKEN がありません（読取り専用の R2 トークン）。一覧を使えないなら --source guess');
+  if (!isHeaderSafeToken(token))
+    throw new Error('MIRAI_SF_R2_READ_TOKEN の形が不正です（可視 ASCII 20〜512 文字。空白・改行は不可）');
   const objects = await listAll({ accountId, bucket, prefix, token });
   const pick = selectLatestPair(objects, { prefix, db, maxAgeHours: opts.maxAgeHours });
   info(
     `一覧 OK bucket=${bucket} objects=${objects.length} candidates=${pick.considered} selected=${pick.stamp} age_h=${pick.ageHours.toFixed(1)} skipped=${pick.skipped.length}`,
   );
-  const base = `/accounts/${accountId}/r2/buckets/${bucket}/objects/`;
   const fetched = {};
   for (const label of ['dump', 'manifest']) {
     const meta = pick[label];
     const etag = classifyEtag(meta.etag); // 欠落・不明な形は例外
-    const bytes = await apiGet(base + encodeKey(meta.key), token, { asBytes: true });
+    const bytes = await apiGet(buildR2Url({ accountId, bucket, key: meta.key }), token, { asBytes: true });
     if (bytes.length !== meta.size) throw new Error(`サイズ不一致 ${label} got=${bytes.length} want=${meta.size}`);
     if (etag.kind === 'md5' && md5(bytes) !== etag.md5) throw new Error(`MD5 が etag と一致しません: ${label}`);
     info(
@@ -284,11 +319,36 @@ async function fetchByGuess({ bucket, prefix, db, opts }) {
   throw new Error(`探索窓に manifest がありません（${keys.length} 件を試行）。窓を広げるか一覧を使う`);
 }
 
+/**
+ * --out の置き場所。無ければ 0700 で新規作成（親は作らない）。既にあるなら「本物のディレクトリ」だけを受け、
+ * シンボリックリンク・ディレクトリ以外は拒否する。既存ディレクトリの権限は変えない（chmod しない）。
+ */
+export function prepareOutDir(dir) {
+  const outDir = resolve(dir);
+  let st = null;
+  try {
+    st = lstatSync(outDir);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw new Error(`--out を確認できません（${error?.code ?? 'error'}）`);
+  }
+  if (st === null) {
+    try {
+      mkdirSync(outDir, { mode: 0o700 });
+    } catch (error) {
+      throw new Error(`--out を作れません（${error?.code ?? 'error'}。親ディレクトリは作らない）`);
+    }
+    return outDir;
+  }
+  if (st.isSymbolicLink()) throw new Error('--out がシンボリックリンクです（追わない）');
+  if (!st.isDirectory()) throw new Error('--out がディレクトリではありません');
+  return outDir;
+}
+
 // ───────── 本体 ─────────
 
 async function main(opts, work) {
   const bucket = process.env.MIRAI_SF_R2_BUCKET || 'mirai-sf-prod-backups';
-  const prefix = normalizePrefix(process.env.MIRAI_SF_R2_PREFIX || 'mirai_sf_prod');
+  const prefix = normalizePrefix(process.env.MIRAI_SF_R2_PREFIX || 'mirai_sf_prod'); // 空・. ・.. のセグメントは例外
   const db = process.env.MIRAI_SF_R2_DB || prefix.split('/').pop() || '';
   if (!BUCKET_RE.test(bucket)) throw new Error('MIRAI_SF_R2_BUCKET が不正です');
   if (!NAME_RE.test(db)) throw new Error('dump 名の DB 部分が不正です（MIRAI_SF_R2_DB で指定してください）');
@@ -316,9 +376,7 @@ async function main(opts, work) {
   );
 
   if (opts.out) {
-    const outDir = resolve(opts.out);
-    mkdirSync(outDir, { recursive: true, mode: 0o700 });
-    chmodSync(outDir, 0o700);
+    const outDir = prepareOutDir(opts.out);
     writeFileSync(join(outDir, basename(dumpPath)), dumpBytes, { mode: 0o600, flag: 'wx' });
     writeFileSync(join(outDir, basename(manifestPath)), manifestBytes, { mode: 0o600, flag: 'wx' });
     info(`確認済みのファイルを残しました: ${join(outDir, basename(dumpPath))}`);

@@ -29,7 +29,8 @@ node scripts/ops/offsite-recover.mjs --verify-only --out ~/recovered
 ```
 
 - 選び方: `<prefix>/<db>-<時刻>.dump` と同名 `.manifest.tsv` が**両方ある**最新。A は manifest の無い dump（送信途中）・サイズ 0・未来の時刻（10 分超）を飛ばす。**A・B とも**、選んだ組が未来（10 分超）または 24 時間より古ければ失敗（`--max-age-hours`、0〜2160。B は古いものへ黙って進まない）。
-- 失敗の表示: wrangler の stderr 本文は出さず、`kind`（not_found / bucket_not_found / auth / rate_limited / network / signal / unknown）・終了コード・HTTP 状態・Cloudflare のエラーコードだけを出す（アカウント ID やトークン様の文字列を出さない）。`--max-probes` は 1〜86401。Ctrl-C / SIGTERM は子プロセスへ転送し、一時領域を消して 130 / 143 で終わる。
+- 入力の検査: 読取りトークンは可視 ASCII 20〜512 文字だけ（改行・空白は送る前に拒否。fetch の例外は種別だけを出す）。`MIRAI_SF_R2_PREFIX` の空・`.`・`..` のセグメントは拒否し、組み立てた URL が `/accounts/<id>/r2/buckets/<bucket>/objects` の下にあることを確かめる。`--from` / `--to` は `Z` か `±HH:MM`（±14:00 まで）付きの実在する日時だけ。`--out` は無ければ 0700 で新規作成、既存ならディレクトリだけを受け（シンボリックリンクは拒否）権限は変えない。
+- 失敗の表示: wrangler の stderr 本文は出さず、`kind`（not_found / bucket_not_found / auth / rate_limited / network / signal / unknown）・終了コード・HTTP 状態・Cloudflare のエラーコードだけを出す（アカウント ID やトークン様の文字列を出さない）。`--max-probes` は 1〜86401。子は独立したプロセスグループで起動し、Ctrl-C / SIGTERM の 1 回目はそのグループへ 1 回だけ転送、2 回目で SIGKILL。一時領域を消して 130 / 143 で終わる。
 - 推定の窓を広げすぎない: 1 件およそ 3.5 秒（wrangler の起動を含む）。1 時間の窓を全部試すと最悪 3.5 時間。**時刻が分かるなら窓を絞る**。毎時のバックアップ（55 分間隔）なので、直近 1 時間に通常 1 件ある。
 - 実測（読取りのみ）: B で `--from 07:50:00Z --to 07:50:30Z` → 9 回目で `20261105T075022Z` を発見、TOC 28 テーブル＝manifest 28 テーブル、取得した dump / manifest の SHA-256 はローカル送信記録と一致（33.6 秒）。A は読取りトークンが未発行のため未実行（一覧そのものは REST で確認済み）。
 

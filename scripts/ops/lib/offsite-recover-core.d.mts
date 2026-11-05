@@ -89,3 +89,22 @@ export function compareTocWithManifest(
   manifestTables: ReadonlyMap<string, number>,
 ): { ok: boolean; missing: string[]; extra: string[]; duplicate: string[] };
 export function parseArgs(argv: readonly string[]): RecoverOptions;
+export function isHeaderSafeToken(token: unknown): boolean;
+export function encodeObjectKey(key: unknown): string;
+export function buildR2Url(options: {
+  apiBase?: string;
+  accountId: string;
+  bucket: string;
+  key?: string | null;
+  query?: Record<string, string> | null;
+}): URL;
+export function classifyFetchError(error: unknown): 'aborted' | 'timeout' | 'network' | 'unknown';
+export function parseIsoWithZone(value: unknown): Date | null;
+export interface SignalState {
+  first: string | null;
+  escalated: boolean;
+}
+export function nextSignalAction(
+  state: SignalState,
+  signal: string,
+): { state: SignalState; action: { kind: 'forward' | 'kill'; signal: string } | { kind: 'none' } };

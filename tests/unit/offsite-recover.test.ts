@@ -2,17 +2,23 @@ import { describe, expect, it } from 'vitest';
 import {
   assertFresh,
   assessFreshness,
+  buildR2Url,
   candidateManifestKeys,
   classifyEtag,
+  classifyFetchError,
   classifyWranglerFailure,
   compareTocWithManifest,
   describeFailure,
+  encodeObjectKey,
   formatStamp,
+  isHeaderSafeToken,
   MAX_AGE_HOURS_LIMIT,
   MAX_PROBES_LIMIT,
+  nextSignalAction,
   normalizePrefix,
   parseArgs,
   parseBackupKey,
+  parseIsoWithZone,
   parseListingPage,
   parseManifest,
   parseStamp,
@@ -338,5 +344,131 @@ describe('引数', () => {
     expect(() => parseArgs(['--from', '2026-11-05T07:00:00Z'])).toThrow(/guess/);
     expect(() => parseArgs(['--out'])).toThrow();
     expect(() => parseArgs(['--bogus'])).toThrow();
+  });
+});
+
+describe('トークンの検査と fetch の失敗（トークンを出さない）', () => {
+  const TOKEN = 'T'.repeat(40);
+  it('可視 ASCII 20〜512 文字だけを受ける', () => {
+    expect(isHeaderSafeToken(TOKEN)).toBe(true);
+    expect(isHeaderSafeToken(`${TOKEN}\n`)).toBe(false);
+    expect(isHeaderSafeToken(`${TOKEN}\r\nX-Evil: 1`)).toBe(false);
+    expect(isHeaderSafeToken(`${TOKEN} x`)).toBe(false);
+    expect(isHeaderSafeToken(`${TOKEN}\t`)).toBe(false);
+    expect(isHeaderSafeToken(`${TOKEN}\u00e9`)).toBe(false);
+    expect(isHeaderSafeToken('short')).toBe(false);
+    expect(isHeaderSafeToken('T'.repeat(513))).toBe(false);
+    expect(isHeaderSafeToken(undefined)).toBe(false);
+  });
+  it('fetch の例外は名前だけで種別にし、文面（ヘッダ値）を使わない', async () => {
+    // 実際の Node の fetch に改行入りのヘッダを渡すと、例外の文面にヘッダ値が載る（だから文面を使わない）
+    const error = await fetch('http://127.0.0.1:9/', { headers: { Authorization: `Bearer ${TOKEN}\nX` } }).catch(
+      (e: unknown) => e,
+    );
+    expect(String((error as Error).message)).toContain(TOKEN);
+    const kind = classifyFetchError(error);
+    expect(kind).toBe('network');
+    expect(kind).not.toContain(TOKEN);
+    expect(classifyFetchError(Object.assign(new Error('x'), { name: 'TimeoutError' }))).toBe('timeout');
+    expect(classifyFetchError(Object.assign(new Error('x'), { name: 'AbortError' }))).toBe('aborted');
+    expect(classifyFetchError(null)).toBe('unknown');
+  });
+});
+
+describe('prefix とキーと URL（パスの付け替えを防ぐ）', () => {
+  const ACCOUNT = '0123456789abcdef0123456789abcdef';
+  const LIST = `/client/v4/accounts/${ACCOUNT}/r2/buckets/mirai-sf-prod-backups/objects`;
+  it('prefix の空・. ・.. のセグメントと使えない文字を拒否する', () => {
+    expect(normalizePrefix('mirai_sf_prod')).toBe('mirai_sf_prod');
+    expect(normalizePrefix('a/b.c/d-e')).toBe('a/b.c/d-e');
+    for (const bad of ['a//b', 'a/./b', 'a/../b', '..', '.', 'a/..', '../a', 'a b', 'a/%2e%2e', 'a?b', 'a#b', '.hidden']) {
+      expect(() => normalizePrefix(bad), bad).toThrow(/PREFIX/);
+    }
+  });
+  it('キーのセグメントの空・. ・.. を拒否し、各セグメントを符号化する', () => {
+    expect(encodeObjectKey('mirai_sf_prod/a b.dump')).toBe('mirai_sf_prod/a%20b.dump');
+    expect(() => encodeObjectKey('a/../b')).toThrow();
+    expect(() => encodeObjectKey('a//b')).toThrow();
+    expect(() => encodeObjectKey('')).toThrow();
+  });
+  it('組み立てた URL は一覧・取得の期待するパスの下だけ', () => {
+    const list = buildR2Url({
+      accountId: ACCOUNT,
+      bucket: 'mirai-sf-prod-backups',
+      query: { prefix: 'mirai_sf_prod/', per_page: '1000' },
+    });
+    expect(list.origin).toBe('https://api.cloudflare.com');
+    expect(list.pathname).toBe(LIST);
+    expect(list.searchParams.get('prefix')).toBe('mirai_sf_prod/');
+    const get = buildR2Url({
+      accountId: ACCOUNT,
+      bucket: 'mirai-sf-prod-backups',
+      key: 'mirai_sf_prod/mirai_sf_prod-20261105T075022Z.dump',
+    });
+    expect(get.pathname).toBe(`${LIST}/mirai_sf_prod/mirai_sf_prod-20261105T075022Z.dump`);
+  });
+  it('キーに %2e%2e などがあっても上の階層へ出ない（符号化してキーの一部として扱う）', () => {
+    const u = buildR2Url({ accountId: ACCOUNT, bucket: 'mirai-sf-prod-backups', key: 'p/%2e%2e' });
+    expect(u.pathname.startsWith(`${LIST}/`)).toBe(true);
+    expect(() => buildR2Url({ accountId: ACCOUNT, bucket: 'mirai-sf-prod-backups', key: 'p/../../x' })).toThrow();
+  });
+  it('アカウント ID・バケット名の形が違えば拒否', () => {
+    expect(() => buildR2Url({ accountId: 'x', bucket: 'mirai-sf-prod-backups' })).toThrow(/アカウント/);
+    expect(() => buildR2Url({ accountId: ACCOUNT, bucket: '../x' })).toThrow(/バケット/);
+  });
+});
+
+describe('--from / --to の日時（タイムゾーン明示・実在する日時だけ）', () => {
+  it('Z と ±HH:MM を受ける', () => {
+    expect(parseIsoWithZone('2026-11-05T07:00:00Z')?.toISOString()).toBe('2026-11-05T07:00:00.000Z');
+    expect(parseIsoWithZone('2026-11-05T16:00:00+09:00')?.toISOString()).toBe('2026-11-05T07:00:00.000Z');
+    expect(parseIsoWithZone('2026-11-05T00:00:00-05:30')?.toISOString()).toBe('2026-11-05T05:30:00.000Z');
+    expect(parseIsoWithZone('2026-11-05T07:00:00.5Z')?.toISOString()).toBe('2026-11-05T07:00:00.500Z');
+    expect(parseIsoWithZone('2026-11-05T00:00:00+14:00')?.toISOString()).toBe('2026-11-04T10:00:00.000Z');
+  });
+  it('実在しない日時・TZ なし・範囲外のオフセットは拒否', () => {
+    for (const bad of [
+      '2026-02-30T00:00:00Z',
+      '2026-11-05T24:00:00Z',
+      '2026-11-05T07:60:00Z',
+      '2026-11-05T07:00:00',
+      '2026-11-05T07:00Z',
+      '2026-11-05T07:00:00+14:59',
+      '2026-11-05T07:00:00+15:00',
+      '2026-11-05T07:00:00+09:60',
+      '2026-11-05T07:00:00+0900',
+      '2026-11-05 07:00:00Z',
+    ]) {
+      expect(parseIsoWithZone(bad), bad).toBeNull();
+    }
+  });
+  it('引数でも同じ規則で拒否する', () => {
+    expect(() => parseArgs(['--source', 'guess', '--from', '2026-02-30T00:00:00Z'])).toThrow(/タイムゾーン/);
+    expect(() => parseArgs(['--source', 'guess', '--to', '2026-11-05T07:00:00'])).toThrow(/タイムゾーン/);
+    expect(() => parseArgs(['--source', 'guess', '--to', '2026-11-05T07:00:00+14:59'])).toThrow(/タイムゾーン/);
+    expect(parseArgs(['--source', 'guess', '--to', '2026-11-05T16:00:00+09:00']).to?.toISOString()).toBe(
+      '2026-11-05T07:00:00.000Z',
+    );
+  });
+});
+
+describe('manifest の件数の範囲', () => {
+  it('安全な整数を超える件数は拒否する', () => {
+    const tip = 'c'.repeat(64);
+    expect(parseManifest(`#audit_tip\t${tip}\na\t9007199254740991\n`).tables.get('a')).toBe(9007199254740991);
+    expect(() => parseManifest(`#audit_tip\t${tip}\na\t9007199254740993\n`)).toThrow(/安全な整数/);
+  });
+});
+
+describe('中断シグナルの扱い', () => {
+  it('1 回目は受けたシグナルを 1 回だけ転送、2 回目は SIGKILL、3 回目以降は何もしない', () => {
+    let state = { first: null as string | null, escalated: false };
+    let step = nextSignalAction(state, 'SIGINT');
+    expect(step.action).toEqual({ kind: 'forward', signal: 'SIGINT' });
+    state = step.state;
+    step = nextSignalAction(state, 'SIGTERM');
+    expect(step.action).toEqual({ kind: 'kill', signal: 'SIGKILL' });
+    state = step.state;
+    expect(nextSignalAction(state, 'SIGINT').action).toEqual({ kind: 'none' });
   });
 });

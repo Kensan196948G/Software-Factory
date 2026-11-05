@@ -43,9 +43,21 @@ export function formatStamp(date) {
     .replace(/[-:]/g, '');
 }
 
-/** `prefix` の前後の `/` を落とす（offsite-r2.mjs と同じ正規化）。 */
+const SEGMENT_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
+
+/**
+ * `prefix` の前後の `/` を落とす（offsite-r2.mjs と同じ正規化）。
+ * 中の各セグメントは英数字・`_` で始まる `[A-Za-z0-9._-]` に限り、空・`.`・`..` は拒否する（パスの付け替えを防ぐ）。
+ */
 export function normalizePrefix(prefix) {
-  return String(prefix ?? '').replace(/^\/+|\/+$/g, '');
+  const p = String(prefix ?? '').replace(/^\/+|\/+$/g, '');
+  if (p === '') return '';
+  for (const segment of p.split('/')) {
+    if (segment === '' || segment === '.' || segment === '..' || !SEGMENT_RE.test(segment)) {
+      throw new Error('MIRAI_SF_R2_PREFIX が不正です（空・. ・.. のセグメントや使えない文字がある）');
+    }
+  }
+  return p;
 }
 
 /**
@@ -268,7 +280,9 @@ export function parseManifest(text) {
     if (tables.has(m[1])) throw new Error(`manifest にテーブルが重複しています: ${m[1]}`);
     if (prev !== null && !(prev < m[1])) throw new Error('manifest のテーブル名が昇順（C 照合）ではありません');
     prev = m[1];
-    tables.set(m[1], Number(m[2]));
+    const count = Number(m[2]);
+    if (!Number.isSafeInteger(count)) throw new Error(`manifest の ${i + 2} 行目の件数が安全な整数の範囲を超えています`);
+    tables.set(m[1], count);
   }
   return { auditTip: hm[1] ?? '', tables };
 }
@@ -296,6 +310,110 @@ export function compareTocWithManifest(tocCounts, manifestTables) {
   return { ok: duplicate.length === 0 && missing.length === 0 && extra.length === 0, missing, extra, duplicate };
 }
 
+// ───────── 外部入力の検査（トークン・URL・日時・fetch の失敗） ─────────
+
+/**
+ * API トークンを HTTP ヘッダに載せてよい形か確かめる（RFC 7230 の可視 ASCII のみ。空白・改行・制御文字は拒否）。
+ * 不正なトークンを fetch に渡すと、例外の文面にヘッダ値が載ることがあるため、送る前に止める。値は返さない・出さない。
+ */
+export function isHeaderSafeToken(token) {
+  return typeof token === 'string' && /^[\x21-\x7E]{20,512}$/.test(token);
+}
+
+/** オブジェクトのキーを URL のパスへ。空・`.`・`..` のセグメントは拒否。 */
+export function encodeObjectKey(key) {
+  if (typeof key !== 'string' || key === '') throw new Error('オブジェクトのキーが不正です');
+  return key
+    .split('/')
+    .map((segment) => {
+      if (segment === '' || segment === '.' || segment === '..')
+        throw new Error('オブジェクトのキーに空・. ・.. のセグメントがあります');
+      return encodeURIComponent(segment);
+    })
+    .join('/');
+}
+
+/**
+ * Cloudflare REST API の URL を組み立て、パスが期待どおり
+ * `/client/v4/accounts/<id>/r2/buckets/<bucket>/objects`（一覧）または その直下のキー（取得）であることを確かめる。
+ * WHATWG URL は `%2e%2e` も `..` として畳むため、組み立て後の pathname で判定する。
+ */
+export function buildR2Url({ apiBase = 'https://api.cloudflare.com/client/v4', accountId, bucket, key = null, query = null }) {
+  if (!/^[0-9a-f]{32}$/.test(accountId)) throw new Error('アカウント ID の形が不正です');
+  if (!BUCKET_RE.test(bucket)) throw new Error('バケット名が不正です');
+  const base = new URL(apiBase);
+  const listPath = `${base.pathname.replace(/\/+$/, '')}/accounts/${accountId}/r2/buckets/${bucket}/objects`;
+  const path = key === null ? listPath : `${listPath}/${encodeObjectKey(key)}`;
+  const url = new URL(base.origin + path);
+  if (query) url.search = new URLSearchParams(query).toString();
+  if (url.origin !== base.origin) throw new Error('API の接続先が想定と違います');
+  if (
+    key === null
+      ? url.pathname !== listPath
+      : !url.pathname.startsWith(`${listPath}/`) || url.pathname.length <= listPath.length + 1
+  ) {
+    throw new Error('組み立てた URL のパスが想定の範囲外です');
+  }
+  if (key !== null && decodeURIComponent(url.pathname.slice(listPath.length + 1)) !== key) {
+    throw new Error('組み立てた URL のキーが元のキーと一致しません');
+  }
+  return url;
+}
+
+/**
+ * fetch の例外を**固定の種別**にする。例外の文面（URL・ヘッダ値が載りうる）は使わない。
+ * 返り値: 'aborted' | 'timeout' | 'network' | 'unknown'
+ */
+export function classifyFetchError(error) {
+  const name = error?.name;
+  if (name === 'TimeoutError') return 'timeout';
+  if (name === 'AbortError') return 'aborted';
+  // Node の fetch は不正なヘッダ値でも通信失敗でも TypeError を投げる（文面にヘッダ値が載ることがある）。
+  // 文面で見分けず、送る前の検査（isHeaderSafeToken）で前者を止め、ここでは種別だけを返す。
+  if (name === 'TypeError') return 'network';
+  return 'unknown';
+}
+
+/**
+ * タイムゾーン明示（`Z` か `±HH:MM`、±14:00 まで）の ISO 8601 日時だけを受ける。
+ * 実在しない日時（2026-02-30、25 時など）は、オフセットを当てる前の各欄の往復で拒否する。秒の小数は 3 桁まで。
+ */
+export function parseIsoWithZone(value) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(String(value));
+  if (!m) return null;
+  const [y, mo, d, h, mi, s] = m.slice(1, 7).map(Number);
+  const ms = m[7] ? Number(m[7].padEnd(3, '0')) : 0;
+  const local = new Date(Date.UTC(y, mo - 1, d, h, mi, s, ms));
+  if (
+    local.getUTCFullYear() !== y ||
+    local.getUTCMonth() !== mo - 1 ||
+    local.getUTCDate() !== d ||
+    local.getUTCHours() !== h ||
+    local.getUTCMinutes() !== mi ||
+    local.getUTCSeconds() !== s
+  ) {
+    return null;
+  }
+  let offsetMinutes = 0;
+  if (m[8] !== 'Z') {
+    const oh = Number(m[10]);
+    const om = Number(m[11]);
+    if (om > 59 || oh * 60 + om > 14 * 60) return null;
+    offsetMinutes = (m[9] === '+' ? 1 : -1) * (oh * 60 + om);
+  }
+  return new Date(local.getTime() - offsetMinutes * 60_000);
+}
+
+/**
+ * 中断シグナルの扱い（状態遷移だけ。実際の kill は実行部）。
+ * 1 回目: 受けたシグナルを子のプロセスグループへ 1 回だけ転送。2 回目以降: SIGKILL へ格上げ。
+ */
+export function nextSignalAction(state, signal) {
+  if (!state.first) return { state: { first: signal, escalated: false }, action: { kind: 'forward', signal } };
+  if (!state.escalated) return { state: { ...state, escalated: true }, action: { kind: 'kill', signal: 'SIGKILL' } };
+  return { state, action: { kind: 'none' } };
+}
+
 // ───────── 引数 ─────────
 
 function boundedInt(value, name, { min, max }) {
@@ -321,8 +439,8 @@ export function parseArgs(argv) {
     return argv[i + 1];
   };
   const isoDate = (value, name) => {
-    const d = new Date(value);
-    if (!/^\d{4}-\d{2}-\d{2}T/.test(value) || Number.isNaN(d.getTime())) throw new Error(`${name} は ISO 8601 の日時です`);
+    const d = parseIsoWithZone(value);
+    if (!d) throw new Error(`${name} はタイムゾーン付きの実在する ISO 8601 日時です（例 2026-11-05T07:00:00Z / +09:00）`);
     return d;
   };
   for (let i = 0; i < argv.length; i += 1) {
