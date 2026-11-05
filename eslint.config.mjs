@@ -10,6 +10,7 @@ export default tseslint.config(
       '.wrangler/**',
       '_work/**',
       '.claude/**',
+      '.agents/**',
       'playwright-report/**',
       'test-results/**',
       'src/web/public/console.js',

@@ -5,7 +5,10 @@ import { parseDevlineTargetRepos, type AllowedRepo } from '../shared/devline.js'
 export interface AppConfig {
   /** 実行モード。isProduction など、セキュリティ挙動の既定値はこちらで決める。 */
   nodeEnv: 'development' | 'test' | 'production';
-  /** 環境名（表示用）。挙動の判定には使わない。 */
+  /**
+   * 環境名。主に表示用だが、ACCESS_TRUST_EMAIL_HEADER の許可判定（Issue #102）だけは appEnv も見る。
+   * Cookie の Secure など他のセキュリティ既定値は nodeEnv / isProduction で決める。
+   */
   appEnv: 'development' | 'test' | 'staging' | 'production';
   isProduction: boolean;
   port: number;
@@ -36,14 +39,19 @@ export interface AppConfig {
   selfApprovalForcedInProduction: boolean;
   /** JSON 取込（全件置換）を許可するか。 */
   allowImport: boolean;
-  /** password: アプリのログイン画面 / access: Cloudflare Access のヘッダを信頼 */
+  /** password: アプリのログイン画面 / access: Cloudflare Access の JWT を検証（ヘッダ信頼は明示 opt-in のみ） */
   authMode: 'password' | 'access';
   accessAllowedEmails: string[];
   accessAllowedDomain: string;
   accessServiceTokenIds: string[];
-  /** Access の JWT 検証。両方そろうと JWT 必須。空ならヘッダを信頼する従来動作（access-jwt.ts）。 */
+  /** Access の JWT 検証。両方そろうと JWT 必須。空ならヘッダを信頼しない（fail-closed。Issue #102）。 */
   accessTeamDomain: string;
   accessAud: string;
+  /**
+   * JWT 未設定のときに Cloudflare Access のヘッダ（email / client-id）を信頼する明示 opt-in。
+   * 既定は false（fail-closed）。APP_ENV=staging / production では 1 を起動エラーにする（Issue #102）。
+   */
+  accessTrustEmailHeader: boolean;
   /** GitHub Issue 自動作成（未設定なら無効） */
   githubToken: string;
   githubRepo: string;
@@ -131,12 +139,25 @@ export function isAccessJwtEnabled(cfg: Pick<AppConfig, 'authMode' | 'accessTeam
   return cfg.authMode === 'access' && Boolean(cfg.accessTeamDomain && cfg.accessAud);
 }
 
+/**
+ * JWT 未設定のときに Access のヘッダを信頼してよいか（Issue #102 の恒久修正）。
+ * 明示 opt-in（ACCESS_TRUST_EMAIL_HEADER=1）があり、かつ本番・staging でないときだけ true。
+ * 既定は false の fail-closed。起動時にも本番・staging の opt-in は拒否するが、ここでも二重に判定する。
+ */
+export function isAccessHeaderTrustEnabled(
+  cfg: Pick<AppConfig, 'authMode' | 'accessTrustEmailHeader' | 'appEnv' | 'isProduction'>,
+): boolean {
+  if (cfg.authMode !== 'access' || !cfg.accessTrustEmailHeader) return false;
+  if (cfg.isProduction || cfg.appEnv === 'staging' || cfg.appEnv === 'production') return false;
+  return true;
+}
+
 /** 本番モードで JWT 検証なしのまま Access のヘッダを信頼しているときの警告文。問題なければ null。 */
 export function accessJwtStartupWarning(
   cfg: Pick<AppConfig, 'isProduction' | 'authMode' | 'accessTeamDomain' | 'accessAud'>,
 ): string | null {
   if (!cfg.isProduction || cfg.authMode !== 'access' || isAccessJwtEnabled(cfg)) return null;
-  return 'AUTH_MODE=access ですが ACCESS_TEAM_DOMAIN / ACCESS_AUD が未設定です。Access の JWT を検証せず、ヘッダのメールを信頼します';
+  return 'AUTH_MODE=access ですが ACCESS_TEAM_DOMAIN / ACCESS_AUD が未設定です。Access の JWT を検証せず、Access のヘッダも信頼しません（ACCESS_TRUST_EMAIL_HEADER の opt-in は本番・staging で拒否します）。この状態では認証できません';
 }
 
 /** MAIL_MODE の解釈。本番の既定は off（通知連携は対象外のため勝手に送らない）。 */
@@ -151,6 +172,38 @@ function appEnvOf(raw: string | undefined, nodeEnv: AppConfig['nodeEnv']): AppCo
   const value = raw?.trim() || nodeEnv;
   if (value === 'development' || value === 'test' || value === 'staging' || value === 'production') return value;
   throw new Error(`APP_ENV が不正です: ${value}（development / test / staging / production のいずれか）`);
+}
+
+/**
+ * ACCESS_TRUST_EMAIL_HEADER の解釈（Issue #102）。既定は無効。
+ * 1 は「APP_ENV を明示した開発・テスト環境」だけ許可する。本番・staging、APP_ENV 未設定では
+ * 起動エラーにする（fail-closed）。
+ * password モードは JWT 設定と同じく対象外で、値があっても無言で無効にする（起動エラーにはしない）。
+ * 1 を許可できない構成のうち、設定ミスとみなせるものだけを起動エラーにする。
+ */
+function accessTrustEmailHeaderOf(
+  raw: string | undefined,
+  authMode: AppConfig['authMode'],
+  appEnv: AppConfig['appEnv'],
+  appEnvExplicit: boolean,
+  isProduction: boolean,
+): boolean {
+  const value = raw?.trim();
+  if (value === undefined || value === '') return false;
+  if (authMode !== 'access') return false;
+  if (value !== '0' && value !== '1') throw new Error('ACCESS_TRUST_EMAIL_HEADER が不正です（0 / 1 のいずれか）');
+  if (value === '0') return false;
+  if (isProduction || appEnv === 'staging' || appEnv === 'production') {
+    throw new Error(
+      'ACCESS_TRUST_EMAIL_HEADER=1 は本番・staging では使えません。Access の JWT 検証（ACCESS_TEAM_DOMAIN / ACCESS_AUD）を設定してください',
+    );
+  }
+  if (!appEnvExplicit) {
+    throw new Error(
+      'ACCESS_TRUST_EMAIL_HEADER=1 は APP_ENV を明示した development / test でのみ使えます（APP_ENV 未設定は development とみなしますが opt-in は許可しません）',
+    );
+  }
+  return true;
 }
 
 export function loadConfig(overrides: RawConfig = {}): AppConfig {
@@ -168,15 +221,23 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
 
   const sessionSecret = pick(file, 'SESSION_SECRET') ?? randomBytes(32).toString('base64url');
   const originSharedSecret = pick(file, 'ORIGIN_SHARED_SECRET') ?? '';
-  const appEnv = appEnvOf(pick(file, 'APP_ENV'), nodeEnv);
+  const rawAppEnv = pick(file, 'APP_ENV');
+  const appEnv = appEnvOf(rawAppEnv, nodeEnv);
+  const appEnvExplicit = Boolean(rawAppEnv?.trim());
   const authMode: AppConfig['authMode'] = (pick(file, 'AUTH_MODE') ?? 'password') === 'access' ? 'access' : 'password';
+  const accessTrustEmailHeader = accessTrustEmailHeaderOf(
+    pick(file, 'ACCESS_TRUST_EMAIL_HEADER'),
+    authMode,
+    appEnv,
+    appEnvExplicit,
+    isProduction,
+  );
 
   // 自己承認の既定は環境で決める。本番だけ既定で禁止し、明示の 1 は警告つきで許可する。
   const rawSelfApproval = pick(file, 'ALLOW_SELF_APPROVAL')?.trim();
   const explicitSelfApproval = rawSelfApproval === undefined || rawSelfApproval === '' ? undefined : rawSelfApproval;
   const allowSelfApprovalDefault = appEnv !== 'production';
-  const allowSelfApproval =
-    explicitSelfApproval === undefined ? allowSelfApprovalDefault : explicitSelfApproval === '1';
+  const allowSelfApproval = explicitSelfApproval === undefined ? allowSelfApprovalDefault : explicitSelfApproval === '1';
   const selfApprovalForcedInProduction = appEnv === 'production' && explicitSelfApproval === '1';
 
   return {
@@ -204,6 +265,7 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
     allowImport: (pick(file, 'ALLOW_IMPORT') ?? '1') === '1',
     authMode,
     ...accessJwtSettingsOf(authMode, pick(file, 'ACCESS_TEAM_DOMAIN'), pick(file, 'ACCESS_AUD')),
+    accessTrustEmailHeader,
     accessAllowedEmails: (pick(file, 'ACCESS_ALLOWED_EMAILS') ?? '')
       .split(',')
       .map((e) => e.trim().toLowerCase())

@@ -1,5 +1,5 @@
 /**
- * AUTH_MODE=access のリクエスト全体の動作（Cookie と JWT の関係、従来動作の維持）。
+ * AUTH_MODE=access のリクエスト全体の動作（Cookie と JWT の関係、fail-closed と明示 opt-in）。
  * 公開鍵の取得はモックし、実ネットワークへ出ない。
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -42,6 +42,8 @@ const restore = {
   emails: config.accessAllowedEmails,
   domain: config.accessAllowedDomain,
   tokens: config.accessServiceTokenIds,
+  trustEmailHeader: config.accessTrustEmailHeader,
+  appEnv: config.appEnv,
 };
 const fetchMock = vi.fn(async (_url: string) => {
   const jwk = { ...keys.publicKey.export({ format: 'jwk' }), kid: 'it', alg: 'RS256', use: 'sig' };
@@ -78,6 +80,9 @@ beforeEach(async () => {
   config.accessServiceTokenIds = [SERVICE_TOKEN];
   config.accessTeamDomain = TEAM;
   config.accessAud = AUD;
+  // Issue #102: ヘッダ信頼の opt-in は既定で無効。テスト環境（非本番・非 staging）として扱う。
+  config.accessTrustEmailHeader = false;
+  config.appEnv = 'test';
 });
 
 afterEach(() => {
@@ -87,6 +92,8 @@ afterEach(() => {
   config.accessAllowedEmails = restore.emails;
   config.accessAllowedDomain = restore.domain;
   config.accessServiceTokenIds = restore.tokens;
+  config.accessTrustEmailHeader = restore.trustEmailHeader;
+  config.appEnv = restore.appEnv;
 });
 
 describe('JWT 検証が有効なとき', () => {
@@ -171,22 +178,58 @@ describe('JWT 検証が有効なとき', () => {
   });
 });
 
-describe('未設定なら従来どおり', () => {
+describe('JWT 未設定は fail-closed（ヘッダ信頼は明示 opt-in のみ）', () => {
+  // 未登録の許可メール。自動で利用者・セッションが作られないことを確かめる。
+  const UNKNOWN = 'jwt-denied@example.com';
+
   beforeEach(() => {
     config.accessTeamDomain = '';
     config.accessAud = '';
+    config.accessTrustEmailHeader = false;
+    config.appEnv = 'test';
     fetchMock.mockClear();
   });
 
-  it('ヘッダのメールでセッションができ、以後は Cookie だけで通る', async () => {
+  it('許可メールのヘッダだけでは401（session も app_user も作らない）', async () => {
+    const res = await me({ 'cf-access-authenticated-user-email': UNKNOWN });
+    expect(res.statusCode).toBe(401);
+    expect(res.headers['set-cookie']).toBeUndefined();
+
+    const sessions = await query<{ count: number }>('select count(*)::int as count from session');
+    expect(sessions.rows[0]?.count).toBe(0);
+    const users = await query<{ count: number }>('select count(*)::int as count from app_user where email = $1', [UNKNOWN]);
+    expect(users.rows[0]?.count).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('クライアントIDのヘッダだけでは401', async () => {
+    const res = await me({ 'cf-access-client-id': SERVICE_TOKEN });
+    expect(res.statusCode).toBe(401);
+    expect(res.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('明示 opt-in があるときだけヘッダでセッションを作る（従来動作）', async () => {
+    config.accessTrustEmailHeader = true;
     const first = await me({ 'cf-access-authenticated-user-email': USER_A });
     expect(first.statusCode).toBe(200);
     expect(emailOf(first)).toBe(USER_A);
+    expect(fetchMock).not.toHaveBeenCalled();
 
     const second = await me({ cookie: cookieFrom(first) });
     expect(second.statusCode).toBe(200);
     expect(emailOf(second)).toBe(USER_A);
-    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('opt-in があっても APP_ENV=staging / production ではヘッダを信頼しない', async () => {
+    config.accessTrustEmailHeader = true;
+    for (const appEnv of ['staging', 'production'] as const) {
+      config.appEnv = appEnv;
+      const res = await me({ 'cf-access-authenticated-user-email': UNKNOWN });
+      expect(res.statusCode).toBe(401);
+      expect(res.headers['set-cookie']).toBeUndefined();
+    }
+    const users = await query<{ count: number }>('select count(*)::int as count from app_user where email = $1', [UNKNOWN]);
+    expect(users.rows[0]?.count).toBe(0);
   });
 
   it('許可外のメールは401', async () => {

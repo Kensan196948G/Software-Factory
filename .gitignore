@@ -33,3 +33,6 @@ Thumbs.db
 
 # Claude Code のローカル状態（worktree など）
 .claude/
+
+# Agent Team のローカル worktree（リポジトリ内に作る場合）
+.agents/

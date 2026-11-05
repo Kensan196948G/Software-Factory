@@ -62,3 +62,64 @@ describe('APP_ENV', () => {
     expect(() => loadConfig()).toThrow(/APP_ENV が不正/);
   });
 });
+
+/**
+ * Issue #102: ACCESS_TRUST_EMAIL_HEADER の起動時判定。
+ * staging / production 経路だけでなく、NODE_ENV=production と APP_ENV 明示の組合せも起動時に拒否することを固定する。
+ */
+describe('ACCESS_TRUST_EMAIL_HEADER', () => {
+  beforeEach(() => {
+    stub({
+      MIRAI_SF_CONFIG_FILE: undefined,
+      COOKIE_SECURE: undefined,
+      REQUIRE_ORIGIN_SECRET: undefined,
+      MAIL_MODE: undefined,
+      AUTH_MODE: 'access',
+      ACCESS_TEAM_DOMAIN: undefined,
+      ACCESS_AUD: undefined,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('既定は無効（未設定なら false）', () => {
+    stub({ NODE_ENV: 'development', APP_ENV: 'development', ACCESS_TRUST_EMAIL_HEADER: undefined });
+    expect(loadConfig().accessTrustEmailHeader).toBe(false);
+  });
+
+  it('APP_ENV を明示した development / test では 1 を許可する', () => {
+    stub({ NODE_ENV: 'development', APP_ENV: 'test', ACCESS_TRUST_EMAIL_HEADER: '1' });
+    expect(loadConfig().accessTrustEmailHeader).toBe(true);
+  });
+
+  it('NODE_ENV=production なら APP_ENV が test / development でも 1 は起動エラー', () => {
+    for (const appEnv of ['test', 'development']) {
+      stub({ NODE_ENV: 'production', APP_ENV: appEnv, ACCESS_TRUST_EMAIL_HEADER: '1' });
+      expect(() => loadConfig()).toThrow(/ACCESS_TRUST_EMAIL_HEADER=1 は本番・staging では使えません/);
+    }
+  });
+
+  it('APP_ENV=staging / production、APP_ENV 未設定では 1 は起動エラー', () => {
+    for (const appEnv of ['staging', 'production', undefined]) {
+      stub({ NODE_ENV: 'development', APP_ENV: appEnv, ACCESS_TRUST_EMAIL_HEADER: '1' });
+      expect(() => loadConfig()).toThrow(/ACCESS_TRUST_EMAIL_HEADER=1/);
+    }
+  });
+
+  it('AUTH_MODE=password では 1 があっても無言で無効（起動エラーにしない）', () => {
+    stub({
+      NODE_ENV: 'development',
+      APP_ENV: 'development',
+      AUTH_MODE: 'password',
+      ACCESS_TRUST_EMAIL_HEADER: '1',
+    });
+    expect(loadConfig().accessTrustEmailHeader).toBe(false);
+  });
+
+  it('0 と 1 以外は起動エラー', () => {
+    stub({ NODE_ENV: 'development', APP_ENV: 'development', ACCESS_TRUST_EMAIL_HEADER: 'true' });
+    expect(() => loadConfig()).toThrow(/ACCESS_TRUST_EMAIL_HEADER が不正/);
+  });
+});

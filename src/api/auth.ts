@@ -2,7 +2,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { PoolClient } from 'pg';
 import { query, withTransaction } from './db.js';
-import { config, isAccessJwtEnabled } from './config.js';
+import { config, isAccessHeaderTrustEnabled, isAccessJwtEnabled } from './config.js';
 import { createAccessJwtVerifier, type AccessJwtVerifier } from './access-jwt.js';
 import { hashPassword, verifyPassword, passwordPolicyError } from './password.js';
 import { ApiError, Errors } from './http.js';
@@ -170,7 +170,10 @@ function serviceTokenIdentity(): string {
   return (config.accessAllowedEmails[0] ?? config.seedAdminEmail).toLowerCase();
 }
 
-/** 従来動作: Cloudflare Access のヘッダをそのまま信頼する（ACCESS_TEAM_DOMAIN / ACCESS_AUD が未設定のとき）。 */
+/**
+ * 従来動作: Cloudflare Access のヘッダをそのまま信頼する。
+ * JWT 未設定でも、明示 opt-in（ACCESS_TRUST_EMAIL_HEADER=1・本番/staging 以外）があるときだけ使う（Issue #102）。
+ */
 function identityFromAccessHeaders(headers: Record<string, string | string[] | undefined>): string | null {
   const emailHeader = headers['cf-access-authenticated-user-email'];
   if (typeof emailHeader === 'string' && emailHeader && isAccessEmailAllowed(emailHeader)) {
@@ -213,12 +216,16 @@ function accessJwtVerifier(): AccessJwtVerifier {
 /**
  * Cloudflare Access の情報から利用者を決める（メール or サービストークン）。
  * JWT 検証が有効なら Cf-Access-Jwt-Assertion だけを見て、ヘッダのメール・クライアントIDは使わない。
+ * JWT 未設定なら、明示 opt-in がない限りヘッダを信頼せず null を返す（fail-closed。Issue #102）。
  */
 export async function resolveAccessIdentity(
   headers: Record<string, string | string[] | undefined>,
   log?: { warn: (obj: { reason: string }, msg: string) => void },
 ): Promise<string | null> {
-  if (!isAccessJwtEnabled(config)) return identityFromAccessHeaders(headers);
+  if (!isAccessJwtEnabled(config)) {
+    if (!isAccessHeaderTrustEnabled(config)) return null;
+    return identityFromAccessHeaders(headers);
+  }
   const token = headers['cf-access-jwt-assertion'];
   if (typeof token !== 'string' || !token) return null;
   const result = await accessJwtVerifier().verify(token);

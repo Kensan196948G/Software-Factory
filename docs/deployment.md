@@ -68,17 +68,18 @@ cloudflared tunnel route dns --overwrite-dns mirai-sf sf.mirai-dx-platform.com
 
 認証方式の変更なので、切替は承認を得てから行う。コードが入っただけでは動作は変わらない。
 
-| 環境変数             | 内容                                                                 |
-| -------------------- | -------------------------------------------------------------------- |
-| `ACCESS_TEAM_DOMAIN` | `https://<team>.cloudflareaccess.com`。JWT の `iss` と公開鍵の取得先 |
-| `ACCESS_AUD`         | Access アプリの Application Audience (AUD) タグ。JWT の `aud` と照合 |
+| 環境変数                    | 内容                                                                   |
+| --------------------------- | ---------------------------------------------------------------------- |
+| `ACCESS_TEAM_DOMAIN`        | `https://<team>.cloudflareaccess.com`。JWT の `iss` と公開鍵の取得先   |
+| `ACCESS_AUD`                | Access アプリの Application Audience (AUD) タグ。JWT の `aud` と照合   |
+| `ACCESS_TRUST_EMAIL_HEADER` | `1` で「JWT 未設定時のヘッダ信頼」を明示 opt-in。既定は未設定＝無効。この値が `1` のときだけ APP_ENV の明示が必須で、許可されるのは development / test だけ。`APP_ENV=staging` / `production`、または `1` かつ APP_ENV 未設定では起動エラー（Issue #102） |
 
 実値は `preview.conf`（0600）だけに置き、リポジトリへ書かない。
 
 | 設定                                 | 動作                                                            |
 | ------------------------------------ | --------------------------------------------------------------- |
 | 両方あり（`AUTH_MODE=access`）       | JWT 必須。下記の検証に通らなければ未認証（`/healthz` は応答）   |
-| 両方なし                             | 従来どおりヘッダを信頼。`NODE_ENV=production` なら起動時に warn |
+| 両方なし                             | **fail-closed**。ヘッダを信頼せず未認証（401）。`NODE_ENV=production` なら起動時に warn。`ACCESS_TRUST_EMAIL_HEADER=1` を明示した場合だけヘッダ信頼を opt-in でき、許可されるのは APP_ENV を明示した development / test。`APP_ENV=staging` / `production`、または `1` かつ APP_ENV 未設定では起動エラー（Issue #102） |
 | 片方だけ、またはドメインの形式が不正 | 起動エラー（`AUTH_MODE=access` のとき）                         |
 
 検証内容:
@@ -94,8 +95,9 @@ cloudflared tunnel route dns --overwrite-dns mirai-sf sf.mirai-dx-platform.com
 1. Zero Trust のダッシュボードで対象 Access アプリの AUD を確認する。
 2. `preview.conf` に2つの変数を追加し、`systemctl --user restart mirai-sf-api`。
 3. `journalctl --user -u mirai-sf-api` に warn がないこと、Access ログイン後の画面表示、Tunnel を経由しない `127.0.0.1:8782` への `Cf-Access-Authenticated-User-Email` 付きリクエストが `/api/auth/me` で 401 になることを確認する。
+4. **fail-closed 版を配備するときは、配備前に発行済みのセッションを失効させる**（`docs/production/17` §7）。fail-closed は「JWT のない新規リクエスト」を止めるが、修正前にヘッダ信頼で発行された Cookie は `SESSION_TTL_HOURS`（既定 12 時間）まで有効なため。
 
-切り戻し: 2つの変数を削除して再起動する。
+切り戻し: 2つの変数を削除して再起動する。ただし 2026-11-06 以降は **fail-closed**（ヘッダ信頼なし）なので、2 変数を外すと誰もログインできなくなる。staging / production では `ACCESS_TRUST_EMAIL_HEADER=1` による回避は起動エラーになる。戻す必要がある場合は、先に JWT の 2 項目を再設定するか、旧セッションを失効したうえで Access を外した状態を所有者へ申告する（`docs/production/17` §7）。
 
 **2026-11-06 追記（Staging で実施。記録は `docs/production/17-staging-access-jwt-rollout-20261106.md`）**:
 
