@@ -1,0 +1,42 @@
+# 雛形: ~/.config/systemd/user/ へコピーして使う（配置・有効化は Lead が行う。手順は docs/production/02-runbook.md §10）。
+# Mirai SF: 失敗通知（OnFailure の受け口）。監視対象の .service の [Unit] に次の 1 行を足すと、
+# その unit が failed になったときにこの template が「失敗した unit 名」を instance にして起動される。
+#
+#   OnFailure=mirai-sf-onfailure@%n.service
+#
+# 既定の通知先は「ローカル記録」だけ（外部へは勝手に送らない）:
+#   1. ~/.local/state/mirai-sf/alerts.jsonl へ 1 行追記（{"at","unit","result"} のみ。秘密は書かない）
+#   2. journal へ priority=err（<3>）で 1 行
+# 任意の外部送信: ~/.config/mirai-sf/notify.env（本人所有・0600）に MIRAI_SF_NOTIFY_CMD=<絶対パス> が
+#   あるときだけ、そのコマンドを `<unit> <result> <at>` の引数で実行する（30 秒で打ち切り。値・出力は表示しない）。
+#   無ければスキップして exit 0。
+#
+# 終了コード: 0=記録済み（外部送信なし／OK）/ 2=unit 名が不正（改行・記号）/ 3=ローカル記録に失敗
+#             / 4=外部送信の設定不正・失敗（ローカル記録は済み）。2〜4 はこの unit を failed にする
+#             （`systemctl --user --failed` に mirai-sf-onfailure@… が出ていれば通知経路の異常）。
+#
+# 設計上の制約: ExecStart は git ワークツリーのスクリプトに依存しない（/bin/sh と coreutils だけで完結）。
+#   ツリーが壊れているときこそ通知が要るため。
+#
+# ⚠️ ExecStart は手で書かない。正本は deploy/systemd/mirai-sf-onfailure.body.sh（読める形）で、
+#   scripts/ops/tests/onfailure-notify.test.sh が「正本をエスケープした結果 = この ExecStart 行」を検証する。
+#   生成: node scripts/ops/tests/onfailure-execstart.mjs
+#   unit 名（%i）は本文に埋め込まず /bin/sh の位置引数 $1 として渡す（引用の崩れ・注入を防ぐ）。
+#
+# 動作確認（発火させずに疎通だけ見る）:
+#   systemctl --user start mirai-sf-onfailure@test.service
+#   journalctl --user -u 'mirai-sf-onfailure@test.service' -n 5 && tail -n 1 ~/.local/state/mirai-sf/alerts.jsonl
+[Unit]
+Description=Mirai SF: OnFailure notifier for %i (local record; self-contained)
+# 通知 unit 自身の失敗で再帰しない
+OnFailure=
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c "set -u; umask 077; unit=\"$${1:-}\"; case \"$$unit\" in '' | *[!A-Za-z0-9@._:-]*) echo \"<3>[mirai-sf-onfailure] unit 名が不正なため記録しません（空・改行・記号を含む）\" >&2; exit 2 ;; esac; if [ \"$${#unit}\" -gt 256 ]; then echo \"<3>[mirai-sf-onfailure] unit 名が長すぎるため記録しません\" >&2; exit 2; fi; result=\"$${MONITOR_SERVICE_RESULT:-}\"; case \"$$result\" in '' | *[!a-z-]*) result=unknown ;; esac; if [ \"$${#result}\" -gt 40 ]; then result=unknown; fi; ts=\"$$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)\"; case \"$${HOME:-}\" in /*) ;; *) echo \"<3>[mirai-sf-onfailure] 失敗を検知しましたが HOME が不正なため記録できません: unit=$$unit result=$$result at=$$ts\" >&2; exit 3 ;; esac; dir=\"$$HOME/.local/state/mirai-sf\"; if mkdir -p \"$$dir\" && printf '{\"at\":\"%%s\",\"unit\":\"%%s\",\"result\":\"%%s\"}\\n' \"$$ts\" \"$$unit\" \"$$result\" >>\"$$dir/alerts.jsonl\"; then echo \"<3>[mirai-sf-onfailure] 失敗を検知: unit=$$unit result=$$result at=$$ts（記録: ~/.local/state/mirai-sf/alerts.jsonl）\" >&2; else echo \"<3>[mirai-sf-onfailure] 失敗を検知しましたがローカル記録に失敗: unit=$$unit result=$$result at=$$ts\" >&2; exit 3; fi; envf=\"$$HOME/.config/mirai-sf/notify.env\"; if [ ! -e \"$$envf\" ] && [ ! -L \"$$envf\" ]; then echo \"[mirai-sf-onfailure] 外部送信なし（notify.env が無い）: unit=$$unit\"; exit 0; fi; if [ -L \"$$envf\" ] || [ ! -f \"$$envf\" ]; then echo \"<3>[mirai-sf-onfailure] notify.env が通常ファイルではないため外部送信しません（symlink・ディレクトリ等は不可）: unit=$$unit\" >&2; exit 4; fi; own=\"$$(find \"$$envf\" -maxdepth 0 -user \"$$(id -u)\" 2>/dev/null)\" || own=\"\"; if [ -z \"$$own\" ]; then echo \"<3>[mirai-sf-onfailure] notify.env が本人所有ではないため外部送信しません: unit=$$unit\" >&2; exit 4; fi; perm_bad=\"$$(find \"$$envf\" -maxdepth 0 -perm /077 2>/dev/null)\" || perm_bad=error; if [ -n \"$$perm_bad\" ]; then echo \"<3>[mirai-sf-onfailure] notify.env の権限が group/other に開いているため外部送信しません（chmod 600 にする）: unit=$$unit\" >&2; exit 4; fi; if [ ! -r \"$$envf\" ]; then echo \"<3>[mirai-sf-onfailure] notify.env を読めないため外部送信しません: unit=$$unit\" >&2; exit 4; fi; cmd=\"$$(sed -n 's/^MIRAI_SF_NOTIFY_CMD=//p' \"$$envf\" 2>/dev/null | tail -n 1 | tr -d \"\\\"'\\r\")\"; if [ -z \"$$cmd\" ]; then echo \"[mirai-sf-onfailure] 外部送信なし（MIRAI_SF_NOTIFY_CMD が未設定）: unit=$$unit\"; exit 0; fi; case \"$$cmd\" in /*) ;; *) echo \"<3>[mirai-sf-onfailure] MIRAI_SF_NOTIFY_CMD は絶対パスで指定してください（値は表示しません）: unit=$$unit\" >&2; exit 4 ;; esac; if [ ! -x \"$$cmd\" ]; then echo \"<3>[mirai-sf-onfailure] MIRAI_SF_NOTIFY_CMD を実行できません（値は表示しません）: unit=$$unit\" >&2; exit 4; fi; rc=0; timeout 30 \"$$cmd\" \"$$unit\" \"$$result\" \"$$ts\" </dev/null >/dev/null 2>&1 || rc=$$?; if [ \"$$rc\" -eq 0 ]; then echo \"[mirai-sf-onfailure] 外部送信 OK: unit=$$unit\"; exit 0; fi; echo \"<3>[mirai-sf-onfailure] 外部送信に失敗（exit=$$rc。ローカル記録は済み）: unit=$$unit\" >&2; exit 4" mirai-sf-onfailure %i
+TimeoutStartSec=60
+NoNewPrivileges=true
+PrivateTmp=true
+SyslogIdentifier=mirai-sf-onfailure
+StandardOutput=journal
+StandardError=journal

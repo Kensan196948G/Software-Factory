@@ -22,7 +22,7 @@
     "format:check": "prettier --check .",
     "test": "node scripts/local-run.mjs vitest run --config vitest.config.ts && node scripts/local-run.mjs vitest run --config vitest.integration.config.ts",
     "test:unit": "node scripts/local-run.mjs vitest run --config vitest.config.ts tests/unit",
-    "test:ops": "bash scripts/ops/tests/staging-autofollow.test.sh && bash scripts/ops/tests/prod-release-ci-gate.test.sh",
+    "test:ops": "bash scripts/ops/tests/staging-autofollow.test.sh && bash scripts/ops/tests/prod-release-ci-gate.test.sh && bash scripts/ops/tests/onfailure-notify.test.sh && bash scripts/ops/tests/rto-drill.test.sh",
     "test:integration": "node scripts/local-run.mjs vitest run --config vitest.integration.config.ts",
     "test:e2e": "node scripts/local-run.mjs playwright test",
     "test:browser:approver": "playwright test --config playwright.approver.config.ts",
@@ -53,6 +53,7 @@
     "ops:slo": "node scripts/ops/measure-slo.mjs",
     "ops:rpo-report": "node scripts/ops/rpo-report.mjs",
     "ops:repo-check": "node scripts/ops/repo-onboarding-check.mjs",
+    "ops:prod:rto-drill": "bash scripts/ops/rto-drill.sh",
     "perf:list-filter": "tsx scripts/perf/list-filter-bench.ts"
   },
   "dependencies": {

@@ -7,6 +7,8 @@
 [Unit]
 Description=Mirai SF production health check (/healthz, db.ok, environment=production, commit)
 After=network.target
+# 失敗したら mirai-sf-onfailure@.service でローカル記録（alerts.jsonl＋journal err）。runbook §10
+OnFailure=mirai-sf-onfailure@%n.service
 
 [Service]
 Type=oneshot
