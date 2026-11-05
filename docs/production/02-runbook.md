@@ -253,7 +253,7 @@ cat ~/.local/state/mirai-sf-prod/healthcheck.json                          # ok=
 - **既定の通知先はローカル記録だけ**（外部へは勝手に送らない）:
   1. `~/.local/state/mirai-sf/alerts.jsonl` へ 1 行追記（`{"at","unit","result"}` のみ。0600。秘密は書かない）
   2. journal へ priority=err で 1 行（`journalctl --user -p err -t mirai-sf-onfailure`）
-- **任意の外部送信**: `~/.config/mirai-sf/notify.env`（本人所有・0600）に `MIRAI_SF_NOTIFY_CMD=<絶対パス>` があるときだけ、そのコマンドを `<unit> <result> <at>` の引数で実行する（30 秒で打ち切り）。値・コマンドの出力は表示しない。ファイルや変数が無ければスキップして exit 0。外部送信先の追加は所有者の承認後に行う。
+- **任意の外部送信**: `~/.config/mirai-sf/notify.env` に `MIRAI_SF_NOTIFY_CMD=<絶対パス>` があるときだけ、そのコマンドを `<unit> <result> <at>` の引数で実行する（30 秒で打ち切り）。値・コマンドの出力は表示しない。ファイルや変数が無ければスキップして exit 0。`notify.env` は読む前に検査し、通常ファイル（symlink・ディレクトリ不可）・本人所有・group/other の権限ビットなし（`chmod 600`。0640/0644/0604 等は不可）・読取可能のいずれかを満たさなければ送信せず exit 4。外部送信先の追加は所有者の承認後に行う。
 - **終了コード**: 0=記録済み（外部送信なし／OK）、2=unit 名が不正（改行・記号。記録しない）、3=ローカル記録に失敗、4=外部送信の設定不正・失敗（ローカル記録は済み）。2〜4 では通知 unit 自身が failed になる（`systemctl --user --failed` に `mirai-sf-onfailure@…` が出ていれば、通知経路の異常）。
 - ExecStart は `/bin/sh` と coreutils だけで完結し、git ワークツリーのスクリプトに依存しない（ツリーが壊れているときこそ通知が要るため）。正本は `deploy/systemd/mirai-sf-onfailure.body.sh`。unit の ExecStart 行は手で書かず、`node scripts/ops/tests/onfailure-execstart.mjs` で生成する。`pnpm test:ops` が正本と unit の一致を検証する。
 
@@ -288,7 +288,7 @@ systemctl --user --failed
 | `fetch`           | R2 から dump と manifest を取得し、送信記録の SHA-256・サイズと照合（`offsite-drill` と同等）。`--local` ならローカルの最新 dump             |
 | `restore`         | 一時DBを作って `pg_restore`                                                                                                                  |
 | `verify`          | manifest（件数・監査ログ末尾ハッシュ）との完全一致と `scripts/db.ts verify`（ハッシュ連鎖）                                                  |
-| `api`             | current リリースの API を一時DB・`127.0.0.1:8789`（`MAIL_MODE=off`）で起動し、`/healthz` が `status=ok`・`db.ok=true`・commit 一致になるまで |
+| `api`             | current リリースの API を一時DB・`127.0.0.1:8789`（`MAIL_MODE=off`）で起動し、`/healthz` が `status=ok`・`db.ok=true`・commit 一致・`environment=production` になるまで（プロキシを経由しない） |
 | `switch_decision` | 切替判断の記録だけ（本番の切替・DNS・Access・サービスは変更しない）                                                                          |
 | `cleanup`         | 一時 API を停止し、一時DBを削除（名前が `mirai_sf_rto_` で始まり本番DB名と異なることを検査してから DROP）                                    |
 
@@ -306,9 +306,10 @@ node -e 'const r=require("/tmp/rto-drill.json"); console.log(r.result, r.totalSe
 pnpm ops:prod:rto-drill --local
 ```
 
-- 出力 JSON: `result`（ok/failed）、`totalSeconds`、`targetMinutes`（既定 30。`MIRAI_SF_RTO_TARGET_MIN`）、`withinTarget`、`stages[]`（`name`・`startedAt`・`endedAt`・`seconds`・`ok`・`note`）、`release.commit`、`backup.file`・`ageMinutes`、`tempDb`。
+- 出力 JSON: `result`（ok/failed）、`totalSeconds`、`targetMinutes`（既定 30。`MIRAI_SF_RTO_TARGET_MIN`）、`withinTarget`、`stages[]`（`name`・`startedAt`・`endedAt`・`seconds`・`ok`・`note`）、`release.commit`、`backup.file`・`ageMinutes`、`tempDb`、`tempDbRemaining`（一時DBが残ったら true）、`reportSaved`。
+- レポートファイルの保存は任意。保存できなかった場合も終了コードは変えず、JSON の `reportSaved=false` と標準エラーの注意で示す（標準出力の JSON が正本なので、上の例のようにリダイレクトして控える）。dry-run は保存しないので `reportSaved=null`。
 - prod.conf の値は `with-env.mjs` 経由で読むだけで表示しない。一時 API には `DATABASE_URL`（一時DB）・`PORT`・`HOST=127.0.0.1`・`MAIL_MODE=off` を上書きして渡す。API と wrangler の出力本文は表示しない。
-- 終了コード: 0=成功、1=失敗（一時DBは削除済み）、2=一時DBを削除できなかった（ログとレポートに出る名前で `dropdb --maintenance-db=postgres --force mirai_sf_rto_…` を手動で実行する）。
+- 終了コード: 0=成功、1=失敗（一時DBは削除済み）、2=一時DBを削除できなかった（`tempDbRemaining=true`。ログと JSON の `tempDb` の名前で `dropdb --maintenance-db=postgres --force mirai_sf_rto_…` を手動で実行する）。
 - 一時ポートは既定 8789（`MIRAI_SF_RTO_PORT`）。8781/8782/8783 と使用中のポートは拒否する。
 - **範囲**: これは「復元して検証し、切替できると判断するまで」の計測。本番の受付停止・切替・Access 確認・受付再開は含まない。全体の RTO（検知から受付再開まで）は、この結果に切替手順（§6 の rollback・§3 の切替）の実測を足して見積もる。結果は `docs/production/07-slo-and-measurement.md` の RTO 欄へ記録する。
 - 検証: `pnpm test:ops`（`scripts/ops/tests/rto-drill.test.sh`。偽 pg クライアント・偽 wrangler・偽 API で、DB 名ガード・dry-run・各段階・失敗時の後片付けを確認）。

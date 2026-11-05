@@ -28,13 +28,15 @@
 #   MIRAI_SF_RTO_PORT            一時 API のポート（既定 8789。8781/8782/8783 は不可）
 #   MIRAI_SF_RTO_HEALTH_TIMEOUT  /healthz を待つ秒数（既定 60）
 #   MIRAI_SF_RTO_TARGET_MIN      RTO の目標（分。既定 30。docs/production/07 の案）
-#   MIRAI_SF_RTO_REPORT_DIR      レポートの保存先（既定 ~/.local/state/mirai-sf-prod/rto-drill。0600）
+#   MIRAI_SF_RTO_REPORT_DIR      レポートの保存先（既定 ~/.local/state/mirai-sf-prod/rto-drill。0600）。保存は任意で、
+#                                失敗しても終了コードは変えず JSON の reportSaved=false で示す（標準出力の JSON が正本）
 #   MIRAI_SF_RTO_HEALTH_STATE    検知段階で読む healthcheck 状態（既定 ~/.local/state/mirai-sf-prod/healthcheck.json）
 #   MIRAI_SF_WRANGLER / MIRAI_SF_R2_API_TOKEN / MIRAI_SF_PG_BIN_DIR / MIRAI_SF_NODE_BIN_DIR  既存スクリプトと同じ
 #
 # 出力: 標準出力には JSON（レポート）だけを出す。進行ログは標準エラーへ出す。
 # 終了コード: 0=成功（dry-run は前提 OK）/ 1=失敗（一時DBは削除済み。dry-run は前提 NG）
-#             / 2=一時DBを削除できなかった（手動で dropdb する。名前はログとレポートに出る）
+#             / 2=一時DBを削除できなかった（手動で dropdb する。名前はログと JSON の tempDb に出て、
+#               tempDbRemaining=true になる）
 set -euo pipefail
 umask 077
 
@@ -98,6 +100,7 @@ rto_main() {
   RTO_DB="mirai_sf_rto_$(date -u +%Y%m%dt%H%M%Sz)_$$"
   RTO_SOURCE_DB="$source_db"
   RTO_CREATED=0
+  RTO_TEMP_DB_LEFT=0
   RTO_API_PID=""
   RTO_STAGE=""
   RTO_STAGE_LABEL=""
@@ -313,12 +316,17 @@ rto_port_in_use() {
   ' "$1"
 }
 
+# 一時 API の /healthz。status=ok・db.ok=true・commit 一致・environment=production をすべて必須にする
+# （別アプリや Staging 設定の API を誤って「復旧できた」と判定しない）。
+# 一時 API は 127.0.0.1 だけなので、環境の HTTP(S)_PROXY / ALL_PROXY を経由させない（--noproxy '*'）。
 rto_health_ok() { # <port> <commit>
   local body
-  body="$(curl -fsS --max-time 2 "http://127.0.0.1:$1/healthz" 2>/dev/null)" || return 1
+  body="$(curl --noproxy '*' -fsS --max-time 2 "http://127.0.0.1:$1/healthz" 2>/dev/null)" || return 1
   EXPECT_SHA="$2" node -e '
     const h = JSON.parse(process.argv[1]);
-    process.exit(h.status === "ok" && h.db && h.db.ok === true && h.commit === process.env.EXPECT_SHA ? 0 : 1);
+    const ok = h.status === "ok" && h.db && h.db.ok === true && h.commit === process.env.EXPECT_SHA &&
+      h.environment === "production";
+    process.exit(ok ? 0 : 1);
   ' "$body" 2>/dev/null
 }
 
@@ -403,6 +411,7 @@ rto_finish() {
       else
         cleanup_ok=false
         cleanup_note="一時DBを削除できませんでした（手動で dropdb）: $RTO_DB"
+        RTO_TEMP_DB_LEFT=1
         RTO_RESULT=failed
         code=2
       fi
@@ -412,13 +421,43 @@ rto_finish() {
     rto_stage_end "$cleanup_ok" "$cleanup_note"
   fi
 
-  local finished json
+  # レポートの保存（実行モードだけ）。保存は任意: 失敗しても終了コードは変えず、
+  # JSON の reportSaved=false と標準エラーの注意で示す（標準出力の JSON が正本）。
+  local finished json report_file="" report_saved=null
   finished="$(rto_now_ms)"
-  json="$(
-    RTO_MODE="$RTO_MODE" RTO_SOURCE="$RTO_SOURCE" RTO_RESULT="$RTO_RESULT" RTO_DECISION="$RTO_DECISION" \
-      RTO_STARTED_MS="$RTO_STARTED_MS" RTO_FINISHED_MS="$finished" RTO_TARGET_MIN="$RTO_TARGET_MIN" \
-      RTO_DB="$RTO_DB" RTO_PORT="$RTO_PORT" RTO_BACKUP="$RTO_BACKUP" RTO_BACKUP_AGE_MIN="$RTO_BACKUP_AGE_MIN" \
-      RTO_COMMIT="$RTO_COMMIT" node -e '
+  if [[ "$RTO_MODE" == run ]]; then
+    report_file="$RTO_REPORT_DIR/rto-drill-$(date -u +%Y%m%dT%H%M%SZ).json"
+    report_saved=false
+    if mkdir -p "$RTO_REPORT_DIR" 2>/dev/null && [[ -d "$RTO_REPORT_DIR" && ! -L "$report_file" ]] &&
+      (umask 077 && : >"$report_file") 2>/dev/null && chmod 600 "$report_file" 2>/dev/null; then
+      report_saved=true
+    fi
+  fi
+  json="$(rto_report_json "$finished" "$report_saved")" ||
+    json='{"version":1,"kind":"mirai-sf-rto-drill","result":"failed","reportSaved":false,"error":"レポートを作れません"}'
+  if [[ "$report_saved" == true ]]; then
+    if printf '%s\n' "$json" >"$report_file" 2>/dev/null; then
+      log "レポート: $report_file"
+    else
+      rm -f -- "$report_file"
+      json="$(rto_report_json "$finished" false)" || true
+      report_saved=false
+    fi
+  fi
+  [[ "$report_saved" != false ]] || log "注意: レポートを保存できません（$RTO_REPORT_DIR）。標準出力の JSON を控えてください（reportSaved=false）"
+
+  printf '%s\n' "$json" >&3
+  rm -rf -- "$RTO_WORK"
+  log "RTO 訓練 終了: result=$RTO_RESULT exit=$code"
+  exit "$code"
+}
+
+# レポートの JSON を標準出力へ出す。引数: <終了時刻 ms> <reportSaved: true|false|null>
+rto_report_json() {
+  RTO_MODE="$RTO_MODE" RTO_SOURCE="$RTO_SOURCE" RTO_RESULT="$RTO_RESULT" RTO_DECISION="$RTO_DECISION" \
+    RTO_STARTED_MS="$RTO_STARTED_MS" RTO_FINISHED_MS="$1" RTO_TARGET_MIN="$RTO_TARGET_MIN" \
+    RTO_DB="$RTO_DB" RTO_PORT="$RTO_PORT" RTO_BACKUP="$RTO_BACKUP" RTO_BACKUP_AGE_MIN="$RTO_BACKUP_AGE_MIN" \
+    RTO_COMMIT="$RTO_COMMIT" RTO_REPORT_SAVED="$2" RTO_DB_CREATED="$RTO_CREATED" RTO_TEMP_DB_LEFT="$RTO_TEMP_DB_LEFT" node -e '
         const fs = require("node:fs");
         const e = process.env;
         const iso = (ms) => new Date(Number(ms)).toISOString();
@@ -444,26 +483,14 @@ rto_finish() {
           port: Number(e.RTO_PORT) || null,
           release: { commit: e.RTO_COMMIT || null },
           backup: { file: e.RTO_BACKUP || null, ageMinutes: e.RTO_BACKUP_AGE_MIN === "" ? null : Number(e.RTO_BACKUP_AGE_MIN) },
+          // 一時DBが残っていれば true（cleanup 失敗。tempDb の名前で手動 dropdb する）
+          tempDbRemaining: e.RTO_MODE === "run" ? e.RTO_DB_CREATED === "1" && e.RTO_TEMP_DB_LEFT === "1" : false,
+          reportSaved: e.RTO_REPORT_SAVED === "true" ? true : e.RTO_REPORT_SAVED === "false" ? false : null,
           stages,
           scope: "リハーサル。本番DB・本番サービス・DNS/Access は変更していない。検知は宣言時刻、切替は判断のみ",
         };
         process.stdout.write(JSON.stringify(report, null, 2) + "\n");
       ' "$RTO_WORK/stages.tsv"
-  )" || json='{"version":1,"kind":"mirai-sf-rto-drill","result":"failed","error":"レポートを作れません"}'
-
-  printf '%s\n' "$json" >&3
-  if [[ "$RTO_MODE" == run ]]; then
-    local report_file
-    report_file="$RTO_REPORT_DIR/rto-drill-$(date -u +%Y%m%dT%H%M%SZ).json"
-    if mkdir -p "$RTO_REPORT_DIR" && printf '%s\n' "$json" >"$report_file" && chmod 600 "$report_file"; then
-      log "レポート: $report_file"
-    else
-      log "注意: レポートを保存できません（$RTO_REPORT_DIR）"
-    fi
-  fi
-  rm -rf -- "$RTO_WORK"
-  log "RTO 訓練 終了: result=$RTO_RESULT exit=$code"
-  exit "$code"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

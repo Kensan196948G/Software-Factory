@@ -32,10 +32,14 @@ case "${HOME:-}" in /*) ;; *) echo "<3>[mirai-sf-onfailure] 失敗を検知し�
 dir="$HOME/.local/state/mirai-sf";
 if mkdir -p "$dir" && printf '{"at":"%s","unit":"%s","result":"%s"}\n' "$ts" "$unit" "$result" >>"$dir/alerts.jsonl"; then echo "<3>[mirai-sf-onfailure] 失敗を検知: unit=$unit result=$result at=$ts（記録: ~/.local/state/mirai-sf/alerts.jsonl）" >&2; else echo "<3>[mirai-sf-onfailure] 失敗を検知しましたがローカル記録に失敗: unit=$unit result=$result at=$ts" >&2; exit 3; fi;
 envf="$HOME/.config/mirai-sf/notify.env";
-if [ ! -e "$envf" ]; then echo "[mirai-sf-onfailure] 外部送信なし（notify.env が無い）: unit=$unit"; exit 0; fi;
+if [ ! -e "$envf" ] && [ ! -L "$envf" ]; then echo "[mirai-sf-onfailure] 外部送信なし（notify.env が無い）: unit=$unit"; exit 0; fi;
+if [ -L "$envf" ] || [ ! -f "$envf" ]; then echo "<3>[mirai-sf-onfailure] notify.env が通常ファイルではないため外部送信しません（symlink・ディレクトリ等は不可）: unit=$unit" >&2; exit 4; fi;
+if [ ! -O "$envf" ]; then echo "<3>[mirai-sf-onfailure] notify.env が本人所有ではないため外部送信しません: unit=$unit" >&2; exit 4; fi;
+perm_bad="$(find "$envf" -maxdepth 0 -perm /077 2>/dev/null)" || perm_bad=error;
+if [ -n "$perm_bad" ]; then echo "<3>[mirai-sf-onfailure] notify.env の権限が group/other に開いているため外部送信しません（chmod 600 にする）: unit=$unit" >&2; exit 4; fi;
+if [ ! -r "$envf" ]; then echo "<3>[mirai-sf-onfailure] notify.env を読めないため外部送信しません: unit=$unit" >&2; exit 4; fi;
 cmd="$(sed -n 's/^MIRAI_SF_NOTIFY_CMD=//p' "$envf" 2>/dev/null | tail -n 1 | tr -d "\"'\r")";
 if [ -z "$cmd" ]; then echo "[mirai-sf-onfailure] 外部送信なし（MIRAI_SF_NOTIFY_CMD が未設定）: unit=$unit"; exit 0; fi;
-if [ ! -O "$envf" ] || [ -n "$(find "$envf" -maxdepth 0 -perm /022 2>/dev/null)" ]; then echo "<3>[mirai-sf-onfailure] notify.env の所有者または権限が不正なため外部送信しません（本人所有・0600 にする）: unit=$unit" >&2; exit 4; fi;
 case "$cmd" in /*) ;; *) echo "<3>[mirai-sf-onfailure] MIRAI_SF_NOTIFY_CMD は絶対パスで指定してください（値は表示しません）: unit=$unit" >&2; exit 4 ;; esac;
 if [ ! -x "$cmd" ]; then echo "<3>[mirai-sf-onfailure] MIRAI_SF_NOTIFY_CMD を実行できません（値は表示しません）: unit=$unit" >&2; exit 4; fi;
 rc=0;

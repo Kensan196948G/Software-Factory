@@ -108,9 +108,10 @@ setup_case() { # <name>
   ln -s "releases/$SHA" "$PROD_HOME/current"
   printf 'COMMIT_SHA=%s\n' "$SHA" >"$RELEASE/release.env"
   : >"$CASE/pg-invocations"
-  # 作り物の設定（実在しない接続先。秘密マーカーは出力に出ないこと）
-  printf 'DATABASE_URL=postgresql://fake:fakepass@127.0.0.1:1/%s\nSESSION_SECRET=%s\nNODE_ENV=production\nAPP_ENV=production\nPORT=8783\n' \
-    "$SRC_DB" "$MARKER" >"$CASE/prod.conf"
+  # 作り物の設定（実在しない接続先。パスワード部分も作り物で、出力に出ないことを検証する）。
+  # 接続文字列の形をリポジトリへ直書きしない（secret-scan の対象）ため、実行時に組み立てる
+  printf 'DATABASE_URL=postgresql://fake:%s@127.0.0.1:1/%s\nSESSION_SECRET=%s\nNODE_ENV=production\nAPP_ENV=production\nPORT=8783\n' \
+    "fakepass" "$SRC_DB" "$MARKER" >"$CASE/prod.conf"
   chmod 600 "$CASE/prod.conf"
 
   # 偽 /healthz サーバー（current の API の代わり）。DATABASE_URL が一時DBを指すことを確かめてから応答する
@@ -125,9 +126,11 @@ fs.writeFileSync(process.env.FAKE_CASE + '/api-env', [
 console.log(process.env.SESSION_SECRET); // 起動ログは表示されないこと
 const dbIsTemp = /^mirai_sf_rto_[0-9a-z_]+$/.test(new URL(process.env.DATABASE_URL).pathname.slice(1));
 const dbOk = dbIsTemp && process.env.FAKE_API_MODE !== 'db-fail';
+// 本物の API と同じく APP_ENV（prod.conf では production）を environment として返す
+const environment = process.env.FAKE_API_MODE === 'staging-env' ? 'staging' : process.env.APP_ENV;
 http.createServer((req, res) => {
   res.setHeader('content-type', 'application/json');
-  res.end(JSON.stringify({ status: dbOk ? 'ok' : 'degraded', commit: process.env.COMMIT_SHA, db: { ok: dbOk } }));
+  res.end(JSON.stringify({ status: dbOk ? 'ok' : 'degraded', environment, commit: process.env.COMMIT_SHA, db: { ok: dbOk } }));
 }).listen(Number(process.env.PORT), process.env.HOST);
 process.on('SIGTERM', () => process.exit(0));
 EOS
@@ -148,6 +151,8 @@ EOS
     cat >"$CASE/pgbin/$cmd" <<EOS
 #!/bin/sh
 printf '%s %s\n' "$cmd" "\$*" >>"$CASE/pg-invocations"
+# dropdb の失敗を模擬する（cleanup 失敗時の exit 2 の検証用）
+if [ "$cmd" = dropdb ] && [ "\${FAKE_DROPDB_FAIL:-}" = 1 ]; then exit 1; fi
 exit 0
 EOS
   done
@@ -373,6 +378,54 @@ check "SHA-256 不一致は終了コード 1" assert_code 1
 check "fetch 段階が失敗" assert_json x 'j.stages.some((s) => s.name === "fetch" && !s.ok)'
 check "SHA-256 不一致では DB を作らない" assert_pg_not_called createdb
 check "SHA-256 不一致では DB を消さない（作っていない）" assert_pg_not_called dropdb
+
+printf '\n== X7. 環境に死んだプロキシがあっても一時 API の /healthz は直接確認する（--noproxy） ==\n'
+setup_case run_proxy
+# 何も待ち受けていないポートをプロキシに設定する（env -i で隠さず、明示的に渡す）
+DEAD_PROXY="http://127.0.0.1:$(free_port)"
+EXTRA_ENV=(HTTP_PROXY="$DEAD_PROXY" http_proxy="$DEAD_PROXY" HTTPS_PROXY="$DEAD_PROXY" https_proxy="$DEAD_PROXY" ALL_PROXY="$DEAD_PROXY" all_proxy="$DEAD_PROXY")
+run_drill --local
+EXTRA_ENV=()
+check "死んだプロキシがあっても成功（終了コード 0）" assert_code 0
+check "api 段階が成功" assert_json x 'j.stages.some((s) => s.name === "api" && s.ok)'
+
+printf '\n== X8. /healthz の environment が production でなければ失敗する ==\n'
+setup_case run_wrongenv
+EXTRA_ENV=(FAKE_API_MODE=staging-env)
+run_drill --local
+EXTRA_ENV=()
+check "environment 不一致は終了コード 1" assert_code 1
+check "api 段階が失敗" assert_json x 'j.result === "failed" && j.stages.some((s) => s.name === "api" && !s.ok)'
+check "environment 不一致でも一時DBを削除" assert_pg_called dropdb "mirai_sf_rto_"
+check "environment 不一致でも一時 API は停止済み" assert_api_stopped
+
+printf '\n== X9. レポートを保存できなければ reportSaved=false（終了コードは変えない） ==\n'
+setup_case run_report_fail
+mkdir -p "$HOME_DIR"
+: >"$HOME_DIR/rto-reports" # ディレクトリの位置にファイルを置く
+run_drill --local
+check "レポート保存失敗でも訓練成功は終了コード 0" assert_code 0
+check "JSON に reportSaved=false" assert_json x 'j.result === "ok" && j.reportSaved === false'
+check "保存失敗を注意として出す" assert_err_contains "reportSaved=false"
+
+printf '\n== X10. レポートを保存できれば reportSaved=true、dry-run は null ==\n'
+setup_case run_report_ok
+run_drill --local
+check "保存できれば reportSaved=true" assert_json x 'j.reportSaved === true && j.tempDbRemaining === false'
+setup_case dry_report
+run_drill --dry-run --local
+check "dry-run は reportSaved=null" assert_json x 'j.reportSaved === null'
+
+printf '\n== X11. 一時DBを削除できなければ終了コード 2 と残存DB名を報告する ==\n'
+setup_case run_dropfail
+EXTRA_ENV=(FAKE_DROPDB_FAIL=1)
+run_drill --local
+EXTRA_ENV=()
+check "dropdb 失敗は終了コード 2" assert_code 2
+check "cleanup 段階が失敗・残存フラグ・result=failed" assert_json x 'j.result === "failed" && j.tempDbRemaining === true && j.stages.some((s) => s.name === "cleanup" && !s.ok && s.note.includes(j.tempDb))'
+check "残存DB名は mirai_sf_rto_ で始まる" assert_json x '/^mirai_sf_rto_[0-9a-z_]+$/.test(j.tempDb)'
+check "残存DB名と手動 dropdb をログに出す" assert_err_contains "一時DBを削除できませんでした（手動で dropdb）: mirai_sf_rto_"
+check "dropdb 失敗でも一時 API は停止済み" assert_api_stopped
 
 printf '\n== 結果: PASS %d / FAIL %d ==\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]]

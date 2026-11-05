@@ -224,14 +224,67 @@ check "送信失敗は終了コード 4" assert_code 4
 check "送信失敗でもローカル記録は 1 行" assert_alert_lines 1
 check "送信失敗を表示する" assert_out_contains "外部送信に失敗（exit=9"
 
-printf '\n== O11. notify.env の権限が緩ければ送信しない ==\n'
-setup_case env_perm
+printf '\n== O11. notify.env の権限が group/other に開いていれば送信しない（0600 以下だけ許可） ==\n'
+for mode in 666 644 640 604 660 620 602 700; do
+  setup_case "env_perm_$mode"
+  write_fake_cmd 0
+  write_notify_env "$CASE/notify-cmd.sh" "$mode"
+  run_notify mirai-sf-prod-backup.service exit-code
+  if [[ "$mode" == 700 ]]; then
+    # group/other ビットが無ければ許可（実行ビットは本人だけ）
+    check "notify.env $mode は送信する（終了コード 0）" assert_code 0
+    continue
+  fi
+  check "notify.env $mode は終了コード 4" assert_code 4
+  check "notify.env $mode でもローカル記録は 1 行" assert_alert_lines 1
+  check "notify.env $mode は権限不正を表示する" assert_out_contains "group/other に開いている"
+  if [[ ! -s "$CASE/notify-invocations" ]]; then pass "notify.env $mode では送信コマンドを実行しない"; else fail "notify.env $mode なのに送信コマンドを実行した"; fi
+done
+setup_case env_perm_400
 write_fake_cmd 0
-write_notify_env "$CASE/notify-cmd.sh" 666
+write_notify_env "$CASE/notify-cmd.sh" 400
 run_notify mirai-sf-prod-backup.service exit-code
-check "権限不正は終了コード 4" assert_code 4
-check "権限不正でもローカル記録は 1 行" assert_alert_lines 1
-if [[ ! -s "$CASE/notify-invocations" ]]; then pass "権限不正では送信コマンドを実行しない"; else fail "権限不正なのに送信コマンドを実行した"; fi
+check "notify.env 400（読取専用・本人のみ）は送信する" assert_code 0
+
+printf '\n== O11b. notify.env がディレクトリなら送信しない ==\n'
+setup_case env_dir
+mkdir -p "$HOME_DIR/.config/mirai-sf/notify.env"
+chmod 700 "$HOME_DIR/.config/mirai-sf/notify.env"
+run_notify mirai-sf-prod-backup.service exit-code
+check "ディレクトリは終了コード 4" assert_code 4
+check "ディレクトリでもローカル記録は 1 行" assert_alert_lines 1
+check "通常ファイルでないことを表示する" assert_out_contains "通常ファイルではない"
+
+printf '\n== O11c. notify.env が symlink なら送信しない（0600 のファイルを指していても） ==\n'
+setup_case env_symlink
+write_fake_cmd 0
+write_notify_env "$CASE/notify-cmd.sh"
+mv "$HOME_DIR/.config/mirai-sf/notify.env" "$CASE/real-notify.env"
+ln -s "$CASE/real-notify.env" "$HOME_DIR/.config/mirai-sf/notify.env"
+run_notify mirai-sf-prod-backup.service exit-code
+check "symlink は終了コード 4" assert_code 4
+if [[ ! -s "$CASE/notify-invocations" ]]; then pass "symlink では送信コマンドを実行しない"; else fail "symlink なのに送信コマンドを実行した"; fi
+
+printf '\n== O11d. 壊れた symlink も送信しない（無いものとして扱わない） ==\n'
+setup_case env_dangling
+mkdir -p "$HOME_DIR/.config/mirai-sf"
+ln -s "$CASE/missing.env" "$HOME_DIR/.config/mirai-sf/notify.env"
+run_notify mirai-sf-prod-backup.service exit-code
+check "壊れた symlink は終了コード 4" assert_code 4
+
+printf '\n== O11e. notify.env が読めなければ送信しない ==\n'
+setup_case env_unreadable
+write_fake_cmd 0
+write_notify_env "$CASE/notify-cmd.sh" 200
+run_notify mirai-sf-prod-backup.service exit-code
+if [[ -r "$HOME_DIR/.config/mirai-sf/notify.env" ]]; then
+  # root で実行すると権限に関係なく読めるため、この経路は検証できない
+  printf 'SKIP: 読取不能を作れない（root 実行）\n'
+else
+  check "読取不能は終了コード 4" assert_code 4
+  check "読取不能を表示する" assert_out_contains "notify.env を読めない"
+  if [[ ! -s "$CASE/notify-invocations" ]]; then pass "読取不能では送信コマンドを実行しない"; else fail "読取不能なのに送信コマンドを実行した"; fi
+fi
 
 printf '\n== O12. 相対パスの MIRAI_SF_NOTIFY_CMD は実行しない ==\n'
 setup_case env_relative
