@@ -14,7 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { prepareOutDir } from '../../scripts/ops/offsite-recover.mjs';
+import { prepareOutDir, writeFilesAtomically } from '../../scripts/ops/offsite-recover.mjs';
 
 // scripts/ops/offsite-recover.mjs の実行部を、偽の wrangler と一時ディレクトリだけで試す。
 // ネットワーク・R2・DB には触らない（list はトークンの検査で止まり、guess は偽の wrangler を呼ぶ）。
@@ -176,5 +176,58 @@ describe('--out の置き場所', () => {
     writeFileSync(file, 'x');
     expect(() => prepareOutDir(file)).toThrow(/ディレクトリではありません/);
     expect(() => prepareOutDir(join(root, 'no-parent', 'child'))).toThrow(/作れません/);
+  });
+});
+
+describe('--out への書込み（一時名→link。全部そろうか何も残さない）', () => {
+  const dumpFile = { name: 'mirai_sf_prod-20261105T010000Z.dump', bytes: Buffer.from('dump-bytes') };
+  const manifestFile = { name: 'mirai_sf_prod-20261105T010000Z.manifest.tsv', bytes: Buffer.from('#audit_tip\t\n') };
+  const files = [dumpFile, manifestFile];
+  it('2 ファイルを 0600 で置き、一時ファイルを残さない', () => {
+    const dir = join(root, 'atomic-ok');
+    mkdirSync(dir, { mode: 0o700 });
+    const written = writeFilesAtomically(dir, files);
+    expect(written).toEqual(files.map((f) => join(dir, f.name)));
+    for (const f of files) {
+      expect(readFileSync(join(dir, f.name), 'utf8')).toBe(f.bytes.toString('utf8'));
+      expect(statSync(join(dir, f.name)).mode & 0o777).toBe(0o600);
+    }
+    expect(readdirSync(dir).sort()).toEqual(files.map((f) => f.name).sort());
+  });
+  it('2 つ目が既にあれば失敗し、今回作った 1 つ目と一時ファイルを消す（既存は残す）', () => {
+    const dir = join(root, 'atomic-exists');
+    mkdirSync(dir, { mode: 0o700 });
+    writeFileSync(join(dir, manifestFile.name), 'existing');
+    expect(() => writeFilesAtomically(dir, files)).toThrow(/同名のファイルがあります/);
+    expect(readdirSync(dir)).toEqual([manifestFile.name]);
+    expect(readFileSync(join(dir, manifestFile.name), 'utf8')).toBe('existing');
+  });
+  it('1 つ目が既にあれば失敗し、既存は上書きしない', () => {
+    const dir = join(root, 'atomic-exists-first');
+    mkdirSync(dir, { mode: 0o700 });
+    writeFileSync(join(dir, dumpFile.name), 'existing');
+    expect(() => writeFilesAtomically(dir, files)).toThrow(/同名のファイルがあります/);
+    expect(readdirSync(dir)).toEqual([dumpFile.name]);
+    expect(readFileSync(join(dir, dumpFile.name), 'utf8')).toBe('existing');
+  });
+  it('書き込めないディレクトリでは失敗し、何も残さない', () => {
+    const dir = join(root, 'atomic-readonly');
+    mkdirSync(dir, { mode: 0o700 });
+    chmodSync(dir, 0o500);
+    try {
+      if (process.getuid?.() === 0) return; // root は権限に関係なく書けるため検証できない
+      expect(() => writeFilesAtomically(dir, files)).toThrow(/--out へ書き込めません/);
+      expect(readdirSync(dir)).toEqual([]);
+    } finally {
+      chmodSync(dir, 0o700);
+    }
+  });
+  it('不正なファイル名は書かない', () => {
+    const dir = join(root, 'atomic-badname');
+    mkdirSync(dir, { mode: 0o700 });
+    expect(() => writeFilesAtomically(dir, [{ name: '../escape.dump', bytes: Buffer.from('x') }])).toThrow(/ファイル名が不正/);
+    expect(() => writeFilesAtomically(dir, [{ name: '.hidden', bytes: Buffer.from('x') }])).toThrow(/ファイル名が不正/);
+    expect(readdirSync(dir)).toEqual([]);
+    expect(existsSync(join(root, 'escape.dump'))).toBe(false);
   });
 });

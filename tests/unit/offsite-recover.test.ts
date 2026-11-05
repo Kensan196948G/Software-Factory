@@ -442,6 +442,14 @@ describe('--from / --to の日時（タイムゾーン明示・実在する日�
       expect(parseIsoWithZone(bad), bad).toBeNull();
     }
   });
+  it('オフセット適用後の UTC が 4 桁の年（0000〜9999）を外れる日時は拒否', () => {
+    // UTC で 10000-01-01T13:59:59Z になる（toISOString が +010000-… の拡張形式になる）
+    expect(parseIsoWithZone('9999-12-31T23:59:59-14:00')).toBeNull();
+    expect(parseIsoWithZone('9999-12-31T23:59:59-00:01')).toBeNull();
+    // 境界内は受ける
+    expect(parseIsoWithZone('9999-12-31T23:59:59Z')?.toISOString()).toBe('9999-12-31T23:59:59.000Z');
+    expect(parseIsoWithZone('9999-12-31T23:59:59+14:00')?.toISOString()).toBe('9999-12-31T09:59:59.000Z');
+  });
   it('引数でも同じ規則で拒否する', () => {
     expect(() => parseArgs(['--source', 'guess', '--from', '2026-02-30T00:00:00Z'])).toThrow(/タイムゾーン/);
     expect(() => parseArgs(['--source', 'guess', '--to', '2026-11-05T07:00:00'])).toThrow(/タイムゾーン/);

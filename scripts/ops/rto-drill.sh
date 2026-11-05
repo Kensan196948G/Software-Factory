@@ -14,7 +14,7 @@
 #   restore          一時DB mirai_sf_rto_<ts> を作って pg_restore
 #   verify           manifest（件数・監査ログ末尾ハッシュ）との完全一致と scripts/db.ts verify（ハッシュ連鎖）
 #   api              current リリースの API を一時DB・一時ポート（既定 127.0.0.1:8789）で起動し、
-#                    /healthz が status=ok・db.ok=true・commit 一致になるまで計測
+#                    /healthz が status=ok・db.ok=true・commit 一致・environment=production になるまで計測
 #   switch_decision  切替判断（判断の記録だけ。本番の切替・DNS・Access・サービスは変更しない）
 #   cleanup          一時 API を停止し、一時DBを削除（名前が mirai_sf_rto_ で始まることを検査してから DROP）
 #
@@ -285,8 +285,8 @@ rto_main() {
     fi
     sleep 0.5
   done
-  [[ "$healthy" == 1 ]] || rto_fail_stage "/healthz が ${health_timeout} 秒以内に status=ok・db.ok=true・commit 一致になりません"
-  rto_stage_end true "/healthz OK（status=ok db.ok=true commit=$RTO_COMMIT、試行 ${tries} 回）"
+  [[ "$healthy" == 1 ]] || rto_fail_stage "/healthz が ${health_timeout} 秒以内に status=ok・db.ok=true・commit 一致・environment=production になりません"
+  rto_stage_end true "/healthz OK（status=ok db.ok=true commit=$RTO_COMMIT environment=production、試行 ${tries} 回）"
 
   # ───── 7. 切替判断 ─────
   rto_stage_begin switch_decision "切替判断（判断の記録だけ。本番の切替はしない）"

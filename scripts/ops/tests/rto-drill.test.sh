@@ -396,6 +396,7 @@ run_drill --local
 EXTRA_ENV=()
 check "environment 不一致は終了コード 1" assert_code 1
 check "api 段階が失敗" assert_json x 'j.result === "failed" && j.stages.some((s) => s.name === "api" && !s.ok)'
+check "診断に environment=production の条件を出す" assert_err_contains "commit 一致・environment=production になりません"
 check "environment 不一致でも一時DBを削除" assert_pg_called dropdb "mirai_sf_rto_"
 check "environment 不一致でも一時 API は停止済み" assert_api_stopped
 

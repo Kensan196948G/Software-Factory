@@ -38,8 +38,21 @@
  *   書込み・削除の API は呼ばない。SIGINT / SIGTERM では子プロセスへ転送し、一時領域を消してから終わる。
  */
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -344,6 +357,56 @@ export function prepareOutDir(dir) {
   return outDir;
 }
 
+/** --out へ書くファイル名（`<db>-<stamp>.dump` / `.manifest.tsv`）。区切り文字・先頭ドットを許さない */
+const NAME_FILE_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,200}$/;
+
+/**
+ * --out へ確認済みの複数ファイル（dump と manifest）を「全部そろうか、何も残さないか」で書く。
+ *   1. 各ファイルを一時名（`.<name>.tmp-<pid>-<乱数>`、0600、wx）へ書き、fsync する
+ *   2. 一時名から最終名へ hard link（既存の最終名は上書きしない。あれば EEXIST で失敗）→ 一時名を削除
+ *   3. 途中で失敗したら、今回作った一時名と最終名だけを削除して例外を投げる（既存のファイルには触らない）
+ * rename ではなく link を使うのは、既存の同名ファイルを黙って置き換えないため（従来の wx と同じ扱い）。
+ * 返り値: 書いた最終名のパス（files の順）。
+ */
+export function writeFilesAtomically(outDir, files) {
+  const temps = [];
+  const finals = [];
+  try {
+    for (const { name, bytes } of files) {
+      if (!NAME_FILE_RE.test(name)) throw new Error('--out へ書くファイル名が不正です');
+      const temp = join(outDir, `.${name}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`);
+      const fd = openSync(temp, 'wx', 0o600);
+      temps.push(temp);
+      try {
+        writeSync(fd, bytes);
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+    }
+    files.forEach(({ name }, index) => {
+      const final = join(outDir, name);
+      try {
+        linkSync(temps[index], final);
+      } catch (error) {
+        throw new Error(
+          error?.code === 'EEXIST'
+            ? `--out に同名のファイルがあります（上書きしない）: ${name}`
+            : `--out へ書き込めません（${error?.code ?? 'error'}）: ${name}`,
+        );
+      }
+      finals.push(final);
+    });
+    return finals;
+  } catch (error) {
+    for (const path of [...finals, ...temps]) rmSync(path, { force: true });
+    if (error instanceof Error && error.message.startsWith('--out')) throw error;
+    throw new Error(`--out へ書き込めません（${error?.code ?? 'error'}。今回作ったファイルは削除しました）`);
+  } finally {
+    for (const temp of temps) rmSync(temp, { force: true });
+  }
+}
+
 // ───────── 本体 ─────────
 
 async function main(opts, work) {
@@ -377,9 +440,12 @@ async function main(opts, work) {
 
   if (opts.out) {
     const outDir = prepareOutDir(opts.out);
-    writeFileSync(join(outDir, basename(dumpPath)), dumpBytes, { mode: 0o600, flag: 'wx' });
-    writeFileSync(join(outDir, basename(manifestPath)), manifestBytes, { mode: 0o600, flag: 'wx' });
-    info(`確認済みのファイルを残しました: ${join(outDir, basename(dumpPath))}`);
+    // 2 ファイルを一時名→link でそろえて置く。片方だけ残る状態を作らない（失敗時は今回作成分を削除）
+    const [savedDump] = writeFilesAtomically(outDir, [
+      { name: basename(dumpPath), bytes: dumpBytes },
+      { name: basename(manifestPath), bytes: manifestBytes },
+    ]);
+    info(`確認済みのファイルを残しました: ${savedDump}`);
   }
   if (opts.verifyOnly) {
     info('verify-only: restore-drill.sh は実行しません');

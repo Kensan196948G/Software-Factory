@@ -281,13 +281,58 @@ write_fake_cmd 0
 write_notify_env "$CASE/notify-cmd.sh" 200
 run_notify mirai-sf-prod-backup.service exit-code
 if [[ -r "$HOME_DIR/.config/mirai-sf/notify.env" ]]; then
-  # root で実行すると権限に関係なく読めるため、この経路は検証できない
-  printf 'SKIP: 読取不能を作れない（root 実行）\n'
+  # root で実行すると権限に関係なく読めるため、この経路は検証できない。
+  # CI では検証の欠落を成功扱いにしない（非 root で実行する）。ローカルは SKIP を許す
+  if [[ "${CI:-}" == true ]]; then
+    fail "読取不能 fixture を作れません（root 実行。CI=true では非 root で実行する）"
+  else
+    printf 'SKIP: 読取不能を作れない（root 実行。CI=true では FAIL）\n'
+  fi
 else
   check "読取不能は終了コード 4" assert_code 4
   check "読取不能を表示する" assert_out_contains "notify.env を読めない"
   if [[ ! -s "$CASE/notify-invocations" ]]; then pass "読取不能では送信コマンドを実行しない"; else fail "読取不能なのに送信コマンドを実行した"; fi
 fi
+
+printf '\n== O11f. 親ディレクトリ ~/.config/mirai-sf が group/other に書込み可能なら送信しない（TOCTOU 対策） ==\n'
+for mode in 777 775 757 730 703; do
+  setup_case "cfgdir_perm_$mode"
+  write_fake_cmd 0
+  write_notify_env "$CASE/notify-cmd.sh"
+  chmod "$mode" "$HOME_DIR/.config/mirai-sf"
+  run_notify mirai-sf-prod-backup.service exit-code
+  check "HOME/.config/mirai-sf $mode は終了コード 4" assert_code 4
+  check "HOME/.config/mirai-sf $mode でもローカル記録は 1 行" assert_alert_lines 1
+  check "HOME/.config/mirai-sf $mode は親ディレクトリ不正を表示する" assert_out_contains "group/other に書込み可能"
+  if [[ ! -s "$CASE/notify-invocations" ]]; then pass "HOME/.config/mirai-sf $mode では送信コマンドを実行しない"; else fail "HOME/.config/mirai-sf $mode なのに送信コマンドを実行した"; fi
+done
+for mode in 700 750 755 711; do
+  setup_case "cfgdir_ok_$mode"
+  write_fake_cmd 0
+  write_notify_env "$CASE/notify-cmd.sh"
+  chmod "$mode" "$HOME_DIR/.config/mirai-sf"
+  run_notify mirai-sf-prod-backup.service exit-code
+  check "HOME/.config/mirai-sf $mode（group/other 書込みなし）は送信する" assert_code 0
+done
+
+printf '\n== O11g. ~/.config が group/other に書込み可能なら送信しない ==\n'
+setup_case config_perm
+write_fake_cmd 0
+write_notify_env "$CASE/notify-cmd.sh"
+chmod 777 "$HOME_DIR/.config"
+run_notify mirai-sf-prod-backup.service exit-code
+check "HOME/.config 777 は終了コード 4" assert_code 4
+if [[ ! -s "$CASE/notify-invocations" ]]; then pass "HOME/.config 777 では送信コマンドを実行しない"; else fail "HOME/.config 777 なのに送信コマンドを実行した"; fi
+
+printf '\n== O11h. ~/.config/mirai-sf が symlink なら送信しない ==\n'
+setup_case cfgdir_symlink
+write_fake_cmd 0
+write_notify_env "$CASE/notify-cmd.sh"
+mv "$HOME_DIR/.config/mirai-sf" "$CASE/real-cfgdir"
+ln -s "$CASE/real-cfgdir" "$HOME_DIR/.config/mirai-sf"
+run_notify mirai-sf-prod-backup.service exit-code
+check "HOME/.config/mirai-sf の symlink は終了コード 4" assert_code 4
+if [[ ! -s "$CASE/notify-invocations" ]]; then pass "HOME/.config/mirai-sf の symlink では送信コマンドを実行しない"; else fail "HOME/.config/mirai-sf の symlink なのに送信コマンドを実行した"; fi
 
 printf '\n== O12. 相対パスの MIRAI_SF_NOTIFY_CMD は実行しない ==\n'
 setup_case env_relative

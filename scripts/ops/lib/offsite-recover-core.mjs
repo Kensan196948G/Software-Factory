@@ -401,7 +401,12 @@ export function parseIsoWithZone(value) {
     if (om > 59 || oh * 60 + om > 14 * 60) return null;
     offsetMinutes = (m[9] === '+' ? 1 : -1) * (oh * 60 + om);
   }
-  return new Date(local.getTime() - offsetMinutes * 60_000);
+  const utc = new Date(local.getTime() - offsetMinutes * 60_000);
+  // オフセットを当てた後の UTC も 4 桁の年（0000〜9999）に収める。
+  // 例: 9999-12-31T23:59:59-14:00 は UTC で 10000 年になり、toISOString が +010000-… の拡張形式になる。
+  const utcYear = utc.getUTCFullYear();
+  if (!Number.isFinite(utc.getTime()) || utcYear < 0 || utcYear > 9999) return null;
+  return utc;
 }
 
 /**
