@@ -147,6 +147,7 @@ journalctl --user -u mirai-sf-prod-backup -u mirai-sf-prod-restore-drill -n 40 -
 - **オフサイトからの復元訓練**: `pnpm ops:prod:offsite-drill`。最新の送信記録の dump と manifest を **R2 から取り寄せ**、記録した SHA-256 と照合してから、`restore-drill.sh` と同じ手順（一時DBへ復元 → 件数・監査ハッシュ照合 → 一時DB削除）を実行する。「送れた」ではなく「R2 から復元できる」を確かめるための訓練。
   - 2026-11-03 実測: 取得・SHA-256 一致 → 復元 → 28 テーブル・件数一致・監査連鎖 verify 成功 → 一時DB削除。
 - 保持: DB の監査行は削除しない（追記のみ）。**ローカルの**ファイルの世代管理は `MIRAI_SF_BACKUP_RETENTION_DAYS`（既定14日。毎時だと最大 336 世代 = 約 43 MB）。
+- **セッション失効**: 旧セッションを条件つきで削除し、同じトランザクションで `audit_log` に記録する手順は [`19-ops-session-revoke.md`](19-ops-session-revoke.md)。`session` を直接 SQL で消さない（[`17`](17-staging-access-jwt-rollout-20261106.md) §3 の「監査の空白」を繰り返さない）。
 - **R2 側の保持規則は未設定として記録中**（アプリからは削除しない。最新のクラウド設定は適用前に再取得する）。毎時 128 KB として概算 **約 1.1 GB/年**。**保持日数と対象プレフィックスの承認後**に R2 ライフサイクル規則（例: 90 日で失効）を設定する。S3 アクセスキーは必須ではなく、[公式手順](https://developers.cloudflare.com/r2/buckets/object-lifecycles/)に従い Dashboard / Wrangler / Cloudflare API でも管理できる。期限超過の既存オブジェクトも削除対象になるため、未承認のまま有効化しない。
 
 ## 6. ロールバック
