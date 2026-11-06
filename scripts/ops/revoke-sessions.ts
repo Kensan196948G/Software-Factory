@@ -36,6 +36,7 @@ const USAGE = `使い方: tsx scripts/ops/revoke-sessions.ts --db <DB名> --cuto
   --allow-active  有効なセッションがあっても続行する（既定は中止）
   --dry-run       検証だけ行う（既定）
   --yes           実際に削除する（--dry-run と同時指定は不可）
+  --correlation-id 監査の相関 ID（任意・200 文字以内）
 
 終了コード: 0=成功（dry-run 含む） / 2=ガード不成立で中止（DB は変更しない） / 1=想定外の失敗`;
 

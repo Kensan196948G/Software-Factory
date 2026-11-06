@@ -329,6 +329,68 @@ describe('revokeSessions（中止系: ガード不成立なら削除しない）
     expect(await sessionCount()).toBe(1);
     expect(await auditCount()).toBe(0);
   });
+
+  it('削除件数が検証と一致しないときは中止し、削除も監査も残さない（guard 7）', async () => {
+    // 最後の防衛（delete_count_mismatch）を回帰検知できるようにする。
+    // DELETE を無効化する行トリガで「検証時は 2 件、削除は 0 件」という競合を作る。
+    const { cutoff } = await seedExpiredSessions(2);
+    await query(
+      `create or replace function test_block_session_delete() returns trigger as $$
+       begin return null; end; $$ language plpgsql`,
+    );
+    await query('drop trigger if exists test_block_session_delete on session');
+    await query(
+      'create trigger test_block_session_delete before delete on session for each row execute function test_block_session_delete()',
+    );
+    try {
+      const outcome = await revokeSessions({
+        db: dbName,
+        cutoff,
+        expectCount: 2,
+        reason: REASON,
+        actor: ACTOR,
+        dryRun: false,
+      });
+
+      expect(outcome).toMatchObject({ ok: false, abortReason: 'delete_count_mismatch' });
+      expect(await sessionCount()).toBe(2);
+      expect(await auditCount()).toBe(0);
+    } finally {
+      await query('drop trigger if exists test_block_session_delete on session');
+      await query('drop function if exists test_block_session_delete()');
+    }
+  });
+
+  it('監査の追記に失敗したら削除もロールバックする（同一トランザクション）', async () => {
+    // 削除と監査が同一 Tx であることを、監査の失敗注入で固定する。
+    const { cutoff } = await seedExpiredSessions(2);
+    await query(
+      `create or replace function test_block_audit_insert() returns trigger as $$
+       begin raise exception 'test: audit insert blocked'; end; $$ language plpgsql`,
+    );
+    await query('drop trigger if exists test_block_audit_insert on audit_log');
+    await query(
+      'create trigger test_block_audit_insert before insert on audit_log for each row execute function test_block_audit_insert()',
+    );
+    try {
+      await expect(
+        revokeSessions({
+          db: dbName,
+          cutoff,
+          expectCount: 2,
+          reason: REASON,
+          actor: ACTOR,
+          dryRun: false,
+        }),
+      ).rejects.toThrow(/audit insert blocked/);
+
+      expect(await sessionCount()).toBe(2);
+      expect(await auditCount()).toBe(0);
+    } finally {
+      await query('drop trigger if exists test_block_audit_insert on audit_log');
+      await query('drop function if exists test_block_audit_insert()');
+    }
+  });
 });
 
 describe('CLI（scripts/ops/revoke-sessions.ts）', () => {

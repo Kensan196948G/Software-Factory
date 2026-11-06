@@ -94,11 +94,13 @@ pnpm ops:db:verify
 ## 8. テスト
 
 ```bash
-pnpm exec vitest run --config vitest.integration.config.ts tests/integration/session-revoke.test.ts
+# `local-run.mjs` 経由で TEST_DATABASE_URL 等を設定する（直接 vitest を叩くと接続設定が入らない）。
+node scripts/local-run.mjs vitest run --config vitest.integration.config.ts tests/integration/session-revoke.test.ts
 ```
 
 - 正常系: 削除件数の一致、監査行が 1 行だけ増えること、監査ハッシュ連鎖（`db:verify` 相当）が OK。
 - 中止系: DB 名不一致・件数不一致・上限超過・cutoff 不正（形式・未来）・有効セッション・cutoff 以後のセッションで、削除も監査追記もしない。
+- 失敗注入: DELETE を止めたとき（`delete_count_mismatch`）と、監査 INSERT を失敗させたとき（削除もロールバック）を固定している。
 - CLI: `--yes` を付けない既定が dry-run であること、ガード不成立が終了コード 2 であること。
 
 ## 9. 未確認・制約
