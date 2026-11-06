@@ -4,7 +4,7 @@
 
 ## 1. 事象
 
-- 2026-11-06 11:50:50 JST、`mirai-sf-autofollow.service` が `action=failed exit=1` で終了した。`c1edde3`（#104 / #105 / #106）への追従が失敗し、**current は `0bb5a799` のまま**（配備はロールバックされ、稼働中の Staging は無傷）。
+- 2026-11-06 **11:40:42 JST に初回の失敗**、**11:50:50 JST にも失敗**し、`mirai-sf-autofollow.service` が `action=failed exit=1` で終了した。`c1edde3`（#104 / #105 / #106）への追従が失敗し、**current は `0bb5a799` のまま**（配備はロールバックされ、稼働中の Staging は無傷）。
 - 失敗時のログ（要約）:
 
 ```
@@ -18,10 +18,10 @@ Error: ERR_PNPM_IGNORED_BUILDS
 
 ## 2. 原因
 
-- このホストの pnpm は **12.18.0**（`/usr/bin/pnpm`）。
-- pnpm 11 で `onlyBuiltDependencies` / `ignoredBuiltDependencies` が廃止され、**pnpm 12 の `allowBuilds`（`pnpm-workspace.yaml` のマップ）** に置き換わった。`strictDepBuilds` の既定は `true` のため、未承認のビルドスクリプトがあると `pnpm install` は**非ゼロ終了**する。
-- リポジトリは `package.json` の `pnpm.onlyBuiltDependencies` だけを持っていたため、pnpm 12 では許可が効かず、`esbuild` / `workerd` のビルドが「未承認」と判定された。
-- 09:10 の配備が成功していたのは、その時点では依存の再インストールが実質不要だったため。11:50 は新規 release ディレクトリで `pnpm install --frozen-lockfile` が実行され、この判定に当たった。
+- `/usr/bin/pnpm` は **corepack のシム**で、実際の pnpm の版は実行時に解決される。2026-11-06 の実測では、**09:10 の配備は pnpm 10.26.2 で成功**し、**11:40 に corepack の `lastKnownGood.json` が 12.18.0 に更新**された後（12.18.0 のキャッシュ生成も 11:40）、**11:40:42 の実行から失敗**した。11:50:50 の失敗も同じ版で起きている。
+- pnpm 11 で `onlyBuiltDependencies` / `ignoredBuiltDependencies` が廃止され、**`allowBuilds`（`pnpm-workspace.yaml` のマップ）** に置き換わった（pnpm 11 の実機は未確認。pnpm 12.18.0 と 10.33.2 で実測）。`strictDepBuilds` の既定は `true` のため、未承認のビルドスクリプトがあると `pnpm install` は**非ゼロ終了**する。
+- リポジトリは `package.json` の `pnpm.onlyBuiltDependencies` だけを持っていたため、pnpm 12 はこれを**無視**し（`The 'pnpm' field … ignored "pnpm.onlyBuiltDependencies"` の警告）、`esbuild` / `workerd` のビルドが「未承認」と判定された。
+- **構造的な原因**: `package.json` に `packageManager` が無く、ホストの corepack の既定が変わると pnpm の版が変わる。版が固定されていないため、同一手順が前日/前回は通り、ある時点から通らなくなる。
 
 ## 3. 修正
 
@@ -51,9 +51,16 @@ Error: ERR_PNPM_IGNORED_BUILDS
 
 - pnpm のメジャー更新時に `pnpm-workspace.yaml` の `allowBuilds` と `package.json` の `pnpm.onlyBuiltDependencies` の**両方**を確認する。
 - 依存を追加してビルドスクリプトが必要になった場合は、`allowBuilds` に追加し、理由を本書へ追記する（無条件の全許可はしない）。
+- **版の固定（次バッチ）**: `package.json` に `packageManager` を置いて pnpm の版を固定する。ただし CI（`.github/workflows/ci.yml`）は `pnpm/action-setup` で `version: 10` を明示しているため、**CI の指定と同時に更新する**（先に片方だけ変えると CI が失敗する）。
+- **pnpm 12 の CI ジョブ（次バッチ）**: 現在の CI は pnpm 10 固定のため、今回の失敗環境（pnpm 12）を CI では検証できない。`pnpm install --frozen-lockfile` を pnpm 12 でも回すジョブを追加する。
 - 監視: autofollow の失敗は `mirai-sf-onfailure@mirai-sf-autofollow.service.service` が記録する（`~/.local/state/mirai-sf/alerts.jsonl`）。外部通知は未設定（N10 の残課題）。
 
 ## 7. 未確認
 
-- GitHub Actions の CI が使う pnpm の版（`package.json` に `packageManager` を置いていないため、ワークフローの設定に依存する）。`allowBuilds` は pnpm 10.26 以降でも解釈されるため、CI への影響は無い見込みだが、**CI の実測で確認する**。
-- 本番の release も同じホストの pnpm を使うため、本修正の前に本番 release を実行すると同じ失敗をする。本修正のマージ後に本番配備を行う。
+- pnpm 11 の実機での挙動（本ホストには無い）。pnpm 12.18.0 と 10.33.2 では実測済み。
+- 本番の release も同じホストの corepack の pnpm を使うため、本修正の前に本番 release を実行すると同じ失敗をする。本修正のマージ後に本番配備を行う。
+- 11:40:42 の初回失敗の時点で、他に同時実行された release があったか（journal では確認していない）。
+
+### 7-1. CI の pnpm 版（確認済み）
+
+- `.github/workflows/ci.yml` は `pnpm/action-setup` で `version: 10` を明示している。したがって CI は pnpm 10 で動作し、`allowBuilds` は 10.26 以降で解釈されるため今回の修正で壊れない（担当が pnpm 10.33.2 で実測）。**CI は今回の失敗環境（pnpm 12）を再現しない**点が残課題。
