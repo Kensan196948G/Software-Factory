@@ -13,13 +13,14 @@
 - 相関ID: レスポンスヘッダ `X-Correlation-Id`。監査ログに記録。
 - 楽観ロック: 更新系は `version` を要求。不一致は 409 `ERR-301`。
 - 環境名: `GET /healthz` と `GET /api/meta` の `environment` は `APP_ENV`（`development` / `test` / `staging` / `production`）の値。未指定・空なら `NODE_ENV` と同じ。不正な値は起動エラー。表示専用で、Cookie の Secure などセキュリティ挙動は `NODE_ENV` で決まる。
+- 認証状態: `GET /healthz` の `auth` は `mode`（`password` / `access`）、`jwtConfigured`、`headerTrustEnabled`、`allowlistConfigured`、`status`（`ready` / `misconfigured`）を返す。`misconfigured` は access モードで認証できる経路が無い（401 が続く）状態で、`AUTH_MODE=access` かつ JWT 未設定・ヘッダ信頼無効、または許可リストが空のときになる。team domain・AUD・メールアドレスは返さない。外形監視（`scripts/ops/healthcheck.mjs`）は `misconfigured` を失敗として扱う（Issue #102 の残リスク。2026-11-06）。
 - 冪等: `POST /api/requests` は `Idempotency-Key` ヘッダ。同じキー・同じ内容なら同じ依頼を返す。内容が違えば 409 `ERR-008`。
 
 ## 2. エンドポイント
 
 | #      | メソッド / パス                                      | 説明                                                                                                         | 権限                                                |
 | ------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------- |
-| —      | `GET /healthz`                                       | 稼働確認（DBレイテンシ・version・commit）                                                                    | なし                                                |
+| —      | `GET /healthz`                                       | 稼働確認（DBレイテンシ・version・commit・認証状態 `auth`）                                                   | なし                                                |
 | —      | `GET /readyz`                                        | 受付可能か（DB必須、503あり）                                                                                | なし                                                |
 | —      | `POST /api/auth/login`                               | ログイン                                                                                                     | なし（レート制限）                                  |
 | —      | `POST /api/auth/logout`                              | ログアウト                                                                                                   | 要ログイン                                          |

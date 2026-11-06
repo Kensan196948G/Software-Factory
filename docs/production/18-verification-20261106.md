@@ -47,7 +47,7 @@
 - 独立レビュー（第 2 回・PR head `cd8c09a`、読み取り専用の別担当）: **PASS-WITH-LIMITS（Critical 0 / High 0 / Medium 0 / Low 7）**。要求観点 (a)〜(i) をコード読取りと `loadConfig` プローブで確認し、CI run 42116689994（head 一致）の成功と、独立再実行（tsc 2 構成・eslint・unit 74/74）を照合した。Low の内訳と対応:
   - 対応した: 切り戻し手順（`17` §7）が本修正の配備後は誤りになる点、`APP_ENV` 未設定の限定条件が暗黙である点（`api.md` / `deployment.md`）、起動時テストの欠落（`NODE_ENV=production` × `APP_ENV` 明示で拒否・`APP_ENV=test` 明示で許可）、`config.ts` のコメント不整合 2 件、`setup-preview.mjs` が JWT 未設定のまま「ログイン全断」の conf を無言で作る点（警告と環境変数注入を追加）。
   - 残す: fail-closed は新規認証のみで既存 Cookie は TTL（既定 12h）内有効。失効は配備手順（`deployment.md` の切替手順 4）で行う。コードによる自動失効はしない。
-  - 残す: 本番で JWT が欠落しても `/healthz` は 200 を返すため、外形監視では「認証全断」を検知できない。監視項目の追加は別タスク（Batch 2 候補）。
+  - 残す: 本番で JWT が欠落しても `/healthz` は 200 を返すため、外形監視では「認証全断」を検知できない。監視項目の追加は別タスク（Batch 2 候補）。→ 2026-11-06 に対応: `/healthz` の `auth.status` を `scripts/ops/healthcheck.mjs` が確認し、`misconfigured` で失敗する（`docs/production/20` の第 2 バッチ候補 4）。
 - **未配備**: 本番・Staging の設定・サービス・DB は変更していない。配備するまで稼働中の挙動は変わらない。
 - 残り: 正規 JWT 経路で Staging の未登録メールを管理者として自動作成する点は未修正（別タスク）。→ §7 の別 PR で是正した（既定 off・opt-in 時も最小権限）。
 

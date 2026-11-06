@@ -169,6 +169,48 @@ export function isAccessAutoProvisionEnabled(cfg: Pick<AppConfig, 'accessAutoPro
   return true;
 }
 
+/** 外形監視に出す認証の状態。値（team domain・AUD・メール）は含めない。 */
+export interface AuthHealthStatus {
+  mode: AppConfig['authMode'];
+  /** JWT 検証が設定済みか（access モードかつ ACCESS_TEAM_DOMAIN / ACCESS_AUD がそろっている）。 */
+  jwtConfigured: boolean;
+  /** JWT 未設定時のヘッダ信頼 opt-in が実際に有効か。 */
+  headerTrustEnabled: boolean;
+  /** 許可するメール／ドメインが設定されているか（空なら JWT が通っても全員拒否になる）。 */
+  allowlistConfigured: boolean;
+  /** ready: 認証経路がある / misconfigured: 認証できる経路が無い（401 が続く状態）。 */
+  status: 'ready' | 'misconfigured';
+}
+
+/**
+ * 稼働中の API が「認証不能」かを外形監視から判別するための状態（Issue #102 の残リスク）。
+ * access モードで、JWT もヘッダ信頼も許可リストも無い場合は、どの経路でも 401 になるため misconfigured。
+ * password モードはアプリのログインで認証できるので常に ready（Access の設定は使わない）。
+ * 返すのは mode・真偽値・status だけで、team domain / AUD / メールアドレスは返さない。
+ */
+export function authHealthStatus(
+  cfg: Pick<
+    AppConfig,
+    | 'authMode'
+    | 'accessTeamDomain'
+    | 'accessAud'
+    | 'accessTrustEmailHeader'
+    | 'accessAllowedEmails'
+    | 'accessAllowedDomain'
+    | 'appEnv'
+    | 'isProduction'
+  >,
+): AuthHealthStatus {
+  const jwtConfigured = isAccessJwtEnabled(cfg);
+  const headerTrustEnabled = isAccessHeaderTrustEnabled(cfg);
+  const allowlistConfigured = cfg.accessAllowedEmails.length > 0 || Boolean(cfg.accessAllowedDomain);
+  if (cfg.authMode === 'password') {
+    return { mode: 'password', jwtConfigured, headerTrustEnabled, allowlistConfigured, status: 'ready' };
+  }
+  const status = (jwtConfigured || headerTrustEnabled) && allowlistConfigured ? 'ready' : 'misconfigured';
+  return { mode: 'access', jwtConfigured, headerTrustEnabled, allowlistConfigured, status };
+}
+
 /** 本番モードで JWT 検証なしのまま Access のヘッダを信頼しているときの警告文。問題なければ null。 */
 export function accessJwtStartupWarning(
   cfg: Pick<AppConfig, 'isProduction' | 'authMode' | 'accessTeamDomain' | 'accessAud'>,

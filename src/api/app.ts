@@ -4,7 +4,7 @@ import fastifyStatic from '@fastify/static';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { versionAssets } from './asset-version.js';
-import { config, isAccessJwtEnabled } from './config.js';
+import { authHealthStatus, config, isAccessJwtEnabled } from './config.js';
 import { ApiError, Errors, applySecurityHeaders, correlationId, sendError } from './http.js';
 import { ZodError, z } from 'zod';
 import { healthCheck } from './db.js';
@@ -276,6 +276,8 @@ export async function buildApp(
       commit: config.commitSha,
       environment: config.appEnv,
       db: db.ok ? { ok: true, latencyMs: db.latencyMs } : { ok: false, error: db.error },
+      // 認証不能（401 が続く状態）を外形監視で検知するための追加情報。秘密の値は返さない。
+      auth: authHealthStatus(config),
       now: new Date().toISOString(),
     };
   });

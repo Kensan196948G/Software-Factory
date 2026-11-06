@@ -221,12 +221,14 @@ DBの監査行は追記のみで消さない（アーカイブは外部コピー
 | 2   | `status=ok` かつ `db.ok=true`                                                                  | exit 1（failed）       |
 | 3   | `environment=staging`                                                                          | exit 1（failed）       |
 | 4   | `/healthz` の `commit` が `~/.local/share/mirai-sf/current/release.env` の `COMMIT_SHA` と一致 | exit 1（failed）       |
-| 5   | （任意）`git -C <repo> rev-parse origin/main` と一致（release 反映漏れの検知）                 | warning のみ（exit 0） |
+| 5   | `/healthz` の `auth.status=ready`（`misconfigured` は認証不能。HTTP 200 でも失敗）              | exit 1（failed）       |
+| 6   | （任意）`git -C <repo> rev-parse origin/main` と一致（release 反映漏れの検知）                 | warning のみ（exit 0） |
 
-- 5 は `git fetch` をしない。`origin/main` は最後に fetch した値なので、古いと誤警告することがある。fetch 後に再実行して解消を確認する。
+- 5 は「JWT 未設定で Access ヘッダ信頼も無効（＝401 が続く）」状態を、HTTP 200 / `status=ok` のままでも検知するための確認（Issue #102 の残リスク）。`auth` は `mode` / `jwtConfigured` / `headerTrustEnabled` / `allowlistConfigured` / `status` だけで、team domain・AUD・メールアドレスは含まない。`auth` が応答に無い場合は警告のみ（API と監視の版ずれの過渡期を許容し、`misconfigured` だけを失敗にする）。本番も同じスクリプトを `MIRAI_SF_HEALTH_ENV=production` で使う。
+- 6 は `git fetch` をしない。`origin/main` は最後に fetch した値なので、古いと誤警告することがある。fetch 後に再実行して解消を確認する。
 - 失敗すると oneshot unit が `failed` になり、`systemctl --user --failed` と `journalctl --user -u mirai-sf-healthcheck` で確認できる。timer は止まらず5分ごとに再試行し、復旧すると `復旧: 連続 N 回の失敗から回復しました` の1行を出す。
 - 状態（連続失敗数・最終失敗理由・最終成功時刻・warning）は `~/.local/state/mirai-sf/healthcheck.json`（0600）に残す。監視自体の状態ファイルであり、秘密値は含めない。
-- 秘密情報は出力しない。`preview.conf`（`DATABASE_URL` など）は読まず、DB にも触らない。`/healthz` の本文はログへ出さず、確認済みの項目（`status` / `environment` / `db.ok` / `commit`）だけを出す。`with-env.mjs` と同じく設定値は表示しない。URL は資格情報・クエリを落として出す。
+- 秘密情報は出力しない。`preview.conf`（`DATABASE_URL` など）は読まず、DB にも触らない。`/healthz` の本文はログへ出さず、確認済みの項目（`status` / `environment` / `db.ok` / `commit` / `auth` の `mode`・真偽値・`status`）だけを出す。`with-env.mjs` と同じく設定値は表示しない。URL は資格情報・クエリを落として出す。
 - 実行元は `current` ではなく常設のチェックアウト（`~/Projects/Software-Factory-Project` → `/mnt/storage/Software-Factory/Software-Factory`）。監視がリリースのデプロイに依存しないため。リポジトリの場所が違う場合は drop-in（`~/.config/systemd/user/mirai-sf-healthcheck.service.d/`）で `WorkingDirectory` と `ExecStart` を差し替える。
 
 有効化（稼働中の API・tunnel・worker は止めない）:
