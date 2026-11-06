@@ -100,11 +100,11 @@ cloudflared tunnel route dns --overwrite-dns mirai-sf sf.mirai-dx-platform.com
 3. `journalctl --user -u mirai-sf-api` に warn がないこと、Access ログイン後の画面表示、Tunnel を経由しない `127.0.0.1:8782` への `Cf-Access-Authenticated-User-Email` 付きリクエストが `/api/auth/me` で 401 になることを確認する。
 4. **fail-closed 版を配備するときは、配備前に発行済みのセッションを失効させる**（`docs/production/17` §7）。fail-closed は「JWT のない新規リクエスト」を止めるが、修正前にヘッダ信頼で発行された Cookie は `SESSION_TTL_HOURS`（既定 12 時間）まで有効なため。
 5. **未登録利用者の自動作成を廃止する版を配備するときは、配備前に `app_user` / `user_role` を棚卸しする**（Issue #102 の完了条件 3）。旧実装は staging で初回ログイン時に `is_admin=true`・3 役（requester / desk / approver）で作成していたため、**既存の行は自動では是正されない**。
-   1. 読取りで棚卸しする（メールアドレスは記録・PR・ログへ書かない）: `select is_admin, count(*) from app_user group by 1;` と `select role, count(*) from user_role group by 1;`
+   1. 読取りで棚卸しする（メールアドレスは記録・PR・ログへ書かない）。`pnpm ops:user-inventory --db <DB名>` で**件数だけ**を表示できる（総数・管理者数・無効数・役割別・作成月別・「管理者かつ3役」の数）。個別の確認が必要なときだけ `--out /path/inventory.csv` を付け、**0600** の CSV をローカルで読む（標準出力にはメールアドレスを出さない。既存ファイルは `--force` なしでは上書きしない）。従来の SQL: `select is_admin, count(*) from app_user group by 1;` と `select role, count(*) from user_role group by 1;`
    2. 正規の管理者を所有者が特定する。記録には**件数と作成日だけ**を残す。
    3. 不要な管理者・役割は管理API（`/api/admin/users`）で降格・無効化する（監査に残る）。**直接 SQL で `app_user.is_admin` や `user_role` を書き換えない**（監査が残らない）。
    4. 再度 1 を実行し、期待どおりになったことを記録する。
-   - 2026-11-06 10:22 JST の Staging 実測: `app_user` 2 件（いずれも `is_admin=true`）、`user_role` は requester / desk / approver が各 2 件、作成日は 2026-10-28。どちらが正規の管理者かは未判定（所有者の確認が必要）。
+   - 2026-11-06 18:35 JST の Staging 実測（`ops:user-inventory --db mirai_sf`）: 合計 2・管理者 2・無効 0・**管理者かつ3役 2**、役割は approver / desk / requester が各 2、作成月は 2026-10。どちらが正規の管理者かは未判定（所有者の確認が必要）。
    - `ACCESS_AUTO_PROVISION` は既定 off。配備後、未登録のメールは 401 になる（staging / production では opt-in 自体が起動エラー）。
 
 切り戻し: 2つの変数を削除して再起動する。ただし 2026-11-06 以降は **fail-closed**（ヘッダ信頼なし）なので、2 変数を外すと誰もログインできなくなる。staging / production では `ACCESS_TRUST_EMAIL_HEADER=1` による回避は起動エラーになる。戻す必要がある場合は、先に JWT の 2 項目を再設定するか、旧セッションを失効したうえで Access を外した状態を所有者へ申告する（`docs/production/17` §7）。
