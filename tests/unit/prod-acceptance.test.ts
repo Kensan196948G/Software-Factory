@@ -17,7 +17,14 @@ function goodFacts(overrides: Partial<AcceptanceFacts> = {}): AcceptanceFacts {
     unit: { activeState: 'active', result: 'success', nRestarts: '0' },
     fiveXxCount: 0,
     db: { appUser: 2, auditLog: 9, request: 0, session: 0, migration: '0016_x' },
-    healthcheck: { ok: true, environment: 'production', healthCommit: SHA, authStatus: 'ready', warnings: [] },
+    healthcheck: {
+      ok: true,
+      environment: 'production',
+      healthCommit: SHA,
+      authStatus: 'ready',
+      warnings: [],
+      checkedAt: new Date().toISOString(),
+    },
     offsite: { ok: true, newestAgeMinutes: 12.3, problems: [] },
     ...overrides,
   };
@@ -74,7 +81,14 @@ describe('evaluateAcceptance', () => {
 
   it('healthcheck の commit が古ければ FAIL', () => {
     const facts = goodFacts();
-    facts.healthcheck = { ok: true, environment: 'production', healthCommit: 'c'.repeat(40), authStatus: 'ready', warnings: [] };
+    facts.healthcheck = {
+      ok: true,
+      environment: 'production',
+      healthCommit: 'c'.repeat(40),
+      authStatus: 'ready',
+      warnings: [],
+      checkedAt: new Date().toISOString(),
+    };
     const report = evaluateAcceptance(facts);
     expect(report.ok).toBe(false);
     expect(report.checks.find((c) => c.name.includes('healthCommit'))?.ok).toBe(false);
@@ -82,7 +96,14 @@ describe('evaluateAcceptance', () => {
 
   it('auth.status が misconfigured なら FAIL', () => {
     const facts = goodFacts();
-    facts.healthcheck = { ok: true, environment: 'production', healthCommit: SHA, authStatus: 'misconfigured', warnings: [] };
+    facts.healthcheck = {
+      ok: true,
+      environment: 'production',
+      healthCommit: SHA,
+      authStatus: 'misconfigured',
+      warnings: [],
+      checkedAt: new Date().toISOString(),
+    };
     const report = evaluateAcceptance(facts);
     expect(report.ok).toBe(false);
     expect(report.checks.find((c) => c.name.includes('auth.status'))?.ok).toBe(false);
@@ -94,6 +115,59 @@ describe('evaluateAcceptance', () => {
     const report = evaluateAcceptance(facts);
     expect(report.ok).toBe(false);
     expect(report.checks.find((c) => c.name.startsWith('R2:'))?.ok).toBe(false);
+  });
+
+
+  it('auth 状態が未取得（null）なら FAIL（誤って PASS にしない）', () => {
+    const facts = goodFacts();
+    facts.healthcheck = {
+      ok: true,
+      environment: 'production',
+      healthCommit: SHA,
+      authStatus: null,
+      warnings: [],
+      checkedAt: new Date().toISOString(),
+    };
+    const report = evaluateAcceptance(facts);
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((c) => c.name.includes('auth.status が ready'))?.ok).toBe(false);
+  });
+
+  it('auth 関連の警告があれば FAIL', () => {
+    const facts = goodFacts();
+    facts.healthcheck = {
+      ok: true,
+      environment: 'production',
+      healthCommit: SHA,
+      authStatus: 'ready',
+      warnings: ['auth が healthz にありません（API と監視の版ずれ）'],
+      checkedAt: new Date().toISOString(),
+    };
+    const report = evaluateAcceptance(facts);
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((c) => c.name.includes('auth 関連の警告'))?.ok).toBe(false);
+  });
+
+  it('healthcheck の状態が古ければ FAIL', () => {
+    const facts = goodFacts();
+    facts.healthcheck = {
+      ok: true,
+      environment: 'production',
+      healthCommit: SHA,
+      authStatus: 'ready',
+      warnings: [],
+      checkedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    };
+    const report = evaluateAcceptance(facts);
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((c) => c.name.includes('状態が新しい'))?.ok).toBe(false);
+  });
+
+  it('DB を読めなければ FAIL', () => {
+    const facts = goodFacts({ db: null, dbError: 'connection refused' });
+    const report = evaluateAcceptance(facts);
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((c) => c.name.startsWith('DB:'))?.ok).toBe(false);
   });
 
   it('http エラーでも例外にせず FAIL にする', () => {
@@ -144,6 +218,11 @@ describe('CLI（scripts/ops/prod-acceptance.ts）', () => {
 
   it('SHA の形式が不正なら exit 2', () => {
     const res = run(['not-a-sha']);
+    expect(res.status).toBe(2);
+  });
+
+  it('未知のオプションは exit 2', () => {
+    const res = run(['--bogus', 'a'.repeat(40)]);
     expect(res.status).toBe(2);
   });
 });

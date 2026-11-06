@@ -132,7 +132,7 @@ journalctl --user -u mirai-sf-prod-backup -u mirai-sf-prod-restore-drill -n 40 -
 
 ## 4. 受入チェックリスト（本番切替後）
 
-**機械的に確認できる項目（1〜3・9 の一部）は `pnpm ops:prod:acceptance <SHA>` でまとめて検証できる**（2026-11-06 追加）。healthz/readyz・commit 一致・unit 状態・起動以降の 5xx・healthcheck の状態・R2 の直近世代を一度に確認し、PASS 以外は exit 1 を返す。下表の 4〜8（人の操作・業務フロー）は従来どおり個別に実施する。
+**機械的に確認できる項目（1・2・9 の一部）は `pnpm ops:prod:acceptance <SHA>` でまとめて検証できる**（2026-11-06 追加）。healthz/readyz・commit 一致・unit 状態・起動以降の 5xx・healthcheck の状態・R2 の直近世代を一度に確認し、全項目 PASS なら exit 0、FAIL があれば exit 1、引数不正は exit 2 を返す。下表の 4〜8（人の操作・業務フロー）は従来どおり個別に実施する。
 
 | #   | 確認                                       | 期待                                                        |
 | --- | ------------------------------------------ | ----------------------------------------------------------- |

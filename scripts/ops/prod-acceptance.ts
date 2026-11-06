@@ -24,6 +24,9 @@ import { checkOffsiteStatus } from './offsite-status.js';
 
 export const USAGE = '使い方: tsx scripts/ops/prod-acceptance.ts <commit-sha> [--json]';
 
+/** healthcheck の状態ファイルがこの分数より古ければ FAIL（timer は 5 分間隔）。 */
+export const HEALTHCHECK_MAX_AGE_MINUTES = 20;
+
 export interface CheckResult {
   name: string;
   ok: boolean;
@@ -45,12 +48,14 @@ export interface AcceptanceFacts {
   unit: { activeState: string | null; result: string | null; nRestarts: string | null; error?: string };
   fiveXxCount: number | null;
   db: { appUser: number; auditLog: number; request: number; session: number; migration: string } | null;
+  dbError?: string;
   healthcheck: {
     ok: boolean;
     environment: string | null;
     healthCommit: string | null;
     authStatus: string | null;
     warnings: string[];
+    checkedAt: string | null;
   } | null;
   offsite: { ok: boolean; newestAgeMinutes: number | null; problems: string[] };
 }
@@ -114,9 +119,27 @@ export function evaluateAcceptance(facts: AcceptanceFacts): { ok: boolean; check
     hc === null ? '状態ファイルが無い' : `healthCommit=${short(hc.healthCommit)} expected=${facts.expectedSha}`,
   );
   add(
-    'healthcheck: auth.status が misconfigured でない',
-    hc !== null && hc.authStatus !== 'misconfigured',
-    hc === null ? '状態ファイルが無い' : `auth=${short(hc.authStatus)}`,
+    'healthcheck: auth.status が ready',
+    hc !== null && hc.authStatus === 'ready',
+    hc === null ? '状態ファイルが無い' : `auth=${short(hc.authStatus)}（未取得なら FAIL）`,
+  );
+  const authWarning = hc?.warnings.find((w) => w.includes('auth')) ?? null;
+  add(
+    'healthcheck: auth 関連の警告が無い',
+    authWarning === null,
+    authWarning ?? 'なし',
+  );
+  const checkedAt = hc?.checkedAt ? Date.parse(hc.checkedAt) : NaN;
+  const ageMin = Number.isNaN(checkedAt) ? null : Math.round(((Date.now() - checkedAt) / 60000) * 10) / 10;
+  add(
+    `healthcheck: 状態が新しい（${HEALTHCHECK_MAX_AGE_MINUTES} 分以内）`,
+    ageMin !== null && ageMin >= 0 && ageMin <= HEALTHCHECK_MAX_AGE_MINUTES,
+    ageMin === null ? 'checkedAt が無い・読めない' : `${ageMin} 分前`,
+  );
+  add(
+    'DB: READ ONLY で件数を取得できる',
+    facts.db !== null,
+    facts.db === null ? `取得できません（${facts.dbError ?? '原因不明'}）` : `app_user=${facts.db.appUser} audit_log=${facts.db.auditLog} migration=${facts.db.migration}`,
   );
 
   add(
@@ -142,7 +165,7 @@ function httpGet(url: string, timeoutMs: number): { status: number; body: unknow
   try {
     const out = execFileSync(
       'curl',
-      ['-sS', '-m', String(Math.ceil(timeoutMs / 1000)), '-w', '\n%{http_code}', url],
+      ['-sS', '--noproxy', '*', '-m', String(Math.ceil(timeoutMs / 1000)), '-w', '\n%{http_code}', url],
       { encoding: 'utf8', timeout: timeoutMs + 1000 },
     );
     const idx = out.lastIndexOf('\n');
@@ -191,7 +214,7 @@ function countFiveXx(unit: string, since: string): number | null {
   }
 }
 
-function dbCounts(db: string): AcceptanceFacts['db'] {
+function dbCountsWithError(db: string): { db: AcceptanceFacts['db']; error?: string } {
   const sql =
     "begin read only; select 'app_user='||(select count(*) from app_user)||' audit_log='||(select count(*) from audit_log)||' request='||(select count(*) from request)||' session='||(select count(*) from session)||' migration='||(select max(version) from schema_migrations); rollback;";
   try {
@@ -200,16 +223,18 @@ function dbCounts(db: string): AcceptanceFacts['db'] {
       timeout: 20_000,
     });
     const m = /app_user=(\d+) audit_log=(\d+) request=(\d+) session=(\d+) migration=(\S+)/.exec(out);
-    if (!m) return null;
+    if (!m) return { db: null, error: '出力を解釈できません' };
     return {
-      appUser: Number(m[1]),
-      auditLog: Number(m[2]),
-      request: Number(m[3]),
-      session: Number(m[4]),
-      migration: m[5] ?? '-',
+      db: {
+        appUser: Number(m[1]),
+        auditLog: Number(m[2]),
+        request: Number(m[3]),
+        session: Number(m[4]),
+        migration: m[5] ?? '-',
+      },
     };
-  } catch {
-    return null;
+  } catch (err) {
+    return { db: null, error: (err as Error).message.slice(0, 120) };
   }
 }
 
@@ -224,6 +249,7 @@ function readHealthcheck(stateDir: string): AcceptanceFacts['healthcheck'] {
       healthCommit: typeof d.healthCommit === 'string' ? d.healthCommit : null,
       authStatus: typeof d.authStatus === 'string' ? d.authStatus : null,
       warnings: Array.isArray(d.warnings) ? (d.warnings as string[]) : [],
+      checkedAt: typeof d.checkedAt === 'string' ? d.checkedAt : null,
     };
   } catch {
     return null;
@@ -251,6 +277,7 @@ export function collectFacts(expectedSha: string, options: CollectOptions = {}):
   const sys = systemctlShow(unit, ['ActiveState', 'Result', 'NRestarts', 'ActiveEnterTimestamp']);
   const since = sys.ActiveEnterTimestamp || '-1 day';
   const fiveXx = countFiveXx(unit, since);
+  const dbResult = dbCountsWithError(db);
   const offsite = checkOffsiteStatus({ backupDir, count: 2, maxAgeMinutes: 90 });
 
   return {
@@ -264,7 +291,8 @@ export function collectFacts(expectedSha: string, options: CollectOptions = {}):
       error: sys.error,
     },
     fiveXxCount: fiveXx,
-    db: dbCounts(db),
+    db: dbResult.db,
+    dbError: dbResult.error,
     healthcheck: readHealthcheck(stateDir),
     offsite: {
       ok: offsite.ok,
@@ -282,23 +310,58 @@ if (invokedDirectly) {
     process.stdout.write(`${USAGE}\n`);
     process.exit(0);
   }
+  const unknown = args.filter((a) => a.startsWith('-') && a !== '--json' && a !== '--help' && a !== '-h');
+  if (unknown.length > 0) {
+    process.stderr.write(`不明なオプションです: ${unknown.join(' ')}\n${USAGE}\n`);
+    process.exit(2);
+  }
   const json = args.includes('--json');
-  const sha = args.find((a) => !a.startsWith('--'));
-  if (!sha || !/^[0-9a-f]{7,40}$/.test(sha)) {
+  const rawSha = args.find((a) => !a.startsWith('-'));
+  if (!rawSha || !/^[0-9a-f]{7,40}$/.test(rawSha)) {
     process.stderr.write(`commit SHA を指定してください。\n${USAGE}\n`);
     process.exit(2);
+  }
+  // 短縮 SHA はリポジトリで解決する（解決できなければ usage エラー）。
+  let sha = rawSha;
+  if (sha.length < 40) {
+    try {
+      sha = execFileSync('git', ['rev-parse', '--verify', `${sha}^{commit}`], { encoding: 'utf8' }).trim();
+    } catch {
+      process.stderr.write(`SHA を解決できません: ${rawSha}\n`);
+      process.exit(2);
+    }
   }
   try {
     const facts = collectFacts(sha);
     const report = evaluateAcceptance(facts);
     if (json) {
-      process.stdout.write(`${JSON.stringify({ ...report, facts }, null, 2)}\n`);
+      const curated = {
+        expectedSha: facts.expectedSha,
+        healthz: {
+          httpStatus: facts.healthz.httpStatus,
+          status: facts.healthz.body?.status ?? null,
+          environment: facts.healthz.body?.environment ?? null,
+          commit: facts.healthz.body?.commit ?? null,
+          dbOk: facts.healthz.body?.db?.ok ?? null,
+        },
+        readyz: { httpStatus: facts.readyz.httpStatus, status: facts.readyz.body?.status ?? null },
+        unit: facts.unit,
+        fiveXxCount: facts.fiveXxCount,
+        db: facts.db,
+        dbError: facts.dbError ?? null,
+        healthcheck: facts.healthcheck,
+        offsite: facts.offsite,
+      };
+      process.stdout.write(`${JSON.stringify({ ...report, facts: curated }, null, 2)}\n`);
     } else {
       process.stdout.write(`${formatChecks(report)}\n`);
       if (facts.db) {
         process.stdout.write(
           `DB: app_user=${facts.db.appUser} audit_log=${facts.db.auditLog} request=${facts.db.request} session=${facts.db.session} migration=${facts.db.migration}\n`,
         );
+      }
+      if (facts.healthcheck?.warnings.length) {
+        process.stdout.write(`healthcheck の警告: ${facts.healthcheck.warnings.join(' / ')}\n`);
       }
     }
     process.exit(report.ok ? 0 : 1);
