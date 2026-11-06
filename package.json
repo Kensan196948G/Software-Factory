@@ -52,6 +52,7 @@
     "bootstrap:local": "node scripts/bootstrap-local.mjs",
     "ops:prod:offsite-drill": "bash scripts/ops/prod-offsite-drill.sh",
     "ops:prod:offsite-status": "tsx scripts/ops/offsite-status.ts",
+    "ops:prod:acceptance": "tsx scripts/ops/prod-acceptance.ts",
     "ops:slo": "node scripts/ops/measure-slo.mjs",
     "ops:rpo-report": "node scripts/ops/rpo-report.mjs",
     "ops:repo-check": "node scripts/ops/repo-onboarding-check.mjs",
