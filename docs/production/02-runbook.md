@@ -134,6 +134,15 @@ journalctl --user -u mirai-sf-prod-backup -u mirai-sf-prod-restore-drill -n 40 -
 
 **機械的に確認できる項目（1・2・9 の一部）は `pnpm ops:prod:acceptance <SHA>` でまとめて検証できる**（2026-11-06 追加）。healthz/readyz・commit 一致・unit 状態・起動以降の 5xx・healthcheck の状態・R2 の直近世代を一度に確認し、全項目 PASS なら exit 0、FAIL があれば exit 1、引数不正は exit 2 を返す。下表の 4〜8（人の操作・業務フロー）は従来どおり個別に実施する。
 
+**Staging でも同じ検査を使える**（本番前の事前確認。Staging は R2 送信の対象外なので `--skip-offsite`）:
+
+```bash
+pnpm ops:prod:acceptance <SHA> --base-url http://127.0.0.1:8782 --db mirai_sf \
+  --unit mirai-sf-api.service --state-dir ~/.local/state/mirai-sf \
+  --expect-environment staging --skip-offsite
+```
+
+
 | #   | 確認                                       | 期待                                                        |
 | --- | ------------------------------------------ | ----------------------------------------------------------- |
 | 1   | `GET /healthz`                             | 200 / `status=ok` / `db.ok=true` / `environment=production` |

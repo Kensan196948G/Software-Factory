@@ -2,16 +2,16 @@
 /**
  * 本番リリース直後の受入を 1 コマンドで確認する（読み取り専用）。
  *
- *   tsx scripts/ops/prod-acceptance.ts <commit-sha> [--json]
+ *   tsx scripts/ops/prod-acceptance.ts <commit-sha> [options]
  *
- * 確認する内容（すべて読み取り）:
- *   1. /healthz: HTTP 200・status=ok・environment=production・commit が対象 SHA と一致・db.ok
+ * 確認する内容（すべて読み取り。本番と Staging の両方で使える）:
+ *   1. /healthz: HTTP 200・status=ok・environment が期待値・commit が対象 SHA と一致・db.ok
  *   2. /readyz: HTTP 200・status=ready
- *   3. prod-api unit: active・Result=success・NRestarts=0
+ *   3. API unit: active・Result=success・NRestarts=0
  *   4. journal: unit 起動以降の 5xx が 0 件
- *   5. DB（READ ONLY）: 件数と schema_migrations の最大を記録（合否には使わない。変化の検知用）
- *   6. healthcheck の状態ファイル: ok=true・environment=production・healthCommit が対象 SHA・auth.status が misconfigured でない
- *   7. オフサイト（R2）: 直近 2 世代に r2.json があり size/SHA-256 が一致（offsite-status.ts を再利用）
+ *   5. DB（READ ONLY）: 読めること・件数と schema_migrations の最大を記録
+ *   6. healthcheck の状態ファイル: ok・environment・healthCommit 一致・auth.status=ready・auth 警告なし・鮮度
+ *   7. オフサイト（R2）: 直近 2 世代に r2.json があり size/SHA-256 が一致（--skip-offsite で省略可。本番では不可）
  *
  * 終了コード: 0=全 PASS / 1=FAIL あり / 2=引数不正
  * 秘密・個人情報・接続文字列は出力しない（commit・件数・時刻だけ）。
@@ -22,7 +22,16 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { checkOffsiteStatus } from './offsite-status.js';
 
-export const USAGE = '使い方: tsx scripts/ops/prod-acceptance.ts <commit-sha> [--json]';
+export const USAGE = [
+  '使い方: tsx scripts/ops/prod-acceptance.ts <commit-sha> [options]',
+  '  --base-url <url>            API のベース URL（既定: http://127.0.0.1:8783 / env MIRAI_SF_PROD_BASE_URL）',
+  '  --db <name>                 件数を確認する DB（既定: mirai_sf_prod / env MIRAI_SF_PROD_DB）',
+  '  --unit <name>               対象の systemd unit（既定: mirai-sf-prod-api.service / env MIRAI_SF_PROD_UNIT）',
+  '  --state-dir <dir>           healthcheck.json と backups のあるディレクトリ（既定: ~/.local/state/mirai-sf-prod）',
+  '  --expect-environment <name> 期待する environment（既定: production。Staging では staging）',
+  '  --skip-offsite             R2 送信対象でない環境でオフサイト検査を省略する',
+  '  --json                     機械可読の JSON で出力する',
+].join('\n');
 
 /** healthcheck の状態ファイルがこの分数より古ければ FAIL（timer は 5 分間隔）。 */
 export const HEALTHCHECK_MAX_AGE_MINUTES = 20;
@@ -43,6 +52,9 @@ export interface HealthzBody {
 
 export interface AcceptanceFacts {
   expectedSha: string;
+  expectedEnvironment: string;
+  /** R2 送信対象でない環境（Staging など）では true。 */
+  skipOffsite: boolean;
   healthz: { httpStatus: number; body: HealthzBody | null; error?: string };
   readyz: { httpStatus: number; body: { status?: unknown } | null; error?: string };
   unit: { activeState: string | null; result: string | null; nRestarts: string | null; error?: string };
@@ -78,8 +90,8 @@ export function evaluateAcceptance(facts: AcceptanceFacts): { ok: boolean; check
     `http=${hz.httpStatus} status=${short(hz.body?.status)}${hz.error ? ` error=${hz.error}` : ''}`,
   );
   add(
-    'healthz: environment=production',
-    hz.body?.environment === 'production',
+    `healthz: environment=${facts.expectedEnvironment}`,
+    hz.body?.environment === facts.expectedEnvironment,
     `environment=${short(hz.body?.environment)}`,
   );
   add(
@@ -96,7 +108,7 @@ export function evaluateAcceptance(facts: AcceptanceFacts): { ok: boolean; check
   );
 
   add(
-    'prod-api unit: active / success / NRestarts=0',
+    'API unit: active / success / NRestarts=0',
     facts.unit.activeState === 'active' && facts.unit.result === 'success' && facts.unit.nRestarts === '0',
     `active=${short(facts.unit.activeState)} result=${short(facts.unit.result)} nRestarts=${short(facts.unit.nRestarts)}${facts.unit.error ? ` error=${facts.unit.error}` : ''}`,
   );
@@ -109,8 +121,8 @@ export function evaluateAcceptance(facts: AcceptanceFacts): { ok: boolean; check
 
   const hc = facts.healthcheck;
   add(
-    'healthcheck: ok=true / environment=production',
-    hc !== null && hc.ok === true && hc.environment === 'production',
+    `healthcheck: ok=true / environment=${facts.expectedEnvironment}`,
+    hc !== null && hc.ok === true && hc.environment === facts.expectedEnvironment,
     hc === null ? '状態ファイルが無い' : `ok=${hc.ok} environment=${short(hc.environment)}`,
   );
   add(
@@ -142,19 +154,23 @@ export function evaluateAcceptance(facts: AcceptanceFacts): { ok: boolean; check
     facts.db === null ? `取得できません（${facts.dbError ?? '原因不明'}）` : `app_user=${facts.db.appUser} audit_log=${facts.db.auditLog} migration=${facts.db.migration}`,
   );
 
-  add(
-    'R2: 直近世代の r2.json と size/SHA-256 が一致',
-    facts.offsite.ok,
-    facts.offsite.ok
-      ? `最新の記録 ${facts.offsite.newestAgeMinutes ?? '-'} 分前`
-      : facts.offsite.problems.join(' / ') || 'NG',
-  );
+  if (facts.skipOffsite) {
+    add('R2: 直近世代の r2.json と size/SHA-256 が一致', true, 'スキップ（R2 送信対象でない環境）');
+  } else {
+    add(
+      'R2: 直近世代の r2.json と size/SHA-256 が一致',
+      facts.offsite.ok,
+      facts.offsite.ok
+        ? `最新の記録 ${facts.offsite.newestAgeMinutes ?? '-'} 分前`
+        : facts.offsite.problems.join(' / ') || 'NG',
+    );
+  }
 
   return { ok: checks.every((c) => c.ok), checks };
 }
 
 export function formatChecks(report: { ok: boolean; checks: CheckResult[] }): string {
-  const lines = [`本番受入: ${report.ok ? 'PASS' : 'FAIL'}`];
+  const lines = [`受入: ${report.ok ? 'PASS' : 'FAIL'}`];
   for (const c of report.checks) {
     lines.push(`${c.ok ? 'PASS' : 'FAIL'}  ${c.name}（${c.detail}）`);
   }
@@ -179,7 +195,9 @@ function httpGet(url: string, timeoutMs: number): { status: number; body: unknow
     }
     return { status, body };
   } catch (err) {
-    return { status: 0, body: null, error: (err as Error).message.slice(0, 120) };
+    // curl のエラー文字列は URL（資格情報を含み得る）を保持するため、固定文言だけを返す。
+    const code = (err as { status?: number }).status;
+    return { status: 0, body: null, error: code === undefined ? '取得できませんでした' : `取得できませんでした（curl exit=${code}）` };
   }
 }
 
@@ -234,7 +252,9 @@ function dbCountsWithError(db: string): { db: AcceptanceFacts['db']; error?: str
       },
     };
   } catch (err) {
-    return { db: null, error: (err as Error).message.slice(0, 120) };
+    // psql のエラーは conninfo（password を含み得る）を保持するため、固定文言だけを返す。
+    const code = (err as { status?: number }).status;
+    return { db: null, error: code === undefined ? '取得できませんでした' : `取得できませんでした（psql exit=${code}）` };
   }
 }
 
@@ -262,6 +282,8 @@ export interface CollectOptions {
   backupDir?: string;
   db?: string;
   unit?: string;
+  expectedEnvironment?: string;
+  skipOffsite?: boolean;
 }
 
 /** 実環境から事実を集める（読み取りのみ）。 */
@@ -270,7 +292,9 @@ export function collectFacts(expectedSha: string, options: CollectOptions = {}):
   const stateDir = options.stateDir ?? process.env.MIRAI_SF_PROD_STATE_DIR ?? join(homedir(), '.local/state/mirai-sf-prod');
   const backupDir = options.backupDir ?? join(stateDir, 'backups');
   const db = options.db ?? process.env.MIRAI_SF_PROD_DB ?? 'mirai_sf_prod';
-  const unit = options.unit ?? 'mirai-sf-prod-api.service';
+  const unit = options.unit ?? process.env.MIRAI_SF_PROD_UNIT ?? 'mirai-sf-prod-api.service';
+  const expectedEnvironment = options.expectedEnvironment ?? 'production';
+  const skipOffsite = options.skipOffsite === true;
 
   const hz = httpGet(`${baseUrl}/healthz`, 10_000);
   const rz = httpGet(`${baseUrl}/readyz`, 10_000);
@@ -282,6 +306,8 @@ export function collectFacts(expectedSha: string, options: CollectOptions = {}):
 
   return {
     expectedSha,
+    expectedEnvironment,
+    skipOffsite,
     healthz: { httpStatus: hz.status, body: hz.body as HealthzBody | null, error: hz.error },
     readyz: { httpStatus: rz.status, body: rz.body as { status?: unknown } | null, error: rz.error },
     unit: {
@@ -304,39 +330,130 @@ export function collectFacts(expectedSha: string, options: CollectOptions = {}):
 
 const invokedDirectly =
   process.argv[1] !== undefined && import.meta.url === `file://${resolve(process.argv[1])}`;
+export interface CliArgs {
+  sha: string;
+  json: boolean;
+  baseUrl?: string;
+  db?: string;
+  unit?: string;
+  stateDir?: string;
+  expectedEnvironment: string;
+  skipOffsite: boolean;
+}
+
+/** CLI 引数を解釈する（純関数。テスト対象）。 */
+export function parseArgs(argv: string[]): CliArgs | { help: true } {
+  const values = new Map<string, string>();
+  const flags = new Set<string>();
+  const takesValue = new Set(['--base-url', '--db', '--unit', '--state-dir', '--expect-environment']);
+  const knownFlags = new Set(['--json', '--skip-offsite']);
+  let sha = '';
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === undefined) continue;
+    if (arg === '--help' || arg === '-h') return { help: true };
+    if (takesValue.has(arg)) {
+      const v = argv[i + 1];
+      if (!v || v.startsWith('--')) throw new Error(`${arg} に値がありません`);
+      values.set(arg, v);
+      i += 1;
+    } else if (knownFlags.has(arg)) {
+      flags.add(arg);
+    } else if (arg.startsWith('-')) {
+      throw new Error(`不明なオプションです: ${arg}`);
+    } else if (!sha) {
+      sha = arg;
+    } else {
+      throw new Error(`位置引数が多すぎます: ${arg}`);
+    }
+  }
+  if (!sha || !/^[0-9a-f]{7,40}$/.test(sha)) throw new Error('commit SHA を指定してください');
+  const expectedEnvironment = values.get('--expect-environment') ?? 'production';
+  if (!['development', 'test', 'staging', 'production'].includes(expectedEnvironment)) {
+    throw new Error('--expect-environment は development / test / staging / production のいずれかです');
+  }
+  const baseUrl = values.get('--base-url');
+  if (baseUrl !== undefined) {
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(baseUrl);
+    } catch {
+      throw new Error('--base-url は http(s) の URL で指定してください');
+    }
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      throw new Error('--base-url は http(s) のみ使えます');
+    }
+    // URL に資格情報やクエリを載せない（エラー・ログへの漏えいと取り違えを防ぐ）。
+    if (parsedUrl.username || parsedUrl.password) {
+      throw new Error('--base-url に資格情報（user:pass@）を含めないでください');
+    }
+    if (parsedUrl.search || parsedUrl.hash) {
+      throw new Error('--base-url にクエリ・フラグメントを含めないでください');
+    }
+  }
+  const db = values.get('--db');
+  if (db !== undefined && !/^[A-Za-z0-9_]{1,63}$/.test(db)) {
+    throw new Error('--db は DB 名（英数字と _）で指定してください（conninfo は不可）');
+  }
+  const unit = values.get('--unit');
+  if (unit !== undefined && !/^[A-Za-z0-9@._:-]{1,128}$/.test(unit)) {
+    throw new Error('--unit の形式が不正です');
+  }
+  const skipOffsite = flags.has('--skip-offsite');
+  // 本番で R2 検査を落とさない（誤用で受入が緩むのを防ぐ）。
+  if (skipOffsite && expectedEnvironment === 'production') {
+    throw new Error('--skip-offsite は本番（--expect-environment=production）では使えません');
+  }
+  return {
+    sha,
+    json: flags.has('--json'),
+    baseUrl,
+    db,
+    unit,
+    stateDir: values.get('--state-dir'),
+    expectedEnvironment,
+    skipOffsite,
+  };
+}
+
 if (invokedDirectly) {
-  const args = process.argv.slice(2);
-  if (args.includes('--help') || args.includes('-h')) {
-    process.stdout.write(`${USAGE}\n`);
-    process.exit(0);
-  }
-  const unknown = args.filter((a) => a.startsWith('-') && a !== '--json' && a !== '--help' && a !== '-h');
-  if (unknown.length > 0) {
-    process.stderr.write(`不明なオプションです: ${unknown.join(' ')}\n${USAGE}\n`);
-    process.exit(2);
-  }
-  const json = args.includes('--json');
-  const rawSha = args.find((a) => !a.startsWith('-'));
-  if (!rawSha || !/^[0-9a-f]{7,40}$/.test(rawSha)) {
-    process.stderr.write(`commit SHA を指定してください。\n${USAGE}\n`);
+  let args: CliArgs;
+  try {
+    const parsed = parseArgs(process.argv.slice(2));
+    if ('help' in parsed) {
+      process.stdout.write(`${USAGE}\n`);
+      process.exit(0);
+    }
+    args = parsed;
+  } catch (err) {
+    process.stderr.write(`${(err as Error).message}\n${USAGE}\n`);
     process.exit(2);
   }
   // 短縮 SHA はリポジトリで解決する（解決できなければ usage エラー）。
-  let sha = rawSha;
+  let sha = args.sha;
   if (sha.length < 40) {
     try {
       sha = execFileSync('git', ['rev-parse', '--verify', `${sha}^{commit}`], { encoding: 'utf8' }).trim();
     } catch {
-      process.stderr.write(`SHA を解決できません: ${rawSha}\n`);
+      process.stderr.write(`SHA を解決できません: ${args.sha}\n`);
       process.exit(2);
     }
   }
   try {
-    const facts = collectFacts(sha);
+    const facts = collectFacts(sha, {
+      baseUrl: args.baseUrl,
+      db: args.db,
+      unit: args.unit,
+      stateDir: args.stateDir,
+      expectedEnvironment: args.expectedEnvironment,
+      skipOffsite: args.skipOffsite,
+    });
     const report = evaluateAcceptance(facts);
-    if (json) {
+    if (args.json) {
       const curated = {
         expectedSha: facts.expectedSha,
+        expectedEnvironment: facts.expectedEnvironment,
+        skipOffsite: facts.skipOffsite,
         healthz: {
           httpStatus: facts.healthz.httpStatus,
           status: facts.healthz.body?.status ?? null,
