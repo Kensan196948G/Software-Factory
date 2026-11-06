@@ -120,3 +120,17 @@ pnpm ops:prod:acceptance <前のSHA>           # 戻した先の受入
 - 既存の管理者の棚卸しは未実施（`ops:user-inventory` で確認可能）。2026-11-06 の実測:
   - Staging（`mirai_sf`）: 2 件・管理者 2・管理者かつ3役 2（作成 2026-10）
   - 本番（`mirai_sf_prod`）: 2 件・管理者 1・管理者かつ3役 1・役割 approver 2 / desk 1 / requester 1（作成 2026-11）
+
+## 10. リハーサル（2026-11-06 20:33 JST・Staging で実施）
+
+本手順のうち **§4（healthcheck を 1 回実行 → 機械的受入）** を Staging でそのまま実行し、手順どおりに通ることを確認した。
+
+| 手順 | 実行 | 結果 |
+| ---- | ---- | ---- |
+| healthcheck を 1 回実行 | `systemctl --user start mirai-sf-healthcheck.service` | `Result=success` / `ExecMainStatus=0`（20:33:51） |
+| 機械的受入 | `ops:prod:acceptance <SHA> --base-url http://127.0.0.1:8782 --db mirai_sf --unit mirai-sf-api.service --state-dir ~/.local/state/mirai-sf --expect-environment staging --skip-offsite` | **14 項目 PASS / exit 0**（FAIL 0） |
+| 対象 | Staging `39103cd`（`auth.status=ready` を含む） | — |
+
+- **確認できたこと**: 「配備直後は healthcheck の状態が古い」という §4 の注意は正しく、**先に healthcheck を 1 回実行すれば受入が通る**。
+- 本番では `--expect-environment production`（既定）と `--skip-offsite` なしで同じ順序で実行する。`--skip-offsite` は本番では exit 2 で拒否される（実装済み）。
+- 未確認: 本番環境での §4 の実行（未配備のため）。
