@@ -225,14 +225,38 @@ describe('parseArgs', () => {
     expect(() => parseArgs([])).toThrow(/SHA/);
     expect(() => parseArgs(['--bogus', SHA])).toThrow(/不明なオプション/);
     expect(() => parseArgs([SHA, '--db'])).toThrow(/値がありません/);
-    expect(() => parseArgs([SHA, '--expect-environment', 'Bad Name'])).toThrow(/形式/);
+    expect(() => parseArgs([SHA, '--expect-environment', 'Bad Name'])).toThrow(/いずれか/);
     expect(() => parseArgs([SHA, 'extra'])).toThrow(/位置引数/);
+  });
+
+  it('本番で --skip-offsite は拒否（受入を緩めない）', () => {
+    expect(() => parseArgs([SHA, '--skip-offsite'])).toThrow(/本番/);
+    expect(parseArgs([SHA, '--expect-environment', 'staging', '--skip-offsite'])).toMatchObject({ skipOffsite: true });
+  });
+
+  it('--base-url の資格情報・非 http(s)・クエリを拒否', () => {
+    expect(() => parseArgs([SHA, '--base-url', 'http://u:p@127.0.0.1:8783'])).toThrow(/資格情報/);
+    expect(() => parseArgs([SHA, '--base-url', 'ftp://127.0.0.1'])).toThrow(/http/);
+    expect(() => parseArgs([SHA, '--base-url', 'http://127.0.0.1:8783/?x=1'])).toThrow(/クエリ/);
+    expect(() => parseArgs([SHA, '--base-url', 'not-a-url'])).toThrow(/URL/);
+  });
+
+  it('--db は DB 名のみ（conninfo を拒否）', () => {
+    expect(() => parseArgs([SHA, '--db', 'host=x password=y'])).toThrow(/DB 名/);
+    expect(parseArgs([SHA, '--db', 'mirai_sf'])).toMatchObject({ db: 'mirai_sf' });
+  });
+
+  it('--expect-environment は APP_ENV の集合に限定', () => {
+    expect(() => parseArgs([SHA, '--expect-environment', 'foo'])).toThrow(/いずれか/);
   });
 });
 
 describe('skipOffsite', () => {
   it('true なら R2 検査をスキップして PASS にする', () => {
-    const facts = goodFacts({ skipOffsite: true, offsite: { ok: false, newestAgeMinutes: null, problems: ['なし'] } });
+    const facts = goodFacts({
+      skipOffsite: true,
+      offsite: { ok: false, newestAgeMinutes: null, problems: ['なし'] },
+    });
     const report = evaluateAcceptance(facts);
     expect(report.ok).toBe(true);
     expect(report.checks.find((c) => c.name.startsWith('R2:'))?.detail).toContain('スキップ');
@@ -250,11 +274,11 @@ describe('skipOffsite', () => {
 describe('formatChecks', () => {
   it('PASS/FAIL と詳細を人が読める形で返す', () => {
     const ok = formatChecks(evaluateAcceptance(goodFacts()));
-    expect(ok.split('\n')[0]).toBe('本番受入: PASS');
+    expect(ok.split('\n')[0]).toBe('受入: PASS');
     expect(ok.split('\n').slice(1).every((l) => l.startsWith('PASS  '))).toBe(true);
 
     const ng = formatChecks(evaluateAcceptance(goodFacts({ fiveXxCount: 1 })));
-    expect(ng.split('\n')[0]).toBe('本番受入: FAIL');
+    expect(ng.split('\n')[0]).toBe('受入: FAIL');
     expect(ng.split('\n').some((l) => l.startsWith('FAIL  '))).toBe(true);
   });
 });

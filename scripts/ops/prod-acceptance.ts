@@ -2,16 +2,16 @@
 /**
  * 本番リリース直後の受入を 1 コマンドで確認する（読み取り専用）。
  *
- *   tsx scripts/ops/prod-acceptance.ts <commit-sha> [--json]
+ *   tsx scripts/ops/prod-acceptance.ts <commit-sha> [options]
  *
- * 確認する内容（すべて読み取り）:
- *   1. /healthz: HTTP 200・status=ok・environment=production・commit が対象 SHA と一致・db.ok
+ * 確認する内容（すべて読み取り。本番と Staging の両方で使える）:
+ *   1. /healthz: HTTP 200・status=ok・environment が期待値・commit が対象 SHA と一致・db.ok
  *   2. /readyz: HTTP 200・status=ready
- *   3. prod-api unit: active・Result=success・NRestarts=0
+ *   3. API unit: active・Result=success・NRestarts=0
  *   4. journal: unit 起動以降の 5xx が 0 件
- *   5. DB（READ ONLY）: 件数と schema_migrations の最大を記録（合否には使わない。変化の検知用）
- *   6. healthcheck の状態ファイル: ok=true・environment=production・healthCommit が対象 SHA・auth.status が misconfigured でない
- *   7. オフサイト（R2）: 直近 2 世代に r2.json があり size/SHA-256 が一致（offsite-status.ts を再利用）
+ *   5. DB（READ ONLY）: 読めること・件数と schema_migrations の最大を記録
+ *   6. healthcheck の状態ファイル: ok・environment・healthCommit 一致・auth.status=ready・auth 警告なし・鮮度
+ *   7. オフサイト（R2）: 直近 2 世代に r2.json があり size/SHA-256 が一致（--skip-offsite で省略可。本番では不可）
  *
  * 終了コード: 0=全 PASS / 1=FAIL あり / 2=引数不正
  * 秘密・個人情報・接続文字列は出力しない（commit・件数・時刻だけ）。
@@ -170,7 +170,7 @@ export function evaluateAcceptance(facts: AcceptanceFacts): { ok: boolean; check
 }
 
 export function formatChecks(report: { ok: boolean; checks: CheckResult[] }): string {
-  const lines = [`本番受入: ${report.ok ? 'PASS' : 'FAIL'}`];
+  const lines = [`受入: ${report.ok ? 'PASS' : 'FAIL'}`];
   for (const c of report.checks) {
     lines.push(`${c.ok ? 'PASS' : 'FAIL'}  ${c.name}（${c.detail}）`);
   }
@@ -195,7 +195,9 @@ function httpGet(url: string, timeoutMs: number): { status: number; body: unknow
     }
     return { status, body };
   } catch (err) {
-    return { status: 0, body: null, error: (err as Error).message.slice(0, 120) };
+    // curl のエラー文字列は URL（資格情報を含み得る）を保持するため、固定文言だけを返す。
+    const code = (err as { status?: number }).status;
+    return { status: 0, body: null, error: code === undefined ? '取得できませんでした' : `取得できませんでした（curl exit=${code}）` };
   }
 }
 
@@ -250,7 +252,9 @@ function dbCountsWithError(db: string): { db: AcceptanceFacts['db']; error?: str
       },
     };
   } catch (err) {
-    return { db: null, error: (err as Error).message.slice(0, 120) };
+    // psql のエラーは conninfo（password を含み得る）を保持するため、固定文言だけを返す。
+    const code = (err as { status?: number }).status;
+    return { db: null, error: code === undefined ? '取得できませんでした' : `取得できませんでした（psql exit=${code}）` };
   }
 }
 
@@ -365,16 +369,50 @@ export function parseArgs(argv: string[]): CliArgs | { help: true } {
   }
   if (!sha || !/^[0-9a-f]{7,40}$/.test(sha)) throw new Error('commit SHA を指定してください');
   const expectedEnvironment = values.get('--expect-environment') ?? 'production';
-  if (!/^[a-z]{1,20}$/.test(expectedEnvironment)) throw new Error('--expect-environment の形式が不正です');
+  if (!['development', 'test', 'staging', 'production'].includes(expectedEnvironment)) {
+    throw new Error('--expect-environment は development / test / staging / production のいずれかです');
+  }
+  const baseUrl = values.get('--base-url');
+  if (baseUrl !== undefined) {
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(baseUrl);
+    } catch {
+      throw new Error('--base-url は http(s) の URL で指定してください');
+    }
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      throw new Error('--base-url は http(s) のみ使えます');
+    }
+    // URL に資格情報やクエリを載せない（エラー・ログへの漏えいと取り違えを防ぐ）。
+    if (parsedUrl.username || parsedUrl.password) {
+      throw new Error('--base-url に資格情報（user:pass@）を含めないでください');
+    }
+    if (parsedUrl.search || parsedUrl.hash) {
+      throw new Error('--base-url にクエリ・フラグメントを含めないでください');
+    }
+  }
+  const db = values.get('--db');
+  if (db !== undefined && !/^[A-Za-z0-9_]{1,63}$/.test(db)) {
+    throw new Error('--db は DB 名（英数字と _）で指定してください（conninfo は不可）');
+  }
+  const unit = values.get('--unit');
+  if (unit !== undefined && !/^[A-Za-z0-9@._:-]{1,128}$/.test(unit)) {
+    throw new Error('--unit の形式が不正です');
+  }
+  const skipOffsite = flags.has('--skip-offsite');
+  // 本番で R2 検査を落とさない（誤用で受入が緩むのを防ぐ）。
+  if (skipOffsite && expectedEnvironment === 'production') {
+    throw new Error('--skip-offsite は本番（--expect-environment=production）では使えません');
+  }
   return {
     sha,
     json: flags.has('--json'),
-    baseUrl: values.get('--base-url'),
-    db: values.get('--db'),
-    unit: values.get('--unit'),
+    baseUrl,
+    db,
+    unit,
     stateDir: values.get('--state-dir'),
     expectedEnvironment,
-    skipOffsite: flags.has('--skip-offsite'),
+    skipOffsite,
   };
 }
 
