@@ -5,13 +5,15 @@
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { evaluateAcceptance, formatChecks, type AcceptanceFacts } from '../../scripts/ops/prod-acceptance.js';
+import { evaluateAcceptance, formatChecks, parseArgs, type AcceptanceFacts } from '../../scripts/ops/prod-acceptance.js';
 
 const SHA = 'a'.repeat(40);
 
 function goodFacts(overrides: Partial<AcceptanceFacts> = {}): AcceptanceFacts {
   return {
     expectedSha: SHA,
+    expectedEnvironment: 'production',
+    skipOffsite: false,
     healthz: { httpStatus: 200, body: { status: 'ok', environment: 'production', commit: SHA, db: { ok: true } } },
     readyz: { httpStatus: 200, body: { status: 'ready' } },
     unit: { activeState: 'active', result: 'success', nRestarts: '0' },
@@ -176,6 +178,72 @@ describe('evaluateAcceptance', () => {
     const report = evaluateAcceptance(facts);
     expect(report.ok).toBe(false);
     expect(report.checks[0]?.detail).toContain('connection refused');
+  });
+});
+
+describe('parseArgs', () => {
+  it('SHA だけなら既定値', () => {
+    expect(parseArgs([SHA])).toEqual({
+      sha: SHA,
+      json: false,
+      baseUrl: undefined,
+      db: undefined,
+      unit: undefined,
+      stateDir: undefined,
+      expectedEnvironment: 'production',
+      skipOffsite: false,
+    });
+  });
+
+  it('Staging 向けのフラグを解釈する', () => {
+    const args = parseArgs([
+      SHA,
+      '--base-url', 'http://127.0.0.1:8782',
+      '--db', 'mirai_sf',
+      '--unit', 'mirai-sf-api.service',
+      '--state-dir', '/tmp/state',
+      '--expect-environment', 'staging',
+      '--skip-offsite',
+      '--json',
+    ]);
+    expect(args).toMatchObject({
+      baseUrl: 'http://127.0.0.1:8782',
+      db: 'mirai_sf',
+      unit: 'mirai-sf-api.service',
+      stateDir: '/tmp/state',
+      expectedEnvironment: 'staging',
+      skipOffsite: true,
+      json: true,
+    });
+  });
+
+  it('--help は help', () => {
+    expect(parseArgs(['--help'])).toEqual({ help: true });
+  });
+
+  it('不正・不足は例外', () => {
+    expect(() => parseArgs([])).toThrow(/SHA/);
+    expect(() => parseArgs(['--bogus', SHA])).toThrow(/不明なオプション/);
+    expect(() => parseArgs([SHA, '--db'])).toThrow(/値がありません/);
+    expect(() => parseArgs([SHA, '--expect-environment', 'Bad Name'])).toThrow(/形式/);
+    expect(() => parseArgs([SHA, 'extra'])).toThrow(/位置引数/);
+  });
+});
+
+describe('skipOffsite', () => {
+  it('true なら R2 検査をスキップして PASS にする', () => {
+    const facts = goodFacts({ skipOffsite: true, offsite: { ok: false, newestAgeMinutes: null, problems: ['なし'] } });
+    const report = evaluateAcceptance(facts);
+    expect(report.ok).toBe(true);
+    expect(report.checks.find((c) => c.name.startsWith('R2:'))?.detail).toContain('スキップ');
+  });
+
+  it('expectedEnvironment を変えると environment 判定も変わる', () => {
+    const facts = goodFacts();
+    facts.expectedEnvironment = 'staging';
+    facts.healthz.body = { ...facts.healthz.body, environment: 'staging' };
+    facts.healthcheck = { ...facts.healthcheck!, environment: 'staging' };
+    expect(evaluateAcceptance(facts).ok).toBe(true);
   });
 });
 
