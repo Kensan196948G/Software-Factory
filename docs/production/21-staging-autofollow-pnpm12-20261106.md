@@ -51,7 +51,8 @@ Error: ERR_PNPM_IGNORED_BUILDS
 
 - pnpm のメジャー更新時に `pnpm-workspace.yaml` の `allowBuilds` と `package.json` の `pnpm.onlyBuiltDependencies` の**両方**を確認する。
 - 依存を追加してビルドスクリプトが必要になった場合は、`allowBuilds` に追加し、理由を本書へ追記する（無条件の全許可はしない）。
-- **版の固定（次バッチ）**: `package.json` に `packageManager` を置いて pnpm の版を固定する。ただし CI（`.github/workflows/ci.yml`）は `pnpm/action-setup` で `version: 10` を明示しているため、**CI の指定と同時に更新する**（先に片方だけ変えると CI が失敗する）。
+- **版の固定（2026-11-06 に判断）**: `package.json` の `packageManager` は**採用しない**。pnpm 12 では `packageManager` を書くと pnpm 自身が依存として lockfile に追加され（`packageManagerDependencies` + `@pnpm/exe.*`）、lockfile が二重ドキュメント構造になる。`allowBuilds` の追加だけで pnpm 10 / 12 の両方が install に成功することを実測したため、まずはそれで足りる。
+- **CI を pnpm 12 に合わせる（2026-11-06）**: `.github/workflows/ci.yml` の `pnpm/action-setup` の `version` を 10 → **12.18.0** に変更し、デプロイと同じ版で CI を回す（PR の CI 自体で検証する）。
 - **pnpm 12 の CI ジョブ（次バッチ）**: 現在の CI は pnpm 10 固定のため、今回の失敗環境（pnpm 12）を CI では検証できない。`pnpm install --frozen-lockfile` を pnpm 12 でも回すジョブを追加する。
 - 監視: autofollow の失敗は `mirai-sf-onfailure@mirai-sf-autofollow.service.service` が記録する（`~/.local/state/mirai-sf/alerts.jsonl`）。外部通知は未設定（N10 の残課題）。
 
