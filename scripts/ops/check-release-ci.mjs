@@ -57,8 +57,12 @@ const queryError = (message) => {
  * 恒久的な失敗（run/job の失敗、必須 job の欠落、API 情報の欠落など）。
  * 「まだ始まっていない・実行中」と区別し、timer を failed にして気づけるようにする。
  */
-/** 検証できない（後続の実行に置換された可能性がある）conclusion。失敗ではなく「未確認」として扱う。 */
-const NOT_READY_CONCLUSIONS = new Set(['cancelled', 'skipped']);
+/**
+ * 検証できない（後続の実行に置換された可能性がある）conclusion。失敗ではなく「未確認」として扱う。
+ * `skipped` は含めない: [skip ci] 等で CI が意図的に走らない場合、黙って配備されないまま
+ * 停滞するより、失敗として通知する方が安全（next SHA が来れば自動で解消する）。
+ */
+const NOT_READY_CONCLUSIONS = new Set(['cancelled', 'stale']);
 
 const terminalFailure = (message) => {
   console.error(`[ci-gate] 失敗: ${message}`);
