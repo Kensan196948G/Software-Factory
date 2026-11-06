@@ -26,7 +26,7 @@ Error: ERR_PNPM_IGNORED_BUILDS
 ## 3. 修正
 
 - `pnpm-workspace.yaml` を追加し、`allowBuilds` に **`esbuild` / `workerd` / `sharp` の 3 つだけ**を `true` で許可した。
-- `package.json` の `pnpm.onlyBuiltDependencies` は、pnpm 10 以前を使う環境（CI など）との互換のため残す。**削除しない**。
+- `package.json` の `pnpm.onlyBuiltDependencies` は、pnpm 10 以前を使う環境との互換のため残す。**削除しない**（現在の CI は 12.18.0 で、こちらは無視される）。
 
 ## 4. 検証（実測）
 
@@ -52,8 +52,8 @@ Error: ERR_PNPM_IGNORED_BUILDS
 - pnpm のメジャー更新時に `pnpm-workspace.yaml` の `allowBuilds` と `package.json` の `pnpm.onlyBuiltDependencies` の**両方**を確認する。
 - 依存を追加してビルドスクリプトが必要になった場合は、`allowBuilds` に追加し、理由を本書へ追記する（無条件の全許可はしない）。
 - **版の固定（2026-11-06 に判断）**: `package.json` の `packageManager` は**採用しない**。pnpm 12 では `packageManager` を書くと pnpm 自身が依存として lockfile に追加され（`packageManagerDependencies` + `@pnpm/exe.*`）、lockfile が二重ドキュメント構造になる。`allowBuilds` の追加だけで pnpm 10 / 12 の両方が install に成功することを実測したため、まずはそれで足りる。
-- **CI を pnpm 12 に合わせる（2026-11-06）**: `.github/workflows/ci.yml` の `pnpm/action-setup` の `version` を 10 → **12.18.0** に変更し、デプロイと同じ版で CI を回す（PR の CI 自体で検証する）。
-- **pnpm 12 の CI ジョブ（次バッチ）**: 現在の CI は pnpm 10 固定のため、今回の失敗環境（pnpm 12）を CI では検証できない。`pnpm install --frozen-lockfile` を pnpm 12 でも回すジョブを追加する。
+- **CI を pnpm 12 に合わせる（2026-11-06 実施）**: `.github/workflows/ci.yml` の `pnpm/action-setup` の `version` を 10 → **12.18.0** に変更し、デプロイと同じ版で CI を回す。PR の CI（quality / docker は pnpm 12.18.0 で成功）で検証した。
+- **残る非対称**: ホストの pnpm は corepack の `lastKnownGood` 依存で、まだ固定されていない。将来 12.19 / 13 に上がると CI の 12.18.0 と再び乖離する。`packageManager` を採用しない判断の帰結として、ホスト側の版を上げる際は CI の `version` も同時に更新する（`docs/production/02-runbook.md` の手順 0 で版を確認する）。
 - 監視: autofollow の失敗は `mirai-sf-onfailure@mirai-sf-autofollow.service.service` が記録する（`~/.local/state/mirai-sf/alerts.jsonl`）。外部通知は未設定（N10 の残課題）。
 
 ## 7. 未確認
@@ -64,4 +64,6 @@ Error: ERR_PNPM_IGNORED_BUILDS
 
 ### 7-1. CI の pnpm 版（確認済み）
 
-- `.github/workflows/ci.yml` は `pnpm/action-setup` で `version: 10` を明示している。したがって CI は pnpm 10 で動作し、`allowBuilds` は 10.26 以降で解釈されるため今回の修正で壊れない（担当が pnpm 10.33.2 で実測）。**CI は今回の失敗環境（pnpm 12）を再現しない**点が残課題。
+- `.github/workflows/ci.yml` は `pnpm/action-setup` で `version: 12.18.0` を明示している（2026-11-06 に 10 から変更）。デプロイ環境と同じ版で CI を回すため、今回の失敗クラス（pnpm 12 で未承認ビルド）をマージ前に検知できる。
+- `allowBuilds` は pnpm 10.26 以降でも解釈される（担当が 10.33.2 で実測）。したがって CI を 10 に戻しても install は通る。
+- 残る課題: `docs/patches/ci.workflow.yml`（CI ブートストラップ用の旧コピー）は `version: 10` のまま。`scripts/apply-ci.sh` は `ci.yml` が無いときだけコピーするため実害は限定的だが、次に触るときに揃える。
