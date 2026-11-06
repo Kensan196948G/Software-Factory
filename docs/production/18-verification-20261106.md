@@ -41,7 +41,7 @@
 ## 3. Issue #102 のコード修正（未配備）
 
 - 変更: `src/api/config.ts` / `src/api/auth.ts` / `tests/unit/access-jwt.test.ts` / `tests/integration/access-jwt.test.ts`。
-- 内容: JWT 未設定時の Access ヘッダ信頼を**既定で無効**（fail-closed）。`ACCESS_TRUST_EMAIL_HEADER=1` の明示 opt-in がある、**APP_ENV を明示した**開発・テスト環境だけ従来動作。`APP_ENV=staging` / `production`、`NODE_ENV=production`、**APP_ENV 未設定**での `1` は起動エラー。`AUTH_MODE=password` では値自体を使わない（JWT 設定と同じ扱い）。JWT が有効なときの経路は不変。
+- 内容: JWT 未設定時の Access ヘッダ信頼を**既定で無効**（fail-closed）。`ACCESS_TRUST_EMAIL_HEADER=1` の明示 opt-in がある、**APP_ENV を明示した**開発・テスト環境だけ従来動作。`APP_ENV=staging` / `production`、`NODE_ENV=production`、**APP_ENV 未設定**での `1` は起動エラー。`AUTH_MODE=password` では値自体を使わない（JWT 設定と同じ扱い）。**登録済み利用者**の JWT 経路は不変（未登録利用者の扱いは §7 の別 PR で変更）。
 - 独立レビュー（実装者とは別担当）の結果: **PASS-WITH-LIMITS（Critical 0 / High 0 / Medium 3 / Low 6）**。Medium のうち次を本 PR で反映した: (a) 配備前に発行済みセッションを失効させる手順の明記、(b) APP_ENV 未設定時の opt-in を起動エラーに変更（実測で development 扱いになっていたため）、(c) Issue #102 の残り半分（JWT 有効時の Staging 自動管理者作成）は未修正であることの明記。残る Low は将来の改善（`AUTH_MODE` の typo フォールバック等）。
 - 検証（Lead が同一 commit で再実行）: `tsc`（tsconfig.json / tsconfig.api.json）exit 0、`eslint . --max-warnings=0`（`.agents/**` を ignore に追加後）exit 0、`vitest` の access-jwt + config = **74/74 pass**（レビュー反映後に再実行）。担当の実測では単体全 850 件・対象結合 14 件も pass（全結合スイート・build・e2e は未実行）。
 - 独立レビュー（第 2 回・PR head `cd8c09a`、読み取り専用の別担当）: **PASS-WITH-LIMITS（Critical 0 / High 0 / Medium 0 / Low 7）**。要求観点 (a)〜(i) をコード読取りと `loadConfig` プローブで確認し、CI run 42116689994（head 一致）の成功と、独立再実行（tsc 2 構成・eslint・unit 74/74）を照合した。Low の内訳と対応:

@@ -73,7 +73,7 @@ cloudflared tunnel route dns --overwrite-dns mirai-sf sf.mirai-dx-platform.com
 | `ACCESS_TEAM_DOMAIN`        | `https://<team>.cloudflareaccess.com`。JWT の `iss` と公開鍵の取得先   |
 | `ACCESS_AUD`                | Access アプリの Application Audience (AUD) タグ。JWT の `aud` と照合   |
 | `ACCESS_TRUST_EMAIL_HEADER` | `1` で「JWT 未設定時のヘッダ信頼」を明示 opt-in。既定は未設定＝無効。この値が `1` のときだけ APP_ENV の明示が必須で、許可されるのは development / test だけ。`APP_ENV=staging` / `production`、または `1` かつ APP_ENV 未設定では起動エラー（Issue #102） |
-| `ACCESS_AUTO_PROVISION`      | `1` で「未登録の Access 利用者を初回ログイン時に自動作成」を明示 opt-in。既定は未設定＝無効（401・`auth.access_denied` / reason=`user_not_registered`）。有効時も作るのは `is_admin=false`・`requester` のみで、`user.provisioned` を監査に残す。`0` / `1` 以外、`APP_ENV=staging` / `production`、`NODE_ENV=production` では起動エラー（Issue #102 完了条件 3） |
+| `ACCESS_AUTO_PROVISION`      | `1` で「未登録の Access 利用者を初回ログイン時に自動作成」を明示 opt-in。既定は未設定＝無効（401・`auth.access_denied` / reason=`user_not_registered`）。有効時も作るのは `is_admin=false`・`requester` のみで、`user.provisioned` を監査に残す。`0` / `1` 以外、`APP_ENV=staging` / `production`、`NODE_ENV=production` では起動エラー（Issue #102 完了条件 3）。**`APP_ENV` の明示は必須ではない**（`ACCESS_TRUST_EMAIL_HEADER` との非対称。`NODE_ENV` が production でなければ開発・テストとして扱う）。 |
 
 実値は `preview.conf`（0600）だけに置き、リポジトリへ書かない。
 
@@ -99,6 +99,13 @@ cloudflared tunnel route dns --overwrite-dns mirai-sf sf.mirai-dx-platform.com
 2. `preview.conf` に2つの変数を追加し、`systemctl --user restart mirai-sf-api`。
 3. `journalctl --user -u mirai-sf-api` に warn がないこと、Access ログイン後の画面表示、Tunnel を経由しない `127.0.0.1:8782` への `Cf-Access-Authenticated-User-Email` 付きリクエストが `/api/auth/me` で 401 になることを確認する。
 4. **fail-closed 版を配備するときは、配備前に発行済みのセッションを失効させる**（`docs/production/17` §7）。fail-closed は「JWT のない新規リクエスト」を止めるが、修正前にヘッダ信頼で発行された Cookie は `SESSION_TTL_HOURS`（既定 12 時間）まで有効なため。
+5. **未登録利用者の自動作成を廃止する版を配備するときは、配備前に `app_user` / `user_role` を棚卸しする**（Issue #102 の完了条件 3）。旧実装は staging で初回ログイン時に `is_admin=true`・3 役（requester / desk / approver）で作成していたため、**既存の行は自動では是正されない**。
+   1. 読取りで棚卸しする（メールアドレスは記録・PR・ログへ書かない）: `select is_admin, count(*) from app_user group by 1;` と `select role, count(*) from user_role group by 1;`
+   2. 正規の管理者を所有者が特定する。記録には**件数と作成日だけ**を残す。
+   3. 不要な管理者・役割は管理API（`/api/admin/users`）で降格・無効化する（監査に残る）。**直接 SQL で `app_user.is_admin` や `user_role` を書き換えない**（監査が残らない）。
+   4. 再度 1 を実行し、期待どおりになったことを記録する。
+   - 2026-11-06 10:22 JST の Staging 実測: `app_user` 2 件（いずれも `is_admin=true`）、`user_role` は requester / desk / approver が各 2 件、作成日は 2026-10-28。どちらが正規の管理者かは未判定（所有者の確認が必要）。
+   - `ACCESS_AUTO_PROVISION` は既定 off。配備後、未登録のメールは 401 になる（staging / production では opt-in 自体が起動エラー）。
 
 切り戻し: 2つの変数を削除して再起動する。ただし 2026-11-06 以降は **fail-closed**（ヘッダ信頼なし）なので、2 変数を外すと誰もログインできなくなる。staging / production では `ACCESS_TRUST_EMAIL_HEADER=1` による回避は起動エラーになる。戻す必要がある場合は、先に JWT の 2 項目を再設定するか、旧セッションを失効したうえで Access を外した状態を所有者へ申告する（`docs/production/17` §7）。
 
