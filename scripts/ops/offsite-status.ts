@@ -44,6 +44,7 @@ export interface OffsiteStatusReport {
   backupDir: string;
   count: number;
   maxAgeMinutes: number;
+  maxGapMinutes: number;
   checkedAt: string;
   /** 最新世代の r2 記録の経過分（記録が無ければ null）。 */
   newestOffsiteAgeMinutes: number | null;
@@ -117,7 +118,12 @@ export function inspectGeneration(dir: string, name: string): OffsiteGeneration 
   if (r2.present) {
     let marker: R2Marker | null = null;
     try {
-      marker = JSON.parse(readFileSync(markerPath, 'utf8')) as R2Marker;
+      const parsed: unknown = JSON.parse(readFileSync(markerPath, 'utf8'));
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        problems.push('r2.json の内容がオブジェクトではない（破損の疑い）');
+      } else {
+        marker = parsed as R2Marker;
+      }
     } catch {
       problems.push('r2.json が JSON として読めない');
     }
@@ -130,6 +136,8 @@ export function inspectGeneration(dir: string, name: string): OffsiteGeneration 
       if (!r2.uploadedAt) problems.push('r2.json に uploadedAt が無い');
       if (r2.dumpSize === null) problems.push('r2.json に dump.size が無い');
       if (r2.dumpSha256 === null) problems.push('r2.json に dump.sha256 が無い');
+      if (r2.manifestSize === null) problems.push('r2.json に manifest.size が無い');
+      if (r2.manifestSha256 === null) problems.push('r2.json に manifest.sha256 が無い');
     }
   } else {
     problems.push('r2.json（オフサイト送信記録）が無い');
@@ -155,7 +163,18 @@ export interface CheckOptions {
   backupDir?: string;
   count?: number;
   maxAgeMinutes?: number;
+  /** 世代の間隔の上限（分）。バックアップの実行間隔より十分大きい値を既定にする。 */
+  maxGapMinutes?: number;
   now?: number;
+}
+
+/** 世代名（mirai_sf_prod-YYYYMMDDTHHMMSSZ）から時刻を取り出す。取れなければ null。 */
+export function generationTime(name: string): number | null {
+  const m = /-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(name);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, se] = m;
+  const at = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(se));
+  return Number.isNaN(at) ? null : at;
 }
 
 /** 直近 count 世代を検証し、レポートを返す。 */
@@ -165,11 +184,15 @@ export function checkOffsiteStatus(options: CheckOptions = {}): OffsiteStatusRep
   );
   const count = options.count ?? 3;
   const maxAgeMinutes = options.maxAgeMinutes ?? 90;
+  const maxGapMinutes = options.maxGapMinutes ?? 90;
   if (!Number.isInteger(count) || count < 1 || count > 50) {
     throw new OffsiteStatusUsageError('--count は 1〜50 の整数で指定してください');
   }
   if (!Number.isFinite(maxAgeMinutes) || maxAgeMinutes <= 0) {
     throw new OffsiteStatusUsageError('--max-age-min は正の数で指定してください');
+  }
+  if (!Number.isFinite(maxGapMinutes) || maxGapMinutes <= 0) {
+    throw new OffsiteStatusUsageError('--max-gap-min は正の数で指定してください');
   }
 
   const names = listDumpNames(backupDir).slice(0, count);
@@ -192,6 +215,9 @@ export function checkOffsiteStatus(options: CheckOptions = {}): OffsiteStatusRep
         problems.push(`${gen.name}: uploadedAt が日時として読めない`);
       } else {
         newestOffsiteAgeMinutes = Math.round(((now - at) / 60000) * 10) / 10;
+        if (newestOffsiteAgeMinutes < -5) {
+          problems.push(`${gen.name}: uploadedAt が未来です（${newestOffsiteAgeMinutes} 分）`);
+        }
       }
     }
   }
@@ -201,11 +227,28 @@ export function checkOffsiteStatus(options: CheckOptions = {}): OffsiteStatusRep
     );
   }
 
+  // 世代の連続性（中間の世代が丸ごと欠けていないか）。名前の時刻で判定する。
+  for (let i = 0; i + 1 < generations.length; i += 1) {
+    const newer = generations[i];
+    const older = generations[i + 1];
+    if (!newer || !older) continue;
+    const t1 = generationTime(newer.name);
+    const t2 = generationTime(older.name);
+    if (t1 === null || t2 === null) continue;
+    const gap = Math.round(((t1 - t2) / 60000) * 10) / 10;
+    if (gap > maxGapMinutes) {
+      problems.push(
+        `${older.name} → ${newer.name} の間隔が空いています（${gap} 分 > ${maxGapMinutes} 分）`,
+      );
+    }
+  }
+
   return {
     ok: problems.length === 0,
     backupDir,
     count,
     maxAgeMinutes,
+    maxGapMinutes,
     checkedAt: new Date(now).toISOString(),
     newestOffsiteAgeMinutes,
     generations,
@@ -220,7 +263,7 @@ function shortSha(value: string | null): string {
 export function formatReport(report: OffsiteStatusReport): string[] {
   const lines: string[] = [];
   lines.push(
-    `オフサイト状態: ${report.ok ? 'OK' : 'NG'}（${report.backupDir}、直近 ${report.count} 世代、鮮度上限 ${report.maxAgeMinutes} 分）`,
+    `オフサイト状態: ${report.ok ? 'OK' : 'NG'}（${report.backupDir}、直近 ${report.count} 世代、鮮度上限 ${report.maxAgeMinutes} 分、間隔上限 ${report.maxGapMinutes} 分）`,
   );
   for (const gen of report.generations) {
     const age = gen.r2.uploadedAt ? ` uploadedAt=${gen.r2.uploadedAt}` : '';
@@ -236,10 +279,21 @@ export function formatReport(report: OffsiteStatusReport): string[] {
   return lines;
 }
 
-function parseArgs(argv: string[]): { count: number; maxAgeMinutes: number; json: boolean } {
+export const USAGE =
+  '使い方: tsx scripts/ops/offsite-status.ts [--count N] [--max-age-min MIN] [--max-gap-min MIN] [--json]';
+
+export function parseArgs(argv: string[]): {
+  count: number;
+  maxAgeMinutes: number;
+  maxGapMinutes: number;
+  json: boolean;
+  help: boolean;
+} {
   let count = 3;
   let maxAgeMinutes = 90;
+  let maxGapMinutes = 90;
   let json = false;
+  let help = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === undefined) continue;
@@ -255,22 +309,33 @@ function parseArgs(argv: string[]): { count: number; maxAgeMinutes: number; json
       if (!value) throw new OffsiteStatusUsageError('--max-age-min に値がありません');
       maxAgeMinutes = Number(value);
       i += 1;
+    } else if (arg === '--max-gap-min') {
+      const value = argv[i + 1];
+      if (!value) throw new OffsiteStatusUsageError('--max-gap-min に値がありません');
+      maxGapMinutes = Number(value);
+      i += 1;
     } else if (arg === '--help' || arg === '-h') {
-      throw new OffsiteStatusUsageError(
-        '使い方: tsx scripts/ops/offsite-status.ts [--count N] [--max-age-min MIN] [--json]',
-      );
+      help = true;
     } else {
       throw new OffsiteStatusUsageError(`不明な引数です: ${arg}`);
     }
   }
-  return { count, maxAgeMinutes, json };
+  return { count, maxAgeMinutes, maxGapMinutes, json, help };
 }
 
 const invokedDirectly = process.argv[1] !== undefined && import.meta.url === `file://${resolve(process.argv[1])}`;
 if (invokedDirectly) {
   try {
     const args = parseArgs(process.argv.slice(2));
-    const report = checkOffsiteStatus({ count: args.count, maxAgeMinutes: args.maxAgeMinutes });
+    if (args.help) {
+      process.stdout.write(`${USAGE}\n`);
+      process.exit(0);
+    }
+    const report = checkOffsiteStatus({
+      count: args.count,
+      maxAgeMinutes: args.maxAgeMinutes,
+      maxGapMinutes: args.maxGapMinutes,
+    });
     if (args.json) {
       process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     } else {

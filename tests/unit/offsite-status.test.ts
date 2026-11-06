@@ -3,6 +3,7 @@
  * 一時ディレクトリに世代一式を作り、欠落・不一致・鮮度の判定を固定する。
  */
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -170,5 +171,108 @@ describe('formatReport', () => {
     const ngLines = formatReport(ngReport);
     expect(ngLines[0]).toContain('NG');
     expect(ngLines.some((l) => l.includes('NG:'))).toBe(true);
+  });
+});
+
+describe('inspectGeneration（破損・異常系）', () => {
+  it('r2.json が null なら NG（素通りさせない）', async () => {
+    const dir = await tempDir();
+    const name = 'mirai_sf_prod-20261106T000000Z';
+    await writeFile(join(dir, `${name}.dump`), DUMP);
+    await writeFile(join(dir, `${name}.manifest.tsv`), MANIFEST);
+    await writeFile(join(dir, `${name}.dump.r2.json`), 'null');
+    const gen = inspectGeneration(dir, name);
+    expect(gen.problems.some((p) => p.includes('オブジェクトではない'))).toBe(true);
+  });
+
+  it('r2.json に manifest の size/sha256 が無ければ NG', async () => {
+    const dir = await tempDir();
+    const name = 'mirai_sf_prod-20261106T000000Z';
+    await writeFile(join(dir, `${name}.dump`), DUMP);
+    await writeFile(join(dir, `${name}.manifest.tsv`), MANIFEST);
+    await writeFile(
+      join(dir, `${name}.dump.r2.json`),
+      JSON.stringify({ uploadedAt: new Date().toISOString(), dump: { size: DUMP.length, sha256: sha256(DUMP) } }),
+    );
+    const gen = inspectGeneration(dir, name);
+    expect(gen.problems.some((p) => p.includes('manifest.size'))).toBe(true);
+    expect(gen.problems.some((p) => p.includes('manifest.sha256'))).toBe(true);
+  });
+});
+
+describe('checkOffsiteStatus（連続性・未来時刻）', () => {
+  it('世代の間隔が空いていれば NG', async () => {
+    const dir = await tempDir();
+    // 10:00 と 12:00（2 時間空き）。
+    await makeGeneration(dir, { name: 'mirai_sf_prod-20261106T100000Z' });
+    await makeGeneration(dir, { name: 'mirai_sf_prod-20261106T120000Z' });
+    const report = checkOffsiteStatus({ backupDir: dir, count: 2, maxGapMinutes: 90 });
+    expect(report.ok).toBe(false);
+    expect(report.problems.some((p) => p.includes('間隔が空いています'))).toBe(true);
+  });
+
+  it('間隔が上限以内なら連続性は OK', async () => {
+    const dir = await tempDir();
+    await makeGeneration(dir, { name: 'mirai_sf_prod-20261106T100000Z' });
+    await makeGeneration(dir, { name: 'mirai_sf_prod-20261106T105500Z' });
+    const report = checkOffsiteStatus({ backupDir: dir, count: 2, maxGapMinutes: 90 });
+    expect(report.ok).toBe(true);
+  });
+
+  it('uploadedAt が未来なら NG', async () => {
+    const dir = await tempDir();
+    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    await makeGeneration(dir, { uploadedAt: future });
+    const report = checkOffsiteStatus({ backupDir: dir, count: 1 });
+    expect(report.ok).toBe(false);
+    expect(report.problems.some((p) => p.includes('未来'))).toBe(true);
+  });
+});
+
+describe('CLI（scripts/ops/offsite-status.ts）', () => {
+  const tsx = join(process.cwd(), 'node_modules/.bin/tsx');
+  const script = join(process.cwd(), 'scripts/ops/offsite-status.ts');
+
+  function run(args: string[], backupDir: string): { status: number; stdout: string } {
+    try {
+      const stdout = execFileSync(tsx, [script, ...args], {
+        encoding: 'utf8',
+        env: { ...process.env, MIRAI_SF_BACKUP_DIR: backupDir },
+      });
+      return { status: 0, stdout };
+    } catch (err) {
+      const e = err as { status?: number; stdout?: string };
+      return { status: e.status ?? -1, stdout: e.stdout ?? '' };
+    }
+  }
+
+  it('--help は exit 0 で使い方を出す', () => {
+    const res = run(['--help'], tmpdir());
+    expect(res.status).toBe(0);
+    expect(res.stdout).toContain('使い方');
+  });
+
+  it('不正な引数は exit 2', () => {
+    const res = run(['--bogus'], tmpdir());
+    expect(res.status).toBe(2);
+  });
+
+  it('整合していれば exit 0、欠落があれば exit 1', async () => {
+    const okDir = await tempDir();
+    await makeGeneration(okDir, { name: 'mirai_sf_prod-20261106T120000Z' });
+    expect(run(['--count', '1'], okDir).status).toBe(0);
+
+    const ngDir = await tempDir();
+    await makeGeneration(ngDir, { name: 'mirai_sf_prod-20261106T120000Z', makeR2: false });
+    expect(run(['--count', '1'], ngDir).status).toBe(1);
+  });
+
+  it('--json は機械可読な JSON を出す', async () => {
+    const dir = await tempDir();
+    await makeGeneration(dir, { name: 'mirai_sf_prod-20261106T120000Z' });
+    const res = run(['--count', '1', '--json'], dir);
+    const parsed = JSON.parse(res.stdout) as { ok: boolean; generations: { name: string }[] };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.generations[0]?.name).toBe('mirai_sf_prod-20261106T120000Z');
   });
 });
