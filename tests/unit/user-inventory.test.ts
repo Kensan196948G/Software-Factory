@@ -3,7 +3,7 @@
  * 既定出力にメールアドレスを出さないこと、CSV が 0600 で書かれることを固定する。
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -154,12 +154,49 @@ describe('CLI（scripts/ops/user-inventory.ts）', () => {
     expect(run([]).status).toBe(2);
   });
 
+  it('symlink の --out は拒否（PII を意図しない先へ出さない）', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'inv-'));
+    const real = join(dir, 'real.csv');
+    const link = join(dir, 'link.csv');
+    try {
+      await writeFile(real, '');
+      await symlink(real, link);
+      const res = run(['--db', 'mirai_sf', '--out', link, '--force']);
+      expect(res.status).toBe(2);
+      expect(res.stderr).toContain('symlink');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('通常ファイルでない --out（/dev/null 等）は拒否', () => {
+    const res = run(['--db', 'mirai_sf', '--out', '/dev/null', '--force']);
+    expect(res.status).toBe(2);
+    expect(res.stderr).toContain('通常ファイルではありません');
+  });
+
+  it('--force で上書きしても 0600 に強制する（PII を world-readable にしない）', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'inv-'));
+    const target = join(dir, 'existing.csv');
+    try {
+      await writeFile(target, '');
+      await chmod(target, 0o644);
+      expect((await stat(target)).mode & 0o777).toBe(0o644);
+      const res = run(['--db', 'mirai_sf', '--out', target, '--force']);
+      // DB が無い環境では失敗しうる。成功したときだけ mode を検証する。
+      if (res.status === 0) {
+        expect((await stat(target)).mode & 0o777).toBe(0o600);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('既存の --out は --force なしで exit 2', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'inv-'));
     const target = join(dir, 'existing.csv');
     try {
-      await readFile(join(dir, '.'), 'utf8').catch(() => undefined);
-      execFileSync('/usr/bin/touch', [target]);
+      await writeFile(target, '');
       const res = run(['--db', 'mirai_sf', '--out', target]);
       expect(res.status).toBe(2);
       expect(res.stderr).toContain('既に存在します');

@@ -15,7 +15,7 @@
  *
  * 終了コード: 0=成功 / 2=引数不正・出力先の衝突 / 1=想定外の失敗
  */
-import { existsSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
@@ -99,8 +99,9 @@ export function formatSummary(db: string, summary: InventorySummary): string {
   ].join('\n');
 }
 
-/** DB から利用者と役割を読む（READ ONLY）。 */
+/** DB から利用者と役割を読む（READ ONLY）。DB 名はここでも検証する。 */
 export function loadUsers(db: string): UserRow[] {
+  if (!/^[A-Za-z0-9_]{1,63}$/.test(db)) throw new InventoryUsageError('--db の形式が不正です');
   // 1 行 1 利用者の TSV（JSON は psql の行折り返しで壊れることがあるため使わない）。
   const sql = [
     'begin read only;',
@@ -110,11 +111,18 @@ export function loadUsers(db: string): UserRow[] {
     'order by u.created_at;',
     'rollback;',
   ].join('\n');
-  const out = execFileSync(
-    'psql',
-    ['-d', db, '-h', '/var/run/postgresql', '-tA', '-F', '\t', '-v', 'ON_ERROR_STOP=1', '-c', sql],
-    { encoding: 'utf8', timeout: 20_000 },
-  );
+  let out: string;
+  try {
+    out = execFileSync(
+      'psql',
+      ['-X', '-d', db, '-h', '/var/run/postgresql', '-tA', '-F', '\t', '-v', 'ON_ERROR_STOP=1', '-c', sql],
+      // stderr は継承させない（psql のエラーはロール名・ホスト・DB 名を含み得る）。
+      { encoding: 'utf8', timeout: 20_000, stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+  } catch {
+    // psql の stderr はロール名・ホストを含み得るため表示しない。
+    throw new Error('DB から読み取れませんでした（接続・権限を確認してください。詳細は表示しません）');
+  }
   return parseUsersTsv(out);
 }
 
@@ -182,8 +190,18 @@ if (invokedDirectly) {
     }
     if (parsed.out) {
       const target = resolve(parsed.out);
-      if (existsSync(target) && !parsed.force) {
-        throw new InventoryUsageError(`出力先が既に存在します（--force で上書き）: ${target}`);
+      if (existsSync(target)) {
+        const st = lstatSync(target);
+        // symlink や device（/dev/stdout 等）へは書かない（PII が意図しない先へ出る）。
+        if (st.isSymbolicLink()) {
+          throw new InventoryUsageError(`出力先が symlink です（拒否）: ${target}`);
+        }
+        if (!st.isFile()) {
+          throw new InventoryUsageError(`出力先が通常ファイルではありません（拒否）: ${target}`);
+        }
+        if (!parsed.force) {
+          throw new InventoryUsageError(`出力先が既に存在します（--force で上書き）: ${target}`);
+        }
       }
     }
     const users = loadUsers(parsed.db);
@@ -191,6 +209,8 @@ if (invokedDirectly) {
     if (parsed.out) {
       const target = resolve(parsed.out);
       writeFileSync(target, toCsv(users), { mode: 0o600 });
+      // 既存ファイルを --force で上書きした場合、mode は引き継がれる。PII を守るため必ず 0600 にする。
+      chmodSync(target, 0o600);
       process.stdout.write(`CSV を書き出しました（0600）: ${target}\n`);
     }
     process.stdout.write(`${formatSummary(parsed.db, summary)}\n`);
@@ -200,7 +220,7 @@ if (invokedDirectly) {
       process.stderr.write(`${err.message}\n${USAGE}\n`);
       process.exit(2);
     }
-    process.stderr.write(`想定外の失敗: ${(err as Error).message}\n`);
+    process.stderr.write(`想定外の失敗（詳細は表示しません）: ${(err as Error).name}\n`);
     process.exit(1);
   }
 }
