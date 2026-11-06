@@ -52,6 +52,12 @@ export interface AppConfig {
    * 既定は false（fail-closed）。APP_ENV=staging / production では 1 を起動エラーにする（Issue #102）。
    */
   accessTrustEmailHeader: boolean;
+  /**
+   * 未登録の Access 利用者を初回ログイン時に自動作成する明示 opt-in（ACCESS_AUTO_PROVISION）。
+   * 既定は false。有効時も最小権限（is_admin=false・requester のみ）で作り、`user.provisioned` を監査に残す。
+   * 本番・staging（NODE_ENV=production を含む）では 1 を起動エラーにする（Issue #102 の完了条件 3）。
+   */
+  accessAutoProvision: boolean;
   /** GitHub Issue 自動作成（未設定なら無効） */
   githubToken: string;
   githubRepo: string;
@@ -152,6 +158,17 @@ export function isAccessHeaderTrustEnabled(
   return true;
 }
 
+/**
+ * 未登録利用者の自動作成（ACCESS_AUTO_PROVISION）が実際に有効か（Issue #102 の完了条件 3）。
+ * 明示 opt-in があり、かつ本番・staging でないときだけ true。既定は false の fail-closed。
+ * 起動時にも本番・staging の opt-in は拒否するが、ここでも二重に判定する。
+ */
+export function isAccessAutoProvisionEnabled(cfg: Pick<AppConfig, 'accessAutoProvision' | 'appEnv' | 'isProduction'>): boolean {
+  if (!cfg.accessAutoProvision) return false;
+  if (cfg.isProduction || cfg.appEnv === 'staging' || cfg.appEnv === 'production') return false;
+  return true;
+}
+
 /** 本番モードで JWT 検証なしのまま Access のヘッダを信頼しているときの警告文。問題なければ null。 */
 export function accessJwtStartupWarning(
   cfg: Pick<AppConfig, 'isProduction' | 'authMode' | 'accessTeamDomain' | 'accessAud'>,
@@ -206,6 +223,24 @@ function accessTrustEmailHeaderOf(
   return true;
 }
 
+/**
+ * ACCESS_AUTO_PROVISION の解釈（Issue #102 の完了条件 3）。既定は無効。
+ * 0 / 1 以外は起動エラー。1 は本番・staging（NODE_ENV=production を含む）では起動エラーにする（fail-closed）。
+ * この値を使うのは Access ログインの経路だけなので、AUTH_MODE=password でも値の検証は行う。
+ */
+function accessAutoProvisionOf(raw: string | undefined, appEnv: AppConfig['appEnv'], isProduction: boolean): boolean {
+  const value = raw?.trim();
+  if (value === undefined || value === '') return false;
+  if (value !== '0' && value !== '1') throw new Error('ACCESS_AUTO_PROVISION が不正です（0 / 1 のいずれか）');
+  if (value === '0') return false;
+  if (isProduction || appEnv === 'staging' || appEnv === 'production') {
+    throw new Error(
+      'ACCESS_AUTO_PROVISION=1 は本番・staging では使えません。利用者は管理API（/api/admin/users）で作成してください',
+    );
+  }
+  return true;
+}
+
 export function loadConfig(overrides: RawConfig = {}): AppConfig {
   const file = { ...readConfigFile(process.env.MIRAI_SF_CONFIG_FILE), ...overrides };
   const nodeEnv = (pick(file, 'NODE_ENV') ?? 'development') as AppConfig['nodeEnv'];
@@ -232,6 +267,7 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
     appEnvExplicit,
     isProduction,
   );
+  const accessAutoProvision = accessAutoProvisionOf(pick(file, 'ACCESS_AUTO_PROVISION'), appEnv, isProduction);
 
   // 自己承認の既定は環境で決める。本番だけ既定で禁止し、明示の 1 は警告つきで許可する。
   const rawSelfApproval = pick(file, 'ALLOW_SELF_APPROVAL')?.trim();
@@ -266,6 +302,7 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
     authMode,
     ...accessJwtSettingsOf(authMode, pick(file, 'ACCESS_TEAM_DOMAIN'), pick(file, 'ACCESS_AUD')),
     accessTrustEmailHeader,
+    accessAutoProvision,
     accessAllowedEmails: (pick(file, 'ACCESS_ALLOWED_EMAILS') ?? '')
       .split(',')
       .map((e) => e.trim().toLowerCase())

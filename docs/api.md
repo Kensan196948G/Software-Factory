@@ -6,6 +6,7 @@
 
 - 認証: `msf_session` Cookie（HttpOnly / SameSite=Lax / Secure は本番）。セッションはDB。
 - `AUTH_MODE=access`: `ACCESS_TEAM_DOMAIN` と `ACCESS_AUD` を設定すると、毎回 `Cf-Access-Jwt-Assertion` の JWT を検証する（`docs/deployment.md` §3-1）。未設定の場合は **fail-closed** で、`Cf-Access-Authenticated-User-Email` / `Cf-Access-Client-Id` ヘッダを信頼しない（401）。このとき `ACCESS_TRUST_EMAIL_HEADER=1` を明示するとヘッダ信頼を opt-in できるが、許可されるのは **`APP_ENV` を明示した** development / test だけ。`APP_ENV=staging` / `production`、または `ACCESS_TRUST_EMAIL_HEADER=1` かつ `APP_ENV` 未設定のときは**起動エラー**になる（Issue #102。2026-11-06）。
+- `AUTH_MODE=access` で利用者表に無いメールは、既定では自動作成せず 401 にする（`auth.access_denied` / reason=`user_not_registered` を監査）。開発・テストで自動作成が必要なときだけ `ACCESS_AUTO_PROVISION=1` を明示する（既定 `0`。`0` / `1` 以外、`APP_ENV=staging` / `production`、`NODE_ENV=production` では起動エラー）。有効時も作るのは最小権限（`is_admin=false`・`requester` のみ）で、`user.provisioned`（isAdmin=false, roles=['requester']）を監査に残す。利用者の作成は管理API（§6）が原則（Issue #102 完了条件 3。2026-11-06）。
 - CSRF: 更新系は `X-CSRF-Token` ヘッダが必要（`msf_csrf` Cookie と一致）。`Origin` も検証。
 - 役割: サーバ側で毎回判定。クライアントの「いまの役割」は信用しない。
 - エラー: `{ "error": { "code": "ERR-xxx", "message": "...", "details"?, "correlationId"? } }`
