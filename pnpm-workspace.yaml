@@ -1,0 +1,15 @@
+# pnpm のビルドスクリプト許可（pnpm 11 以降の形式）。
+#
+# 背景: package.json の `pnpm.onlyBuiltDependencies` は pnpm 11 で廃止され、
+# pnpm 12 では無視される。そのため pnpm 12 の既定（strictDepBuilds=true）で
+# `ERR_PNPM_IGNORED_BUILDS` となり、2026-11-06 11:50 の Staging 自動追従が失敗した。
+#
+# - pnpm 11 以降: この `allowBuilds`（パッケージ名 → true/false）
+# - pnpm 10 以前: package.json の `pnpm.onlyBuiltDependencies`
+#
+# 許可するのは、ビルドスクリプトが実際に必要な次の 3 つだけ。追加する場合は理由を
+# docs/production/21-staging-autofollow-pnpm12-20261106.md に記録する。
+allowBuilds:
+  esbuild: true
+  workerd: true
+  sharp: true

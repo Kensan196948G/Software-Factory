@@ -85,6 +85,12 @@ cd /mnt/storage/Software-Factory/Software-Factory
 git switch main && git pull --ff-only
 SHA=$(git rev-parse HEAD)
 
+# 0. 前提: pnpm の版（このホストは 12.x）。ビルドスクリプトの許可は
+#    pnpm-workspace.yaml の allowBuilds（pnpm 11 以降）と package.json の
+#    pnpm.onlyBuiltDependencies（pnpm 10 以前）の両方で管理する。
+#    失敗時は docs/production/21-staging-autofollow-pnpm12-20261106.md を参照。
+pnpm --version
+
 # 1. 計画の確認（リリース成果物・DB・サービスを変更しない。fetch による refs 更新のみ）
 pnpm ops:prod:release --dry-run "$SHA"
 
