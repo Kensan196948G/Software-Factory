@@ -12,7 +12,7 @@
 | # | 条件 | 確認方法 | 2026-11-06 時点 |
 | - | ---- | -------- | --------------- |
 | 1 | 所有者の配備承認（数字選択または Y/N） | 会話・記録 | **未取得** |
-| 2 | main が緑（必須 CI 3/3） | `gh run list --branch main --limit 1` | 成功 |
+| 2 | main が緑（必須 CI 3/3） | `gh run list --branch main --limit 1`。**実際の判定は §1 の dry-run の CI ゲートで行う**（執筆時点 2026-11-06 20:06 は最新 main の CI が実行中であり、「成功」を前提にしない） | 実行中 |
 | 3 | 未適用の migration がない | `ops:prod:release --dry-run <SHA>` | 0 件 |
 | 4 | 最新バックアップと R2 記録が新しい | `pnpm ops:prod:offsite-status --count 2` | OK |
 | 5 | ロールバック手順が使える | `pnpm ops:prod:rollback --dry-run <前SHA>` | exit 0 |
@@ -54,11 +54,16 @@ pnpm ops:prod:release "$SHA"
 
 ## 4. 機械的受入（必須）
 
+**先に healthcheck を 1 回実行する**。受入は `healthcheck.json` を読むが、このファイルは 5 分間隔の timer が更新するため、配備直後は**旧 SHA・auth 未取得のまま**で最大 5 分間 FAIL する。
+
 ```bash
+systemctl --user start mirai-sf-prod-healthcheck.service   # 1 回だけ実行（数秒で終わる）
+systemctl --user show mirai-sf-prod-healthcheck.service -p Result -p ExecMainStatus
 pnpm ops:prod:acceptance "$SHA"
 ```
 
-- **期待**: 14 項目すべて `PASS`、exit 0。特に `auth.status=ready` と `auth 関連の警告が無い` を確認する。
+- **期待**: healthcheck が `Result=success` / `ExecMainStatus=0`。その後の受入が 14 項目すべて `PASS`、exit 0。特に `auth.status=ready` と `auth 関連の警告が無い` を確認する。
+- 注意: healthcheck 自体が失敗した場合は、受入に進まず原因（healthz・db・オフサイト鮮度）を確認する。
 - **中止**: 1 項目でも FAIL → §7 のロールバックへ。**FAIL のまま業務確認へ進まない**。
 - 補足: `--json` で機械可読の結果を保存できる。
 
@@ -91,6 +96,7 @@ pnpm ops:prod:acceptance "$SHA"
 ```bash
 pnpm ops:prod:rollback --dry-run <前のSHA>   # 計画の確認
 pnpm ops:prod:rollback <前のSHA>             # 切替（DB は戻さない）
+systemctl --user start mirai-sf-prod-healthcheck.service   # 状態を更新（§4 と同じ理由）
 pnpm ops:prod:acceptance <前のSHA>           # 戻した先の受入
 ```
 
@@ -111,4 +117,6 @@ pnpm ops:prod:acceptance <前のSHA>           # 戻した先の受入
 - 外部通知は未設定（失敗はローカル記録のみ）。
 - 別ホスト DR は未実証（R2 からの復元は同一ホストで実証済み）。
 - R2 の保持規則は未設定（N7 未適用）。
-- 既存の管理者 2 件（`is_admin=true`・3 役）の棚卸しは未実施（`ops:user-inventory` で確認可能）。
+- 既存の管理者の棚卸しは未実施（`ops:user-inventory` で確認可能）。2026-11-06 の実測:
+  - Staging（`mirai_sf`）: 2 件・管理者 2・管理者かつ3役 2（作成 2026-10）
+  - 本番（`mirai_sf_prod`）: 2 件・管理者 1・管理者かつ3役 1・役割 approver 2 / desk 1 / requester 1（作成 2026-11）
