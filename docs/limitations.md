@@ -92,6 +92,7 @@
 | C-04 | ローカルDNSが新ホスト名を解決しない間は `/etc/hosts` で暫定対応                                                               | このホストからの確認に限る                                                                     | DNS伝播後に削除。他端末は通常のDNSで解決できる                                                                                              |
 | C-05 | `AUTH_MODE=access` で `ACCESS_TEAM_DOMAIN` / `ACCESS_AUD` が未設定の場合は fail-closed とし、Access ヘッダを信頼しない（Issue #102 のコード修正。2026-11-06） | ヘッダ信頼が必要な開発環境では `ACCESS_TRUST_EMAIL_HEADER=1` と APP_ENV の明示が要る（staging / production / APP_ENV 未設定では起動エラー）。未設定のままではログインできない | JWT の 2 項目を設定する（deployment §3-1）。ローカル確認は 127.0.0.1:8782 のみ。切戻し時は JWT を外すと全員ログイン不可になる点に注意 |
 | C-06 | 未登録の Access 利用者は既定で自動作成しない（401・`auth.access_denied` / reason=`user_not_registered`）。自動作成は `ACCESS_AUTO_PROVISION=1` の明示 opt-in（開発・テストのみ）で、作るのは `is_admin=false`・`requester` のみ（Issue #102 完了条件 3。2026-11-06） | 新規利用者は管理API（`/api/admin/users`）で事前に作成する必要がある。staging / production、`NODE_ENV=production` では opt-in 自体が起動エラー | 管理APIで登録する（api.md §6）。必要でも本番・staging の設定変更では回避しない |
+| C-07 | `/healthz` の `auth.status` は「認証経路の設定」（JWT・ヘッダ信頼・許可リスト）だけを見る。**`app_user` に該当ユーザーが存在するかは見ない**（2026-11-06、PR #111） | DB 復元直後・全利用者削除・許可リスト変更では「構成は ready なのに全員 401」になり得る。監視は構成の欠落のみ検知する | 復元・利用者削除・許可リスト変更の直後に `/api/auth/me` が 401 にならないことを手動確認する。将来は有効ユーザー存在の検査を追加する |
 
 ## 4. 未決事項（要件定義書 Q-01〜23との関係）
 

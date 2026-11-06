@@ -21,6 +21,24 @@ let server: Server;
 let healthUrl = '';
 let root = '';
 let backupDir = '';
+/** 偽 /healthz が返す本文。テストの途中で差し替えて認証状態を変える。 */
+let healthBody: Record<string, unknown> = {};
+
+function healthyBody() {
+  return {
+    status: 'ok',
+    environment: 'production',
+    commit: COMMIT,
+    db: { ok: true },
+    auth: {
+      mode: 'access',
+      jwtConfigured: true,
+      headerTrustEnabled: false,
+      allowlistConfigured: true,
+      status: 'ready',
+    },
+  };
+}
 
 type RunResult = { code: number; out: string };
 
@@ -96,9 +114,10 @@ beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), 'mirai-sf-healthcheck-offsite-'));
   mkdirSync(join(root, 'home', 'current'), { recursive: true });
   writeFileSync(join(root, 'home', 'current', 'release.env'), `COMMIT_SHA=${COMMIT}\n`);
+  healthBody = healthyBody();
   server = createServer((_request, response) => {
     response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ status: 'ok', environment: 'production', commit: COMMIT, db: { ok: true } }));
+    response.end(JSON.stringify(healthBody));
   });
   await new Promise<void>((resolvePromise) => server.listen(0, '127.0.0.1', () => resolvePromise()));
   const { port } = server.address() as AddressInfo;
@@ -111,6 +130,7 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
+  healthBody = healthyBody();
   backupDir = join(root, `backups-${Math.random().toString(36).slice(2)}`);
   mkdirSync(backupDir, { recursive: true });
   writeDump('mirai_sf_prod-new.dump', 10);
@@ -284,5 +304,72 @@ describe('healthcheck.mjs のオフサイト送信記録の鮮度確認', () => 
     expect(code, out).toBe(1);
     expect(out).toContain('MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN が正の整数（分）ではありません');
     expect(out).not.toContain('ninety-secret');
+  }, 40_000);
+});
+
+describe('healthcheck.mjs の認証状態（auth.status）', () => {
+  it('auth.status=ready なら OK（ログにも認証状態を出す）', async () => {
+    const { code, out } = await run({});
+    expect(code, out).toBe(0);
+    expect(out).toContain('auth.status=ready（mode=access）');
+    expect(out).toContain('healthcheck OK');
+  }, 40_000);
+
+  it('HTTP 200 / status=ok でも auth.status=misconfigured なら NG（認証不能）', async () => {
+    healthBody.auth = {
+      mode: 'access',
+      jwtConfigured: false,
+      headerTrustEnabled: false,
+      allowlistConfigured: false,
+      status: 'misconfigured',
+    };
+    const { code, out } = await run({});
+    expect(code, out).toBe(1);
+    expect(out).toContain('auth.status=misconfigured（認証不能。');
+    expect(out).toContain('jwtConfigured=false');
+    expect(out).toContain('headerTrustEnabled=false');
+    expect(out).toContain('allowlistConfigured=false');
+    expect(out).toContain('healthcheck NG');
+    // 既存の確認（HTTP 200 / status=ok / db.ok）は通っているのに失敗していること
+    expect(out).not.toContain('status=(想定外の値)');
+  }, 40_000);
+
+  it('auth が無い（旧版 API など）は警告のみ（版ずれの過渡期を許容し、失敗にはしない）', async () => {
+    delete healthBody.auth;
+    const { code, out } = await run({});
+    expect(code, out).toBe(0);
+    expect(out).toContain('警告: auth が healthz にありません');
+    expect(out).toContain('healthcheck OK');
+  }, 40_000);
+
+  it('未知の auth.status は NG（ready 以外を通さない）', async () => {
+    healthBody.auth = {
+      mode: 'access',
+      jwtConfigured: true,
+      headerTrustEnabled: false,
+      allowlistConfigured: true,
+      status: 'unknown',
+    };
+    const { code, out } = await run({});
+    expect(code, out).toBe(1);
+    expect(out).toContain('auth.status=unknown（ready を期待）');
+  }, 40_000);
+
+  it('auth の中の余分な値（team domain・AUD・メール等）はログに出さない', async () => {
+    healthBody.auth = {
+      mode: 'access',
+      jwtConfigured: false,
+      headerTrustEnabled: false,
+      allowlistConfigured: false,
+      status: 'misconfigured',
+      teamDomain: 'leak-team-should-not-appear',
+      aud: 'leak-aud-should-not-appear',
+      email: 'leak-email-should-not-appear@example.com',
+    };
+    const { code, out } = await run({});
+    expect(code, out).toBe(1);
+    expect(out).not.toContain('leak-team-should-not-appear');
+    expect(out).not.toContain('leak-aud-should-not-appear');
+    expect(out).not.toContain('leak-email-should-not-appear');
   }, 40_000);
 });

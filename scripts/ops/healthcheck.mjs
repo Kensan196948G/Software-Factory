@@ -7,11 +7,12 @@
  *   2. status=ok かつ db.ok=true
  *   3. environment が期待どおり（既定 staging。本番は MIRAI_SF_HEALTH_ENV=production）
  *   4. /healthz の commit が current/release.env の COMMIT_SHA と一致する
- *   5. （任意）git rev-parse origin/main と一致しない場合は warning（失敗にはしない）
- *   6. （任意）最新 dump の鮮度（MIRAI_SF_HEALTH_BACKUP_DIR 設定時）
- *   7. （任意）最新のオフサイト送信記録 `*.dump.r2.json` の鮮度（MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN 設定時）
+ *   5. auth.status が ready（misconfigured は認証不能。HTTP 200 でも失敗にする。Issue #102 の残リスク）
+ *   6. （任意）git rev-parse origin/main と一致しない場合は warning（失敗にはしない）
+ *   7. （任意）最新 dump の鮮度（MIRAI_SF_HEALTH_BACKUP_DIR 設定時）
+ *   8. （任意）最新のオフサイト送信記録 `*.dump.r2.json` の鮮度（MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN 設定時）
  *
- * 6・7 はどちらも「検知範囲の拡大」であって RPO の保証ではない（docs/production/07-slo-and-measurement.md）。
+ * 7・8 はどちらも「検知範囲の拡大」であって RPO の保証ではない（docs/production/07-slo-and-measurement.md）。
  *
  * 失敗時は exit 1（oneshot unit が failed になり `systemctl --user --failed` で見える）。
  * 連続失敗と最終状態は ~/.local/state/mirai-sf/healthcheck.json に残し、復旧時に1行ログを出す。
@@ -19,6 +20,7 @@
  * 秘密情報は出力しない:
  *   - preview.conf（DATABASE_URL などの設定値）は読まない。DB も触らない。
  *   - /healthz の本文はログへ出さない。出すのは確認済みの項目（status / environment / db.ok / commit）だけ。
+ *   - auth は mode / 真偽値 / status だけを出し、team domain・AUD・メールアドレスは出さない（/healthz も返さない）。
  *   - URL は scheme://host:port/path までに落として出し、資格情報・クエリは出さない。
  *   - with-env.mjs と同じく、設定値は表示せず、失敗理由も内部で組み立てた文言だけを出す。
  *
@@ -402,7 +404,25 @@ async function main() {
       failures.push(`commit が一致しません（healthz=${health.commit}, release.env=${deployed.value}）`);
     }
 
-    // 5. （任意）origin/main との比較。取得できるときだけ warning を出す
+    // 5. 認証状態。HTTP 200 / status=ok でも、認証できる経路が無ければ失敗にする
+    //    （Issue #102 の残リスク: JWT 未設定 + ヘッダ信頼無効で /healthz が 200 のまま認証全断になる）
+    const auth = health.auth;
+    if (!auth || typeof auth !== 'object' || Array.isArray(auth)) {
+      // 版ずれの過渡期（監視の更新が API の配備より先）を許容する。misconfigured は失敗にする。
+      const message = 'auth が healthz にありません（API と監視の版ずれ。認証状態を確認できません）';
+      warnings.push(message);
+      warn(message);
+    } else if (auth.status === 'misconfigured') {
+      failures.push(
+        `auth.status=misconfigured（認証不能。mode=${safeValue(auth.mode)}, jwtConfigured=${auth.jwtConfigured === true}, headerTrustEnabled=${auth.headerTrustEnabled === true}, allowlistConfigured=${auth.allowlistConfigured === true}）`,
+      );
+    } else if (auth.status !== 'ready') {
+      failures.push(`auth.status=${safeValue(auth.status)}（ready を期待）`);
+    } else {
+      log(`auth.status=ready（mode=${safeValue(auth.mode)}）`);
+    }
+
+    // 6. （任意）origin/main との比較。取得できるときだけ warning を出す
     if (SHA_PATTERN.test(String(health.commit))) {
       const repo = resolveGitRepo();
       const originMain = repo ? readGitRef(repo, 'refs/remotes/origin/main') : null;
@@ -420,7 +440,7 @@ async function main() {
     }
   }
 
-  // 6. （任意）バックアップの鮮度（RPO の確認）。環境変数があるときだけ
+  // 7. （任意）バックアップの鮮度（RPO の確認）。環境変数があるときだけ
   if (backupDir) {
     const backup = checkBackupFreshness(backupDir, backupMaxAgeMin);
     if (backup.failure) {
@@ -430,7 +450,7 @@ async function main() {
     }
   }
 
-  // 7. （任意）オフサイト（R2）送信記録の鮮度。MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN があるときだけ
+  // 8. （任意）オフサイト（R2）送信記録の鮮度。MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN があるときだけ
   if (offsiteMaxAgeRaw) {
     const offsiteMaxAgeMin = /^[1-9][0-9]{0,5}$/.test(offsiteMaxAgeRaw) ? Number(offsiteMaxAgeRaw) : null;
     if (offsiteMaxAgeMin === null) {
@@ -454,6 +474,8 @@ async function main() {
     healthCommit: health && SHA_PATTERN.test(String(health.commit)) ? health.commit : null,
     environment: health ? safeValue(health.environment) : null,
     dbOk: health && health.db && typeof health.db === 'object' ? health.db.ok === true : null,
+    authStatus: health && health.auth && typeof health.auth === 'object' ? safeValue(health.auth.status) : null,
+    authMode: health && health.auth && typeof health.auth === 'object' ? safeValue(health.auth.mode) : null,
     previousConsecutiveFailures: previousFailures,
     totalFailures,
     lastFailureAt: previous.lastFailureAt ?? null,
@@ -480,7 +502,7 @@ async function main() {
       log(`復旧: 連続 ${previousFailures} 回の失敗から回復しました（最終失敗 ${previous.lastFailureAt ?? '不明'}）`);
     }
     log(
-      `healthcheck OK（commit=${health.commit}, environment=${safeValue(health.environment)}, db.ok=true, ${probe.durationMs}ms）`,
+      `healthcheck OK（commit=${health.commit}, environment=${safeValue(health.environment)}, db.ok=true, auth.status=${safeValue(health.auth?.status)}, ${probe.durationMs}ms）`,
     );
     return 0;
   }
