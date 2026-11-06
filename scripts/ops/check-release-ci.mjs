@@ -19,7 +19,7 @@
  * 終了コード:
  *   0   確認できた（配備してよい）
  *   75  一時的な未確認（run がまだ無い・実行中。配備しない。次の timer で再確認）
- *   1   失敗または照会不能（run/job の失敗、必須 job の欠落/skipped、
+ *   1   失敗または照会不能（run/job の失敗、必須 job の欠落/skipped（Run 自体が skipped の場合は除く）、
  *       API 情報不足、JSON 不正、gh/API エラー。配備しない。timer を failed にする）
  *
  * 秘密情報は出力しない（gh の認証は gh 自身に任せ、トークンを引数・ログに出さない）。
@@ -57,6 +57,9 @@ const queryError = (message) => {
  * 恒久的な失敗（run/job の失敗、必須 job の欠落、API 情報の欠落など）。
  * 「まだ始まっていない・実行中」と区別し、timer を failed にして気づけるようにする。
  */
+/** 検証できない（後続の実行に置換された可能性がある）conclusion。失敗ではなく「未確認」として扱う。 */
+const NOT_READY_CONCLUSIONS = new Set(['cancelled', 'skipped']);
+
 const terminalFailure = (message) => {
   console.error(`[ci-gate] 失敗: ${message}`);
   process.exit(1);
@@ -211,6 +214,11 @@ if (attempt.status !== 'completed') {
   notReady(`最新 attempt が未完了です（status=${safeValue(attempt.status)}）`);
 }
 if (attempt.conclusion !== 'success') {
+  if (NOT_READY_CONCLUSIONS.has(attempt.conclusion)) {
+    notReady(
+      `最新 attempt が検証できません（conclusion=${safeValue(attempt.conclusion)}。後続の実行による置換の可能性）`,
+    );
+  }
   terminalFailure(`最新 attempt が成功していません（conclusion=${safeValue(attempt.conclusion)}）`);
 }
 
@@ -252,6 +260,11 @@ if (finalLatest.status !== 'completed') {
   notReady(`job 確認後に attempt の状態が変わりました（status=${safeValue(finalLatest.status)}）`);
 }
 if (finalLatest.conclusion !== 'success') {
+  if (NOT_READY_CONCLUSIONS.has(finalLatest.conclusion)) {
+    notReady(
+      `job 確認後に attempt が検証できなくなりました（conclusion=${safeValue(finalLatest.conclusion)}。後続の実行による置換の可能性）`,
+    );
+  }
   terminalFailure(`job 確認後に attempt が成功でなくなりました（conclusion=${safeValue(finalLatest.conclusion)}）`);
 }
 

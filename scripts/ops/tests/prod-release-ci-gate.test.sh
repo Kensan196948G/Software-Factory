@@ -258,6 +258,15 @@ check "CI 未完了は展開しない" assert_not_deployed
 check "CI 未完了は current を変えない" assert_current_unchanged
 check "未確認をログに出す" assert_out_contains "exact-main CI が未確認のため配備しません"
 
+printf '\n== P3b. CI が cancelled（後続に置換）なら「未確認」（gate=75）で配備しない ==\n'
+setup_case gate_cancelled
+write_gh_attempt completed cancelled
+run_prod "$NEW"
+check "CI cancelled は終了コード 75" assert_code 75
+check "CI cancelled は展開しない" assert_not_deployed
+check "CI cancelled は current を変えない" assert_current_unchanged
+check "未確認をログに出す" assert_out_contains "exact-main CI が未確認のため配備しません"
+
 printf '\n== P4. CI の run が無い（gate=75）なら配備しない ==\n'
 setup_case gate_norun
 printf '{"total_count":0,"workflow_runs":[]}\n' >"$CASE/gh/runs.json"

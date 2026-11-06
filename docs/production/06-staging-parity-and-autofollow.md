@@ -96,7 +96,7 @@
    attempt の id/run_attempt/event/path/head_sha/head_branch が一覧と一致、attempt が `completed`/`success`、
    `quality` / `e2e` / `docker` の全 job が存在し `completed`/`success`、job 確認後の再取得でも
    同じ run/attempt のまま成功（再 run race 検出）。
-   **まだ run が無い・実行中は exit 75（次の timer で再確認）**、run/attempt/job の失敗、必須 job の欠落/skipped、
+   **まだ run が無い・実行中、または attempt が `cancelled` / `skipped`（後続の実行による置換の可能性）は exit 75（次の timer で再確認）**、run/attempt/job の失敗（`failure` / `timed_out` 等）、必須 job の欠落/skipped、
    `created_at` 欠落、API 情報不足、gh/API の照会エラー（JSON 不正を含む）は **exit 1（timer を failed にして気づける）**。
    gh の stderr 本文はログへ出さず、終了コード・シグナル・errno の固定分類だけを出す。
    手動 override / bypass は無い。
