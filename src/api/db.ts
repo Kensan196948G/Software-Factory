@@ -77,3 +77,15 @@ export async function healthCheck(): Promise<{ ok: boolean; latencyMs: number; e
     return { ok: false, latencyMs: -1, error: (err as Error).message };
   }
 }
+
+/**
+ * 有効な利用者（`app_user.is_active = true`）の件数。外形監視用（limitations C-07）。
+ *
+ * DB 復元直後・全利用者の無効化では「認証経路の構成は ready なのに全員 401」になる。
+ * `/healthz` は構成だけを見ていたためこの状態を検知できなかったので、件数を 1 つ足す。
+ * **返すのは件数だけ**で、メール・ID・名前は返さない。
+ */
+export async function countActiveUsers(): Promise<number> {
+  const row = await one<{ count: number }>('select count(*)::int as count from app_user where is_active');
+  return row?.count ?? 0;
+}

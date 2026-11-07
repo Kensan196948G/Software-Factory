@@ -35,6 +35,7 @@ function healthyBody() {
       jwtConfigured: true,
       headerTrustEnabled: false,
       allowlistConfigured: true,
+      usersActive: 3,
       status: 'ready',
     },
   };
@@ -580,4 +581,81 @@ describe('healthcheck.mjs の認証状態（auth.status）', () => {
     expect(out).not.toContain('leak-aud-should-not-appear');
     expect(out).not.toContain('leak-email-should-not-appear');
   }, 40_000);
+
+  it('auth.usersActive=0 は NG（構成が ready でも全員 401 になる全断。C-07）', async () => {
+    healthBody.auth = {
+      mode: 'access',
+      jwtConfigured: true,
+      headerTrustEnabled: false,
+      allowlistConfigured: true,
+      usersActive: 0,
+      status: 'ready',
+    };
+    const { code, out } = await run({});
+    expect(code, out).toBe(1);
+    expect(out).toContain('auth.usersActive=0（有効な利用者が 0 件。');
+    expect(out).toContain('healthcheck NG');
+    // 構成としては ready なので、認証経路の判定では失敗していないこと
+    expect(out).toContain('auth.status=ready（mode=access）');
+  }, 40_000);
+
+  it('auth.usersActive が 1 以上なら OK（件数だけをログに出す）', async () => {
+    healthBody.auth = {
+      mode: 'access',
+      jwtConfigured: true,
+      headerTrustEnabled: false,
+      allowlistConfigured: true,
+      usersActive: 2,
+      status: 'ready',
+    };
+    const { code, out } = await run({});
+    expect(code, out).toBe(0);
+    expect(out).toContain('auth.usersActive=2');
+    expect(out).toContain('healthcheck OK');
+  }, 40_000);
+
+  it('auth.usersActive が無い（旧版 API など）は警告のみ（版ずれを許容し、失敗にはしない）', async () => {
+    healthBody.auth = {
+      mode: 'access',
+      jwtConfigured: true,
+      headerTrustEnabled: false,
+      allowlistConfigured: true,
+      status: 'ready',
+    };
+    const { code, out } = await run({});
+    expect(code, out).toBe(0);
+    expect(out).toContain('警告: auth.usersActive が healthz にありません');
+    expect(out).toContain('healthcheck OK');
+  }, 40_000);
+
+  it('auth.usersActive=null（API が件数を取得できない）は NG（検査の消失を緑にしない）', async () => {
+    healthBody.auth = {
+      mode: 'access',
+      jwtConfigured: true,
+      headerTrustEnabled: false,
+      allowlistConfigured: true,
+      usersActive: null,
+      status: 'ready',
+    };
+    const { code, out } = await run({});
+    expect(code, out).toBe(1);
+    expect(out).toContain('auth.usersActive=null（API が有効な利用者の件数を取得できませんでした。');
+    expect(out).toContain('healthcheck NG');
+  }, 40_000);
+
+  it('auth.usersActive が数値でない（文字列・負数・小数）は NG（"0" を成功扱いにしない）', async () => {
+    for (const value of ['0', -1, 1.5]) {
+      healthBody.auth = {
+        mode: 'access',
+        jwtConfigured: true,
+        headerTrustEnabled: false,
+        allowlistConfigured: true,
+        usersActive: value,
+        status: 'ready',
+      };
+      const { code, out } = await run({});
+      expect(code, `値=${JSON.stringify(value)} / ${out}`).toBe(1);
+      expect(out, `値=${JSON.stringify(value)}`).toContain('auth.usersActive が整数（0 以上）ではありません');
+    }
+  }, 120_000);
 });
