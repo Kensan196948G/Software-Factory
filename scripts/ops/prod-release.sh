@@ -13,7 +13,8 @@
 #   MIRAI_SF_PROD_API_UNIT     既定 mirai-sf-prod-api.service
 #
 # exact-main CI ゲート: 解決した 40 桁 SHA の push/main ci.yml（最新 attempt、quality/e2e/docker）が
-# 成功していなければ配備しない（release.sh の check-release-ci.mjs 呼び出し。75=CI 未完了、1=失敗・照会不能）。
+# 成功していなければ配備しない（release.sh の check-release-ci.mjs 呼び出し。
+# 75=CI 未完了・run 未作成・attempt が cancelled/stale（後続に置換）、1=失敗・照会不能）。
 # --dry-run ではゲート結果を表示するだけ。無効化・bypass の手段は無い（fail-closed）。
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

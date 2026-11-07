@@ -18,8 +18,9 @@
  *
  * 終了コード:
  *   0   確認できた（配備してよい）
- *   75  一時的な未確認（run がまだ無い・実行中。配備しない。次の timer で再確認）
- *   1   失敗または照会不能（run/job の失敗、必須 job の欠落/skipped（Run 自体が skipped の場合は除く）、
+ *   75  一時的な未確認（run がまだ無い・実行中、attempt が cancelled/stale（後続の実行に置換された可能性）。
+ *       配備しない。次の timer で再確認）
+ *   1   失敗または照会不能（run/job の失敗、必須 job の欠落/skipped（run 自体の skipped を含む）、
  *       API 情報不足、JSON 不正、gh/API エラー。配備しない。timer を failed にする）
  *
  * 秘密情報は出力しない（gh の認証は gh 自身に任せ、トークンを引数・ログに出さない）。
@@ -54,16 +55,16 @@ const queryError = (message) => {
   process.exit(1);
 };
 /**
- * 恒久的な失敗（run/job の失敗、必須 job の欠落、API 情報の欠落など）。
- * 「まだ始まっていない・実行中」と区別し、timer を failed にして気づけるようにする。
- */
-/**
  * 検証できない（後続の実行に置換された可能性がある）conclusion。失敗ではなく「未確認」として扱う。
- * `skipped` は含めない: [skip ci] 等で CI が意図的に走らない場合、黙って配備されないまま
+ * `skipped` は含めない: GitHub の skip 指示子等で CI が意図的に走らない場合、黙って配備されないまま
  * 停滞するより、失敗として通知する方が安全（next SHA が来れば自動で解消する）。
  */
 const NOT_READY_CONCLUSIONS = new Set(['cancelled', 'stale']);
 
+/**
+ * 恒久的な失敗（run/job の失敗、必須 job の欠落、API 情報の欠落など）。
+ * 「まだ始まっていない・実行中」と区別し、timer を failed にして気づけるようにする。
+ */
 const terminalFailure = (message) => {
   console.error(`[ci-gate] 失敗: ${message}`);
   process.exit(1);

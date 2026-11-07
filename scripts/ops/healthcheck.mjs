@@ -82,7 +82,9 @@ const offsiteMaxAgeRaw = (process.env.MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN ?? '')
 /**
  * 最新 dump に対応する送信記録がまだ無いときの猶予（分）。backup.sh は dump を置いた後に R2 へ送るため、
  * 直後は記録が無いのが正常である。dump の経過がこの猶予を超えても記録が無ければ NG にする。
- * 未設定・空なら既定 10 分。MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN 設定時だけ使う。
+ * 未設定・空なら既定 10 分（`MIRAI_SF_HEALTH_OFFSITE_GENERATION_GRACE_MIN`。本番実測: 送信は約 14 秒、
+ * healthcheck は 5 分間隔なので 10 分で十分）。MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN 設定時だけ使う。
+ * MAX_AGE 以上の値を設定すると検知短縮の効果が失われるため推奨しない。
  */
 const DEFAULT_OFFSITE_GENERATION_GRACE_MIN = 10;
 const offsiteGenerationGraceRaw = (process.env.MIRAI_SF_HEALTH_OFFSITE_GENERATION_GRACE_MIN ?? '').trim();

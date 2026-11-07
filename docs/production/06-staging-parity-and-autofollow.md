@@ -118,7 +118,7 @@
 | 1      | 失敗（health 不一致、CI の恒久的な失敗・必須 job 欠落/skipped・created_at 欠落・API 情報不足・照会エラーなど。直前のリリースへ戻した場合を含む）             |
 | 2      | 失敗して直前のリリースへ戻せなかった（手動で復旧する）                                                                                                     |
 | 3      | 破壊的な可能性がある migration のため中止（`release.sh` の判定）                                                                                           |
-| 75     | 配備しない（一時的）: 実行中、main・clean でない／diverged、exact-main CI の run がまだ無い・実行中（timer は成功扱い。次の回で再確認） |
+| 75     | 配備しない（一時的）: 実行中、main・clean でない／diverged、exact-main CI の run がまだ無い・実行中、attempt が cancelled/stale（後続に置換された可能性）（timer は成功扱い。次の回で再確認） |
 
 ### 3-3. 環境変数（検証用の差し替えを含む）
 
@@ -227,6 +227,8 @@ autofollow は「origin/main への追従」を見る。役割が違うため両
 15. exact-main CI: event が push でない run は exit 1（workflow 設定の異常として気づく）
 16. exact-main CI: branch が main でない run は exit 1
 17. exact-main CI: 過去 attempt が success でも最新 attempt が未完了なら exit 75
+17b. exact-main CI: 最新 attempt が cancelled（後続に置換）なら exit 75・release.sh を呼ばない
+17c. exact-main CI: 最新 attempt が stale（後続に置換）なら exit 75・release.sh を呼ばない
 18. exact-main CI: 必須 job が skipped なら exit 1
 19. exact-main CI: 必須 job が欠けていれば exit 1
 20. exact-main CI: gh/API エラーは exit 1（75 ではない）・release.sh を呼ばない
@@ -271,14 +273,14 @@ queryで非push・非mainは除外されるので、該当runしか無い実API�
 `/healthz` と `current` を確認し、runbook の一次対応に沿って手動で復旧する。
 exit 1 は「CI の恒久的な失敗・必須 job 欠落/skipped・created_at 欠落・API 情報不足・照会エラー」で、
 timer が failed になる（確認できるまで配備しない）。
-exit 75 は「一時的に配備しない」で、CI の run 未作成・実行中、または実行中/作業ツリー不一致/diverged を含む
-（timer は成功扱い。次の回で再確認する）。
+exit 75 は「一時的に配備しない」で、CI の run 未作成・実行中、attempt が cancelled/stale（後続に置換）、
+または実行中/作業ツリー不一致/diverged を含む（timer は成功扱い。次の回で再確認する）。
 CI の状態は `gh run list --workflow ci.yml --commit <SHA>` 等で確認できる。**CI 待ちを飛ばす bypass は無い。**
 
 ## 7. 既知の制約
 
 - push フックではないため、main の反映は最大約 10 分遅れる（timer の間隔）。
-- **exact-main CI の run がまだ無い・実行中の間は配備しない（exit 75）。** CI 完了まで
+- **exact-main CI の run がまだ無い・実行中、attempt が cancelled/stale（後続に置換）の間は配備しない（exit 75）。** CI 完了まで
   最大で CI 所要時間（quality / e2e / docker）＋10 分待つ。CI 待ちを飛ばす override / bypass は無い。
   **CI の失敗・必須 job の欠落/skipped は exit 1** で timer が failed になる（成功扱いの 75 と区別する）。
 - CI ゲートは `gh` の認証（gh auth / hosts.yml）に依存する。gh/API エラーは exit 1（failed）で、
