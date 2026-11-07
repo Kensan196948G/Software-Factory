@@ -544,7 +544,7 @@ async function main() {
       //     キーがあるのに null・不正値・0 件なら失敗にする（fail-closed。検査の消失を緑にしない）。
       if (!Object.prototype.hasOwnProperty.call(auth, 'usersActive')) {
         const message =
-          'auth.usersActive が healthz にありません（API と監視の版ずれ。有効な利用者の存在を確認できません）';
+          'auth.usersActive が healthz にありません（旧 API との版ずれ、または DB 不達で API が件数を出していない。有効な利用者の存在を確認できません）';
         warnings.push(message);
         warn(message);
       } else if (auth.usersActive === null) {

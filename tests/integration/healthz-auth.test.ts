@@ -36,7 +36,7 @@ type HealthBody = {
     jwtConfigured: boolean;
     headerTrustEnabled: boolean;
     allowlistConfigured: boolean;
-    usersActive?: number;
+    usersActive?: number | null;
     status: string;
   };
   now: string;
