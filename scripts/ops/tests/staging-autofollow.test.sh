@@ -516,6 +516,17 @@ check "最新 attempt 未完了は終了コード 75" assert_code 75
 check "最新 attempt 未完了は release.sh を呼ばない" assert_no_release
 check "未完了をログに出す" assert_out_contains "未完了"
 
+printf '\n== 17b. 最新 attempt が cancelled なら「未確認」（75）で配備しない ==\n'
+setup_case gate_cancelled
+write_gh_run "$NEW" push main
+cat >"$CASE/gh/attempt-1001-1.json" <<EOF
+{"id":1001,"head_sha":"$NEW","head_branch":"main","event":"push","path":".github/workflows/ci.yml","status":"completed","conclusion":"cancelled","run_attempt":1}
+EOF
+run_case ok
+check "cancelled は終了コード 75" assert_code 75
+check "cancelled は release.sh を呼ばない" assert_no_release
+check "cancelled をログに出す" assert_out_contains "検証できません"
+
 printf '\n== 18. 必須 job が skipped なら通さない ==\n'
 setup_case gate_skip
 write_gh_jobs 1001 1 success skipped success
