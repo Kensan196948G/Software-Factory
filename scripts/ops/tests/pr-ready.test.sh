@@ -205,6 +205,20 @@ write_checks() {
   printf '{"total_count":%d,"check_runs":[%s]}\n' "$count" "$runs" >"$GH_DIR/checks.json"
 }
 
+# fixture を JavaScript 式で書き換える（テスト専用。$NODE_BIN は親プロセスの PATH で解決する）
+patch_json() { # <file> <js-expression>
+  HEAD_SHA="$HEAD_SHA" "$NODE_BIN" -e '
+const fs = require("fs");
+const file = process.argv[1];
+const d = JSON.parse(fs.readFileSync(file, "utf8"));
+eval(process.argv[2]);
+fs.writeFileSync(file, JSON.stringify(d));
+' "$1" "$2"
+}
+patch_pr() { patch_json "$GH_DIR/pr.json" "$1"; }
+patch_protection() { patch_json "$GH_DIR/protection.json" "$1"; }
+patch_checks() { patch_json "$GH_DIR/checks.json" "$1"; }
+
 run_case() {
   local -a extra_env=()
   if [[ "${PROTECTION_ERROR:-0}" == "1" ]]; then extra_env+=("FAKE_GH_PROTECTION_MODE=error"); fi
@@ -445,6 +459,98 @@ check "gh エラーは終了コード 1" assert_code 1
 check "照会エラーを出す" assert_out_contains "照会エラー"
 check "マーカーを出さない" assert_out_not_contains "SYNTHETIC_MARKER_DO_NOT_LEAK"
 check "トークンらしき文字列を出さない" assert_out_not_contains "ghp_"
+
+printf '\n== P30. rollup の同名 CheckRun が別 app_id なら 75（別アプリの success を採用しない） ==\n'
+setup_case rollup_app_mismatch
+patch_pr 'd.data.repository.pullRequest.statusCheckRollup.contexts.nodes.forEach((node) => { if (node.name === "quality") node.checkSuite.app.databaseId = 999; });'
+run_case 101
+check "rollup の別 app_id は 75" assert_code 75
+check "quality を rollup 未確認として扱う" assert_out_contains "statusCheckRollup に required が揃っていません（quality）"
+
+printf '\n== P31. StatusContext（success）は --checks なら OK ==\n'
+setup_case status_context_ok
+patch_pr 'd.data.repository.pullRequest.statusCheckRollup.contexts.nodes = ["quality", "e2e", "docker"].map((name) => ({ __typename: "StatusContext", context: name, state: "SUCCESS" }));'
+run_case 101 --checks quality,e2e,docker
+check "StatusContext success は終了コード 0" assert_code 0
+
+printf '\n== P32. StatusContext（failure）は 1 ==\n'
+setup_case status_context_failure
+patch_pr 'd.data.repository.pullRequest.statusCheckRollup.contexts.nodes = ["quality", "e2e", "docker"].map((name) => ({ __typename: "StatusContext", context: name, state: name === "e2e" ? "FAILURE" : "SUCCESS" }));'
+run_case 101 --checks quality,e2e,docker
+check "StatusContext failure は終了コード 1" assert_code 1
+check "rollup の失敗を出す" assert_out_contains "statusCheckRollup で必須チェックが失敗しています（e2e: failure）"
+
+printf '\n== P33. --checks 時の BEHIND は 75（strict 不明のため 0 にしない） ==\n'
+setup_case checks_behind
+write_pr BEHIND
+run_case 101 --checks quality,e2e,docker
+check "--checks の BEHIND は 75" assert_code 75
+check "strict 不明を出す" assert_out_contains "strict 不明"
+check "strict=false と決めつけない" assert_out_not_contains "strict=false のため許容します"
+
+printf '\n== P34. --checks 時の未解決スレッドは 75（会話解決の要否が不明） ==\n'
+setup_case checks_unresolved
+write_pr CLEAN MERGEABLE false OPEN main auto/test false null 2
+run_case 101 --checks quality,e2e,docker
+check "--checks の未解決スレッドは 75" assert_code 75
+check "会話解決の要否が不明と出す" assert_out_contains "保護設定を読まないため会話解決が必須か判定できません"
+
+printf '\n== P35. check-runs の件数不一致は 1 ==\n'
+setup_case checks_count_mismatch
+patch_checks 'd.total_count = 99;'
+run_case 101
+check "check-runs 件数不一致は終了コード 1" assert_code 1
+check "件数不完全を出す" assert_out_contains "check run の件数が不完全です"
+
+printf '\n== P36. check-runs が 100 件超なら 1 ==\n'
+setup_case checks_over_limit
+patch_checks 'd.check_runs = Array.from({ length: 101 }, (_, i) => ({ id: 2000 + i, name: "extra-" + i, head_sha: process.env.HEAD_SHA, status: "completed", conclusion: "success", app: { id: 15368 } })); d.total_count = 101;'
+run_case 101
+check "check-runs 100 件超は終了コード 1" assert_code 1
+check "100 件超を出す" assert_out_contains "check run が 100 件を超えています"
+
+printf '\n== P37. rollup の件数不一致は 1 ==\n'
+setup_case rollup_count_mismatch
+patch_pr 'd.data.repository.pullRequest.statusCheckRollup.contexts.totalCount = 99;'
+run_case 101
+check "rollup 件数不一致は終了コード 1" assert_code 1
+check "rollup 不完全を出す" assert_out_contains "statusCheckRollup が不完全です"
+
+printf '\n== P38. reviewThreads の件数不一致は 1 ==\n'
+setup_case threads_count_mismatch
+patch_pr 'd.data.repository.pullRequest.reviewThreads.totalCount = 99;'
+run_case 101
+check "reviewThreads 件数不一致は終了コード 1" assert_code 1
+check "件数不一致を出す" assert_out_contains "レビュースレッドが 100 件を超えているか件数が一致しません"
+
+printf '\n== P39. reviewThreads に未取得ページがあれば 1 ==\n'
+setup_case threads_has_next
+patch_pr 'd.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage = true;'
+run_case 101
+check "未取得ページは終了コード 1" assert_code 1
+check "判定不能を出す" assert_out_contains "判定不能"
+
+printf '\n== P40. --json は 75 でも 1 行の JSON を出す ==\n'
+setup_case json_not_ready
+write_checks
+run_case 101 --json
+check "--json の 75 は終了コード 75" assert_code 75
+check "code=75" assert_json 'd.code === 75 && d.ok === false'
+check "reasons が 1 件以上" assert_json 'Array.isArray(d.reasons) && d.reasons.length > 0'
+
+printf '\n== P41. --json は失敗（1）でも 1 行の JSON を出す ==\n'
+setup_case json_failure
+write_checks "quality:completed:success" "e2e:completed:failure" "docker:completed:success"
+run_case 101 --json
+check "--json の 1 は終了コード 1" assert_code 1
+check "code=1" assert_json 'd.code === 1 && d.ok === false'
+check "reasons が 1 件以上" assert_json 'Array.isArray(d.reasons) && d.reasons.length > 0'
+
+printf '\n== P42. 保護設定が contexts のみ（checks なし）でも判定する ==\n'
+setup_case contexts_fallback
+patch_protection 'delete d.required_status_checks.checks;'
+run_case 101
+check "contexts フォールバックは終了コード 0" assert_code 0
 
 printf '\n== P29. 全ケースを通じて書き込み系の gh 呼び出し・dispatch が無い ==\n'
 # 最後の CASE ではなく全ケースの記録を横断して確認する

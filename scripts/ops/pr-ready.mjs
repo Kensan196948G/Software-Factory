@@ -8,6 +8,8 @@
  * 必須チェック名は --checks / MIRAI_SF_PR_READY_CHECKS が無ければ、base ブランチの
  * branch protection（required_status_checks の context / app_id）から取得する。
  * 取得できない場合は --checks を必須にして fail-closed（exit 1）。
+ * --checks を指定した場合は保護設定を読まないため、strict（BEHIND）・会話解決などの保護条件は
+ * 未確認であり、該当した場合は 0 を返さず 75（未確認）にする。
  *
  * 判定は「PR の statusCheckRollup に required の各チェックが success で揃っているか」まで行う。
  * 2026-11-07 の実測: workflow_dispatch で作った check run は head SHA には付くが、PR の
@@ -90,6 +92,8 @@ function usage() {
     '',
     '必須チェックは既定で base ブランチの branch protection から取得します。',
     '--checks quality,e2e,docker のように指定すると保護設定を読まずにその名前を使います。',
+    'この場合 strict・会話解決・その他の保護条件は不明なため、BEHIND や未解決スレッドがあると',
+    '0 を返さず 75（未確認）になります。保護条件まで確認するには保護設定が読める環境で実行してください。',
     '--json は結果を 1 行の JSON（stdout）で出し、人間向けの警告は stderr に出します。',
     '',
     'v1 では --dispatch は実装していません。workflow_dispatch の check run は PR の',
@@ -367,7 +371,7 @@ let conversationRequired = false;
 
 if (explicitChecks) {
   requiredChecks = explicitChecks.names.map((check) => ({ name: check, appId: null }));
-  warn('--checks のため保護設定を読みません（会話解決の要否は未確認です）');
+  warn('--checks のため保護設定を読みません（strict・会話解決・その他の保護条件は未確認です）');
 } else {
   const protectionResponse = ghGet(`repos/${repo}/branches/${encodeURIComponent(base)}/protection`);
   if (protectionResponse.error) {
@@ -406,6 +410,10 @@ if (mergeStateStatus === 'UNKNOWN') finish(75, ['mergeStateStatus=UNKNOWN（GitH
 if (mergeStateStatus === 'DIRTY') finish(1, ['mergeStateStatus=DIRTY（競合しています）']);
 if (mergeStateStatus === 'DRAFT') finish(1, ['mergeStateStatus=DRAFT（draft です）']);
 if (mergeStateStatus === 'BEHIND') {
+  if (explicitChecks) {
+    // 保護設定を読まないため strict の値を判定できない。strict=true の PR を ready 扱いしない
+    finish(75, ['mergeStateStatus=BEHIND（保護設定を読まないため strict 不明。base の最新への更新が必要か確認できません）']);
+  }
   if (strict) finish(1, ['mergeStateStatus=BEHIND（保護設定 strict=true のため base の最新への更新が必要です）']);
   warn('mergeStateStatus=BEHIND（strict=false のため許容します）');
 }
@@ -495,28 +503,52 @@ if (missing.length > 0) {
 // ---- 4. PR の statusCheckRollup で required が success か -------------------
 
 /**
- * rollup の context に required のチェックが success / neutral で含まれるか。
+ * rollup の context から required 1 件の状態を分類する。
  * CheckRun は app_id が保護設定と一致するものだけを採用する（別アプリの同名チェックを成功扱いしない）。
+ * 成功が 1 件でもあれば OK。失敗（failure 系）は 1、未完了（実行中・cancelled/stale 等）は 75、
+ * 該当なしは missing（PR-linked な run が必要）として扱う。
+ * @returns {{ state: 'success'|'failure'|'pending'|'missing', reason?: string }}
  */
-function rollupHasSuccess(contexts, required) {
+function classifyRollup(contexts, required) {
+  let pendingReason = null;
+  let failureReason = null;
   for (const context of contexts) {
     if (!isObject(context)) continue;
     if (context.__typename === 'CheckRun') {
       if (context.name !== required.name) continue;
-      if (!OK_CONCLUSIONS.has(String(context.conclusion).toLowerCase())) continue;
       if (required.appId !== null) {
         const app = isObject(context.checkSuite) && isObject(context.checkSuite.app) ? context.checkSuite.app : null;
         if (!isObject(app) || app.databaseId !== required.appId) continue;
       }
-      return true;
+      const status = String(context.status ?? '').toLowerCase();
+      const conclusion = String(context.conclusion ?? '').toLowerCase();
+      if (status === 'completed' && OK_CONCLUSIONS.has(conclusion)) return { state: 'success' };
+      if (status === 'completed' && FAILURE_CONCLUSIONS.has(conclusion)) {
+        failureReason = `${required.name}: ${conclusion || 'failure'}`;
+        continue;
+      }
+      if (status === 'completed' && NOT_READY_CONCLUSIONS.has(conclusion)) {
+        pendingReason = `${required.name}: ${conclusion}`;
+        continue;
+      }
+      pendingReason = `${required.name}: ${status || 'unknown'}`;
+      continue;
     }
     if (context.__typename === 'StatusContext') {
       if (context.context !== required.name) continue;
       if (required.appId !== null) continue;
-      if (String(context.state).toUpperCase() === 'SUCCESS') return true;
+      const state = String(context.state ?? '').toUpperCase();
+      if (state === 'SUCCESS') return { state: 'success' };
+      if (state === 'FAILURE' || state === 'ERROR') {
+        failureReason = `${required.name}: ${state.toLowerCase()}`;
+        continue;
+      }
+      pendingReason = `${required.name}: ${state.toLowerCase() || 'unknown'}`;
     }
   }
-  return false;
+  if (failureReason) return { state: 'failure', reason: failureReason };
+  if (pendingReason) return { state: 'pending', reason: pendingReason };
+  return { state: 'missing' };
 }
 
 const rollupContexts = isObject(statusCheckRollup) && isObject(statusCheckRollup.contexts) ? statusCheckRollup.contexts : null;
@@ -533,9 +565,20 @@ if (
 ) {
   finish(1, [`PR の statusCheckRollup が不完全です（件数不一致・${PAGE_LIMIT} 件超・未取得ページのいずれか）`]);
 }
-const missingInRollup = requiredChecks
-  .filter((required) => !rollupHasSuccess(rollupContexts.nodes, required))
-  .map((required) => required.name);
+const rollupStates = requiredChecks.map((required) => ({ required, ...classifyRollup(rollupContexts.nodes, required) }));
+const rollupFailures = rollupStates.filter((item) => item.state === 'failure');
+const rollupPending = rollupStates.filter((item) => item.state === 'pending');
+const missingInRollup = rollupStates.filter((item) => item.state === 'missing').map((item) => item.required.name);
+if (rollupFailures.length > 0) {
+  finish(1, [
+    `PR の statusCheckRollup で必須チェックが失敗しています（${rollupFailures.map((item) => item.reason).join(', ')}）`,
+  ]);
+}
+if (rollupPending.length > 0) {
+  finish(75, [
+    `PR の statusCheckRollup で必須チェックが未完了です（${rollupPending.map((item) => item.reason).join(', ')}）。待ってから再実行してください`,
+  ]);
+}
 if (missingInRollup.length > 0) {
   finish(75, [
     `PR の statusCheckRollup に required が揃っていません（${missingInRollup.join(', ')}）。PR-linked な run が必要です（head を更新して pull_request イベントを起こしてください）。workflow_dispatch では required status を満たせません`,
@@ -544,22 +587,32 @@ if (missingInRollup.length > 0) {
 
 // ---- 5. 会話の解決 --------------------------------------------------------
 
+const threadNodes = isObject(reviewThreads) && Array.isArray(reviewThreads.nodes) ? reviewThreads.nodes : null;
+if (conversationRequired && threadNodes === null) {
+  queryError('レビュースレッドを取得できません（API 情報不足）');
+}
+if (
+  threadNodes !== null &&
+  (!Number.isSafeInteger(reviewThreads.totalCount) ||
+    reviewThreads.totalCount !== threadNodes.length ||
+    reviewThreads.pageInfo?.hasNextPage === true)
+) {
+  finish(1, [`レビュースレッドが ${PAGE_LIMIT} 件を超えているか件数が一致しません（判定不能）`]);
+}
+const countUnresolved = (nodes) => nodes.filter((thread) => isObject(thread) && thread.isResolved === false).length;
 if (conversationRequired) {
-  if (!isObject(reviewThreads) || !Array.isArray(reviewThreads.nodes)) {
-    queryError('レビュースレッドを取得できません（API 情報不足）');
-  }
-  if (
-    !Number.isSafeInteger(reviewThreads.totalCount) ||
-    reviewThreads.totalCount !== reviewThreads.nodes.length ||
-    reviewThreads.pageInfo?.hasNextPage === true
-  ) {
-    finish(1, [`レビュースレッドが ${PAGE_LIMIT} 件を超えているか件数が一致しません（判定不能）`]);
-  }
-  const unresolved = reviewThreads.nodes.filter((thread) => isObject(thread) && thread.isResolved === false).length;
+  const unresolved = countUnresolved(threadNodes);
   result.unresolvedThreads = unresolved;
   if (unresolved > 0) finish(1, [`未解決のレビュースレッドがあります（${unresolved} 件）`]);
-} else if (isObject(reviewThreads) && Array.isArray(reviewThreads.nodes)) {
-  result.unresolvedThreads = reviewThreads.nodes.filter((thread) => isObject(thread) && thread.isResolved === false).length;
+} else if (threadNodes !== null) {
+  const unresolved = countUnresolved(threadNodes);
+  result.unresolvedThreads = unresolved;
+  // --checks は保護設定を読まないため、会話解決が必須か判定できない。未解決があれば 0 を返さない
+  if (explicitChecks && unresolved > 0) {
+    finish(75, [`未解決のレビュースレッドがあります（${unresolved} 件）。保護設定を読まないため会話解決が必須か判定できません`]);
+  }
+} else if (explicitChecks) {
+  queryError('レビュースレッドを取得できません（API 情報不足）');
 }
 
 // ---- 6. レビュー判定 ------------------------------------------------------

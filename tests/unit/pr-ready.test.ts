@@ -12,6 +12,10 @@ it('PR マージ前ゲートの隔離shell回帰が全て成功する', () => {
   });
   expect(output).toContain('/ FAIL 0 ==');
   expect(output).toContain('PASS: PR-linked な run が必要と案内する');
+  expect(output).toContain('PASS: --checks の BEHIND は 75');
+  expect(output).toContain('PASS: --checks の未解決スレッドは 75');
+  expect(output).toContain('PASS: rollup の別 app_id は 75');
+  expect(output).toContain('PASS: StatusContext failure は終了コード 1');
   expect(output).toContain('PASS: 書き込み系の gh 呼び出しは 0 件');
   expect(output).toContain('PASS: workflow run（再実行）は 0 件');
 }, 130_000);
