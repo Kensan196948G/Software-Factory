@@ -277,7 +277,9 @@ success か、会話解決済み・draft でない・競合なし・base 一致�
 `workflow_dispatch` で作った check run は head SHA には付いても **PR の required status にはならない**ため、
 v1 は再実行（dispatch）を行わない。チェックが無いときは head を更新して `pull_request` イベントを起こす
 （空コミットで可。CI 実行抑止指示子を入れない）。本ツールは push / commit / merge をせず、GET と
-読み取り専用 GraphQL だけを使う。
+読み取り専用 GraphQL だけを使う。**`--checks` を指定した場合は保護設定を読まないため、strict（`BEHIND` の
+要否）・会話解決・その他の保護条件は未確認であり、`BEHIND` や未解決レビュースレッドがある場合は 0 を返さず
+75（未確認）になる**（保護条件まで確認するには保護設定が読める環境で実行する）。
 
 失敗時（exit 1/2）は autofollow が旧版を維持しようとするが、**exit 2 は戻せなかった**という意味なので、
 `/healthz` と `current` を確認し、runbook の一次対応に沿って手動で復旧する。
