@@ -24,6 +24,8 @@
 - コミット: Conventional Commits（`feat:` / `fix:` / `docs:` / `test:` / `chore:` / `refactor:`）。
 - PR本文: 目的 / MVP範囲 / 変更 / UI影響 / API影響 / DB影響 / Security影響 / テスト結果 / CI結果 / Deployment結果 / 既知の制限 / Rollback。
 - Required Checks が緑・未解決レビューなし・Critical/Highなしのときだけ Squash Merge。
+- コミットメッセージ・PRタイトル・PR本文に GitHub の skip 指示子（角括弧で囲む形式）を入れない。入れると
+  workflow run 自体が生成されず、必須チェックが付かずに PR がブロックされる（詳細: `docs/production/22-batch2-plan-20261106.md` §9-3）。
 
 ## 4. 変更の進め方
 

@@ -527,6 +527,17 @@ check "cancelled は終了コード 75" assert_code 75
 check "cancelled は release.sh を呼ばない" assert_no_release
 check "cancelled をログに出す" assert_out_contains "検証できません"
 
+printf '\n== 17c. 最新 attempt が stale なら「未確認」（75）で配備しない ==\n'
+setup_case gate_stale
+write_gh_run "$NEW" push main
+cat >"$CASE/gh/attempt-1001-1.json" <<EOF
+{"id":1001,"head_sha":"$NEW","head_branch":"main","event":"push","path":".github/workflows/ci.yml","status":"completed","conclusion":"stale","run_attempt":1}
+EOF
+run_case ok
+check "stale は終了コード 75" assert_code 75
+check "stale は release.sh を呼ばない" assert_no_release
+check "stale をログに出す" assert_out_contains "検証できません"
+
 printf '\n== 18. 必須 job が skipped なら通さない ==\n'
 setup_case gate_skip
 write_gh_jobs 1001 1 success skipped success

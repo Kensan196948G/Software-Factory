@@ -443,6 +443,76 @@ describe('healthcheck.mjs のオフサイト送信記録の世代相関（最新
     expect(out).toContain('healthcheck NG');
     expectNoRecordContents(out);
   }, 40_000);
+
+  it('NG: 最新 dump の mtime が未来（許容 5 分超）なら世代相関を判定できないため NG（記録層は通っていても）', async () => {
+    writeDump('mirai_sf_prod-old.dump', 200);
+    writeRecord('mirai_sf_prod-old.dump', 30, 30);
+    writeDump('mirai_sf_prod-new.dump', -30);
+    const { code, out } = await run(offSiteEnv);
+    expect(code, out).toBe(1);
+    expect(out).toContain('最新オフサイト送信記録: mirai_sf_prod-old.dump.r2.json');
+    expect(out).toContain('最新 dump の更新時刻が未来です（時計ずれの許容 5 分を超過）: mirai_sf_prod-new.dump');
+    expect(out).toContain('healthcheck NG');
+    expectNoRecordContents(out);
+  }, 40_000);
+
+  // 子プロセス起動の遅延があるためミリ秒一致の境界は再現できない。猶予の内側/外側の近傍で
+  // 比較方向（内側は OK・外側は NG）を固定する。
+  it('猶予境界の内側: grace 2 分・dump 経過 1.9 分なら OK', async () => {
+    writeDump('mirai_sf_prod-old.dump', 200);
+    writeRecord('mirai_sf_prod-old.dump', 30, 30);
+    writeDump('mirai_sf_prod-new.dump', 1.9);
+    const { code, out } = await run({
+      ...offSiteEnv,
+      MIRAI_SF_HEALTH_OFFSITE_GENERATION_GRACE_MIN: '2',
+    });
+    expect(code, out).toBe(0);
+    expect(out).toContain('≤ 猶予 2 分');
+    expect(out).toContain('healthcheck OK');
+  }, 40_000);
+
+  it('猶予境界の外側: grace 2 分・dump 経過 2.1 分なら NG', async () => {
+    writeDump('mirai_sf_prod-old.dump', 200);
+    writeRecord('mirai_sf_prod-old.dump', 30, 30);
+    writeDump('mirai_sf_prod-new.dump', 2.1);
+    const { code, out } = await run({
+      ...offSiteEnv,
+      MIRAI_SF_HEALTH_OFFSITE_GENERATION_GRACE_MIN: '2',
+    });
+    expect(code, out).toBe(1);
+    expect(out).toMatch(/最新世代のオフサイト送信記録がありません（dump の経過 \d+ 分 \d+ 秒前 > 猶予 2 分）/);
+    expect(out).toContain('healthcheck NG');
+  }, 40_000);
+
+  it('規約外の手動 *.dump も通常ファイルなら最新世代として扱う（現状挙動の固定）', async () => {
+    // 規約名の dump には記録があるが、mtime がより新しい規約外 dump を最新世代として扱う
+    writeDump('mirai_sf_prod-new.dump', 40);
+    writeRecord('mirai_sf_prod-new.dump', 40, 40);
+    writeDump('manual-copy.dump', 30);
+    const { code, out } = await run(offSiteEnv);
+    expect(code, out).toBe(1);
+    expect(out).toMatch(
+      /最新世代のオフサイト送信記録がありません（dump の経過 \d+ 分 \d+ 秒前 > 猶予 10 分）: manual-copy\.dump/,
+    );
+    expect(out).toContain('healthcheck NG');
+  }, 40_000);
+
+  it('grace >= MAX_AGE（120 >= 90）では MAX_AGE を超えた世代でも猶予内として OK（現状挙動の固定）', async () => {
+    writeDump('mirai_sf_prod-old.dump', 200);
+    writeRecord('mirai_sf_prod-old.dump', 30, 30);
+    // dump 鮮度チェック（既定 90 分）で NG にならないよう、比較用に緩める
+    writeDump('mirai_sf_prod-new.dump', 100);
+    const { code, out } = await run({
+      ...offSiteEnv,
+      MIRAI_SF_HEALTH_BACKUP_MAX_AGE_MIN: '300',
+      MIRAI_SF_HEALTH_OFFSITE_GENERATION_GRACE_MIN: '120',
+    });
+    expect(code, out).toBe(0);
+    expect(out).toContain(
+      '最新世代のオフサイト送信記録: まだありません（dump の経過 100 分 ≤ 猶予 120 分）: mirai_sf_prod-new.dump',
+    );
+    expect(out).toContain('healthcheck OK');
+  }, 40_000);
 });
 
 describe('healthcheck.mjs の認証状態（auth.status）', () => {

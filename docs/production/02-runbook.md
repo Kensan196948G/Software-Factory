@@ -122,7 +122,7 @@ journalctl --user -u mirai-sf-prod-backup -u mirai-sf-prod-restore-drill -n 40 -
 | ゲートの結果                                               | 本番 release の終了コード | 対応                                                     |
 | ---------------------------------------------------------- | ------------------------- | -------------------------------------------------------- |
 | 0（確認済み）                                              | 展開へ進む                | —                                                        |
-| 75（run 未作成・実行中・再 run race）                      | 75（配備しない）          | CI の完了を待って同じ SHA で再実行する                   |
+| 75（run 未作成・実行中・attempt が cancelled/stale・再 run race） | 75（配備しない）          | CI の完了を待って同じ SHA で再実行する                   |
 | 1（失敗・必須 job 欠落/skipped・API 情報不足・照会エラー） | 1（配備しない）           | CI を直して main へ入れ直す。`gh auth status` も確認する |
 
 - `--dry-run` でもゲートを照会し、結果を `[dry-run] exact-main CI ゲート: …` として表示するだけ（終了コードには反映しない）。配備前の確認に使う。
@@ -189,6 +189,11 @@ pnpm ops:prod:rollback <戻し先SHA>
   `MIRAI_SF_HEALTH_BACKUP_MAX_AGE_MIN`（既定 90。RPO 1 時間に対する余裕）を設定すると、最新の `*.dump` が
   無い・または指定分より古いときに healthcheck が失敗する。2026-11-03 実測: 正常時
   `最新バックアップ: …（3 分前）`、空ディレクトリと 3 時間前の dump でいずれも NG（終了コード 1）。
+- **オフサイト（R2）送信記録も監視する**（`MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN` 設定時。本番 unit は 90 分）:
+  最新の送信記録が指定分より古い場合に加え、最新のローカル dump に対応する `<dump名>.r2.json` が無いまま
+  dump の経過が猶予（`MIRAI_SF_HEALTH_OFFSITE_GENERATION_GRACE_MIN`、既定 10 分）を超えると healthcheck が失敗する。
+  dump 直後（送信完了前）は猶予内なので誤検知しない。判定できない状態は fail-closed で NG。
+  記録の中身（バケット・キー・ハッシュ）と保存先のフルパスは出力しない。
 - 設定ファイル `prod.conf` は読まない（release.env の COMMIT_SHA だけを照合）。秘密は出力しない。
 - 失敗は `systemctl --user --failed` と `journalctl --user -u mirai-sf-prod-healthcheck` で見る。
   失敗はローカル記録（`alerts.jsonl`＋journal err）へ残る（§10）。外部通知（Slack 等）は未設定（通知先・送信方式の承認待ち。§10 の `MIRAI_SF_NOTIFY_CMD` で後から有効化できる）。通知送信自体に Access サービストークンは不要。Access 認証付きの公開経路監視は別課題であり、最小権限の機械認証を設計してから追加する。現行のサービストークン認証は ACCESS_ALLOWED_EMAILS の先頭（なければ seed 管理者メール）の利用者へマッピングし、その権限を引き継ぐため、本番監視用として安易に有効化しない。

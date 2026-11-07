@@ -275,6 +275,15 @@ check "CI skipped は終了コード 1" assert_code 1
 check "CI skipped は展開しない" assert_not_deployed
 check "失敗をログに出す" assert_out_contains "exact-main CI が失敗または照会不能のため配備しません"
 
+printf '\n== P3d. CI が stale（後続に置換）なら「未確認」（gate=75）で配備しない ==\n'
+setup_case gate_stale
+write_gh_attempt completed stale
+run_prod "$NEW"
+check "CI stale は終了コード 75" assert_code 75
+check "CI stale は展開しない" assert_not_deployed
+check "CI stale は current を変えない" assert_current_unchanged
+check "未確認をログに出す" assert_out_contains "exact-main CI が未確認のため配備しません"
+
 printf '\n== P4. CI の run が無い（gate=75）なら配備しない ==\n'
 setup_case gate_norun
 printf '{"total_count":0,"workflow_runs":[]}\n' >"$CASE/gh/runs.json"

@@ -12,11 +12,20 @@
 | # | 条件 | 確認方法 | 2026-11-06 時点 |
 | - | ---- | -------- | --------------- |
 | 1 | 所有者の配備承認（数字選択または Y/N） | 会話・記録 | **未取得** |
-| 2 | main が緑（必須 CI 3/3） | `gh run list --branch main --limit 1`。**実際の判定は §1 の dry-run の CI ゲートで行う**（執筆時点 2026-11-06 20:06 は最新 main の CI が実行中であり、「成功」を前提にしない） | 実行中 |
+| 2 | main が緑（必須 CI 3/3） | `gh run list --branch main --limit 1`。**実際の判定は §1 の dry-run の CI ゲートで行う** | success（run 42215329492、quality / e2e / docker 3/3） |
 | 3 | 未適用の migration がない | `ops:prod:release --dry-run <SHA>` | 0 件 |
 | 4 | 最新バックアップと R2 記録が新しい | `pnpm ops:prod:offsite-status --count 2` | OK |
 | 5 | ロールバック手順が使える | `pnpm ops:prod:rollback --dry-run <前SHA>` | exit 0 |
 | 6 | 監視が動いている | `systemctl --user show mirai-sf-prod-healthcheck.service -p Result` | success |
+
+補足: 前提 2 の判定は必ず §1 の dry-run（exact-main CI ゲート）で行う。コミット本文の skip 指示子等で
+main の push CI が生成されないことがあるため、`gh run list` の表示だけで「緑」とみなさない（詳細は
+`22-batch2-plan-20261106.md` §9-3）。
+
+healthcheck は、最新のローカル dump に対応する R2 送信記録 `<dump名>.r2.json` の有無も確認する。
+記録が無いまま dump の経過が猶予（`MIRAI_SF_HEALTH_OFFSITE_GENERATION_GRACE_MIN`、既定 10 分）を超えると NG
+（判定不能は fail-closed）。`MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN`（本番 unit は 90 分）設定時のみ有効。
+systemd unit は変更しない（設定変更は所有者承認の範囲）。
 
 ## 1. 配備対象の確定
 

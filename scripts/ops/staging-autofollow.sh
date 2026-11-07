@@ -12,7 +12,8 @@
 #   5. .ops.lock を取り、current を読み直す（CI ゲート中も保持する）
 #   6. exact-main CI ゲート（check-release-ci.mjs）: 対象 SHA の push/main ci.yml の
 #      最新 attempt で quality/e2e/docker と run が成功していることを必須にする。
-#      一時的な未確認（run なし・実行中）は 75、失敗・job 欠落・API 情報不足・照会エラーは 1 で配備しない
+#      一時的な未確認（run なし・実行中・attempt が cancelled/stale（後続に置換））は 75、
+#      失敗・job 欠落・API 情報不足・照会エラーは 1 で配備しない
 #   7. 既存の release.sh で配備（切替・再起動・/healthz 確認・失敗時の戻しは release.sh に任せる。
 #      ゲートは 6 で済んでいるので MIRAI_SF_RELEASE_CI_GATE は渡さない）
 #   8. 配備後に /healthz を独立に確認し、だめなら直前のリリースへ戻す
@@ -25,7 +26,8 @@
 #   2  失敗して直前のリリースへ戻せなかった（手動で復旧する）
 #   3  破壊的な可能性がある migration のため中止（release.sh の判定）
 #   75 配備しない（一時的）: 別の実行（autofollow／手動 release/rollback）が進行中、
-#      実行元が main・clean でない、diverged、または exact-main CI がまだ実行中・run 未作成
+#      実行元が main・clean でない、diverged、または exact-main CI がまだ実行中・run 未作成、
+#      attempt が cancelled/stale（後続の実行に置換された可能性）
 #      （skip。timer は SuccessExitStatus=75 で成功扱い）
 #
 # 環境変数（release.sh と共通のものは lib.sh を参照）:

@@ -21,14 +21,15 @@
 # exact-main CI ゲート（本番）:
 #   main 確認の後、解決した 40 桁 SHA で check-release-ci.mjs を実行する（このスクリプトと同じ
 #   controller 側のものを使う）。0 以外ならリリース成果物・DB・サービスを変更せずに終了する
-#   （変更は fetch による refs 更新のみ。75=CI 未完了・run 未作成、
+#   （変更は fetch による refs 更新のみ。75=CI 未完了・run 未作成・attempt が cancelled/stale（後続に置換）、
 #   1=CI 失敗・照会不能）。--dry-run ではゲート結果を表示するだけで、終了コードには反映しない。
 #   override / bypass のフラグ・環境変数は無い（fail-closed）。
 #   Staging の release.sh 単独利用（MIRAI_SF_RELEASE_CI_GATE 未設定・非本番ホーム）ではゲートを実行しない
 #   （Staging 自動配備は staging-autofollow.sh が同じゲートを通してから release.sh を呼ぶ）。
 #
 # 終了コード: 0=成功 / 1=失敗（切替前、または前のリリースへ戻した。CI ゲートの失敗・照会不能を含む）
-#             / 2=戻せなかった / 3=破壊的 migration / 75=exact-main CI が未完了のため配備しない（本番のみ）
+#             / 2=戻せなかった / 3=破壊的 migration
+#             / 75=exact-main CI が未完了・attempt が cancelled/stale のため配備しない（本番のみ）
 set -euo pipefail
 umask 077
 
