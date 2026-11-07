@@ -22,7 +22,7 @@
  * 秘密情報は出力しない:
  *   - preview.conf（DATABASE_URL などの設定値）は読まない。DB も触らない。
  *   - /healthz の本文はログへ出さない。出すのは確認済みの項目（status / environment / db.ok / commit）だけ。
- *   - auth は mode / 真偽値 / status だけを出し、team domain・AUD・メールアドレスは出さない（/healthz も返さない）。
+ *   - auth は mode / 真偽値 / status / 有効な利用者の件数（usersActive）だけを出し、team domain・AUD・メールアドレスは出さない（/healthz も返さない）。
  *   - URL は scheme://host:port/path までに落として出し、資格情報・クエリは出さない。
  *   - with-env.mjs と同じく、設定値は表示せず、失敗理由も内部で組み立てた文言だけを出す。
  *
@@ -540,19 +540,23 @@ async function main() {
     } else {
       log(`auth.status=ready（mode=${safeValue(auth.mode)}）`);
       // 5b. 有効な利用者 0 件は、構成が ready でも全員 401 になる状態（docs/limitations.md C-07）。
-      //     DB 復元直後・全利用者の無効化で起きる。usersActive は件数だけ（個人は特定できない）。
-      if (typeof auth.usersActive === 'number' && Number.isFinite(auth.usersActive) && auth.usersActive >= 0) {
-        if (auth.usersActive === 0) {
-          failures.push('auth.usersActive=0（有効な利用者が 0 件。構成が ready でも全員 401 になる状態）');
-        } else {
-          log(`auth.usersActive=${auth.usersActive}`);
-        }
-      } else {
-        // 監視の更新が API の配備より先の過渡期、または一時的な取得失敗。0 件は失敗、不明は警告に留める。
+      //     新 API は取得失敗を usersActive=null で明示する。キー欠如（旧 API）だけを版ずれとして警告に留め、
+      //     キーがあるのに null・不正値・0 件なら失敗にする（fail-closed。検査の消失を緑にしない）。
+      if (!Object.prototype.hasOwnProperty.call(auth, 'usersActive')) {
         const message =
-          'auth.usersActive が healthz にありません（API と監視の版ずれ、または利用者件数の取得失敗。有効な利用者の存在を確認できません）';
+          'auth.usersActive が healthz にありません（API と監視の版ずれ。有効な利用者の存在を確認できません）';
         warnings.push(message);
         warn(message);
+      } else if (auth.usersActive === null) {
+        failures.push(
+          'auth.usersActive=null（API が有効な利用者の件数を取得できませんでした。DB の権限・スキーマ・状態を確認してください）',
+        );
+      } else if (!Number.isSafeInteger(auth.usersActive) || auth.usersActive < 0) {
+        failures.push('auth.usersActive が整数（0 以上）ではありません（healthz の応答形式を確認してください）');
+      } else if (auth.usersActive === 0) {
+        failures.push('auth.usersActive=0（有効な利用者が 0 件。構成が ready でも全員 401 になる状態）');
+      } else {
+        log(`auth.usersActive=${auth.usersActive}`);
       }
     }
 

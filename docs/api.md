@@ -13,7 +13,7 @@
 - 相関ID: レスポンスヘッダ `X-Correlation-Id`。監査ログに記録。
 - 楽観ロック: 更新系は `version` を要求。不一致は 409 `ERR-301`。
 - 環境名: `GET /healthz` と `GET /api/meta` の `environment` は `APP_ENV`（`development` / `test` / `staging` / `production`）の値。未指定・空なら `NODE_ENV` と同じ。不正な値は起動エラー。表示専用で、Cookie の Secure などセキュリティ挙動は `NODE_ENV` で決まる。
-- 認証状態: `GET /healthz` の `auth` は `mode`（`password` / `access`）、`jwtConfigured`、`headerTrustEnabled`、`allowlistConfigured`、`usersActive`、`status`（`ready` / `misconfigured`）を返す。`misconfigured` は access モードで認証できる経路が無い（401 が続く）状態で、`AUTH_MODE=access` かつ JWT 未設定・ヘッダ信頼無効、または許可リストが空のときになる。`usersActive` は有効な利用者（`app_user.is_active = true`）の**件数だけ**で、DB から取得できないときは省略する（復元直後・全利用者の無効化による「構成は ready なのに全員 401」を検知するため。limitations C-07）。team domain・AUD・メールアドレス・利用者 ID は返さない。外形監視（`scripts/ops/healthcheck.mjs`）は `misconfigured` と `usersActive=0` を失敗として扱う（Issue #102 の残リスク。2026-11-06 / C-07。2026-11-07）。
+- 認証状態: `GET /healthz` の `auth` は `mode`（`password` / `access`）、`jwtConfigured`、`headerTrustEnabled`、`allowlistConfigured`、`usersActive`、`status`（`ready` / `misconfigured`）を返す。`misconfigured` は access モードで認証できる経路が無い（401 が続く）状態で、`AUTH_MODE=access` かつ JWT 未設定・ヘッダ信頼無効、または許可リストが空のときになる。`usersActive` は有効な利用者（`app_user.is_active = true`）の**件数だけ**で、個人を特定できる値（メール・ID・名前）は返さない。DB は正常だが件数を取得できないときは `null`（外形監視は失敗として扱う）、DB 不達のときはキー自体を省略する（旧 API と同じ扱い）。件数を返すのは、復元直後・全利用者の無効化による「構成は ready なのに全員 401」を外形監視で検知するためで、0 件の判定に必要な最小限の情報にとどめる（limitations C-07）。team domain・AUD・メールアドレスは返さない。外形監視（`scripts/ops/healthcheck.mjs`）は `misconfigured` と `usersActive=0`・`null`・不正値を失敗として扱う（Issue #102 の残リスク。2026-11-06 / C-07。2026-11-07）。
 - 冪等: `POST /api/requests` は `Idempotency-Key` ヘッダ。同じキー・同じ内容なら同じ依頼を返す。内容が違えば 409 `ERR-008`。
 
 ## 2. エンドポイント

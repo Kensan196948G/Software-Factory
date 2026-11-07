@@ -228,7 +228,7 @@ DBの監査行は追記のみで消さない（アーカイブは外部コピー
 - 6 は `git fetch` をしない。`origin/main` は最後に fetch した値なので、古いと誤警告することがある。fetch 後に再実行して解消を確認する。
 - 失敗すると oneshot unit が `failed` になり、`systemctl --user --failed` と `journalctl --user -u mirai-sf-healthcheck` で確認できる。timer は止まらず5分ごとに再試行し、復旧すると `復旧: 連続 N 回の失敗から回復しました` の1行を出す。
 - 状態（連続失敗数・最終失敗理由・最終成功時刻・warning）は `~/.local/state/mirai-sf/healthcheck.json`（0600）に残す。監視自体の状態ファイルであり、秘密値は含めない。
-- 秘密情報は出力しない。`preview.conf`（`DATABASE_URL` など）は読まず、DB にも触らない。`/healthz` の本文はログへ出さず、確認済みの項目（`status` / `environment` / `db.ok` / `commit` / `auth` の `mode`・真偽値・`status`）だけを出す。`with-env.mjs` と同じく設定値は表示しない。URL は資格情報・クエリを落として出す。
+- 秘密情報は出力しない。`preview.conf`（`DATABASE_URL` など）は読まず、DB にも触らない。`/healthz` の本文はログへ出さず、確認済みの項目（`status` / `environment` / `db.ok` / `commit` / `auth` の `mode`・真偽値・`status`・有効な利用者の件数）だけを出す。`with-env.mjs` と同じく設定値は表示しない。URL は資格情報・クエリを落として出す。
 - 実行元は `current` ではなく常設のチェックアウト（`~/Projects/Software-Factory-Project` → `/mnt/storage/Software-Factory/Software-Factory`）。監視がリリースのデプロイに依存しないため。リポジトリの場所が違う場合は drop-in（`~/.config/systemd/user/mirai-sf-healthcheck.service.d/`）で `WorkingDirectory` と `ExecStart` を差し替える。
 
 有効化（稼働中の API・tunnel・worker は止めない）:

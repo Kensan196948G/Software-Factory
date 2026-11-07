@@ -271,13 +271,13 @@ export async function buildApp(
     const db = await healthCheck();
     const auth: AuthHealthStatus = authHealthStatus(config);
     // 有効な利用者 0 件は「構成は ready なのに全員 401」になる（docs/limitations.md C-07）。
-    // 返すのは件数だけで、メール・ID・名前は返さない。取得できないときは省略する
-    // （DB の一時不調や監視の版ずれで healthz 自体を落とさない）。
+    // 返すのは件数だけで、メール・ID・名前は返さない。
+    // 取得できなかったときは null を明示する（キー欠如＝旧 API の版ずれと区別し、監視を fail-closed にする）。
     if (db.ok) {
       try {
         auth.usersActive = await countActiveUsers();
       } catch {
-        /* 監視の補助情報。取れないときは usersActive を返さない（healthcheck は警告に留める） */
+        auth.usersActive = null;
       }
     }
     return {

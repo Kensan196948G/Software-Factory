@@ -177,11 +177,26 @@ describe('/healthz の auth 情報', () => {
     );
   });
 
-  it('usersActive は有効な app_user の件数と一致する（DB を変更しない）', async () => {
+  it('usersActive は無効な利用者を数えない（where is_active の回帰）', async () => {
     const { pool } = await import('../../src/api/db.js');
-    const counted = await pool.query<{ count: number }>('select count(*)::int as count from app_user where is_active');
-    const { res, body } = await health();
-    expect(res.statusCode).toBe(200);
-    expect(body.auth.usersActive).toBe(counted.rows[0]?.count ?? 0);
+    const email = `inactive-c07-${Date.now()}@example.com`;
+    // 無効な利用者を 1 件だけ足す。where is_active が抜けると usersActive が total 側にずれる。
+    await pool.query(
+      `insert into app_user (email, display_name, dept_code, password_hash, is_active)
+       select $1, 'inactive-c07', code, 'x', false from department limit 1`,
+      [email],
+    );
+    try {
+      const stats = await pool.query<{ total: number; active: number }>(
+        'select count(*)::int as total, count(*) filter (where is_active)::int as active from app_user',
+      );
+      const { res, body } = await health();
+      expect(res.statusCode).toBe(200);
+      // fixture が効いていること（無効な行が実在し、total > active）
+      expect(stats.rows[0]?.total ?? 0).toBeGreaterThan(stats.rows[0]?.active ?? 0);
+      expect(body.auth.usersActive).toBe(stats.rows[0]?.active ?? 0);
+    } finally {
+      await pool.query('delete from app_user where email = $1', [email]);
+    }
   });
 });

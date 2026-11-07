@@ -627,4 +627,35 @@ describe('healthcheck.mjs の認証状態（auth.status）', () => {
     expect(out).toContain('警告: auth.usersActive が healthz にありません');
     expect(out).toContain('healthcheck OK');
   }, 40_000);
+
+  it('auth.usersActive=null（API が件数を取得できない）は NG（検査の消失を緑にしない）', async () => {
+    healthBody.auth = {
+      mode: 'access',
+      jwtConfigured: true,
+      headerTrustEnabled: false,
+      allowlistConfigured: true,
+      usersActive: null,
+      status: 'ready',
+    };
+    const { code, out } = await run({});
+    expect(code, out).toBe(1);
+    expect(out).toContain('auth.usersActive=null（API が有効な利用者の件数を取得できませんでした。');
+    expect(out).toContain('healthcheck NG');
+  }, 40_000);
+
+  it('auth.usersActive が数値でない（文字列・負数・小数）は NG（"0" を成功扱いにしない）', async () => {
+    for (const value of ['0', -1, 1.5]) {
+      healthBody.auth = {
+        mode: 'access',
+        jwtConfigured: true,
+        headerTrustEnabled: false,
+        allowlistConfigured: true,
+        usersActive: value,
+        status: 'ready',
+      };
+      const { code, out } = await run({});
+      expect(code, `値=${JSON.stringify(value)} / ${out}`).toBe(1);
+      expect(out, `値=${JSON.stringify(value)}`).toContain('auth.usersActive が整数（0 以上）ではありません');
+    }
+  }, 120_000);
 });
