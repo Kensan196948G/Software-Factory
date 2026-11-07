@@ -325,6 +325,11 @@ CI の状態は `gh run list --workflow ci.yml --commit <SHA>` 等で確認で�
 - **RPO 1h の保証**: 55 分の開始間隔だけでは保証できない。`docs/production/07-slo-and-measurement.md`
   §3-4 は是正前の最大間隔 60.2 分・60 分超 4 回を記録し、是正後は未計測。`measure-slo.mjs` は最新 dump の
   鮮度のみで判定し、healthcheck の鮮度閾値は 90 分、外部通知は未実装。
+  healthcheck のオフサイト確認（`MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN` 設定時）は、最新のローカル dump
+  （`*.dump`、dot 始まりの一時ファイルは除く）に対応する送信記録 `<dump名>.r2.json` の有無も見る。記録が
+  無い場合は、dump の経過が猶予（既定 10 分。`MIRAI_SF_HEALTH_OFFSITE_GENERATION_GRACE_MIN` で変更可）を
+  超えた時点で NG にする（従来は 1 つ前の世代の記録が閾値内なら OK のままで、送信失敗の検知が最大で閾値
+  ぶん遅れた）。猶予内は送信中の可能性があるため OK。判定できない状態は fail-closed で NG にする。
 - **R2 の同一ホスト依存**: `backup.sh` が同一ホストで送信し、送信記録もローカル。wrangler の OAuth に依存し、
   送信記録が無い dump がある（07 §3-4）。ホスト障害時の独立コピー・復元手順としては未検証
   （`docs/production/02-runbook.md` §5）。

@@ -10,7 +10,8 @@
  *   5. auth.status が ready（misconfigured は認証不能。HTTP 200 でも失敗にする。Issue #102 の残リスク）
  *   6. （任意）git rev-parse origin/main と一致しない場合は warning（失敗にはしない）
  *   7. （任意）最新 dump の鮮度（MIRAI_SF_HEALTH_BACKUP_DIR 設定時）
- *   8. （任意）最新のオフサイト送信記録 `*.dump.r2.json` の鮮度（MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN 設定時）
+ *   8. （任意）最新世代のオフサイト送信記録の存在・鮮度（MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN 設定時）。
+ *      最新のローカル dump に対応する `<dump名>.r2.json` が無いまま猶予（既定 10 分）を超えていないかも見る。
  *
  * 7・8 はどちらも「検知範囲の拡大」であって RPO の保証ではない（docs/production/07-slo-and-measurement.md）。
  *
@@ -35,6 +36,10 @@
  *                                未設定なら確認しない。記録の時刻は JSON の uploadedAt（キーが無いときだけ mtime）。
  *                                最新記録が読めない・壊れている・未来時刻・シンボリックリンクなら NG（fail-closed）。
  *                                記録の中身（バケット・キー・ハッシュ）と保存先のパスは出力しない。
+ *                                あわせて、最新のローカル dump（`*.dump`）に対応する `<dump名>.r2.json` の存在を見る。
+ *   MIRAI_SF_HEALTH_OFFSITE_GENERATION_GRACE_MIN  （任意）最新 dump に送信記録がまだ無いときの猶予（分、既定 10）。
+ *                                上記の MAX_AGE 設定時だけ使う。dump 作成直後は送信中のため、dump の経過が
+ *                                猶予以内なら OK、超えていれば NG（送信失敗の検知遅れを縮める）。
  *
  * 終了コード: 0=正常（warning を含む）/ 1=異常
  */
@@ -74,6 +79,13 @@ const backupMaxAgeMin = Number.parseInt(process.env.MIRAI_SF_HEALTH_BACKUP_MAX_A
  * R2 送信が止まっていれば失敗にするため。値の書式が不正なときは設定ミスとして失敗にする（値は出さない）。
  */
 const offsiteMaxAgeRaw = (process.env.MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN ?? '').trim();
+/**
+ * 最新 dump に対応する送信記録がまだ無いときの猶予（分）。backup.sh は dump を置いた後に R2 へ送るため、
+ * 直後は記録が無いのが正常である。dump の経過がこの猶予を超えても記録が無ければ NG にする。
+ * 未設定・空なら既定 10 分。MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN 設定時だけ使う。
+ */
+const DEFAULT_OFFSITE_GENERATION_GRACE_MIN = 10;
+const offsiteGenerationGraceRaw = (process.env.MIRAI_SF_HEALTH_OFFSITE_GENERATION_GRACE_MIN ?? '').trim();
 /** 送信記録の uploadedAt・mtime の未来方向の許容幅（時計ずれ）。超えたら NG（負の経過分を正常扱いしない）。 */
 const OFFSITE_FUTURE_SKEW_MS = 5 * 60 * 1000;
 /** 送信記録として読む最大サイズ。超えたら NG。 */
@@ -306,25 +318,119 @@ function readOffsiteRecordTime(path, stat, now) {
 }
 
 /**
- * 最新のオフサイト送信記録（`*.dump.r2.json`）の経過時間を調べる。R2 送信が黙って止まっていないかの確認。
- * 「最新」は lstat の mtime が最も新しい記録。その記録を検証できなければ NG（fail-closed）。
- * 記録名に一致するエントリが通常ファイルでない（シンボリックリンク等）・lstat できない場合も NG。
- * 保存先のパスはログへ出さない（固定表現）。
+ * 最新のローカル dump（`*.dump`、通常ファイル）を特定する（fail-closed）。
+ * dot 始まりのエントリは backup.sh の一時ファイル等なので世代として数えない。
+ * lstat できない・通常ファイルでないエントリは、どれが最新か決められないため NG（固定文言・名前以外は出さない）。
  */
-function checkOffsiteFreshness(dir, maxAgeMin) {
+function findLatestLocalDump(dir, entries) {
+  let newest = null;
+  for (const entry of entries) {
+    if (entry.startsWith('.') || !entry.endsWith('.dump')) continue;
+    let stat;
+    try {
+      stat = lstatSync(join(dir, entry));
+    } catch {
+      return { failure: `ローカル dump の状態を取得できません: ${safeValue(entry)}` };
+    }
+    if (!stat.isFile()) {
+      return { failure: `ローカル dump が通常ファイルではありません（シンボリックリンク等は不可）: ${safeValue(entry)}` };
+    }
+    if (!newest || stat.mtimeMs > newest.stat.mtimeMs) newest = { name: entry, stat };
+  }
+  if (!newest) {
+    return { failure: '最新のローカル dump（*.dump）を特定できません（オフサイト送信記録との世代対応を確認できません）' };
+  }
+  return { newest };
+}
+
+/**
+ * 最新のローカル dump とオフサイト送信記録の「世代対応」を調べる（fail-closed）。
+ * 既定の確認（最新の記録の鮮度）だけでは、最新 dump の送信だけが失敗して 1 つ前の記録が閾値内の間、
+ * 検知できない。ここでは最新 dump に対応する `<dump名>.r2.json` の存在を見る。
+ *   - 対応する記録が無い: dump の経過が猶予（既定 10 分）以内なら OK（送信中）、超えていれば NG
+ *   - 対応する記録がある: 通常ファイルであること・検証できること・鮮度（maxAgeMin）を確認する
+ *   - 最新 dump を特定できない（1 件も無い）・通常ファイルでない・lstat できない・更新時刻が未来: NG
+ * 記録の中身（バケット・キー・ハッシュ）と保存先のフルパスは出さない。
+ */
+function checkOffsiteGeneration(dir, entries, maxAgeMin, graceMin, now) {
+  const latest = findLatestLocalDump(dir, entries);
+  if (latest.failure) return { failure: latest.failure };
+  const { name, stat } = latest.newest;
+  const safeDumpName = safeValue(name);
+  if (stat.mtimeMs > now + OFFSITE_FUTURE_SKEW_MS) {
+    return { failure: `最新 dump の更新時刻が未来です（時計ずれの許容 5 分を超過）: ${safeDumpName}` };
+  }
+  const recordName = `${name}.r2.json`;
+  const recordPath = join(dir, recordName);
+  let recordStat;
+  try {
+    recordStat = lstatSync(recordPath);
+  } catch (error) {
+    // 記録が無い（ENOENT）だけを「未送信」として扱う。状態を取得できない場合は判定不能なので NG
+    if (!(error && typeof error === 'object' && error.code === 'ENOENT')) {
+      return { failure: `最新世代のオフサイト送信記録の状態を取得できません: ${safeValue(recordName)}` };
+    }
+  }
+  const dumpAgeMs = Math.max(0, now - stat.mtimeMs);
+  if (!recordStat) {
+    if (dumpAgeMs > graceMin * 60000) {
+      const ageSeconds = Math.floor(dumpAgeMs / 1000);
+      const shown = `${Math.floor(ageSeconds / 60)} 分 ${ageSeconds % 60} 秒前`;
+      return {
+        failure: `最新世代のオフサイト送信記録がありません（dump の経過 ${shown} > 猶予 ${graceMin} 分）: ${safeDumpName}`,
+      };
+    }
+    return {
+      info: `最新世代のオフサイト送信記録: まだありません（dump の経過 ${Math.round(dumpAgeMs / 60000)} 分 ≤ 猶予 ${graceMin} 分）: ${safeDumpName}`,
+    };
+  }
+  if (!recordStat.isFile()) {
+    return {
+      failure: `最新世代のオフサイト送信記録が通常ファイルではありません（シンボリックリンク等は不可）: ${safeValue(recordName)}`,
+    };
+  }
+  const time = readOffsiteRecordTime(recordPath, recordStat, now);
+  if (time.failure) {
+    return { failure: `最新世代のオフサイト送信記録を検証できません（${time.failure}）: ${safeValue(recordName)}` };
+  }
+  // 許容幅内の未来（時計ずれ）は 0 として扱う。閾値との比較はミリ秒で行い、丸めるのは表示だけ
+  const ageMs = Math.max(0, now - time.at);
+  if (ageMs > maxAgeMin * 60000) {
+    const ageSeconds = Math.floor(ageMs / 1000);
+    const shown = `${Math.floor(ageSeconds / 60)} 分 ${ageSeconds % 60} 秒前`;
+    return {
+      failure: `最新世代のオフサイト送信記録が古すぎます（${shown} > ${maxAgeMin} 分、${time.source} 基準）: ${safeValue(recordName)}`,
+    };
+  }
+  return {
+    info: `最新世代のオフサイト送信記録: ${safeValue(recordName)}（${Math.round(ageMs / 60000)} 分前、${time.source} 基準）`,
+  };
+}
+
+/**
+ * オフサイト（R2）の送信状況を調べる。R2 送信が黙って止まっていないかの確認。
+ *   1) 最新の送信記録（`*.dump.r2.json`）の鮮度。「最新」は lstat の mtime が最も新しい記録。
+ *   2) 最新のローカル dump に対応する送信記録の存在（世代相関）と鮮度。
+ * どちらも fail-closed: 読めない・通常ファイルでない・壊れている・未来時刻は NG。
+ * 1) で NG になった場合は 2) を重ねて出さない（同じ障害でログを埋めない）。保存先のパスはログへ出さない。
+ * @returns {{ failures: string[], infos: string[] }}
+ */
+function checkOffsiteFreshness(dir, maxAgeMin, generationGraceMin) {
   const where = 'MIRAI_SF_HEALTH_BACKUP_DIR';
   let dirStat;
   try {
     dirStat = lstatSync(dir);
   } catch {
-    return { failure: `オフサイト送信記録の保存先がありません（${where}）` };
+    return { failures: [`オフサイト送信記録の保存先がありません（${where}）`], infos: [] };
   }
-  if (!dirStat.isDirectory()) return { failure: `オフサイト送信記録の保存先がディレクトリではありません（${where}）` };
+  if (!dirStat.isDirectory()) {
+    return { failures: [`オフサイト送信記録の保存先がディレクトリではありません（${where}）`], infos: [] };
+  }
   let entries;
   try {
     entries = readdirSync(dir);
   } catch {
-    return { failure: `オフサイト送信記録の保存先を読めません（${where}）` };
+    return { failures: [`オフサイト送信記録の保存先を読めません（${where}）`], infos: [] };
   }
   const now = Date.now();
   let newest = null;
@@ -335,17 +441,22 @@ function checkOffsiteFreshness(dir, maxAgeMin) {
     try {
       stat = lstatSync(path);
     } catch {
-      return { failure: `オフサイト送信記録の状態を取得できません: ${safeValue(entry)}` };
+      return { failures: [`オフサイト送信記録の状態を取得できません: ${safeValue(entry)}`], infos: [] };
     }
     if (!stat.isFile()) {
-      return { failure: `オフサイト送信記録が通常ファイルではありません（シンボリックリンク等は不可）: ${safeValue(entry)}` };
+      return {
+        failures: [`オフサイト送信記録が通常ファイルではありません（シンボリックリンク等は不可）: ${safeValue(entry)}`],
+        infos: [],
+      };
     }
     if (!newest || stat.mtimeMs > newest.stat.mtimeMs) newest = { name: entry, path, stat };
   }
-  if (!newest) return { failure: `オフサイト送信記録（*.dump.r2.json）がありません（${where}）` };
+  if (!newest) return { failures: [`オフサイト送信記録（*.dump.r2.json）がありません（${where}）`], infos: [] };
   const name = safeValue(newest.name);
   const time = readOffsiteRecordTime(newest.path, newest.stat, now);
-  if (time.failure) return { failure: `最新のオフサイト送信記録を検証できません（${time.failure}）: ${name}` };
+  if (time.failure) {
+    return { failures: [`最新のオフサイト送信記録を検証できません（${time.failure}）: ${name}`], infos: [] };
+  }
   // 許容幅内の未来（時計ずれ）は 0 として扱う。許容幅を超える未来は上で NG にしている。
   // 閾値との比較はミリ秒で行う（丸めた分で比べると 90 分 29 秒が通ってしまう）。丸めるのは表示だけ
   const ageMs = Math.max(0, now - time.at);
@@ -354,10 +465,15 @@ function checkOffsiteFreshness(dir, maxAgeMin) {
     const ageSeconds = Math.floor(ageMs / 1000);
     const shown = `${Math.floor(ageSeconds / 60)} 分 ${ageSeconds % 60} 秒前`;
     return {
-      failure: `最新のオフサイト送信記録が古すぎます（${shown} > ${maxAgeMin} 分、${time.source} 基準）: ${name}`,
+      failures: [`最新のオフサイト送信記録が古すぎます（${shown} > ${maxAgeMin} 分、${time.source} 基準）: ${name}`],
+      infos: [],
     };
   }
-  return { info: `最新オフサイト送信記録: ${name}（${ageMinutes} 分前、${time.source} 基準）` };
+  const infos = [`最新オフサイト送信記録: ${name}（${ageMinutes} 分前、${time.source} 基準）`];
+  const generation = checkOffsiteGeneration(dir, entries, maxAgeMin, generationGraceMin, now);
+  if (generation.failure) return { failures: [generation.failure], infos };
+  if (generation.info) infos.push(generation.info);
+  return { failures: [], infos };
 }
 
 async function main() {
@@ -450,7 +566,8 @@ async function main() {
     }
   }
 
-  // 8. （任意）オフサイト（R2）送信記録の鮮度。MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN があるときだけ
+  // 8. （任意）オフサイト（R2）送信記録の鮮度と、最新 dump との世代対応。
+  //    MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN があるときだけ
   if (offsiteMaxAgeRaw) {
     const offsiteMaxAgeMin = /^[1-9][0-9]{0,5}$/.test(offsiteMaxAgeRaw) ? Number(offsiteMaxAgeRaw) : null;
     if (offsiteMaxAgeMin === null) {
@@ -458,11 +575,18 @@ async function main() {
     } else if (!backupDir) {
       failures.push('MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN の確認には MIRAI_SF_HEALTH_BACKUP_DIR が必要です');
     } else {
-      const offsite = checkOffsiteFreshness(backupDir, offsiteMaxAgeMin);
-      if (offsite.failure) {
-        failures.push(offsite.failure);
-      } else if (offsite.info) {
-        log(offsite.info);
+      const offsiteGenerationGraceMin =
+        offsiteGenerationGraceRaw === ''
+          ? DEFAULT_OFFSITE_GENERATION_GRACE_MIN
+          : /^[1-9][0-9]{0,5}$/.test(offsiteGenerationGraceRaw)
+            ? Number(offsiteGenerationGraceRaw)
+            : null;
+      if (offsiteGenerationGraceMin === null) {
+        failures.push('MIRAI_SF_HEALTH_OFFSITE_GENERATION_GRACE_MIN が正の整数（分）ではありません（値はログへ出しません）');
+      } else {
+        const offsite = checkOffsiteFreshness(backupDir, offsiteMaxAgeMin, offsiteGenerationGraceMin);
+        for (const info of offsite.infos) log(info);
+        failures.push(...offsite.failures);
       }
     }
   }
