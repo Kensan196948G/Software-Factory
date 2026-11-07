@@ -264,10 +264,20 @@ queryで非push・非mainは除外されるので、該当runしか無い実API�
 | 手動で追従    | `bash scripts/ops/staging-autofollow.sh`                                                                      |
 | 計画だけ確認  | `bash scripts/ops/staging-autofollow.sh --dry-run`（fetch と状態ファイルのみ更新。CI ゲートは照会しない）     |
 | CI ゲート確認 | `node scripts/ops/check-release-ci.mjs <SHA>`（0=可 / 75=一時的な未確認 / 1=失敗・照会不能） |
+| マージ前確認  | `node scripts/ops/pr-ready.mjs <PR番号>`（0=可 / 75=未確認 / 1=失敗・照会不能。`--json`・`--checks` 可） |
 | テスト        | `pnpm test:ops`                                                                                               |
 | 止める        | `systemctl --user disable --now mirai-sf-autofollow.timer`（unit は消さない）                                 |
 | 手動で戻す    | `pnpm ops:rollback --dry-run <SHA>` → `pnpm ops:rollback <SHA>`（DB は戻さない）                              |
 | failed の確認 | `systemctl --user --failed` / `systemctl --user show -p Result -p ExecMainStatus mirai-sf-autofollow.service` |
+
+**PR マージ前ゲート**（`scripts/ops/pr-ready.mjs`、2026-11-07 追加）: PR 番号を渡すと、必須チェック（既定は
+base ブランチの branch protection から取得。`--checks` で明示可）が **PR の `statusCheckRollup`** に揃って
+success か、会話解決済み・draft でない・競合なし・base 一致を確認する。exit 0=可 / 75=未確認（未実行・実行中・
+`cancelled`/`stale`・`mergeable=UNKNOWN`・必須チェックが PR に紐づいていない） / 1=失敗・照会不能・引数不正。
+`workflow_dispatch` で作った check run は head SHA には付いても **PR の required status にはならない**ため、
+v1 は再実行（dispatch）を行わない。チェックが無いときは head を更新して `pull_request` イベントを起こす
+（空コミットで可。CI 実行抑止指示子を入れない）。本ツールは push / commit / merge をせず、GET と
+読み取り専用 GraphQL だけを使う。
 
 失敗時（exit 1/2）は autofollow が旧版を維持しようとするが、**exit 2 は戻せなかった**という意味なので、
 `/healthz` と `current` を確認し、runbook の一次対応に沿って手動で復旧する。
