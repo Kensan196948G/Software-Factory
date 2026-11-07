@@ -36,6 +36,7 @@ type HealthBody = {
     jwtConfigured: boolean;
     headerTrustEnabled: boolean;
     allowlistConfigured: boolean;
+    usersActive?: number;
     status: string;
   };
   now: string;
@@ -91,13 +92,16 @@ describe('/healthz の auth 情報', () => {
     expect(body.db.ok).toBe(true);
     expect(typeof body.now).toBe('string');
     // auth は password モードでは Access の設定を使わない
-    expect(body.auth).toEqual({
+    expect(body.auth).toMatchObject({
       mode: 'password',
       jwtConfigured: false,
       headerTrustEnabled: false,
       allowlistConfigured: true,
       status: 'ready',
     });
+    // 有効な利用者の件数（C-07）。件数だけで、メール・ID・名前は返さない
+    expect(typeof body.auth.usersActive).toBe('number');
+    expect(body.auth.usersActive).toBeGreaterThanOrEqual(0);
   });
 
   it('access モードで JWT が設定済みなら ready', async () => {
@@ -116,13 +120,14 @@ describe('/healthz の auth 情報', () => {
     const { res, body } = await health();
     expect(res.statusCode).toBe(200);
     expect(body.status).toBe('ok');
-    expect(body.auth).toEqual({
+    expect(body.auth).toMatchObject({
       mode: 'access',
       jwtConfigured: false,
       headerTrustEnabled: false,
       allowlistConfigured: true,
       status: 'misconfigured',
     });
+    expect(typeof body.auth.usersActive).toBe('number');
   });
 
   it('JWT 未設定でも開発・テストのヘッダ信頼 opt-in が有効なら ready', async () => {
@@ -168,7 +173,15 @@ describe('/healthz の auth 情報', () => {
     expect(text).not.toContain('secret-user-should-not-appear');
     const auth = (res.json() as HealthBody).auth;
     expect(Object.keys(auth).sort()).toEqual(
-      ['allowlistConfigured', 'headerTrustEnabled', 'jwtConfigured', 'mode', 'status'].sort(),
+      ['allowlistConfigured', 'headerTrustEnabled', 'jwtConfigured', 'mode', 'status', 'usersActive'].sort(),
     );
+  });
+
+  it('usersActive は有効な app_user の件数と一致する（DB を変更しない）', async () => {
+    const { pool } = await import('../../src/api/db.js');
+    const counted = await pool.query<{ count: number }>('select count(*)::int as count from app_user where is_active');
+    const { res, body } = await health();
+    expect(res.statusCode).toBe(200);
+    expect(body.auth.usersActive).toBe(counted.rows[0]?.count ?? 0);
   });
 });

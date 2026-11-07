@@ -178,6 +178,11 @@ export interface AuthHealthStatus {
   headerTrustEnabled: boolean;
   /** 許可するメール／ドメインが設定されているか（空なら JWT が通っても全員拒否になる）。 */
   allowlistConfigured: boolean;
+  /**
+   * 有効な利用者の件数（`/healthz` が DB から取得できたときだけ）。0 は認証全断。
+   * DB 不達・取得失敗のときは省略する（監視は「不明」として警告に留める）。
+   */
+  usersActive?: number;
   /** ready: 認証経路がある / misconfigured: 認証できる経路が無い（401 が続く状態）。 */
   status: 'ready' | 'misconfigured';
 }

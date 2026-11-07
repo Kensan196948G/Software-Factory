@@ -8,6 +8,7 @@
  *   3. environment が期待どおり（既定 staging。本番は MIRAI_SF_HEALTH_ENV=production）
  *   4. /healthz の commit が current/release.env の COMMIT_SHA と一致する
  *   5. auth.status が ready（misconfigured は認証不能。HTTP 200 でも失敗にする。Issue #102 の残リスク）
+ *      かつ auth.usersActive が 1 以上（0 件は全断。構成が ready でも誰もログインできない。C-07）
  *   6. （任意）git rev-parse origin/main と一致しない場合は warning（失敗にはしない）
  *   7. （任意）最新 dump の鮮度（MIRAI_SF_HEALTH_BACKUP_DIR 設定時）
  *   8. （任意）最新世代のオフサイト送信記録の存在・鮮度（MIRAI_SF_HEALTH_OFFSITE_MAX_AGE_MIN 設定時）。
@@ -538,6 +539,21 @@ async function main() {
       failures.push(`auth.status=${safeValue(auth.status)}（ready を期待）`);
     } else {
       log(`auth.status=ready（mode=${safeValue(auth.mode)}）`);
+      // 5b. 有効な利用者 0 件は、構成が ready でも全員 401 になる状態（docs/limitations.md C-07）。
+      //     DB 復元直後・全利用者の無効化で起きる。usersActive は件数だけ（個人は特定できない）。
+      if (typeof auth.usersActive === 'number' && Number.isFinite(auth.usersActive) && auth.usersActive >= 0) {
+        if (auth.usersActive === 0) {
+          failures.push('auth.usersActive=0（有効な利用者が 0 件。構成が ready でも全員 401 になる状態）');
+        } else {
+          log(`auth.usersActive=${auth.usersActive}`);
+        }
+      } else {
+        // 監視の更新が API の配備より先の過渡期、または一時的な取得失敗。0 件は失敗、不明は警告に留める。
+        const message =
+          'auth.usersActive が healthz にありません（API と監視の版ずれ、または利用者件数の取得失敗。有効な利用者の存在を確認できません）';
+        warnings.push(message);
+        warn(message);
+      }
     }
 
     // 6. （任意）origin/main との比較。取得できるときだけ warning を出す

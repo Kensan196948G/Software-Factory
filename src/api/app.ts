@@ -4,10 +4,10 @@ import fastifyStatic from '@fastify/static';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { versionAssets } from './asset-version.js';
-import { authHealthStatus, config, isAccessJwtEnabled } from './config.js';
+import { authHealthStatus, config, isAccessJwtEnabled, type AuthHealthStatus } from './config.js';
 import { ApiError, Errors, applySecurityHeaders, correlationId, sendError } from './http.js';
 import { ZodError, z } from 'zod';
-import { healthCheck } from './db.js';
+import { countActiveUsers, healthCheck } from './db.js';
 import {
   CSRF_COOKIE,
   accessLogin,
@@ -269,6 +269,17 @@ export async function buildApp(
   /* ───────── health ───────── */
   app.get('/healthz', async () => {
     const db = await healthCheck();
+    const auth: AuthHealthStatus = authHealthStatus(config);
+    // 有効な利用者 0 件は「構成は ready なのに全員 401」になる（docs/limitations.md C-07）。
+    // 返すのは件数だけで、メール・ID・名前は返さない。取得できないときは省略する
+    // （DB の一時不調や監視の版ずれで healthz 自体を落とさない）。
+    if (db.ok) {
+      try {
+        auth.usersActive = await countActiveUsers();
+      } catch {
+        /* 監視の補助情報。取れないときは usersActive を返さない（healthcheck は警告に留める） */
+      }
+    }
     return {
       status: db.ok ? 'ok' : 'degraded',
       app: 'mirai-sf-intake',
@@ -277,7 +288,7 @@ export async function buildApp(
       environment: config.appEnv,
       db: db.ok ? { ok: true, latencyMs: db.latencyMs } : { ok: false, error: db.error },
       // 認証不能（401 が続く状態）を外形監視で検知するための追加情報。秘密の値は返さない。
-      auth: authHealthStatus(config),
+      auth,
       now: new Date().toISOString(),
     };
   });
