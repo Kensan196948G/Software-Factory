@@ -2,50 +2,51 @@
 
 正本: 要件定義書 V1.0（MSF-REQ-2026-001）／詳細仕様書 V1.0（MSF-SPC-2026-001）。
 「実装」は本リポジトリのMVPで実装済み、「Backlog」はIssue化して対象外、「一部」は制限付き。
+状態は 2026-11-09 時点の実装に合わせて更新した。画面の実装はコンソール（`src/web/public/console.js`）と E2E（`tests/e2e/`）を根拠にする。
 
 ## 1. 機能要件（7章）
 
-| ID        | 要件                                         | 状態                      | 実装・根拠                                          |
-| --------- | -------------------------------------------- | ------------------------- | --------------------------------------------------- |
-| FR-01     | 依頼の登録（7ステップ／1枚フォーム）         | 実装（API・画面）         | `POST /api/requests`、SCR-02                        |
-| FR-02     | カタログから道具を選ぶと件名・部署・色が入る | 一部（API完了・画面待ち） | `catalog_tool`、SCR-02/21                           |
-| FR-03     | 注文書のプレビュー                           | 一部（API完了・画面待ち） | `buildOrderYaml`                                    |
-| FR-04     | 必須チェック・エラー時も入力を消さない       | 実装（API）               | zod、ERR-001                                        |
-| FR-05     | 合格の条件の書き方チェック                   | 実装                      | `checkCriteria`（26語・仮置き・8文字）              |
-| FR-06     | よく使う書き方の例文                         | 実装（共有定義）          | `CRITERIA_TEMPLATES`                                |
-| FR-07     | 添付                                         | **一部**（メタ情報のみ）  | `attachment`                                        |
-| FR-08     | 受付番号の自動採番（二重採番なし）           | 実装                      | `request_counter`、`allocateId`                     |
-| FR-09     | 編集・再提出                                 | 実装（API）               | `PATCH`、差戻し→受付                                |
-| FR-10     | 信号の色の候補と理由                         | 実装                      | `evaluateSignal`（R1〜R6）                          |
-| FR-11     | ものさし（削減見込み・5観点）                | 実装                      | `computeMeasure`／`computeScore`                    |
-| FR-12     | 状態管理（12状態）                           | 実装                      | `STATUSES`、遷移表                                  |
-| FR-13     | 役割による操作制限                           | 実装                      | `roleCanTransition`（サーバ判定）                   |
-| FR-14     | 承認者が色を最終決定                         | 実装                      | `POST transitions`（approved）                      |
-| FR-15     | 赤の確認チェック                             | 実装                      | `validateApproval`、ERR-203                         |
-| FR-16     | 差戻し・見送りの理由必須                     | 実装                      | `isReasonRequired`、ERR-102                         |
-| FR-17     | コメント・変更履歴                           | 実装                      | `comment`／`request_history`                        |
-| FR-18     | （FR-52で置換）                              | —                         | FR-52                                               |
-| FR-19     | ボード                                       | 一部（API完了・画面待ち） | `GET /api/requests`、SCR-03                         |
-| FR-20     | 検索・絞り込み・並べ替え・ページング         | 一部                      | `GET /api/requests`（信号はJS絞り込み）             |
-| FR-21     | 集計                                         | 一部                      | `catalog/summary`、ホーム件数                       |
-| FR-22     | 印刷                                         | Backlog                   | —                                                   |
-| FR-23     | 注文書YAML                                   | 実装                      | `GET /orders`、`buildOrderYaml`                     |
-| FR-24     | CSV出力（11列・BOM・CRLF）                   | 実装                      | `buildCsv`                                          |
-| FR-25     | JSON出力・取込（全件置換）                   | 実装                      | `export.json`、`POST /api/import`                   |
-| FR-26     | カタログ（19部署・118件）                    | 実装（API）               | `catalog_tool`                                      |
-| FR-27     | カタログのマスタ管理                         | 一部（seed/DB）           | `department`／`catalog_tool`                        |
-| FR-28     | 承認済み注文書からIssueを作る                | 実装                      | `POST /api/requests/:id/handoff`（Issue #2 で実測） |
-| FR-29〜46 | 開発ライン（AI実装・CI・PR・公開・通知）     | Backlog                   | 注文書YAML＋Issueまで                               |
-| FR-47     | 下書き自動保存・再開                         | 実装（API）               | `draft`、SCR-08                                     |
-| FR-48     | 次へ／元に戻す                               | 一部（APIは遷移）         | SCR-03/05、UIでトースト                             |
-| FR-49     | 選べる状態だけ表示・理由                     | 実装（API）               | `transitionOptions`                                 |
-| FR-50     | 承認前チェック                               | 実装                      | `preApprovalChecklist`                              |
-| FR-51     | 差戻し理由テンプレート                       | 実装（共有定義）          | 仕様3-15の文言                                      |
-| FR-52     | ホームの「あなたの番」                       | 実装（API）               | `yourTurn`、`GET /api/home`                         |
-| FR-53     | 滞留日数（3日/7日）                          | 実装                      | `staleDays`／`staleLevel`                           |
-| FR-54     | あいまい語の書き換え候補                     | 実装（共有定義）          | `REWRITE_GROUPS`                                    |
-| FR-55     | 標準化・教育                                 | Backlog                   | —                                                   |
-| FR-56     | トレーサビリティ                             | 一部                      | 受付番号・履歴・承認・注文書版                      |
+| ID        | 要件                                         | 状態                     | 実装・根拠                                                                   |
+| --------- | -------------------------------------------- | ------------------------ | ---------------------------------------------------------------------------- |
+| FR-01     | 依頼の登録（7ステップ／1枚フォーム）         | 実装（API・画面）        | `POST /api/requests`、SCR-02                                                 |
+| FR-02     | カタログから道具を選ぶと件名・部署・色が入る | 実装（API・画面）        | `catalog_tool`、SCR-02/21                                                    |
+| FR-03     | 注文書のプレビュー                           | 実装（API・画面）        | `buildOrderYaml`、コンソールのプレビュー                                     |
+| FR-04     | 必須チェック・エラー時も入力を消さない       | 実装（API）              | zod、ERR-001                                                                 |
+| FR-05     | 合格の条件の書き方チェック                   | 実装                     | `checkCriteria`（26語・仮置き・8文字）                                       |
+| FR-06     | よく使う書き方の例文                         | 実装（共有定義）         | `CRITERIA_TEMPLATES`                                                         |
+| FR-07     | 添付                                         | **一部**（メタ情報のみ） | `attachment`                                                                 |
+| FR-08     | 受付番号の自動採番（二重採番なし）           | 実装                     | `request_counter`、`allocateId`                                              |
+| FR-09     | 編集・再提出                                 | 実装（API）              | `PATCH`、差戻し→受付                                                         |
+| FR-10     | 信号の色の候補と理由                         | 実装                     | `evaluateSignal`（R1〜R6）                                                   |
+| FR-11     | ものさし（削減見込み・5観点）                | 実装                     | `computeMeasure`／`computeScore`                                             |
+| FR-12     | 状態管理（12状態）                           | 実装                     | `STATUSES`、遷移表                                                           |
+| FR-13     | 役割による操作制限                           | 実装                     | `roleCanTransition`（サーバ判定）                                            |
+| FR-14     | 承認者が色を最終決定                         | 実装                     | `POST transitions`（approved）                                               |
+| FR-15     | 赤の確認チェック                             | 実装                     | `validateApproval`、ERR-203                                                  |
+| FR-16     | 差戻し・見送りの理由必須                     | 実装                     | `isReasonRequired`、ERR-102                                                  |
+| FR-17     | コメント・変更履歴                           | 実装                     | `comment`／`request_history`                                                 |
+| FR-18     | （FR-52で置換）                              | —                        | FR-52                                                                        |
+| FR-19     | ボード                                       | 実装（API・画面）        | `GET /api/requests`、SCR-03                                                  |
+| FR-20     | 検索・絞り込み・並べ替え・ページング         | 実装（API・画面）        | `GET /api/requests`（信号の絞り込みは SQL。`09-list-filter-performance.md`） |
+| FR-21     | 集計                                         | 一部                     | `catalog/summary`、ホーム件数                                                |
+| FR-22     | 印刷                                         | Backlog                  | —                                                                            |
+| FR-23     | 注文書YAML                                   | 実装                     | `GET /orders`、`buildOrderYaml`                                              |
+| FR-24     | CSV出力（11列・BOM・CRLF）                   | 実装                     | `buildCsv`                                                                   |
+| FR-25     | JSON出力・取込（全件置換）                   | 実装                     | `export.json`、`POST /api/import`                                            |
+| FR-26     | カタログ（19部署・118件）                    | 実装（API）              | `catalog_tool`                                                               |
+| FR-27     | カタログのマスタ管理                         | 一部（seed/DB）          | `department`／`catalog_tool`                                                 |
+| FR-28     | 承認済み注文書からIssueを作る                | 実装                     | `POST /api/requests/:id/handoff`（Issue #2 で実測）                          |
+| FR-29〜46 | 開発ライン（AI実装・CI・PR・公開・通知）     | Backlog                  | 注文書YAML＋Issueまで                                                        |
+| FR-47     | 下書き自動保存・再開                         | 実装（API）              | `draft`、SCR-08                                                              |
+| FR-48     | 次へ／元に戻す                               | 一部（APIは遷移）        | SCR-03/05、UIでトースト                                                      |
+| FR-49     | 選べる状態だけ表示・理由                     | 実装（API）              | `transitionOptions`                                                          |
+| FR-50     | 承認前チェック                               | 実装                     | `preApprovalChecklist`                                                       |
+| FR-51     | 差戻し理由テンプレート                       | 実装（共有定義）         | 仕様3-15の文言                                                               |
+| FR-52     | ホームの「あなたの番」                       | 実装（API）              | `yourTurn`、`GET /api/home`                                                  |
+| FR-53     | 滞留日数（3日/7日）                          | 実装                     | `staleDays`／`staleLevel`                                                    |
+| FR-54     | あいまい語の書き換え候補                     | 実装（共有定義）         | `REWRITE_GROUPS`                                                             |
+| FR-55     | 標準化・教育                                 | Backlog                  | —                                                                            |
+| FR-56     | トレーサビリティ                             | 一部                     | 受付番号・履歴・承認・注文書版                                               |
 
 ## 2. 非機能要件（8章）— MVPで担保する範囲
 
