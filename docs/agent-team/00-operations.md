@@ -144,6 +144,7 @@ Exit code の扱いは次のとおりである。
 - 回答が無ければ R4 を実行しない。デフォルトは「何もしない」であり、安全側に倒す。
 - 回答は数字で受け取り、追加の確認は必要最小限（1 問）にとどめる。
 - 承認の記録（何を・いつ・誰が承認したか）を残す。記録が無い承認は無いものとして扱う。
+- **品質門禁の承認は所有者本人のみが行う。** 品質門禁（要件レビュー・テストケースレビュー・リリース・結項）の承認は所有者本人のみが行い、エージェントおよび他の担当者は承認しない。承認記録（日時・対象・承認者）を残し、記録が無い承認は無いものとして扱う。
 
 例:
 
@@ -186,8 +187,8 @@ Exit code の扱いは次のとおりである。
 - リポジトリ設定は squash のみ（`allow_merge_commit=false`、`allow_rebase_merge=false`、`allow_squash_merge=true`）、`delete_branch_on_merge=true`、`squash_merge_commit_title=PR_TITLE`、`squash_merge_commit_message=BLANK`、rulesets は 0 件である。
 - skip 指示子を commit message / PR タイトル / PR 本文のいずれかに入れると、workflow run 自体が生成されず必須チェックが付かない。squash 本文に混入した事故は `docs/production/22-batch2-plan-20261106.md` §9-3 に記録されている。
 
-未確認事項は次のとおりである。
+未確認事項と現在値は次のとおりである（現在値の正本は `docs/production/26-release-status.md`）。
 
-- 本番の現在 SHA は未確認である。
-- 所有者承認の現在値は未確認である（`docs/production/24-production-deploy-runbook.md` の前提表で「未取得」）。
+- 本番の現在 SHA: `2d0766b0`（2026-11-09 07:51 JST 実測）。
+- 最新 main（`dbfede1e`）の配備承認: 未取得（`docs/production/26` §3、`docs/production/24` の前提表）。
 - Dependabot の open PR の採否は未確認である（2026-11-09 JST 時点で #133〜#137 の 5 件が open）。
