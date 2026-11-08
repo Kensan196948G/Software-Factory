@@ -22,7 +22,7 @@
 | Reviewer     | 実装者とは別コンテキストでの独立レビュー。重大度別の指摘                     | 指摘リスト（Critical / High / Medium / Low）、PASS / FAIL の根拠（file:line） | ファイルの変更（指摘のみ）、実装者と同じコンテキストでのレビュー   |
 
 - 実装者とレビュアーは別コンテキストにする。Reviewer は Builder の会話を共有しない別セッションで起動する。
-- このリポジトリの branch protection には `required_pull_request_reviews` が無いため、GitHub は承認数を強制しない（2026-11-09 実測: 当該キーは存在しない）。したがって独立性は運用で担保する。
+- このリポジトリの branch protection には `required_pull_request_reviews` が無いため、GitHub は承認数を強制しない（2026-11-09 JST 実測: 当該キーは存在しない）。したがって独立性は運用で担保する。
 - 独立性を担保する運用は次の 3 点である。
   1. Reviewer は Builder の会話コンテキストを共有しない別セッションで実行する。
   2. Reviewer の指摘は PR コメントではなく、重大度と根拠（file:line）付きのタスク出力として残す。
@@ -73,15 +73,15 @@ Exit code の扱いは次のとおりである。
 
 ## 4. リスク分類 R0〜R4
 
-| 区分             | 定義                                         | 例                                                                                                                                                                                                 | 手続き                                                                                                                 |
-| ---------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| R0 観測          | 読み取りのみで、リポジトリ・環境を変更しない | `gh api` の GET、`git log` / `git status`、`node scripts/ops/pr-ready.mjs`、`docs/` の閲覧                                                                                                         | 制限なし。証跡を残す                                                                                                   |
-| R1 ローカル可逆  | ローカルで完結し、破棄できる変更             | worktree 内のファイル作成・編集、ローカル commit、`pnpm exec prettier --write`、ローカル検証                                                                                                       | Builder が実行できる                                                                                                   |
-| R2 遠隔・可逆    | リモートに影響するが、取り消せる変更         | `auto/<slug>` への push、PR 作成、PR コメント、head を更新して `pull_request` イベントを起こすこと                                                                                                 | Builder が実行できる。`main` への push は不可                                                                          |
-| R3 統合（merge） | `main` への squash merge                     | 本ドキュメントの PR のマージ                                                                                                                                                                       | §6 の条件を満たし、Reviewer の blocker が無いときに限り実行できる。**マージから 10 分以内に staging へ自動配備される** |
-| R4 承認必須      | 不可逆、または本番・権限・課金に影響する操作 | 本番配備、rollback、Cloudflare の変更、課金・契約、認証・権限の変更、破壊的 DB 操作、`.github/workflows/**` と `deploy/**` の変更、secret rotation、force push、`--admin` マージ、`main` 直接 push | 人間の明示承認（§7）が必要。承認が無ければ実行しない                                                                   |
+| 区分             | 定義                                         | 例                                                                                                                                                                                                 | 手続き                                                                                                                                                                                                                                                                           |
+| ---------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R0 観測          | 読み取りのみで、リポジトリ・環境を変更しない | `gh api` の GET、`git log` / `git status`、`node scripts/ops/pr-ready.mjs`、`docs/` の閲覧                                                                                                         | 制限なし。証跡を残す                                                                                                                                                                                                                                                             |
+| R1 ローカル可逆  | ローカルで完結し、破棄できる変更             | worktree 内のファイル作成・編集、ローカル commit、`pnpm exec prettier --write`、ローカル検証                                                                                                       | Builder が実行できる                                                                                                                                                                                                                                                             |
+| R2 遠隔・可逆    | リモートに影響するが、取り消せる変更         | `auto/<slug>` への push、PR 作成、PR コメント、head を更新して `pull_request` イベントを起こすこと                                                                                                 | Builder が実行できる。`main` への push は不可                                                                                                                                                                                                                                    |
+| R3 統合（merge） | `main` への squash merge                     | 本ドキュメントの PR のマージ                                                                                                                                                                       | §6 の条件を満たし、Reviewer の blocker が無いときに限り実行できる。**マージ後、main の push CI（quality / e2e / docker）が success した後の最初の timer 実行で staging へ自動配備される。実測の main CI は約 21〜25 分、timer は 10 分間隔のため、配備まで通常 20〜35 分かかる** |
+| R4 承認必須      | 不可逆、または本番・権限・課金に影響する操作 | 本番配備、rollback、Cloudflare の変更、課金・契約、認証・権限の変更、破壊的 DB 操作、`.github/workflows/**` と `deploy/**` の変更、secret rotation、force push、`--admin` マージ、`main` 直接 push | 人間の明示承認（§7）が必要。承認が無ければ実行しない                                                                                                                                                                                                                             |
 
-- R3 の merge は「コードを `main` に統合する」操作であると同時に「staging を更新する」操作でもある。staging の自動追従は `deploy/systemd/mirai-sf-autofollow.timer` が 10 分間隔で行うため、マージ後に staging の状態が変わる。
+- R3 の merge は「コードを `main` に統合する」操作であると同時に「staging を更新する」操作でもある。staging の自動追従は `deploy/systemd/mirai-sf-autofollow.timer` が 10 分間隔で行う。配備は main の push CI（quality / e2e / docker）が success した後になるため、マージから配備まで通常 20〜35 分かかる。
 - R4 に該当するか迷う場合は R4 として扱い、人間に確認する。過剰な承認要求は事故より安い。
 
 ## 5. 品質ゲート Gate01〜10
@@ -101,7 +101,7 @@ Exit code の扱いは次のとおりである。
 
 - CI に無い検証が 2 つある。`prettier`（`pnpm exec prettier --check ...`）と `pnpm test:ops`（`scripts/ops/tests/*.sh`）は `.github/workflows/ci.yml` にステップが無い。変更内容に応じてローカルで実行し、実行できない場合は「未実行」と記録する。
 - 実行できないゲートは「未実行」と記録し、CI に委ねる。ローカルに PostgreSQL や Docker が無い場合、Gate05 / Gate09 は未実行となり得る。CI の `quality` が Gate01〜05 と Gate06 の相当を実行し、`e2e` と `docker` がそれぞれ Gate08 / Gate09 を実行する。
-- CI の実測所要時間は PR #137（2026-11-07）で `quality` 10 分 12 秒、`e2e` 14 分 5 秒、`docker` 1 分 10 秒である。CI の完了を待つ間は他の作業を進め、ポーリングだけを繰り返さない。
+- CI の実測所要時間は PR #137（2026-11-08 JST。run は 2026-11-07T21:34Z 開始）で `quality` 10 分 12 秒、`e2e` 14 分 5 秒、`docker` 1 分 10 秒である。CI の完了を待つ間は他の作業を進め、ポーリングだけを繰り返さない。
 
 ## 6. マージ条件と停止条件
 
@@ -110,7 +110,7 @@ Exit code の扱いは次のとおりである。
 - 必須チェック `quality` / `e2e` / `docker` が success である（app_id 15368）。
 - 未解決のレビュースレッドが 0 件である（`required_conversation_resolution=true`）。
 - PR が draft でない。
-- `mergeStateStatus` が `CLEAN` である。`strict=false` のため `BEHIND` は許容する。
+- `mergeStateStatus` が `CLEAN`、または `strict=false` のため `BEHIND` である（`DIRTY` / `DRAFT` は不可、`UNKNOWN` は待機）。
 - `reviewDecision` が `CHANGES_REQUESTED` / `REVIEW_REQUIRED` でない。`required_pull_request_reviews` が無いため通常は null だが、人間がレビューを要求した場合は該当し得る。
 - Reviewer の blocker（Critical / High）が無い。
 
@@ -128,7 +128,7 @@ Exit code の扱いは次のとおりである。
 
 - `pr-ready` が exit 1: 失敗または照会不能。原因を特定するまでマージしない。同じ失敗を再実行だけで繰り返さない。
 - `pr-ready` が exit 75: 未確認（待てば変わる）。状態を進めず、待って再実行する。RETRYING として扱わない。
-- 保護設定が読めない: `--checks` で回避しない。`--checks` 指定時は保護条件が未確認になるため、fail-closed で止める。
+- 保護設定が読めない: `--checks` で回避しない。`--checks` 指定時は保護設定を読まないため、未解決スレッド・BEHIND 以外は保護条件未確認のまま exit 0 を返し得る。exit 0 でもマージしない（fail-closed）。
 - 必須チェックが `skipped`: exit 1 として扱う。skip を成功として扱わない。
 - `mergeStateStatus` が `DIRTY` / `DRAFT`、または strict=true の環境で `BEHIND`: マージしない。
 - `reviewDecision` が `CHANGES_REQUESTED` / `REVIEW_REQUIRED`: マージしない。
@@ -190,4 +190,4 @@ Exit code の扱いは次のとおりである。
 
 - 本番の現在 SHA は未確認である。
 - 所有者承認の現在値は未確認である（`docs/production/24-production-deploy-runbook.md` の前提表で「未取得」）。
-- Dependabot の open PR の採否は未確認である（2026-11-09 時点で #133〜#137 の 5 件が open）。
+- Dependabot の open PR の採否は未確認である（2026-11-09 JST 時点で #133〜#137 の 5 件が open）。
