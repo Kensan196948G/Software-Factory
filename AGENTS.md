@@ -35,6 +35,8 @@
 4. DBを変えたら migration を追加（additive）し、`db:verify` と空DBからの再構築を確認する。
 5. UIを変えたら設計成果物（`docs/design/msf-intake-design.html`）との差異を確認し、差異を記録する。
 
+AI チームの運用詳細（ロール・状態機械・品質ゲート・マージ手順）は `docs/agent-team/00-operations.md` を参照する。矛盾時は本ファイル（`AGENTS.md`）を優先する。
+
 ## 5. 検証コマンド
 
 ```bash
