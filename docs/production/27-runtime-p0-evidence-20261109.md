@@ -165,7 +165,7 @@ Q-12 の対応ブラウザは **Chrome・Edge の最新 2 版**、対応幅は *
 
 - **TC-AUTH-01**: ログイン成功・失敗・期限切れ・無効化後の失効は確認した。Cookie の `HttpOnly`・`SameSite=Lax` 属性と、ログイン失敗が監査に残ることは、引用したテストでは確認していない（`src/api/auth.ts` の `login_failed` 監査は実装にある）。
 - **TC-AUTH-02**: CSRF トークン欠落はテスト済み。Origin 不正の拒否は実装（`src/api/app.ts` の Origin 検査）はあるが、実行証跡は取っていない。
-- **読込状態**: `docs/project/01-mvp-scope.md` は「読込中」の状態を要求しているが、実装に明示表示が無い。不具合は**未起票**（起票案はローカル文書。品質工作台への登録は UI 操作待ち）。
+- **読込状態**: `docs/project/01-mvp-scope.md` は「読込中」の状態を要求しているが、実装に明示表示が無い。不具合は 2026-11-09 20:56 に起票済み（`bug_mw97gmv4_de66291b`、minor / open）。
 - **TC-AUTHZ-01**: 受付担当の承認は **409 / ERR-201** で拒否される。TC の期待は 403 である。403 は管理 API（`separation.test.ts`）と自己承認（ERR-105）では確認した。**この差は判定せず、品質工作台の判断に委ねる。**
 - **TC-REQ-01**: 形式（`REQ-YYYY-0001`）と履歴「受付」は確認した。年が変わったときの 0001 と、複数件での連番の一意性は明示テストが無い（25 並列の作成がすべて 201 になることは確認）。
 - **TC-AUDIT-01**: ハッシュ連鎖・管理者限定・CSV 出力は確認した。`audit_log` の UPDATE/DELETE 拒否（`audit_log_no_update` トリガ）と改ざん検知は専用テストが無い。追記専用テーブル 4 種（`order_snapshot` など）の UPDATE/DELETE 拒否は `devline-qa-db.test.ts` の T-04 で確認済み。CSV の 5000 件上限・BOM・secret 非混入は未確認。
