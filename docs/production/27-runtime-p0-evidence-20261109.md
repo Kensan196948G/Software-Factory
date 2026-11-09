@@ -33,7 +33,7 @@ UI 状態の実測は `~/.local/state/mirai-sf/evidence/ui-state-*/` に `summar
 | Node / pnpm   | Node v22.22.3 / pnpm 12（プロジェクトの指定どおり）                                                                                                                   |
 | DB            | `mirai_sf_test`（既存のテスト DB。DB の作成・DROP はしていない）                                                                                                      |
 | API           | レート制限の確認のみ、`127.0.0.1:18999` で一時起動（`NODE_ENV=development`・`AUTH_MODE=password`・`MAIL_MODE=file`）                                                  |
-| 本番・Staging | 参照も変更もしていない（Staging の自動追従は別の運用で動いている）                                                                                                    |
+| 本番・Staging | 本番・Cloudflare は参照も変更もしていない。Staging 相当の preview は §4-3 で `preview.conf` を更新し `mirai-sf-api` を再起動した（§0）                                |
 
 ## 3. 実行結果サマリ
 
@@ -99,14 +99,14 @@ TC の期待との差分:
 - 経路: `https://sf.mirai-dx-platform.com`（Cloudflare Access 配下。staging 相当の公開 URL）へ、**サービストークン**（`CF-Access-Client-Id` / `CF-Access-Client-Secret`）で接続した。
 - 環境側: 対象アプリの Access ポリシーに **Service Auth**（Service Token = `sf-e2e`）が必要だった（無い場合は 302 で Access ログインへ戻り、meta JWT の `service_token_status` が `false` になる）。`preview.conf` に `ACCESS_SERVICE_TOKEN_IDS`（クライアント ID）を設定し、`mirai-sf-api` を再起動した（exit 0。バックアップは `preview.conf.bak-*`）。`/healthz` は `ok`・`commit=65cefe80`・`authMode=access`。
 
-| 手順            | 実測                                                                     |
-| --------------- | ------------------------------------------------------------------------ |
-| コンソール HTML | **200**・コンソールの文言を含む                                          |
-| `/api/auth/me`  | **200**・利用者「管理者」・roles `requester` / `desk` / `approver`       |
-| 依頼の作成      | **201**・`REQ-2026-0016`（version 1）→ Preview DB（`mirai_sf`）へ書込み  |
-| 一覧の読み戻し  | **200**・total 14・先頭 `REQ-2026-0016`                                  |
-| 取消            | **200**・`REQ-2026-0016` を取消（論理削除）                              |
-| 後片付け        | 前回の検証依頼 `REQ-2026-0015` も取消（200）。検証用の依頼は残っていない |
+| 手順            | 実測                                                                                                       |
+| --------------- | ---------------------------------------------------------------------------------------------------------- |
+| コンソール HTML | **200**・コンソールの文言を含む                                                                            |
+| `/api/auth/me`  | **200**・利用者「管理者」・roles `requester` / `desk` / `approver`                                         |
+| 依頼の作成      | **201**・`REQ-2026-0016`（version 1）→ Preview DB（`mirai_sf`）へ書込み                                    |
+| 一覧の読み戻し  | **200**・total 14・先頭 `REQ-2026-0016`                                                                    |
+| 取消            | **200**・`REQ-2026-0016` を取消（論理削除）                                                                |
+| 後片付け        | 前回の検証依頼 `REQ-2026-0015` も取消（200）。取消は論理削除のため DB 行は残るが、一覧・画面からは除外済み |
 
 学び（再実行時に必要）:
 
@@ -143,7 +143,7 @@ TC の期待との差分:
 - 目標が未決定のため合否は断定しない。サービス層（`listForActor`、50 件ページング）の処理時間は **p95 152.4 ms**（`5c0ffbda` で再測）。
 - 5,000 件上限の比較経路（after）は 100,000 件で before より遅い。実際の一覧 API はこの経路を使わない。
 - **これらの数値はサービス層の処理時間であり、HTTP ルーティング・認証・CSRF・シリアライズ・TLS・Tunnel の遅延は含まない。** 利用者から見た応答時間は未測定。
-- 100,000 件の初回 setup は、合成 ID が 5 桁固定（`lpad(i::text, 5, '0')`）で 100,000 件目が 10,000 件目と衝突して失敗した。`lpad` の幅を件数に合わせる修正を入れて再実行した（本 PR に含む）。
+- 100,000 件の初回 setup は、合成 ID が 5 桁固定（`lpad(i::text, 5, '0')`）で 100,000 件目が 10,000 件目と衝突して失敗した。`lpad` の幅を件数に合わせる修正（PR #143 / `5c0ffbda`）を入れて再実行した。
 
 **対応ブラウザ・画面幅**（TC-COMPAT-01、Playwright）:
 
