@@ -28,7 +28,7 @@ CI の e2e は GitHub Actions のジョブログが証跡である（run `425376
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | 実行 HEAD     | `dbfede1e`（統合・単体の実行時）。`2a02024f` との差は `AGENTS.md`・`README.md`・`docs/` のみで、`src/`・`tests/`・`db/` は同一 |
 | 実行日時      | 統合 2026-11-09 08:28:17〜08:42:20（843.30 秒）／単体 10:02:45〜10:03:24（38.67 秒）／レート制限 10:02:16〜10:02:18            |
-| CI の e2e     | run `42537665728`（`2a02024f`、2026-11-09 09:09 JST 前後）。9 シナリオ success                                                 |
+| CI の e2e     | run `42537665728`（`2a02024f`、2026-11-09 09:09 JST 前後）。**161 passed / 1 skipped**（13.6 分）                              |
 | Node / pnpm   | Node v22.22.3 / pnpm 12（プロジェクトの指定どおり）                                                                            |
 | DB            | `mirai_sf_test`（既存のテスト DB。DB の作成・DROP はしていない）                                                               |
 | API           | レート制限の確認のみ、`127.0.0.1:18999` で一時起動（`NODE_ENV=development`・`AUTH_MODE=password`・`MAIL_MODE=file`）           |
@@ -41,7 +41,7 @@ CI の e2e は GitHub Actions のジョブログが証跡である（run `425376
 | 統合テスト               | `pnpm test:integration`                         | **24 ファイル / 780 テスト pass**、exit 0、843.30 秒（08:28:17 開始）           | 生ログ（§0）                     |
 | 単体テスト               | `pnpm test:unit`                                | **38 ファイル / 974 テスト pass**、exit 0、38.67 秒（10:02:45 開始）            | 生ログ（§0）                     |
 | ログイン試行のレート制限 | 一時 API に誤ったパスワードで 11 回ログイン     | 1〜10 回目 **401（ERR-106）**、11 回目 **429（ERR-302）**。`Retry-After` は無し | 生ログ（§0）                     |
-| CI の e2e                | `pnpm exec playwright test`（CI の e2e ジョブ） | 9 シナリオ success（`tests/e2e/console.spec.ts` を含む）                        | GitHub Actions run `42537665728` |
+| CI の e2e                | `pnpm exec playwright test`（CI の e2e ジョブ） | **161 passed / 1 skipped**（13.6 分。`tests/e2e/console.spec.ts` を含む）       | GitHub Actions run `42537665728` |
 
 単体テストは**補助証跡**である。純関数・設定・運用スクリプトの健全性は示すが、API・DB・UI の動作やリリース可否を証明しない。
 
