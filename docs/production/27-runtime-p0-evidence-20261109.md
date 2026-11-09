@@ -14,7 +14,7 @@
 | レート制限（10:02）      | `rate-limit-body-20261109T100216.log` | `6f3fb2833228dbbf626eee62dcdb61d7539a35b2d91dd4d3361eb65c23a09814` |
 
 CI の e2e は GitHub Actions のジョブログが証跡である（run `42537665728`、head `2a02024f`）。
-UI 状態の実測は `~/.local/state/mirai-sf/evidence/ui-state-*/` に `summary.json`（実測値）とスクリーンショットを保存した。
+UI 状態の実測は `~/.local/state/mirai-sf/evidence/ui-state-*/` に `summary.json`（実測値）とスクリーンショットを保存した。Access 越し E2E は `~/.local/state/mirai-sf/evidence/access-e2e-*/summary.json` に保存した。
 
 ## 1. 目的と範囲
 
@@ -37,13 +37,14 @@ UI 状態の実測は `~/.local/state/mirai-sf/evidence/ui-state-*/` に `summar
 
 ## 3. 実行結果サマリ
 
-| 実行                     | コマンド                                             | 結果                                                                                      | 証跡                                           |
-| ------------------------ | ---------------------------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| 統合テスト               | `pnpm test:integration`                              | **24 ファイル / 780 テスト pass**、exit 0、843.30 秒（08:28:17 開始）                     | 生ログ（§0）                                   |
-| 単体テスト               | `pnpm test:unit`                                     | **38 ファイル / 974 テスト pass**、exit 0、38.67 秒（10:02:45 開始）                      | 生ログ（§0）                                   |
-| ログイン試行のレート制限 | 一時 API に誤ったパスワードで 11 回ログイン          | 1〜10 回目 **401（ERR-106）**、11 回目 **429（ERR-302）**。`Retry-After` は無し           | 生ログ（§0）                                   |
-| CI の e2e                | `pnpm exec playwright test`（CI の e2e ジョブ）      | **161 passed / 1 skipped**（13.6 分。`tests/e2e/console.spec.ts` を含む）                 | GitHub Actions run `42537665728`               |
-| UI の 5 状態・キーボード | Playwright でローカル API（`127.0.0.1:18999`）を操作 | §4-2 のとおり（空・入力エラー・通信エラー・成功・キーボードは実測、読込中は専用 UI 無し） | `~/.local/state/mirai-sf/evidence/ui-state-*/` |
+| 実行                     | コマンド                                                    | 結果                                                                                      | 証跡                                             |
+| ------------------------ | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| 統合テスト               | `pnpm test:integration`                                     | **24 ファイル / 780 テスト pass**、exit 0、843.30 秒（08:28:17 開始）                     | 生ログ（§0）                                     |
+| 単体テスト               | `pnpm test:unit`                                            | **38 ファイル / 974 テスト pass**、exit 0、38.67 秒（10:02:45 開始）                      | 生ログ（§0）                                     |
+| ログイン試行のレート制限 | 一時 API に誤ったパスワードで 11 回ログイン                 | 1〜10 回目 **401（ERR-106）**、11 回目 **429（ERR-302）**。`Retry-After` は無し           | 生ログ（§0）                                     |
+| CI の e2e                | `pnpm exec playwright test`（CI の e2e ジョブ）             | **161 passed / 1 skipped**（13.6 分。`tests/e2e/console.spec.ts` を含む）                 | GitHub Actions run `42537665728`                 |
+| UI の 5 状態・キーボード | Playwright でローカル API（`127.0.0.1:18999`）を操作        | §4-2 のとおり（空・入力エラー・通信エラー・成功・キーボードは実測、読込中は専用 UI 無し） | `~/.local/state/mirai-sf/evidence/ui-state-*/`   |
+| Access 越し E2E          | `node .agents/w2-ui/run-access-e2e.mjs`（サービストークン） | コンソール 200・`/api/auth/me` 200・依頼作成 **201**・読み戻し 200・取消 200（§4-3）      | `~/.local/state/mirai-sf/evidence/access-e2e-*/` |
 
 単体テストは**補助証跡**である。純関数・設定・運用スクリプトの健全性は示すが、API・DB・UI の動作やリリース可否を証明しない。
 
@@ -93,6 +94,29 @@ TC の期待との差分:
 - 一覧の空表示に、その場の次の導線（新規作成ボタン等）は無い（左レールにのみある）。
 - ホームの件数は運用の見本データを含むため、依頼 0 件でも「あなたの番」が 0 件にならない。
 
+### 4-3. TC-ACCESS-01 と Preview DB の実測（Access 実 JWT / 2026-11-09 14:00〜14:05 JST）
+
+- 経路: `https://sf.mirai-dx-platform.com`（Cloudflare Access 配下。staging 相当の公開 URL）へ、**サービストークン**（`CF-Access-Client-Id` / `CF-Access-Client-Secret`）で接続した。
+- 環境側: 対象アプリの Access ポリシーに **Service Auth**（Service Token = `sf-e2e`）が必要だった（無い場合は 302 で Access ログインへ戻り、meta JWT の `service_token_status` が `false` になる）。`preview.conf` に `ACCESS_SERVICE_TOKEN_IDS`（クライアント ID）を設定し、`mirai-sf-api` を再起動した（exit 0。バックアップは `preview.conf.bak-*`）。`/healthz` は `ok`・`commit=65cefe80`・`authMode=access`。
+
+| 手順            | 実測                                                                     |
+| --------------- | ------------------------------------------------------------------------ |
+| コンソール HTML | **200**・コンソールの文言を含む                                          |
+| `/api/auth/me`  | **200**・利用者「管理者」・roles `requester` / `desk` / `approver`       |
+| 依頼の作成      | **201**・`REQ-2026-0016`（version 1）→ Preview DB（`mirai_sf`）へ書込み  |
+| 一覧の読み戻し  | **200**・total 14・先頭 `REQ-2026-0016`                                  |
+| 取消            | **200**・`REQ-2026-0016` を取消（論理削除）                              |
+| 後片付け        | 前回の検証依頼 `REQ-2026-0015` も取消（200）。検証用の依頼は残っていない |
+
+学び（再実行時に必要）:
+
+- サービストークンで書き込むには、Access ログイン時に発行される `msf_csrf` Cookie を `x-csrf-token` ヘッダーで送る。不足すると 403 / ERR-101。
+- 依頼の入力は `requestInputSchema` に従う（`kind` は `new_tool` など、`decides` は `g`/`y`/`r`、`scope`・`criteria` は配列、`approver` は必須）。
+- 取消の遷移は `to: "cancel"`（`cancelled` ではない）。
+
+生ログ: `~/.local/state/mirai-sf/evidence/access-e2e-*/summary.json`。
+実 SMTP/TLS は、2026-11-09 の所有者判断で**今回不採用**（後日、追加実装）とした。
+
 ## 5. 未実行・部分・期待との差分
 
 - **TC-AUTH-01**: ログイン成功・失敗・期限切れ・無効化後の失効は確認した。Cookie の `HttpOnly`・`SameSite=Lax` 属性と、ログイン失敗が監査に残ることは、引用したテストでは確認していない（`src/api/auth.ts` の `login_failed` 監査は実装にある）。
@@ -102,7 +126,8 @@ TC の期待との差分:
 - **TC-AUDIT-01**: ハッシュ連鎖・管理者限定・CSV 出力は確認した。`audit_log` の UPDATE/DELETE 拒否（`audit_log_no_update` トリガ）と改ざん検知は専用テストが無い。追記専用テーブル 4 種（`order_snapshot` など）の UPDATE/DELETE 拒否は `devline-qa-db.test.ts` の T-04 で確認済み。CSV の 5000 件上限・BOM・secret 非混入は未確認。
 - **TC-UI-STATE-01**: §4-2 のとおり 5 状態とキーボード操作を実測した。TC の期待と異なる点（入力エラーが項目別でない・読込中の明示表示が無い・一覧の空表示に導線が無い）は、修正せず品質工作台の判断に委ねる。
 - **TC-RATE-01**: 401×10 → 429（ERR-302）を確認した。15 分後の解除（手順 3）と監査記録（手順 4）は未実行。429 に `Retry-After` は付かない。
-- **Access 実 JWT・Preview DB・実 SMTP/TLS**: 資格情報が必要なため未実行（C3）。Access の fail-closed は `access-jwt` で確認済み。
+- **Access 実 JWT・Preview DB**: §4-3 のとおり実行済み（読み取り・書込み・取消）。
+- **実 SMTP/TLS**: 2026-11-09 の所有者判断で今回不採用（後日、追加実装）。`access-jwt` の fail-closed は確認済み。
 
 ## 6. 再現手順
 
