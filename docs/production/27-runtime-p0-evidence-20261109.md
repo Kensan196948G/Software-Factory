@@ -33,7 +33,7 @@ UI 状態の実測は `~/.local/state/mirai-sf/evidence/ui-state-*/` に `summar
 | Node / pnpm   | Node v22.22.3 / pnpm 12（プロジェクトの指定どおり）                                                                                                                   |
 | DB            | `mirai_sf_test`（既存のテスト DB。DB の作成・DROP はしていない）                                                                                                      |
 | API           | レート制限の確認のみ、`127.0.0.1:18999` で一時起動（`NODE_ENV=development`・`AUTH_MODE=password`・`MAIL_MODE=file`）                                                  |
-| 本番・Staging | 本番・Cloudflare は参照も変更もしていない。Staging 相当の preview は §4-3 で `preview.conf` を更新し `mirai-sf-api` を再起動した（§0）                                |
+| 本番・Staging | 本番の設定・Cloudflare の設定は変更していない（Access 配下 URL への接続は §4-3 で実施）。Staging 相当の preview は §4-3 で `preview.conf` を更新し `mirai-sf-api` を再起動した（§0）                                |
 
 ## 3. 実行結果サマリ
 
@@ -69,7 +69,7 @@ UI 状態の実測は `~/.local/state/mirai-sf/evidence/ui-state-*/` に `summar
 | TC-DEVLINE-01     | handoff の許可外・公開リポジトリ拒否と冪等                  | `tests/integration/devline-qa-handoff.test.ts`「T-21: 同じ版の再投入で Issue が増えず created=false」「T-22: 5並列の投入で Issue は1つ」「T-93: 同じ POST の再実行で監査・履歴が増えない」／`tests/integration/devline-target-selection.test.ts`                                      | 実行済み                                                                                                          |
 | TC-DEVLINE-02     | AC 未確認の非合格・人の承認・agent 拒否・二重押下           | `tests/integration/devline-qa-verify.test.ts`「未知の status や空の段階を passed に数えない」「同じ段階が passed と skipped の両方なら悪い方（合格にしない）」「同じ配信を並行で5回送っても記録は1件」／`tests/integration/devline-ac-gui.test.ts`                                    | 実行済み                                                                                                          |
 | TC-HEALTH-01      | healthz の usersActive と外形監視の失敗判定                 | `tests/integration/healthz-auth.test.ts`「usersActive は無効な利用者を数えない」「本番相当で JWT 未設定・ヘッダ信頼無効なら 200 のまま misconfigured」／`tests/unit/healthcheck-offsite.test.ts`「古い: ローカル dump が新しくても、送信記録が閾値より古ければ NG」                   | 実行済み                                                                                                          |
-| TC-ACCESS-01      | Access JWT の fail-closed と最小権限の自動登録              | `tests/integration/access-jwt.test.ts`「ヘッダのメールだけでは401」「改ざんした JWT は401（500にしない）」「本番では未登録の利用者を自動登録しない」「サービストークンは common_name が許可リストにあるときだけ通る」                                                                 | 実行済み（実 JWT での E2E は未実行。C3 の資格情報待ち）                                                           |
+| TC-ACCESS-01      | Access JWT の fail-closed と最小権限の自動登録              | `tests/integration/access-jwt.test.ts`「ヘッダのメールだけでは401」「改ざんした JWT は401（500にしない）」「本番では未登録の利用者を自動登録しない」「サービストークンは common_name が許可リストにあるときだけ通る」                                                                 | 実行済み（§4-3 でサービストークンによる機械認証 E2E を実施。**人間 OTP による業務受入は未実施**）                                                           |
 | TC-UI-STATE-01    | 主要画面の 5 状態（空・読込・入力エラー・通信エラー・成功） | ローカル実測（§4-2）: 依頼0件の一覧・ボード・データ、入力エラーの `#err`、通信断の toast・再試行、成功 toast、キーボードのみの作成。CI e2e は `console.spec.ts`「一覧の検索で0件の表示になる」・`handoff.spec.ts`「通信断・500: 成功表示をせず再試行でき、応答だけ失っても作成は1回」 | 実測済み（ただし TC の期待と差分あり: 入力エラーは項目別でない・読込中の明示表示が無い。§4-2）                    |
 | TC-CONCURRENCY-01 | 同時登録・同時承認・同時 handoff の競合                     | `tests/integration/api.test.ts`「接続プールを超える同時の作成でも詰まらない」／`tests/integration/separation.test.ts`「二重承認は拒否し、拒否の理由も監査に残す（同時・再送の両方）」／`tests/integration/devline-qa-handoff.test.ts`「T-22: 5並列の投入で Issue は1つ」              | 実行済み                                                                                                          |
 | TC-RATE-01        | ログイン試行のレート制限（10 回 / 15 分）                   | 一時 API に誤ったパスワードで 11 回（2026-11-09 10:02 JST）。1〜10 回目 401・ERR-106、11 回目 429・ERR-302                                                                                                                                                                            | 一部（手順 1〜2 のみ。15 分後の解除と監査ログの確認は未実行）                                                     |
@@ -94,8 +94,9 @@ TC の期待との差分:
 - 一覧の空表示に、その場の次の導線（新規作成ボタン等）は無い（左レールにのみある）。
 - ホームの件数は運用の見本データを含むため、依頼 0 件でも「あなたの番」が 0 件にならない。
 
-### 4-3. TC-ACCESS-01 と Preview DB の実測（Access 実 JWT / 2026-11-09 14:00〜14:05 JST）
+### 4-3. TC-ACCESS-01 と Preview DB の実測（Access サービストークン / 2026-11-09 14:00〜14:05 JST）
 
+- 表記是正（2026-11-09 20:05）: 本節の「実 JWT」はサービストークンによる機械認証を指す。人間 OTP は未実施であり、業務受入の代替ではない。
 - 経路: `https://sf.mirai-dx-platform.com`（Cloudflare Access 配下。staging 相当の公開 URL）へ、**サービストークン**（`CF-Access-Client-Id` / `CF-Access-Client-Secret`）で接続した。
 - 環境側: 対象アプリの Access ポリシーに **Service Auth**（Service Token = `sf-e2e`）が必要だった（無い場合は 302 で Access ログインへ戻り、meta JWT の `service_token_status` が `false` になる）。`preview.conf` に `ACCESS_SERVICE_TOKEN_IDS`（クライアント ID）を設定し、`mirai-sf-api` を再起動した（exit 0。バックアップは `preview.conf.bak-*`）。`/healthz` は `ok`・`commit=65cefe80`・`authMode=access`。
 
@@ -170,7 +171,7 @@ Q-12 の対応ブラウザは **Chrome・Edge の最新 2 版**、対応幅は *
 - **TC-AUDIT-01**: ハッシュ連鎖・管理者限定・CSV 出力は確認した。`audit_log` の UPDATE/DELETE 拒否（`audit_log_no_update` トリガ）と改ざん検知は専用テストが無い。追記専用テーブル 4 種（`order_snapshot` など）の UPDATE/DELETE 拒否は `devline-qa-db.test.ts` の T-04 で確認済み。CSV の 5000 件上限・BOM・secret 非混入は未確認。
 - **TC-UI-STATE-01**: §4-2 のとおり 5 状態とキーボード操作を実測した。TC の期待と異なる点（入力エラーが項目別でない・読込中の明示表示が無い・一覧の空表示に導線が無い）は、修正せず品質工作台の判断に委ねる。
 - **TC-RATE-01**: 401×10 → 429（ERR-302）を確認した。15 分後の解除（手順 3）と監査記録（手順 4）は未実行。429 に `Retry-After` は付かない。
-- **Access 実 JWT・Preview DB**: §4-3 のとおり実行済み（読み取り・書込み・取消）。
+- **Access サービストークン・Preview DB**: §4-3 のとおり実行済み（読み取り・書込み・取消）。人間 OTP は未実施。
 - **実 SMTP/TLS**: 2026-11-09 の所有者判断で今回不採用（後日、追加実装）。`access-jwt` の fail-closed は確認済み。
 
 ## 6. 再現手順
