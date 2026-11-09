@@ -190,5 +190,5 @@ Exit code の扱いは次のとおりである。
 未確認事項と現在値は次のとおりである（現在値の正本は `docs/production/26-release-status.md`）。
 
 - 本番の現在 SHA: `2d0766b0`（2026-11-09 07:51 JST 実測）。
-- 最新 main（`dbfede1e`）の配備承認: 未取得（`docs/production/26` §3、`docs/production/24` の前提表）。
+- 最新 main（`e9d09787`）の配備承認: 未取得（`docs/production/26` §3、`docs/production/24` の前提表）。
 - Dependabot の open PR の採否は未確認である（2026-11-09 JST 時点で #133〜#137 の 5 件が open）。
