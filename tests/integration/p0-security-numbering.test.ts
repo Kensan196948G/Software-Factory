@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { SESSION_COOKIE } from '../../src/api/auth.js';
 import { verifyAuditChain } from '../../src/api/audit.js';
@@ -211,6 +211,45 @@ describe('RATE-01', () => {
       });
       expect(blocked.statusCode).toBe(429);
       expect(blocked.json<{ error: { code: string } }>().error.code).toBe('ERR-302');
+    } finally {
+      config.nodeEnv = originalNodeEnv;
+    }
+  });
+
+  it('15 分経過すると制限が解除され、正しいパスワードで 200 になる', async () => {
+    const originalNodeEnv = config.nodeEnv;
+    const clientIp = '198.51.100.78';
+    config.nodeEnv = 'development';
+    try {
+      for (let attempt = 1; attempt <= 11; attempt += 1) {
+        await app.inject({
+          method: 'POST',
+          url: '/api/auth/login',
+          remoteAddress: clientIp,
+          payload: { email: TEST_USER.email, password: 'wrong-password' },
+        });
+      }
+      const blocked = await app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        remoteAddress: clientIp,
+        payload: { email: TEST_USER.email, password: TEST_USER.password },
+      });
+      expect(blocked.statusCode).toBe(429);
+
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(Date.now() + 15 * 60_000 + 1_000));
+      try {
+        const allowed = await app.inject({
+          method: 'POST',
+          url: '/api/auth/login',
+          remoteAddress: clientIp,
+          payload: { email: TEST_USER.email, password: TEST_USER.password },
+        });
+        expect(allowed.statusCode).toBe(200);
+      } finally {
+        vi.useRealTimers();
+      }
     } finally {
       config.nodeEnv = originalNodeEnv;
     }
