@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { SESSION_COOKIE } from '../../src/api/auth.js';
 import { verifyAuditChain } from '../../src/api/audit.js';
