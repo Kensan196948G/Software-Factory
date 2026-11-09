@@ -29,13 +29,15 @@
 | 内部 production インスタンス | `/healthz` が `200`、`commit=2d0766b09387efcf86253f4580b5423e319a7ee1`、`environment=production`、`db.ok=true`、`current` → `releases/2d0766b0`（14 世代保持）                                                                    | 2026-11-09 07:51 JST |
 | 本番の unit                  | `mirai-sf-prod-api` / `mirai-sf-prod-tunnel` は active                                                                                                                                                                            | 2026-11-09 07:51 JST |
 | 公開リリース                 | 未認証で `https://sf-prod.mirai-dx-platform.com/` へアクセスすると **302 → Cloudflare Access**。**OTP ログイン（JWT 検証を通ったコンソール表示）は未確認**（`docs/deployment.md`、`docs/production/18-verification-20261106.md`） | 2026-11-09           |
-| リリース対象（基準 SHA）    | `3bcf8dee`。本改訂の基準。main への push CI run `42590939151` が success（`quality` / `e2e` / `docker`） | 2026-11-09 18:32 JST |
-| マージ後 main               | `e9d09787`（本改訂を含む。2026-11-09 19:02:43 JST）。push CI run `42597963265` が success（19:27:31 JST、`quality` / `e2e` / `docker`） | 2026-11-09 20:02 JST |
+| 本改訂の基準 SHA            | `3bcf8dee`（PR #145/#146 の基準）。main への push CI run `42590939151` が success（`quality` / `e2e` / `docker`） | 2026-11-09 18:32 JST |
+| リリース対象（配備承認の対象） | `e9d09787`（2026-11-09 19:02:43 JST の main）。push CI run `42597963265` が success（19:27:31 JST、`quality` / `e2e` / `docker`） | 2026-11-09 20:02 JST |
 | 配備待ちの差分               | `2d0766b0..e9d09787` = 37 commit。`src/` 5 ファイル（auth・config・session-revoke を含む、+540/-25）。**migration の追加は無い** | 2026-11-09 |
 | Staging                      | `e9d09787`（2026-11-09 19:30:33 配備）。`/healthz` 200・`db.ok=true`・`environment=staging` | 2026-11-09 20:00 JST |
 | 配備承認                     | 2026-11-05 の委任記録（`11`）はある。**`e9d09787` の配備承認は未取得**（`22` の P0-1、`24` の前提表） | 2026-11-09 |
 | 業務受入                     | **未実施**（人間 OTP 後の別人による承認）                                                                                                                                                                                         | 2026-11-09           |
 | 品質状態                     | TC 60 件中 **19 件 executed**（P0 は 16/21）、不具合 3 件 closed、門禁 3 件 approved、release 門禁は未申請。**公式レポートは v1（4/60）のままで未再版**。判定は **NO-GO**（§4）                                                   | 2026-11-09           |
+
+- **配備承認の対象は `e9d09787`。** 承認後に main が進んだ場合（本改訂のマージ等）は、配備前に `2d0766b0..<配備対象 SHA>` の差分を確認し、必要なら再承認を得る。
 
 未確認事項は次のとおりである。
 
