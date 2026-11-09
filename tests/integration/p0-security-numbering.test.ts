@@ -142,8 +142,10 @@ describe('REQ-01', () => {
     });
     expect(new Set(parsed.map((p) => p.year)).size).toBe(1);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(parsed[1].seq).toBe(parsed[0].seq + 1);
-    expect(parsed[2].seq).toBe(parsed[1].seq + 1);
+    const [first, second, third] = parsed;
+    if (!first || !second || !third) throw new Error('3 件そろっていません');
+    expect(second.seq).toBe(first.seq + 1);
+    expect(third.seq).toBe(second.seq + 1);
   });
 
   it('年跨ぎの接頭辞は REQ-<新年>- になる（DB 時計の制御が要るため書式のみ確認）', () => {
