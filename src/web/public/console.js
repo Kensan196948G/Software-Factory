@@ -4907,12 +4907,35 @@ const SF = (function () {
     }
   }
 
+  /* ---- 読込中の明示表示（不具合 bug_mw97gmv4） ---- */
+  // サーバ接続時、まだ表示できるデータが無く、取得中である状態。
+  // 「0 件」と「読込中」を混同させないため、件数表示と空表示を分ける。
+  function loadingNoData(count) {
+    return Boolean(MSF_CONNECTED && !count && listServer.loading);
+  }
+  /** 読込中の明示表示。reduce 指定時は回転を止める。 */
+  function loadingNote(detail) {
+    const reduce =
+      typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const spin = reduce
+      ? ''
+      : '<span aria-hidden="true" style="width:12px;height:12px;border:2px solid var(--line,#d7dce3);border-top-color:var(--ci,#2563eb);border-radius:50%;display:inline-block;animation:spin 1s linear infinite"></span>';
+    return (
+      '<span role="status" aria-busy="true" style="display:inline-flex;align-items:center;gap:8px;justify-content:center">' +
+      '<b>読み込み中です…</b>' +
+      spin +
+      (detail ? '<span class="muted" style="font-size:12.5px">' + E(detail) + '</span>' : '') +
+      '</span>'
+    );
+  }
+
   /* ---- board ---- */
   function renderBoard() {
     const flow = SF.STATUSES.filter((s) => s.flow),
       side = SF.STATUSES.filter((s) => !s.flow);
     const isMine = (r) => !!SF.turnOf(S.role, r, me().name);
     const items = S.data.items.filter((r) => (!S.fd || r.dept === S.fd) && (!S.bmine || isMine(r)));
+    const loading = loadingNoData(items.length);
     const card = (r) => {
       const c = colorOf(r),
         d = SF.deptOf(r.dept),
@@ -4987,11 +5010,19 @@ const SF = (function () {
       ico('i-plus') +
       '新しい依頼</button></div>' +
       '<div class="board" id="board">' +
-      flow.map((s) => col(s)).join('') +
-      side.map((s) => col(s, 'side')).join('') +
+      (loading
+        ? '<div class="card pad" style="grid-column:1/-1">' + loadingNote('依頼を読み込んでいます') + '</div>'
+        : flow.map((s) => col(s)).join('') + side.map((s) => col(s, 'side')).join('')) +
       '</div>';
     S.fresh = null;
-    $('#bnew').addEventListener('click', startNew);
+    const newBtn = $('#bnew');
+    if (newBtn) {
+      newBtn.disabled = loading;
+      newBtn.addEventListener('click', () => {
+        if (loading) return;
+        startNew();
+      });
+    }
     $('#bfd').addEventListener('change', (e) => {
       S.fd = e.target.value;
       renderBoard();
@@ -5093,6 +5124,7 @@ const SF = (function () {
       listServerVersions = new Map((state.items || []).map((x) => [x.id, Number(x.version) || 0]));
       listServerUpdatedAt = new Map((state.items || []).map((x) => [x.id, String(x.updatedAt || '')]));
       if (S.view === 'list') renderList();
+      else if (S.view === 'board') renderBoard();
     };
     const load = (page, acc, total, restarted) =>
       window.__MSF__
@@ -5183,12 +5215,8 @@ const SF = (function () {
     const totalLabel = useServer ? listServer.total : S.data.items.length;
     const loadedLabel = useServer && listServer.items ? listServer.items.length : 0;
     const capped = useServer && listServer.total > loadedLabel; // 表示の上限までしか出していない
-    const emptyMsg =
-      useServer && listServer.loading
-        ? '絞り込みの結果を読み込んでいます…'
-        : useServer && listServer.error
-          ? listServer.error
-          : '条件に合う依頼がありません';
+    const loading = useServer && Boolean(listServer.loading) && a.length === 0;
+    const emptyMsg = useServer && listServer.error ? listServer.error : '条件に合う依頼がありません';
     $('#view').innerHTML =
       '<div class="btool"><h2 class="h2" style="margin:0">' +
       ico('i-list') +
@@ -5256,12 +5284,14 @@ const SF = (function () {
               );
             })
             .join('')
-        : '<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">' + E(emptyMsg) + '</td></tr>') +
+        : loading
+          ? '<tr><td colspan="10" style="text-align:center;padding:30px">' +
+            loadingNote('絞り込みの結果を読み込んでいます') +
+            '</td></tr>'
+          : '<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">' + E(emptyMsg) + '</td></tr>') +
       '</tbody></table></div><p class="hint">' +
-      a.length +
-      ' 件 ／ 全 ' +
-      totalLabel +
-      ' 件</p>' +
+      (loading ? '件数を数えています…' : a.length + ' 件 ／ 全 ' + totalLabel + ' 件') +
+      '</p>' +
       (capped
         ? '<p class="hint">全 ' +
           listServer.total +
@@ -5299,12 +5329,23 @@ const SF = (function () {
       renderList();
     });
     $$('#ltb tr[data-id]').forEach((tr) => tr.addEventListener('click', () => openDrawer(tr.dataset.id)));
-    $('#lcsv').addEventListener('click', () =>
-      SF.download('受付一覧_' + ymd() + '.csv', SF.toCSV(a), 'text/csv')
-        ? toast('CSVを書き出しました')
-        : toast('書き出せませんでした', true),
-    );
-    $('#ljson').addEventListener('click', exportJSON);
+    const csvBtn = $('#lcsv');
+    if (csvBtn) {
+      csvBtn.disabled = loading;
+      csvBtn.addEventListener('click', () => {
+        if (loading) return;
+        if (SF.download('受付一覧_' + ymd() + '.csv', SF.toCSV(a), 'text/csv')) toast('CSVを書き出しました');
+        else toast('書き出せませんでした', true);
+      });
+    }
+    const jsonBtn = $('#ljson');
+    if (jsonBtn) {
+      jsonBtn.disabled = loading;
+      jsonBtn.addEventListener('click', () => {
+        if (loading) return;
+        exportJSON();
+      });
+    }
   }
   const ymd = () => {
     const d = new Date();
