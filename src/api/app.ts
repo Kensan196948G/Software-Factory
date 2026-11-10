@@ -803,7 +803,7 @@ export async function buildApp(
       if (config.authMode === 'access') {
         void reply
           .status(401)
-          .type('text/html')
+          .type('text/html; charset=utf-8')
           .send('<p>認証できませんでした。Cloudflare Access の設定を確認してください。</p>');
         return;
       }
