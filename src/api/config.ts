@@ -146,6 +146,16 @@ export function isAccessJwtEnabled(cfg: Pick<AppConfig, 'authMode' | 'accessTeam
 }
 
 /**
+ * Cloudflare Access のログアウト URL。アプリのセッションだけ消しても Access の Cookie が残ると
+ * 次のリクエストで同じ利用者として自動ログインしてしまうため、画面のログアウトは両方を終える。
+ * AUTH_MODE=password では null（アプリのログイン画面へ戻す）。
+ */
+export function accessLogoutUrl(cfg: Pick<AppConfig, 'authMode' | 'accessTeamDomain'>): string | null {
+  if (cfg.authMode !== 'access' || !cfg.accessTeamDomain) return null;
+  return `${cfg.accessTeamDomain.replace(/\/+$/, '')}/cdn-cgi/access/logout`;
+}
+
+/**
  * JWT 未設定のときに Access のヘッダを信頼してよいか（Issue #102 の恒久修正）。
  * 明示 opt-in（ACCESS_TRUST_EMAIL_HEADER=1）があり、かつ本番・staging でないときだけ true。
  * 既定は false の fail-closed。起動時にも本番・staging の opt-in は拒否するが、ここでも二重に判定する。

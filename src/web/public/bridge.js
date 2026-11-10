@@ -992,10 +992,24 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(seedOpsIfNeeded, 800));
   else setTimeout(seedOpsIfNeeded, 800);
 
+  // Cloudflare Access のログアウト URL（サーバが起動データへ入れる）。形が違う値は使わない。
+  const logoutUrl = (() => {
+    const raw = boot.auth && typeof boot.auth.logoutUrl === 'string' ? boot.auth.logoutUrl : '';
+    try {
+      const u = new URL(raw);
+      if (u.protocol !== 'https:' || !/\.cloudflareaccess\.com$/.test(u.hostname)) return null;
+      if (u.pathname !== '/cdn-cgi/access/logout') return null;
+      return u.origin + u.pathname;
+    } catch {
+      return null;
+    }
+  })();
+
   window.__MSF__ = {
     initialRole,
     persist,
     switchRole,
+    logoutUrl,
     saveDraft,
     clearDraft,
     approvers,

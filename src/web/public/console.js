@@ -3224,6 +3224,27 @@ const SF = (function () {
     if (S.open) renderDrawer();
     render();
   });
+  // ログアウト: アプリのセッションを破棄し、Cloudflare Access のセッションも終える。
+  // Access の Cookie が残ると、次に開いたときに同じ利用者として自動ログインしてしまう。
+  const logoutBtn = $('#logout');
+  if (logoutBtn) {
+    if (!MSF_CONNECTED || !window.__MSF__) {
+      logoutBtn.hidden = true;
+    } else {
+      logoutBtn.hidden = false;
+      logoutBtn.addEventListener('click', async () => {
+        logoutBtn.disabled = true;
+        logoutBtn.textContent = 'ログアウト中…';
+        try {
+          await window.__MSF__.api('POST', '/api/auth/logout');
+        } catch (e) {
+          /* アプリ側の失効に失敗しても Access 側は終える（残ったセッションは期限で切れる） */
+        }
+        const url = window.__MSF__.logoutUrl;
+        location.replace(url || '/login');
+      });
+    }
+  }
   $('#rail').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-v]');
     if (!b) return;
