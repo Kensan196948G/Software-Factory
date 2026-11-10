@@ -3236,7 +3236,8 @@ const SF = (function () {
         logoutBtn.disabled = true;
         logoutBtn.textContent = 'ログアウト中…';
         try {
-          await window.__MSF__.api('POST', '/api/auth/logout');
+          // 空でも JSON 本文を送る。本文なしの POST は Fastify が Content-Type を解釈できず 415 になる
+          await window.__MSF__.api('POST', '/api/auth/logout', {});
         } catch (e) {
           /* アプリ側の失効に失敗しても Access 側は終える（残ったセッションは期限で切れる） */
         }

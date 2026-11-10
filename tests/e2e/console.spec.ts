@@ -313,3 +313,15 @@ test('運用データがDBに保存され、再読み込みで復元される', 
     { data: { ...state.data, apps: [{ ...apps[0], name: before }, ...apps.slice(1)] }, version: state.version + 1 },
   );
 });
+
+test('ログアウトするとアプリのセッションが失効し、ログイン画面へ戻る', async ({ page }) => {
+  await login(page);
+  const logout = page.getByRole('button', { name: 'ログアウト' });
+  await expect(logout).toBeVisible();
+  await logout.click();
+  await expect(page).toHaveURL(/\/login$/);
+
+  // 失効していること: ログイン画面を経ずにコンソールへ戻れない
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/login$/);
+});
