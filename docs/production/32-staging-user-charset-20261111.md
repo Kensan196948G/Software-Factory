@@ -17,17 +17,18 @@
 
 | 層 | 設定 | 実測 |
 | --- | --- | --- |
-| Cloudflare Access | アプリ `Mirai Software Factory 受付ステーション`（`5c812603-3ab8-48ba-9b72-8c5861457453`）、Allow ポリシー `ae1ab612-d6e4-4fcf-9063-27cb9616d567` | Include = `mirai-const.co.jp` / `yahoo.co.jp` / `kensan1969@gmail.com`。B の `kenaritou@yahoo.co.jp` は Access を通る（**ポリシー変更なし**） |
+| Cloudflare Access | アプリ `Mirai Software Factory 受付ステーション`（`5c812603-3ab8-48ba-9b72-8c5861457453`）、Allow ポリシー `ae1ab612-d6e4-4fcf-9063-27cb9616d567` | Include = `mirai-const.co.jp` / `yahoo.co.jp` / `kensan1969@gmail.com`。B の外部メール（`yahoo.co.jp` ドメイン。実値は本書に記載しない）は Access を通る（**ポリシー変更なし**） |
 | アプリ | `mirai-sf-api.service`、`APP_ENV=staging`、`AUTH_MODE=access`、JWT 検証あり（`jwtConfigured=true`） | `ACCESS_ALLOWED_EMAILS` は `kensan1969@gmail.com` のみだった |
 
 - 利用者管理での登録は `app_user` を作るだけで、Access / アプリ許可リストは変えない（`03` §5.3 の二段階）。
+- 外部個人のメールアドレスは本書に記載しない（`04` の運用に合わせ、実値は所有者の管理下に置く）。
 
 ### 1-2. 実施
 
 | 時刻 | 操作 | 結果 |
 | --- | --- | --- |
 | 08:18:40 | `~/.config/mirai-sf/preview.conf` を退避（`preview.conf.bak-20261111081840`） | 0600 維持 |
-| 08:18:40 | `ACCESS_ALLOWED_EMAILS` に `kenaritou@yahoo.co.jp` を追加 | キー構成は不変。差分はこの1値のみ |
+| 08:18:40 | `ACCESS_ALLOWED_EMAILS` に外部メール1件（B。実値は本書に記載しない）を追加 | キー構成は不変。差分はこの1値のみ |
 | 08:18:50 | `systemctl --user restart mirai-sf-api.service` | active、NRestarts 0。プロセス環境に新アドレス |
 | 08:19:41 | `_work/create-staging-user.ts`（local-cli）で利用者作成 | 監査 `user.create` success |
 
@@ -35,7 +36,7 @@
 
 | 項目 | 値 |
 | --- | --- |
-| email | `kenaritou@yahoo.co.jp` |
+| email | 外部メール（B。実値は本書に記載しない） |
 | display_name | `Kenaritou` |
 | dept_code | `eigyo` |
 | roles | `requester` / `desk` |
@@ -46,7 +47,7 @@
 ### 1-3. 検証（実測）
 
 - `/healthz`（08:24 JST）: `status=ok`、`environment=staging`、`db.ok=true`、`auth.mode=access`、`auth.jwtConfigured=true`、`auth.headerTrustEnabled=false`、`auth.allowlistConfigured=true`、`auth.status=ready`、**`auth.usersActive=3`**（B 追加前は 2）。
-- `isAccessEmailAllowed` の直接評価（稼働中 `preview.conf` を使用）: `kenaritou@yahoo.co.jp` → **true**、`kensan1969@gmail.com` → true、`someone@example.com` → **false**。
+- `isAccessEmailAllowed` の直接評価（稼働中 `preview.conf` を使用）: 追加した外部メール → **true**、`kensan1969@gmail.com` → true、`someone@example.com` → **false**。
 - `app_user` と `user_role`: 上表のとおり。監査 `user.create`（`local-cli uid=1000`、08:19:41）を確認。
 
 ### 1-4. 未確認・残り
