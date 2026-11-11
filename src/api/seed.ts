@@ -115,8 +115,6 @@ export async function seedMaster(client: PoolClient): Promise<{ departments: num
       [t.id, t.dept_code, t.name, t.description, t.signal, t.seed_candidate, t.sort_order],
     );
   }
-  // 画面に出す部署・道具は Mirai-Info に合わせる（旧・機能別の部署は selectable=false で残る）
-  await seedMiraiDirectory(client);
   return { departments: departments.length, tools: tools.length };
 }
 
@@ -260,7 +258,12 @@ function buildHistory(seed: DemoRequestSeed): { at: Date; actor: string; role: s
 /** 見本データ9件を投入する。呼び出し側が空であることを保証する（reset/seed 内）。 */
 export async function seedDemo(client: PoolClient): Promise<number> {
   const { demo } = loadSeedData();
+  // 旧スキーマ（Mirai-Info の部署がまだ無い DB）でも見本を入れられるように、無い部署は先頭へ寄せる。
+  const first = await client.query<{ code: string }>('select code from department order by sort_order limit 1');
+  const fallbackDept = first.rows[0]?.code ?? 'keiei';
   for (const seed of demo) {
+    const exists = await client.query('select 1 from department where code = $1', [seed.dept_code]);
+    const deptCode = exists.rowCount ? seed.dept_code : fallbackDept;
     const year = Number(seed.id.slice(4, 8));
     const seq = Number(seed.id.slice(9));
     const createdAt = daysAgo(seed.created_days_ago);
@@ -281,7 +284,7 @@ export async function seedDemo(client: PoolClient): Promise<number> {
         year,
         createdAt,
         seed.applicant,
-        seed.dept_code,
+        deptCode,
         seed.contact,
         seed.title,
         seed.kind,
@@ -400,7 +403,8 @@ export async function seedAll(client: PoolClient): Promise<{
   mirai: { departments: number; tools: number; employees: number };
 }> {
   const master = await seedMaster(client);
-  const mirai = await miraiCounts(client);
+  // 画面に出す部署・道具は Mirai-Info に合わせる（旧・機能別の部署は selectable=false で残る）
+  const mirai = await seedMiraiDirectory(client);
   const admin = await seedAdmin(client);
   const hasRequests = await client.query('select 1 from request limit 1');
   let demo = 0;
