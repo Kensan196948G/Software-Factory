@@ -160,13 +160,14 @@ pnpm test:browser:approver
 # アクセシビリティだけ
 pnpm exec playwright test --config playwright.approver.config.ts tests/browser/a11y.spec.ts
 
-# 既存の E2E 一式（tests/e2e/a11y.spec.ts 経由で同じ5件が加わる）
+# 既存の E2E 一式（tests/e2e/a11y.spec.ts 経由で同じ6件が加わる）
 pnpm test:e2e
 ```
 
 `playwright.approver.config.ts` の `testMatch` は承認者・a11y・利用者管理を対象とし、`8a1ee99` 時点で
 **承認者回帰 16 件 + アクセシビリティ 5 件 + 利用者管理 9 件 = 30 件**を実行する。
 既存の `tests/e2e/approver.spec.ts` / `tests/e2e/a11y.spec.ts` に加え、`tests/e2e/admin-users.spec.ts` から同じ管理UI9件を読み込む。
+2026-11-11 に「確認・承認（右端パネル）」を追加し、アクセシビリティ 6 件・計 31 件になった（`docs/production/33-review-ui-step1-20261111.md`）。
 CIのworkflow・必須チェック規則は変更しない。通常のe2e設定でも各specを収集する（追加の9件は `--list` で確認）。
 CI の E2E ジョブは `pnpm install` で `@axe-core/playwright` を入れるため、追加の設定は要らない。
 
@@ -179,6 +180,7 @@ CI の E2E ジョブは `pnpm install` で `@axe-core/playwright` を入れる�
 | 3   | 依頼詳細                  | 一覧の行を開いたドロワー `#drawer`                               | `#drawer` のみ |
 | 4   | 注文書タブ                | ドロワーの `[data-dt="yaml"]`                                    | `#drawer` のみ |
 | 5   | 承認者選択（ウィザード6） | 「新しい依頼」→ 道具 → … → 承認者選択                            | ページ全体     |
+| 6   | 確認・承認（右端パネル）  | ナビの「確認・承認」                                              | ページ全体     |
 
 - 既存の `tests/browser/approver.spec.ts` と同じく、`page.route('**/*')` で全通信を横取りする。実サーバ・DB・メール・本番/Staging には接続しない。
 - データはすべて作り物（`架空 同名` / `first@example.com` 等）。実データは使わない。
@@ -211,6 +213,7 @@ CI の E2E ジョブは `pnpm install` で `@axe-core/playwright` を入れる�
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pnpm test:browser:approver` | **30 / 30 PASS**（承認者16 + a11y5 + 管理UI9、skip 0。管理UI9は PR #86 で追加、PR #88 で必須E2Eへ読込み。旧 21/21 は管理UI追加前の記録）                                                            |
 | アクセシビリティ5画面        | **5 / 5 PASS**（serious/critical 0。除外は上表の7件のみ）                                                                                                                                           |
+| 2026-11-11 追記（確認・承認） | 当該1画面を追加。**6 / 6 PASS**（serious/critical 0、既知の除外の追加なし）。`pnpm typecheck` / `eslint` も pass                                                                    |
 | `pnpm typecheck`             | **PASS**（エラー0）                                                                                                                                                                                 |
 | `pnpm lint`                  | **PASS**（警告0、max-warnings=0）                                                                                                                                                                   |
 | `pnpm test:unit`             | **644 / 644 PASS**（18ファイル）                                                                                                                                                                    |
