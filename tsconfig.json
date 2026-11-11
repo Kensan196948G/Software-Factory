@@ -31,5 +31,6 @@
     "vitest.config.ts",
     "playwright.config.ts",
     "playwright.approver.config.ts"
-  ]
+  ],
+  "exclude": ["tests/e2e-legacy", "tests/browser-legacy"]
 }

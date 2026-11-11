@@ -888,11 +888,11 @@ V.list=function(){
  return `${S.fs&&statusOf(S.fs).flow?flowBar([S.fs]):flowBar([])}${pageHead('list','一覧','すべての依頼を検索・絞り込みできます。行を押すと詳細が開きます。','n')}
  <div class="card rise" style="--i:1"><div class="row" style="margin-bottom:10px;align-items:flex-end">
   <div class="fld" style="flex:2 1 220px;margin:0"><div class="lbl">${I('search','sm')}キーワード</div><input type="search" data-flt="fq" value="${E(S.fq)}" placeholder="件名・起票者・内容"></div>
-  <div class="fld" style="margin:0"><div class="lbl">${I('layers','sm')}部署</div><select data-flt="fd"><option value="">すべての部署</option>${CATALOG.map(c=>`<option value="${c.id}"${S.fd===c.id?' selected':''}>${E(c.name)}</option>`).join('')}</select></div>
-  <div class="fld" style="margin:0"><div class="lbl">${I('activity','sm')}状態</div><select data-flt="fs"><option value="">すべての状態</option>${STATUSES.map(s=>`<option value="${s.k}"${S.fs===s.k?' selected':''}>${E(s.l)}</option>`).join('')}</select></div>
-  <div class="fld" style="margin:0"><div class="lbl">${I('flag','sm')}信号</div><select data-flt="fc"><option value="">すべての色</option>${['g','y','r'].map(c=>`<option value="${c}"${S.fc===c?' selected':''}>${COLORS[c].l}</option>`).join('')}</select></div>
+  <div class="fld" style="margin:0"><div class="lbl">${I('layers','sm')}部署</div><select data-flt="fd" aria-label="部署で絞り込み"><option value="">すべての部署</option>${CATALOG.map(c=>`<option value="${c.id}"${S.fd===c.id?' selected':''}>${E(c.name)}</option>`).join('')}</select></div>
+  <div class="fld" style="margin:0"><div class="lbl">${I('activity','sm')}状態</div><select data-flt="fs" aria-label="状態で絞り込み"><option value="">すべての状態</option>${STATUSES.map(s=>`<option value="${s.k}"${S.fs===s.k?' selected':''}>${E(s.l)}</option>`).join('')}</select></div>
+  <div class="fld" style="margin:0"><div class="lbl">${I('flag','sm')}信号</div><select data-flt="fc" aria-label="信号の色で絞り込み"><option value="">すべての色</option>${['g','y','r'].map(c=>`<option value="${c}"${S.fc===c?' selected':''}>${COLORS[c].l}</option>`).join('')}</select></div>
   <div class="btns"><button class="btn ghost sm" data-a="csv" type="button">${I('download')}CSV</button><button class="btn ghost sm" data-a="clearFlt" type="button">${I('x')}絞り込み解除</button></div></div>
-  <div class="tbl"><table><thead><tr><th>受付番号</th><th>件名</th><th>部署</th><th>起票者</th><th>信号</th><th>状態</th><th>削減見込み</th><th>更新</th></tr></thead><tbody id="ltb"></tbody></table></div>
+  <div class="tbl" tabindex="0"><table><thead><tr><th>受付番号</th><th>件名</th><th>部署</th><th>起票者</th><th>信号</th><th>状態</th><th>削減見込み</th><th>更新</th></tr></thead><tbody id="ltb"></tbody></table></div>
   <div class="hint" id="lcnt" style="margin-top:8px"></div></div>`;
 };
 function listRows(){
@@ -933,7 +933,7 @@ V.log=function(){
  return `${pageHead('audit','監査ログ','依頼の受付・状態の変更・編集に加えて、DevOps・SecOps の操作、システム設定の変更、ログイン・ログアウトを新しい順にすべて記録します。行を押すと、右端のパネルに中身が1ページで出ます。','n')}
  <div class="card rise" style="--i:1"><div class="seg tabs">${LOGK.map(x=>`<button class="${S.logk===x[0]?'on':''}" data-a="logk" data-v="${x[0]}" type="button">${I(x[2])}${x[1]}</button>`).join('')}</div>
  <div class="row" style="margin-bottom:10px;align-items:flex-end"><div class="fld" style="margin:0;flex:2 1 200px"><div class="lbl">${I('search','sm')}キーワード</div><input type="search" data-flt="logq" value="${E(S.logq)}" placeholder="操作者・操作・対象・受付番号・メモ"></div><div class="btns"><button class="btn ghost sm" data-a="logcsv" type="button">${I('download')}CSV</button><span class="hint" id="logcnt"></span></div></div>
- <div class="tbl"><table><thead><tr><th>日時</th><th>操作・操作者</th><th>対象</th></tr></thead><tbody id="logtb"></tbody></table></div></div>`;
+ <div class="tbl" tabindex="0"><table><thead><tr><th>日時</th><th>操作・操作者</th><th>対象</th></tr></thead><tbody id="logtb"></tbody></table></div></div>`;
 };
 function logRows(){
  const ev=[];
@@ -975,6 +975,7 @@ const AREA={req:['依頼','inbox','var(--accent)'],devops:['DevOps','code','var(
 const GROUP={requester:'SF-Requesters',desk:'SF-Desk',approver:'SF-Approvers'};
 /* だれがどの操作をできるか（依頼の状態は canMove のとおり） */
 const CAN={ai:['desk'],check:['desk'],review:['approver'],merge:['desk'],stg:['desk'],prod:['approver'],rollback:['desk'],
+ handoff:['desk','approver'],stop:['desk','approver'],resume:['desk','approver'],
  vtake:['desk'],vfix:['desk'],vrisk:['desk'],vriskok:['approver'],ack:['desk','approver'],access:['approver'],gate:['desk'],cfg:['desk']};
 const may=k=>(CAN[k]||[]).includes(S.role);
 const rl=k=>roleOf(k).l.replace(/（.*）/,'');
@@ -1169,7 +1170,7 @@ function secKpi(){
 function abtn(key,act,label,ic,o){
  o=o||{};const can=may(key),ok=can&&!o.off;
  const tip=!can?'この操作ができるのは '+whoCanT(key)+' です':o.off||label;
- return `<button class="btn sm ${o.cls||''}${ok&&o.ready?' ready':''}" data-a="${act}"${o.id?` data-id="${E(o.id)}"`:''} type="button"${ok?'':' disabled'} title="${E(tip)}">${I(ic)}${E(label)}</button>`;
+ return `<button class="btn sm ${o.cls||''}${ok&&o.ready?' ready':''}" data-a="${act}"${o.id?` data-id="${E(o.id)}"`:''}${o.job?` data-job="${E(o.job)}"`:''} type="button"${ok?'':' disabled'} title="${E(tip)}">${I(ic)}${E(label)}</button>`;
 }
 function gateFor(keys){
  const ks=keys.filter(k=>!may(k));if(!ks.length)return '';
@@ -1220,6 +1221,67 @@ function updDev(){
  }
 }
 AFTER.devops=updDev;
+/* ---------- 開発ラインの実行記録（サーバ） ----------
+   正本の DevOps は見本の段階表示を持つ。実データはこのブロックに出す（投入・承認・配備・戻し）。 */
+const DL_TTL=5000, DL_LIVE=['approved','dev','verify','field','release_wait','done'];
+const DL_ROLES=['desk','approver','admin'];
+const DL_STATE={queued:'待機',planning:'計画中',implementing:'実装中',verifying:'CIで検証中',revising:'修正中',pr_ready:'PR候補の準備完了（人の確認待ち）',reviewing:'人が確認中',approved:'承認済み（merge待ち）',merged:'merge済み（配備の承認待ち）',staged:'配備済み（検証環境）',released:'公開',closed:'終了',stopped:'停止',failed:'失敗',cancelled:'中止'};
+const dlCache=new Map();
+function dlOf(id){if(!dlCache.has(id))dlCache.set(id,{loaded:false,loading:false,loadedAt:0,items:[],handoffs:[],evidence:{},release:{},busy:false,msg:null});return dlCache.get(id)}
+function dlRel(jobId){for(const s of dlCache.values()){if(s.release&&s.release[jobId])return s.release[jobId]}return {}}
+function dlLoad(id,force){
+ const s=dlOf(id);
+ if(!window.__MSF__)return Promise.resolve();
+ if(s.loading)return s.p;
+ if(!force&&s.loaded&&Date.now()-(s.loadedAt||0)<DL_TTL)return Promise.resolve();
+ s.loading=true;
+ s.p=window.__MSF__.readJobs(id).then(res=>{
+  s.loading=false;s.loadedAt=Date.now();s.loaded=!!res;
+  if(res){s.items=Array.isArray(res.items)?res.items:[];s.handoffs=Array.isArray(res.handoffs)?res.handoffs:[];s.evidence=res.evidence||{};s.release=res.release||{};}
+  if(S.view==='devops'&&S.sel.devops===id)updPane();
+ }).catch(()=>{s.loading=false;s.loadedAt=Date.now();s.loaded=true;s.items=[];s.handoffs=[];s.msg='実行記録を読み込めませんでした';if(S.view==='devops'&&S.sel.devops===id)updPane()});
+ return s.p;
+}
+function dlShort(v){const t=String(v||'');return t?t.slice(0,8):'—'}
+async function dlAct(id,jobId,path,body,okMsg){
+ const s=dlOf(id);if(s.busy)return;
+ s.busy=true;s.msg=null;updPane();
+ try{await window.__MSF__.api('POST','/api/jobs/'+encodeURIComponent(jobId)+'/'+path,body);s.msg=okMsg||'受け付けました';toast(s.msg,'ok','code');}
+ catch(err){s.msg=(err&&err.message)||'処理を完了できませんでした';toast(s.msg,'bad');}
+ s.busy=false;await dlLoad(id,true);
+}
+function dlReason(title,hint,cb){
+ dlPending=cb;
+ modal(I('msg')+E(title),`<p class="hint" style="margin:0 0 8px">${E(hint)}</p><textarea id="dlr" rows="3" placeholder="理由"></textarea>`,`<button class="btn ghost" data-a="closeModal" type="button">キャンセル</button><button class="btn" data-a="dlReasonOk" type="button">${I('check')}実行</button>`);
+}
+function dlHTML(r){
+ const s=dlOf(r.id);
+ if(!s.loaded){if(!s.loading)dlLoad(r.id);return `<div class="sec-h">${I('code','sm')}開発ラインの実行記録（サーバ）</div><div class="hint">読み込み中…</div>`}
+ const jobs=s.items||[],hs=s.handoffs||[],h=hs[0]||null;
+ const canHandoff=DL_ROLES.includes(S.role)&&DL_LIVE.includes(r.status)&&Number(r.__orderVersion)>0;
+ const head=`<div class="dp-acts">${abtn('handoff','devHandoff','開発ラインへ投入（Issueを作る）','send',{id:r.id,cls:'ai',ready:true,off:s.busy?'処理中です':canHandoff?'':'依頼が「承認済み」になってから、または注文書の版ができるまで待ちます'})}<span class="hint">注文書 版 ${E(String(r.__orderVersion||0))}</span></div>`;
+ const issues=hs.length?hs.slice(0,3).map(x=>`<div class="hint">版 ${E(String(x.orderVersion))}：${x.issueNo?('Issue #'+E(String(x.issueNo))):'—'}・${E(x.state==='succeeded'?'投入済み':x.state)}・${fmtS(x.updatedAt)}</div>`).join(''):'<div class="hint">まだ投入していません</div>';
+ const jobRows=jobs.length?jobs.slice(0,3).map(j=>{
+  const rel=(s.release[j.id]||{});
+  const acts=[];
+  if(j.state==='pr_ready'&&j.headSha)acts.push(abtn('merge','devMerge','merge を承認','check',{id:r.id,job:j.id,cls:'ok',ready:true}));
+  if(['approved','merged','staged'].includes(j.state)&&rel.mergeSha&&rel.imageDigest)acts.push(abtn('prod','devDeploy','検証環境へ配備','layers',{id:r.id,job:j.id,cls:'ok',ready:true}));
+  if(['pr_ready','merged','staged','released'].includes(j.state))acts.push(abtn('rollback','devRollbackBtn','戻す','undo',{id:r.id,job:j.id,cls:'ghost dng'}));
+  if(['planning','implementing','verifying','revising','reviewing'].includes(j.state))acts.push(abtn('stop','devCancel','止める','pause',{id:r.id,job:j.id,cls:'ghost'}));
+  if(['stopped','failed','cancelled'].includes(j.state))acts.push(abtn('resume','devResume','再開','play',{id:r.id,job:j.id,cls:'ghost'}));
+  return `<div class="blk" style="margin-top:6px"><h5>${I('code','sm')}ジョブ（注文書 版 ${E(String(j.orderVersion))}）</h5>
+   <div><span class="badge b-acc">${E(DL_STATE[j.state]||j.state)}</span>${j.orderCurrent?'':' <span class="badge b-warn">版が古い</span>'}${j.supersededAt?' <span class="badge">差し替え済み</span>':''}</div>
+   <div class="hint">head ${E(dlShort(j.headSha))}・費用 ¥${Number(j.costJpy||0).toLocaleString('ja-JP')}・修復 ${Number(j.repairCountTotal||0)}回・更新 ${fmtS(j.updatedAt)}</div>
+   ${rel.mergeSha?`<div class="hint">merge ${E(dlShort(rel.mergeSha))}・配備 ${E(rel.imageDigest?'あり':'—')}・環境 ${E(rel.environment||'')}</div>`:''}
+   ${j.stopReason?`<div class="note n-warn" style="margin-top:4px">${I('pause')}<div>停止理由：${E(j.stopReason)}</div></div>`:''}
+   ${acts.length?`<div class="dp-acts" style="margin-top:4px">${acts.join('')}</div>`:''}
+  </div>`}).join(''):'<div class="hint">ジョブはまだありません。投入すると Issue が作られ、AI の実装が始まります。</div>';
+ return `<div class="sec-h">${I('code','sm')}開発ラインの実行記録（サーバ）</div>
+  ${head}${issues}${jobRows}
+  ${s.msg?`<div class="note ${/できません|失敗|エラー/.test(s.msg)?'n-bad':'n-acc'}" style="margin-top:6px">${I('info')}<div>${E(s.msg)}</div></div>`:''}`;
+}
+let dlPending=null;
+
 function devPane(){
  const l=lineOf(S.sel.devops),r=l&&find(l.req);
  if(!l||!r)return emptyBox('code','開発ラインの依頼を選ぶと、ここに進み具合と操作が1ページで出ます');
@@ -1241,11 +1303,16 @@ function devPane(){
   :(nx.k==='done'&&r.status!=='done')?`<div class="note n-ok" style="margin:8px 0 0">${I('flag')}<div>本番に出ました。依頼を「完了」にできます（承認者）。<button class="lk" data-a="devStatus" data-id="${E(id)}" data-v="done" type="button">完了にする</button></div></div>`:'';
  const ev=S.data.audit.filter(a=>a.ref===id&&a.area==='devops').slice(-3).reverse();
  const keys=nx.k==='run'||nx.k==='done'?[]:[nx.k];
+ const serverMode=!!window.__MSF__;
+ const actionBlock=serverMode
+  ? `<div class="dp-acts"><button class="btn ghost sm" data-a="devStatus" data-id="${E(id)}" type="button" title="依頼の状態を変える">${I('flag')}状態を変更</button></div>
+ <div class="note n-acc">${I('info')}<div>上の段階と自動検査は見本です。実際の開発ラインは下の「実行記録（サーバ）」で確認・操作します。</div></div>`
+  : `${busy?`<div class="busyrow"><i class="spin sm"></i>${l.running==='ai'?'AIが実装しています…（このサンプルでは数秒で終わります）':'自動検査を実行しています…'}</div>`:`<div class="dp-acts">${main}${others.join('')}<button class="btn ghost sm" data-a="devStatus" data-id="${E(id)}" type="button" title="依頼の状態を変える">${I('flag')}状態を変更</button></div>`}
+ ${busy?'':gateFor(keys)}`;
  return `<div class="dp-h">${cico(r.dept,'lg')}<div class="dp-t"><div class="hint"><span class="mono">${E(id)}</span>　Issue #${l.issue}${l.pr?'　PR #'+l.pr:''}</div><h2 class="cl2" title="${E(r.title)}">${E(r.title)}</h2><div class="btns xs" style="margin-top:3px">${sb(r.status)}${sig(colorOf(r))}<button class="badge b-acc lk2" data-a="devOpen" data-id="${E(id)}" type="button" title="ボードで依頼の詳細を見る">${I('board')}依頼を開く</button></div></div></div>
  <div class="msteps dsteps">${DSTAGES.map((s,i)=>{const cc=i<si?'done':i===si?(c.fail&&i===2?'bad':'cur'):'';return `<span class="ms ${cc}" title="${s[0]}">${cc==='done'?I('check'):I(s[1])}</span>${i<DSTAGES.length-1?`<i class="ml${i<si?' done':''}"></i>`:''}`}).join('')}</div>
  <div class="dcap">${I('target','sm')}いま：<b>${si>=7?'本番で稼働中':E(DSTAGES[si][0])}</b>　次：<b>${E(nx.t)}</b>${nx.who?`（${E(rl(nx.who))}）`:''}</div>
- ${busy?`<div class="busyrow"><i class="spin sm"></i>${l.running==='ai'?'AIが実装しています…（このサンプルでは数秒で終わります）':'自動検査を実行しています…'}</div>`:`<div class="dp-acts">${main}${others.join('')}<button class="btn ghost sm" data-a="devStatus" data-id="${E(id)}" type="button" title="依頼の状態を変える">${I('flag')}状態を変更</button></div>`}
- ${busy?'':gateFor(keys)}${stNote}
+ ${actionBlock}${stNote}
  <div class="sec-h">${I('shieldok','sm')}自動検査（必須 ${c.all}件のうち 合格 ${c.all-c.fail-c.pend}・不合格 ${c.fail}・未実行 ${c.pend}）</div>
  <div class="ckgrid">${CHECKS.map(([k,lb,ic],i)=>{const v=l.checks[k],run=l.running==='check'&&v!=='na';return `<div class="ck ${run?'run':v}" style="--i:${i}" title="${E(lb)}"><span class="ci2">${run?'<i class="spin sm"></i>':I(v==='pass'?'check':v==='fail'?'x':ic)}</span><div style="min-width:0"><b class="cl1">${E(lb)}</b><small>${run?'実行中':{pass:'合格',fail:'不合格',pend:'未実行',na:'対象外'}[v]}</small></div>${isReq(k)&&v!=='na'?'<span class="rq">必須</span>':''}</div>`}).join('')}</div>
  <div class="g2c">
@@ -1254,6 +1321,7 @@ function devPane(){
   <div class="blk"><h5>${I('user','sm')}レビュー</h5><div>${l.review==='ok'?`${I('check','sm')}承認済み（${E(l.reviewBy||'承認者')}）`:'<span class="hint">承認者のレビュー待ち</span>'}</div></div>
   <div class="blk"><h5>${I('code','sm')}ブランチ</h5><div class="mono cl1" title="${E(l.branch)}">${E(l.branch)}</div></div>
  </div>
+ ${window.__MSF__?dlHTML(r):''}
  <div class="sec-h">${I('audit','sm')}この依頼の DevOps の記録（新しい順）</div>
  ${ev.length?`<ul class="tl c">${ev.map((a,i)=>`<li style="--i:${i}"><b>${E(a.action)}</b><small>${fmtS(a.at)}　${E(a.by)}</small>${a.note?`<div class="cl1 hint" title="${E(a.note)}">${E(a.note)}</div>`:''}</li>`).join('')}</ul>`:'<div class="hint">まだありません</div>'}`;
 }
@@ -1464,7 +1532,7 @@ function render(){
  const m=$('#main'),sp=SPLIT.includes(S.view),w0=$('#work');
  const keep=sp&&!fresh&&w0?w0.scrollTop:0;
  m.className=(RM?'':(fresh?'anim':freshSel?'anim-d':''))+(sp?' split':'');
- m.innerHTML=sp?`<div class="work" id="work">${html}</div><aside class="rpane" id="rpane" aria-label="右端パネル（要点を1ページで表示）"><div class="rin anim-in" id="rin"></div></aside>`:html;
+ m.innerHTML=sp?`<div class="work" id="work" tabindex="0">${html}</div><aside class="rpane" id="rpane" aria-label="右端パネル（要点を1ページで表示）"><div class="rin anim-in" id="rin"></div></aside>`:html;
  if(sp&&keep)$('#work').scrollTop=keep;
  if(fresh&&!RM)countUp();
  if(AFTER[S.view])AFTER[S.view]();
@@ -1648,6 +1716,22 @@ const ACT={
  devSel(el){S.sel.devops=el.dataset.id;$$('#devbody [data-a=devSel]').forEach(x=>x.classList.toggle('on',x.dataset.id===S.sel.devops));updPane()},
  devOpen(el){go('board',el.dataset.id)},
  devStatus(el){const r=find(el.dataset.id);if(r)openStatus(r,el.dataset.v||undefined)},
+ async devHandoff(el){
+  const id=el.dataset.id,r=find(id);if(!r)return;const s=dlOf(id);if(s.busy)return;
+  if(!(Number(r.__orderVersion)>0)){toast('注文書の版がありません（承認後に投入できます）','bad');return}
+  s.busy=true;s.msg=null;updPane();
+  const res=await window.__MSF__.handoff(id,Number(r.__orderVersion));
+  s.busy=false;
+  if(res.ok){s.msg=(res.result&&res.result.issueNo?'Issue #'+res.result.issueNo+' に投入しました':'投入しました');toast(s.msg,'ok','code');}
+  else{s.msg=(res.message||'投入できませんでした');toast(s.msg,'bad');}
+  await dlLoad(id,true);
+ },
+ devMerge(el){const id=el.dataset.id,job=el.dataset.job;if(!id||!job)return;const s=dlOf(id);const j=(s.items||[]).find(x=>x.id===job);if(!j||!j.headSha){toast('head の記録がありません','bad');return}void dlAct(id,job,'approve-merge',{headSha:j.headSha},'merge を承認しました');},
+ devDeploy(el){const id=el.dataset.id,job=el.dataset.job;if(!id||!job)return;const rel=dlRel(job);if(!rel.mergeSha||!rel.imageDigest){toast('merge と成果物の記録がそろってから配備します','bad');return}void dlAct(id,job,'approve-deploy',{sha:rel.mergeSha,digest:rel.imageDigest,environment:rel.environment},'配備を受け付けました');},
+ devRollbackBtn(el){const id=el.dataset.id,job=el.dataset.job;if(!id||!job)return;dlReason('本番を戻す','戻す理由を書いてください（監査に残ります）',reason=>{void dlAct(id,job,'rollback',{reason},'戻しを受け付けました')});},
+ devCancel(el){const id=el.dataset.id,job=el.dataset.job;if(!id||!job)return;const s=dlOf(id);const j=(s.items||[]).find(x=>x.id===job);dlReason('ジョブを止める','止める理由を書いてください（監査に残ります）',reason=>{void dlAct(id,job,'cancel',{reason,...(j&&j.state?{expectedState:j.state}:{})},'停止を受け付けました')});},
+ devResume(el){const id=el.dataset.id,job=el.dataset.job;if(!id||!job)return;dlReason('ジョブを再開する','再開する理由を書いてください（監査に残ります）',reason=>{void dlAct(id,job,'resume',{reason},'再開を受け付けました')});},
+ dlReasonOk(){const el=$('#dlr');const v=el?el.value.trim():'';if(!v){toast('理由を書いてください','bad');return}const cb=dlPending;closeModal();if(cb)cb(v);},
  devAI(el){
   const l=lineOf(el.dataset.id),r=l&&find(l.req);if(!l||!r||l.running)return;
   if(!may('ai')){toast('この操作ができるのは '+whoCanT('ai')+' です','bad','lock');return}
