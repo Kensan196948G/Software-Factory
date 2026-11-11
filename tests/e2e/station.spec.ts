@@ -215,18 +215,23 @@ test.describe('ステーション画面', () => {
   });
 
   test('ボードから状態変更のダイアログを開ける', async ({ page }) => {
+    // 承認者はどの状態からでも遷移先を選べる（権限の判定はサーバも行う）
+    await setRole(page, 'approver');
     await gotoTab(page, 'board');
-    const card = page.locator('#work .kc').first();
+    const card = page.locator('#work .kc[data-id]').first();
     await expect(card).toBeVisible();
+    const id = await card.getAttribute('data-id');
+    expect(id).toMatch(/^REQ-/);
     await card.click();
-    await expect(page.locator('#rin')).toContainText('依頼');
-    const statusBtn = page.locator('#rin [data-a="status"]').first();
-    if ((await statusBtn.count()) > 0) {
-      await statusBtn.click();
-      await expect(page.locator('#modal.open')).toBeVisible();
-      await page.keyboard.press('Escape');
-      await expect(page.locator('#modal.open')).toHaveCount(0);
-    }
+    // 右端のパネルに、選んだ依頼（受付番号）が出る
+    await expect(page.locator('#rin')).toContainText(id as string);
+    // 「状態を変更」のボタン（次状態へ進めるショートカットと区別する）
+    const statusBtn = page.locator('#rin [data-a="status"][title="状態を変更"]');
+    await expect(statusBtn).toBeVisible();
+    await statusBtn.click();
+    await expect(page.locator('#modal.open')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#modal.open')).toHaveCount(0);
   });
 
   test('テーマをダークに切り替えられ、再読み込みでも残る', async ({ page }) => {
