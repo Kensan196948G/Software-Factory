@@ -206,6 +206,14 @@ test.describe('ステーション画面', () => {
     await expect(page.locator('#modal.open')).toHaveCount(0);
   });
 
+  test('システム設定でメールの状態を確認できる', async ({ page }) => {
+    await gotoTab(page, 'settings');
+    await page.click('#setleft .li[data-v="mail"]');
+    await expect(page.locator('#rin')).toContainText('送信の方法');
+    await expect(page.locator('#rin')).toContainText('送信待ち');
+    await expect(page.locator('#rin')).toContainText('送信済み');
+  });
+
   test('ボードから状態変更のダイアログを開ける', async ({ page }) => {
     await gotoTab(page, 'board');
     const card = page.locator('#work .kc').first();

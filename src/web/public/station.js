@@ -1464,9 +1464,37 @@ function uPwModal(id){
   `<button class="btn ghost" data-a="closeModal" type="button">キャンセル</button><button class="btn" data-a="uPwOk" data-id="${E(id)}" type="button">${I('check')}再設定する</button>`);
 }
 
+/* ---------- メール送信簿（承認依頼メール） ---------- */
+const MA={loaded:false,loading:false,summary:null,items:[],error:''};
+function loadMail(force){
+ if(!window.__MSF__)return;
+ if(MA.loading)return;
+ if(MA.loaded&&!force)return;
+ MA.loading=true;MA.error='';
+ const p1=window.__MSF__.api('GET','/api/mail/status').catch(()=>null);
+ const p2=window.__MSF__.api('GET','/api/mail/outbox?limit=20').then(r=>r&&Array.isArray(r.items)?r.items:[]).catch(err=>{MA.error=(err&&err.message)||'送信簿を読めません';return []});
+ Promise.all([p1,p2]).then(([sum,items])=>{MA.summary=sum;MA.items=items;MA.loaded=true;MA.loading=false;if(S.view==='settings'&&S.setTab==='mail')updPane()});
+}
+function mailHTML(){
+ if(!MA.loaded&&!MA.error){loadMail();return `<div class="hint">メールの状態を読み込んでいます…</div>`}
+ const st=MA.summary||{};
+ const badge=s=>`<span class="badge ${s==='sent'?'b-ok':s==='failed'?'b-bad':s==='sending'?'b-ai':'b-warn'}">${{pending:'送信待ち',sending:'送信中',sent:'送信済み',failed:'失敗'}[s]||s}</span>`;
+ const rows=MA.items.length?MA.items.map(m=>`<div class="li" style="--i:0"><span class="aic" style="--cc:var(--accent)">${I('send')}</span><div class="bd"><div class="t cl1" title="${E(m.subject)}">${E(m.subject)}</div><div class="m"><span class="mono">${E(m.id)}</span>${badge(m.status)}<span class="hint">${E(m.to)}</span><span class="hint">${fmtS(m.sentAt||m.createdAt)}</span></div>${m.lastError?`<div class="hint cl1">${E(m.lastError)}</div>`:''}</div>${m.status==='failed'?`<button class="btn ghost sm" data-a="mRetry" data-id="${E(m.id)}" type="button">再送</button>`:''}</div>`).join(''):'<div class="hint">まだありません</div>';
+ return `<div class="hint">${st.mode?('送信の方法：<b>'+E(st.mode)+'</b>'+(st.ready?'（送信できます）':'（設定が未完了です）')):'—'}${st.lastSentAt?('　最終送信 '+fmtS(st.lastSentAt)):''}</div>
+ <div class="g2c" style="margin:6px 0 8px">
+  <div class="blk"><h5>${I('clock','sm')}送信待ち</h5><div>${st.pending||0}</div></div>
+  <div class="blk"><h5>${I('alert','sm')}失敗</h5><div>${st.failed||0}</div></div>
+  <div class="blk"><h5>${I('check','sm')}送信済み</h5><div>${st.sent||0}</div></div>
+ </div>
+ <div class="btns" style="margin-bottom:8px"><button class="btn ghost sm" data-a="mReload" type="button">${I('reset')}読み直す</button>${isAdmin()?`<button class="btn ghost sm" data-a="mFlush" type="button">${I('send')}送信待ちを送る</button>`:''}</div>
+ ${MA.error?`<div class="note n-warn">${I('alert')}<div>${E(MA.error)}</div></div>`:''}
+ <div class="dlist">${rows}</div>
+ <div class="note n-acc">${I('info')}<div>承認依頼メールの記録です。宛先と本文はここから変更できません（送る内容は依頼の内容から作られます）。</div></div>`;
+}
+
 /* ===================== システム設定 ===================== */
 const SETS=[
- ['personal','表示（自分用）','monitor',true],['general','基本','gear'],['approvers','承認者','stamp'],['users','利用者','user'],['roles','役割と権限','users',true],
+ ['personal','表示（自分用）','monitor',true],['general','基本','gear'],['approvers','承認者','stamp'],['users','利用者','user'],['mail','メール','send'],['roles','役割と権限','users',true],
  ['devops','DevOps','code'],['secops','SecOps','shield'],['data','データ','db',true],['about','このアプリについて','info',true]
 ];
 function themeNow(){return document.documentElement.dataset.theme||'auto'}
@@ -1476,6 +1504,7 @@ function setSum(k){
   general:'組織名：'+(c.org||'（なし）')+'／スタンプ：'+c.stampName+'／起動時：'+(c.startLogin?'ログイン画面':'そのまま使う'),
   approvers:c.approvers.length+'人：'+c.approvers.join('・'),
   users:(window.__MSF__?(UA.loaded?UA.items.length+'人（有効 '+UA.items.filter(u=>u.isActive).length+'人）':'サーバの利用者を読み込みます'):'サーバ接続時のみ'),
+  mail:(window.__MSF__?(MA.summary?('送信待ち '+MA.summary.pending+'・失敗 '+MA.summary.failed+'（'+MA.summary.mode+'）'):'承認依頼メールの状態'):'サーバ接続時のみ'),
   roles:'3つの役割と、できること（参照のみ）',
   devops:'マージ前の必須検査：9件中 '+CHECKS.filter(([k])=>isReq(k)).length+'件',
   secops:'修正期限：'+SEVK.map(k=>SEV[k].l+c.sla[k]+'日').join('・'),
@@ -1506,6 +1535,7 @@ function setPane(){
   <div class="fld"><div class="lbl">${I('stamp','sm')}受付スタンプの名前（12文字まで）</div><input data-cfg="stampName" maxlength="12" value="${E(c.stampName)}"${dis}></div>
   <label class="tog${ro?' dis':''}"><input type="checkbox" data-cfg="startLogin"${c.startLogin?' checked':''}${dis}><span class="sw"></span><span class="tx"><b>起動したとき、ログイン画面から始める</b><small>オフにすると、前回の人のまま使い始めます</small></span></label>`;
  else if(k==='users')b=usersHTML();
+ else if(k==='mail')b=mailHTML();
  else if(k==='approvers')b=window.__MSF__?`<div class="hint" style="margin-top:6px">新しい依頼の STEP 7 で選べる承認者です。承認者の追加・変更はサーバの利用者管理で行います（この画面では参照のみ）。</div>
   ${c.approvers.map((a,i)=>`<div class="apvrow" style="--i:${i}">${av(a)}<b style="flex:1">${E(a)}</b>${i===0?'<span class="badge b-acc">新しい依頼の最初の候補</span>':''}<span class="lkic" title="サーバの利用者管理で変更します">${I('lock','sm')}</span></div>`).join('')}
   <div class="note n-acc">${I('info')}<div>承認者名簿はサーバ（PostgreSQL）から読み込んでいます。変更は管理の手順で行ってください。</div></div>`:`<div class="hint" style="margin-top:6px">新しい依頼の STEP 7 で選べる承認者です。いま入っている依頼の承認者は変わりません。</div>
@@ -1867,6 +1897,15 @@ const ACT={
  setTab(el){S.setTab=el.dataset.v;$$('#setleft [data-a=setTab]').forEach(x=>x.classList.toggle('on',x.dataset.v===S.setTab));updPane()},
  goSet(el){S.setTab=el.dataset.v||'personal';go('settings')},
  uReload(){UA.loaded=false;UA.error='';updPane()},
+ mReload(){MA.loaded=false;MA.error='';updPane()},
+ async mRetry(el){
+  try{await window.__MSF__.api('POST','/api/mail/outbox/'+encodeURIComponent(el.dataset.id)+'/retry',{});toast('再送しました','ok','send');loadMail(true)}
+  catch(err){toast((err&&err.message)||'再送できませんでした','bad')}
+ },
+ async mFlush(){
+  try{const r=await window.__MSF__.api('POST','/api/mail/flush',{});toast('送信待ちを送りました'+((r&&r.sent!=null)?'（'+r.sent+'件）':''),'ok','send');loadMail(true)}
+  catch(err){toast((err&&err.message)||'送信できませんでした','bad')}
+ },
  uAdd(){uAddModal()},
  async uAddOk(){
   const g=id=>{const el=$('#'+id);return el?el:null};
