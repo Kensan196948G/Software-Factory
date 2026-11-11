@@ -1350,7 +1350,7 @@ function setSum(k){
   devops:'マージ前の必須検査：9件中 '+CHECKS.filter(([k])=>isReq(k)).length+'件',
   secops:'修正期限：'+SEVK.map(k=>SEV[k].l+c.sla[k]+'日').join('・'),
   data:'依頼 '+S.data.items.length+'件・開発ライン '+Object.keys(S.data.devsec.lines).length+'件・監査ログ '+logCount()+'件',
-  about:'版 1.1・完全オフライン・外部通信なし'}[k];
+  about:(window.__MSF__?'版 1.1・サーバ保存（PostgreSQL）':'版 1.1・完全オフライン・外部通信なし')}[k];
 }
 function logCount(){return S.data.items.reduce((a,r)=>a+(r.history||[]).length,0)+S.data.audit.length}
 V.settings=function(){
@@ -1399,7 +1399,7 @@ function setPane(){
   <div class="hint" style="margin-top:4px">JSONには、依頼・DevOps・SecOps・監査ログが入ります。システム設定は入りません。</div>
   <div class="sec-h">${I('reset','sm')}初期化</div><div class="btns"><button class="btn ghost sm dng" data-a="reset" type="button">${I('reset')}データをサンプルに戻す</button><button class="btn ghost sm dng" data-a="cfgReset" type="button"${dis}>${I('gear')}設定を初期値に戻す</button></div>`;
  }
- else b=`<dl class="kv" style="margin-top:8px"><dt>${I('factory','sm')}名前</dt><dd>ソフトウェアファクトリーステーション</dd><dt>${I('tag','sm')}版</dt><dd>1.1（DevOps・SecOps・システム設定・監査ログ）</dd><dt>${I('globe','sm')}通信</dt><dd>しません（完全オフライン。外部のライブラリ・フォントも読み込みません）</dd><dt>${I('db','sm')}保存のキー</dt><dd class="mono">${E(KEY)}・${E(KEY)}-settings・${E(KEY)}-theme・${E(KEY)}-session</dd><dt>${I('info','sm')}位置づけ</dt><dd>操作を確かめるためのサンプルです。人名・数値は架空です。</dd></dl>`;
+ else b=`<dl class="kv" style="margin-top:8px"><dt>${I('factory','sm')}名前</dt><dd>ソフトウェアファクトリーステーション</dd><dt>${I('tag','sm')}版</dt><dd>1.1（DevOps・SecOps・システム設定・監査ログ）</dd><dt>${I('globe','sm')}通信</dt><dd>${window.__MSF__?'サーバ（同一オリジンの API）と通信します。依頼は PostgreSQL に保存されます。':'しません（完全オフライン。外部のライブラリ・フォントも読み込みません）'}</dd><dt>${I('db','sm')}保存のキー</dt><dd class="mono">${E(KEY)}・${E(KEY)}-settings・${E(KEY)}-theme・${E(KEY)}-session</dd><dt>${I('info','sm')}位置づけ</dt><dd>${window.__MSF__?'受付ステーションの画面です。依頼はサーバに保存されます。DevOps・SecOps の数値とできごとは見本です。':'操作を確かめるためのサンプルです。人名・数値は架空です。'}</dd></dl>`;
  return head+b;
 }
 function setCfg(t){
