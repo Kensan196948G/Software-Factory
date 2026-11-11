@@ -163,7 +163,7 @@ tr.click{cursor:pointer}tr.click td{transition:background .15s}tr.click:hover td
 .bx.y{background:var(--sy)}.bx.r{background:var(--sr);color:#fff}
 .bx svg{width:13px;height:13px}
 /* ---------- pipeline ---------- */
-.pipe{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:12px;margin-bottom:8px}
+.pipe{display:grid;grid-template-columns:repeat(9,minmax(0,1fr));gap:12px;margin-bottom:8px}
 .stage{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px 11px 10px;cursor:pointer;box-shadow:var(--shadow);transition:transform .2s,box-shadow .2s,border-color .2s;--tc:var(--accent)}
 .stage.c-a{--tc:var(--ai)}.stage.c-h{--tc:var(--warn)}.stage.c-s{--tc:var(--ok)}
 .stage::before{content:"";position:absolute;left:-1px;right:-1px;top:-1px;height:4px;border-radius:14px 14px 0 0;background:var(--tc)}
@@ -531,7 +531,7 @@ tr.click.on td{background:var(--accent-soft)}
 @keyframes freshG{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--sy) 60%,transparent)}}
 @keyframes press{0%{transform:scale(2.6) rotate(-30deg);opacity:0}60%{transform:scale(.92) rotate(-10deg);opacity:1}100%{transform:scale(1) rotate(-12deg)}}
 /* ---------- responsive ---------- */
-@media (max-width:1320px){.pipe{grid-template-columns:repeat(4,minmax(0,1fr))}.stage::after{display:none}.rail{display:none}.g3{grid-template-columns:1fr 1fr}}
+@media (max-width:1320px){.pipe{grid-template-columns:repeat(5,minmax(0,1fr))}.stage::after{display:none}.rail{display:none}.g3{grid-template-columns:1fr 1fr}}
 @media (max-width:900px){
  :root{--rw:clamp(330px,46vw,460px)}
  .shell{display:flex;flex-direction:column}
@@ -539,7 +539,7 @@ tr.click.on td{background:var(--accent-soft)}
  nav a{white-space:nowrap;margin:0;flex:none}nav a.on::before{display:none}nav .sep,nav .navnote{display:none}
  main{flex:1}
  .g2,.g3,.g-main,.g-side,.choices,.tools,.vsbox,.stopts{grid-template-columns:1fr}
- .pipe{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .pipe{grid-template-columns:repeat(3,minmax(0,1fr))}
  main{padding:14px 16px 48px}
  .work{padding:14px 16px 24px}
  .barrow{grid-template-columns:110px 1fr 30px}
