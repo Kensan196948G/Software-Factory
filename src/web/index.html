@@ -329,6 +329,44 @@ ul.tl small{display:block;color:var(--muted)}
 .kc.mine{box-shadow:0 0 0 2px var(--safety)}
 .kc .myt{position:absolute;top:-8px;right:8px}
 .kc:focus-visible{outline:3px solid var(--teal);outline-offset:2px}
+
+/* review（確認・承認）: 左の一覧と右端パネルを同時に見る（D-01/D-21） */
+.review{display:grid;grid-template-columns:minmax(300px,1fr) minmax(420px,40%);gap:16px;align-items:start}
+.rlist{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:auto;max-height:calc(100vh - 150px)}
+.rlist .rhead{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface);z-index:2}
+.rlist .rhead b{font-size:13.5px}
+.rlist .rhead em{font-style:normal;margin-left:auto;font-size:12px;color:var(--muted)}
+.rrow{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:none;padding:11px 14px;cursor:pointer;border-left:4px solid transparent}
+.rrow:hover{background:var(--surface2)}
+.rrow.on{background:var(--safety-soft);border-left-color:var(--safety)}
+.rrow .rt{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted)}
+.rrow .rt .no{font-family:ui-monospace,Consolas,monospace}
+.rrow b{display:block;font-size:13.5px;line-height:1.45;margin:3px 0 4px}
+.rrow .rm{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:11.5px;color:var(--muted)}
+.rrow:focus-visible{outline:3px solid var(--teal);outline-offset:-3px}
+.rpanel{position:sticky;top:74px;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);max-height:calc(100vh - 96px);overflow:hidden}
+.rp-head{padding:14px 16px 10px;border-bottom:1px solid var(--line)}
+.rp-head .rp-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11.5px;color:var(--muted)}
+.rp-head h3{margin:6px 0 4px;font-size:16px;line-height:1.4}
+.rp-head .rp-meta{font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px}
+.rp-body{padding:12px 16px;overflow:hidden;flex:1;min-height:0}
+.rp-sec{margin:0 0 10px}
+.rp-sec h4{margin:0 0 4px;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:5px}
+.rp-sec p{margin:0;font-size:13px;line-height:1.55}
+.rp-sec ul{margin:0;padding-left:18px;font-size:12.5px;line-height:1.5}
+.rp-two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.rp-clamp{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.rp-more{font-size:11.5px;color:var(--muted)}
+.rp-chk{display:flex;flex-wrap:wrap;gap:4px}
+.rp-chk span{font-size:11.5px;border-radius:999px;padding:1px 8px;border:1px solid var(--line)}
+.rp-chk .w{background:var(--y-soft);color:#7a5a00;border-color:transparent}
+.rp-chk .ok{background:var(--g-soft);color:#0d5f33;border-color:transparent}
+@media (prefers-color-scheme:dark){ .rp-chk .w{color:#f0c35a} .rp-chk .ok{color:#7fd4a2} }
+.rp-act{display:flex;flex-wrap:wrap;gap:8px;padding:10px 16px 14px;border-top:1px solid var(--line)}
+.rp-empty{padding:40px 20px;text-align:center;color:var(--muted)}
+.rp-who{margin:0 0 10px;font-size:12.5px;color:var(--muted)}
+@media (max-width:1080px){.review{grid-template-columns:1fr}.rpanel{position:static;max-height:none}.rlist{max-height:none}}
+@media (max-height:760px){.rp-sec.opt{display:none}}
 .kf{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}
 .kn{display:inline-flex;align-items:center;gap:3px;font-size:12px;font-weight:700;padding:5px 10px;min-height:32px;border-radius:999px;border:0;background:var(--safety);color:#1b222b;cursor:pointer;white-space:nowrap;margin-left:auto;max-width:100%}
 .kn .ico{width:14px;height:14px;vertical-align:0}
@@ -571,6 +609,7 @@ table.t.aud td{font-size:12.5px}
     <button data-v="new" type="button"><svg class="ico"><use href="#i-plus"/></svg>新しい依頼</button>
     <button data-v="board" type="button"><svg class="ico"><use href="#i-board"/></svg>ボード</button>
     <button data-v="list" type="button"><svg class="ico"><use href="#i-list"/></svg>一覧</button>
+    <button data-v="review" type="button"><svg class="ico"><use href="#i-check"/></svg>確認・承認<span class="badge" id="bdgReview" style="display:none"></span></button>
     <button data-v="ops" type="button"><svg class="ico"><use href="#i-pulse"/></svg>運用<span class="badge" id="bdgOps" style="display:none"></span></button>
     <button data-v="devops" type="button"><svg class="ico"><use href="#i-git"/></svg>DevOps</button>
     <button data-v="secops" type="button"><svg class="ico"><use href="#i-lock"/></svg>SecOps<span class="badge" id="bdgSec" style="display:none"></span></button>

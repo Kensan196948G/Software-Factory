@@ -2409,6 +2409,7 @@ const SF = (function () {
     fc: '',
     open: null,
     dtab: 'sum',
+    reviewSel: null,
     pickDept: '',
     fresh: null,
     critUndo: {},
@@ -3261,6 +3262,219 @@ const SF = (function () {
     render();
     window.scrollTo({ top: 0 });
   }
+  /* ---- review（確認・承認）: 左の一覧と右端パネルを同時に見る（D-01/D-21） ---- */
+  /** 判断を待つ依頼。承認待ち → 内容確認中 → 受付 → 差戻し の順。 */
+  const REVIEW_ORDER = ['wait', 'review', 'received', 'back'];
+  function reviewPending() {
+    return S.data.items
+      .filter((r) => REVIEW_ORDER.includes(r.status))
+      .slice()
+      .sort(
+        (a, b) =>
+          REVIEW_ORDER.indexOf(a.status) - REVIEW_ORDER.indexOf(b.status) || SF.stayDays(b) - SF.stayDays(a),
+      );
+  }
+  function reviewLines(text, n) {
+    const a = String(text || '')
+      .split(/\r?\n/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+    return { shown: a.slice(0, n), more: Math.max(0, a.length - n) };
+  }
+  function reviewUL(text, n) {
+    const { shown, more } = reviewLines(text, n);
+    if (!shown.length) return '<span class="muted">－</span>';
+    return (
+      '<ul>' +
+      shown.map((x) => '<li>' + E(x) + '</li>').join('') +
+      '</ul>' +
+      (more ? '<div class="rp-more">ほか ' + more + ' 件</div>' : '')
+    );
+  }
+  function reviewRows(list) {
+    return list
+      .map((r) => {
+        const c = colorOf(r),
+          d = SF.deptOf(r.dept),
+          nx = SF.nextOf(r);
+        const on = r.id === S.reviewSel;
+        return (
+          '<button type="button" class="rrow' +
+          (on ? ' on' : '') +
+          '" data-id="' +
+          E(r.id) +
+          '" data-status="' +
+          E(r.status) +
+          '" aria-pressed="' +
+          (on ? 'true' : 'false') +
+          '">' +
+          '<span class="rt"><span class="no">' +
+          E(r.id) +
+          '</span><span>' +
+          E(SF.statusOf(r.status).l) +
+          '</span>' +
+          stay(r) +
+          '</span>' +
+          '<b>' +
+          E(r.title) +
+          '</b>' +
+          '<span class="rm">' +
+          sig(c) +
+          '<span>・' +
+          E(d ? d.short : '') +
+          '</span>' +
+          (nx ? '<span>・次は' + E(nextWho(r)) + '</span>' : '') +
+          '</span></button>'
+        );
+      })
+      .join('');
+  }
+  /** 受付チェックの札。長い説明は title に置き、パネルは高さを食わない。 */
+  const REVIEW_CHK = {
+    crit: '合格の条件',
+    out: '作らない',
+    data: '扱う情報',
+    party: '社外の範囲',
+    safety: '安全・品質',
+    red: '赤信号',
+  };
+  function reviewChecks(r) {
+    const pc = SF.precheck(r);
+    if (!pc.length) return '<span class="muted">－</span>';
+    return (
+      '<div class="rp-chk">' +
+      pc
+        .map((x) => {
+          const lab = REVIEW_CHK[x.k] || x.k;
+          return (
+            '<span class="' +
+            (x.lv === 'w' ? 'w' : 'ok') +
+            '" title="' +
+            E(x.t) +
+            '">' +
+            (x.lv === 'w' ? '△' : '✓') +
+            ' ' +
+            E(lab) +
+            '</span>'
+          );
+        })
+        .join('') +
+      '</div>'
+    );
+  }
+  function reviewPanel(r) {
+    if (!r) return '<div class="rp-empty">左の一覧から依頼を選んでください。</div>';
+    const c = colorOf(r),
+      d = SF.deptOf(r.dept),
+      nx = SF.nextOf(r),
+      turn = SF.turnOf(S.role, r, me().name);
+    const canNx = Boolean(nx && SF.canMoveR(S.role, r, nx, me().name));
+    const act = [];
+    if (r.status === 'wait' && SF.canMoveR(S.role, r, 'approved', me().name))
+      act.push(
+        '<button class="btn go" id="rvApprove" type="button">' + ico('i-check') + '承認する</button>',
+      );
+    else if (canNx)
+      act.push(
+        '<button class="btn go" id="rvNext" type="button">' +
+          ico('i-arrow') +
+          E(SF.statusOf(nx).l) +
+          'へ進める</button>',
+      );
+    if (r.status !== 'back' && SF.canMoveR(S.role, r, 'back', me().name))
+      act.push('<button class="btn" id="rvBack" type="button">' + ico('i-undo') + '差し戻す</button>');
+    const others = SF.STATUSES.filter((s) => s.k !== r.status && SF.canMoveR(S.role, r, s.k, me().name));
+    if (others.length) act.push('<button class="btn sm" id="rvStatus" type="button">状態を変更</button>');
+    act.push('<button class="btn sm" id="rvOpen" type="button">全文を開く</button>');
+    return (
+      '<div class="rp-head">' +
+      '<div class="rp-top">' +
+      st(r.status) +
+      sig(c) +
+      (r.signalFinal ? '' : '<span>候補</span>') +
+      stay(r) +
+      '<span class="no">' +
+      E(r.id) +
+      '</span></div>' +
+      '<h3>' +
+      E(r.title) +
+      '</h3>' +
+      '<div class="rp-meta"><span>' +
+      E(d ? d.name : '') +
+      '</span><span>・起票者 ' +
+      E(r.applicant || '－') +
+      '</span><span>・更新 ' +
+      E(SF.fmt(r.updatedAt)) +
+      '</span><span>・' +
+      SF.measure(r).hours +
+      'h/月</span></div>' +
+      '</div>' +
+      '<div class="rp-body">' +
+      '<div class="rp-sec"><h4>困りごと</h4><p class="rp-clamp">' +
+      E(String(r.problem || '－')) +
+      '</p></div>' +
+      '<div class="rp-sec"><h4>目的</h4><p class="rp-clamp">' +
+      E(String(r.purpose || '－')) +
+      '</p></div>' +
+      '<div class="rp-sec rp-two opt"><div><h4>作るもの</h4>' +
+      reviewUL(r.scope, 3) +
+      '</div><div><h4>作らない</h4>' +
+      reviewUL(r.outScope, 3) +
+      '</div></div>' +
+      '<div class="rp-sec"><h4>合格の条件</h4>' +
+      reviewUL((r.criteria || []).filter(Boolean).join('\n'), 4) +
+      '</div>' +
+      '<div class="rp-sec"><h4>受付チェック（自動）</h4>' +
+      reviewChecks(r) +
+      '</div>' +
+      (turn
+        ? '<p class="rp-who">あなたの番です: ' + E(turn) + '（いまの状態になってから ' + SF.stayDays(r) + ' 日）</p>'
+        : '<p class="rp-who">いまの役割（' + E(SF.roleShort(S.role)) + '）では進められません。次に動かすのは ' + E(nextWho(r) || '－') + ' です。</p>') +
+      '</div>' +
+      '<div class="rp-act">' +
+      act.join('') +
+      '</div>'
+    );
+  }
+  function renderReview() {
+    const list = reviewPending();
+    if (S.reviewSel && !list.some((r) => r.id === S.reviewSel)) S.reviewSel = null;
+    if (!S.reviewSel && list.length) S.reviewSel = list[0].id;
+    const r = list.find((x) => x.id === S.reviewSel) || null;
+    const loading = loadingNoData(list.length);
+    $('#view').innerHTML =
+      '<div class="btool"><h2 class="h2" style="margin:0">' +
+      ico('i-check') +
+      '確認・承認</h2><span class="muted" style="font-size:12.5px">判断を待つ依頼を左に並べ、右のパネルで確かめて、そのまま進める・承認する・差し戻す。押せるボタンは役割で変わります。</span></div>' +
+      '<div class="review">' +
+      '<div class="rlist" id="rlist" tabindex="0" aria-label="判断を待つ依頼の一覧">' +
+      '<div class="rhead"><b>判断を待つ依頼</b><em>' +
+      list.length +
+      ' 件</em></div>' +
+      (loading
+        ? '<div style="padding:20px">' + loadingNote('依頼を読み込んでいます') + '</div>'
+        : list.length
+          ? reviewRows(list)
+          : '<div style="padding:24px" class="muted">判断を待つ依頼はありません。</div>') +
+      '</div>' +
+      '<aside class="rpanel" id="rpanel" aria-label="依頼の要点と操作">' +
+      (loading ? '<div class="rp-empty">' + loadingNote('依頼を読み込んでいます') + '</div>' : reviewPanel(r)) +
+      '</aside>' +
+      '</div>';
+    $$('.rrow').forEach((b) =>
+      b.addEventListener('click', () => {
+        S.reviewSel = b.dataset.id;
+        renderReview();
+      }),
+    );
+    if (!r) return;
+    if ($('#rvApprove')) $('#rvApprove').addEventListener('click', () => openStatus(r, 'approved'));
+    if ($('#rvNext')) $('#rvNext').addEventListener('click', () => advance(r));
+    if ($('#rvBack')) $('#rvBack').addEventListener('click', () => openStatus(r, 'back'));
+    if ($('#rvStatus')) $('#rvStatus').addEventListener('click', () => openStatus(r));
+    if ($('#rvOpen')) $('#rvOpen').addEventListener('click', () => openDrawer(r.id));
+  }
+
   function render() {
     // 管理者でなくなった（別の端末で変更された等）ときは管理画面を残さない
     if (S.view === 'adminUsers' && !adminMenuAllowed()) S.view = 'home';
@@ -3286,11 +3500,19 @@ const SF = (function () {
     bs.textContent = nSec;
     bs.style.display = nSec ? 'grid' : 'none';
     bs.title = '期限切れの脆弱性と未確認の通知 ' + nSec + ' 件';
+    const br = $('#bdgReview');
+    if (br) {
+      const nRv = reviewPending().length;
+      br.textContent = nRv;
+      br.style.display = nRv ? 'grid' : 'none';
+      br.title = '判断を待つ依頼 ' + nRv + ' 件';
+    }
     ({
       home: renderHome,
       new: renderWizard,
       board: renderBoard,
       list: renderList,
+      review: renderReview,
       data: renderData,
       ops: renderOps,
       devops: renderDevops,
