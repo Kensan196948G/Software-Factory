@@ -1,6 +1,6 @@
 # Access ログアウト後の再ログイン不能（No Access cookie found）— 原因と修正（2026-11-11）
 
-作成: 2026-11-11 JST。対象: Staging `sf.mirai-dx-platform.com`（本番 `sf-prod.mirai-dx-platform.com` も同じ実装）。状態: **修正実装済み・Staging 配備待ち**。
+作成: 2026-11-11 JST。対象: Staging `sf.mirai-dx-platform.com`（本番 `sf-prod.mirai-dx-platform.com` も同じ実装）。状態: **修正実装済み・Staging／本番配備済み**（`ab771376`、2026-11-11 16:11 JST）。
 
 ## 1. 症状
 
@@ -46,8 +46,8 @@ https://<APP_BASE_URL のオリジン>/cdn-cgi/access/logout?returnTo=<アプリ
 
 - unit: `tests/unit/access-logout-url.test.ts` — アプリのドメイン・`returnTo`・password/http/不正値の 3 件が pass。
 - 画面のログアウト（password モード）: 既存 E2E の「ログアウトするとアプリのセッションが失効し、ログイン画面へ戻る」で従来どおり。
-- Staging 配備後: ブラウザでログアウト → `sf.mirai-dx-platform.com` のログアウト（Cookie あり）→ `returnTo` でアプリへ戻り、OTP ログイン画面になることを確認する（人間の OTP が必要）。
-- 本番は別承認で配備する。
+- Staging: 2026-11-11 15:49 配備。所有者が実機でログアウト→再ログインを確認し、**OK**。
+- 本番: 2026-11-11 16:11 配備（`ab771376`）。機械受入 14/14 PASS。
 
 ## 5. いま困っている場合の回避手順
 
