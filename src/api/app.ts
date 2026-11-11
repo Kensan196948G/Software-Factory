@@ -54,7 +54,7 @@ import {
   updateDraftItem,
   updateRequest,
 } from './service.js';
-import { getCatalogTools, listDepartments } from './repo.js';
+import { getCatalogTools, listDepartments, listMiraiEmployees } from './repo.js';
 import { deliverOutboxMail, deliverPendingMail, enqueueStallReminders, listOutbox, mailSummary } from './mail-outbox.js';
 import { verifyAuditChain, appendAudit } from './audit.js';
 import {
@@ -107,7 +107,10 @@ const LEGACY_APPROVERS = [
   { name: '松本 綾', email: 'matsumoto@example.com' },
 ];
 
-const managedRolesSchema = z.array(z.enum(['requester', 'desk', 'approver'])).min(1).max(3);
+const managedRolesSchema = z
+  .array(z.enum(['requester', 'desk', 'approver']))
+  .min(1)
+  .max(3);
 
 const adminUserCreateSchema = z.object({
   email: z.string().trim().email().max(200),
@@ -344,7 +347,10 @@ export async function buildApp(
     const master = directory.map((a) => ({ id: a.id, name: a.displayName, email: a.email }));
     const approvers = config.isProduction
       ? master
-      : [...master, ...LEGACY_APPROVERS.filter((legacy) => !master.some((m) => m.name === legacy.name || m.email === legacy.email))];
+      : [
+          ...master,
+          ...LEGACY_APPROVERS.filter((legacy) => !master.some((m) => m.name === legacy.name || m.email === legacy.email)),
+        ];
     return {
       appName: 'みらいSF 受付ステーション',
       version: config.appVersion,
@@ -564,15 +570,22 @@ export async function buildApp(
     return { items: await getCatalogTools({ dept: q.dept, signal: q.signal, q: q.q }) };
   });
 
+  app.get('/api/mirai/employees', async (req) => {
+    auth(req);
+    const q = req.query as { dept?: string };
+    return { items: await listMiraiEmployees(q.dept) };
+  });
+
   app.get('/api/catalog/summary', async (req) => {
     auth(req);
-    const departments = await listDepartments();
+    // 部署は Mirai-Info の 16。道具は「実在する道具」を重複なく数える（同じ道具を複数の部署に出しても1件）。
+    const [departments, tools] = await Promise.all([listDepartments(), getCatalogTools({})]);
     return {
       departments: departments.length,
-      tools: departments.reduce((sum, d) => sum + d.toolCount, 0),
-      g: departments.reduce((sum, d) => sum + d.g, 0),
-      y: departments.reduce((sum, d) => sum + d.y, 0),
-      r: departments.reduce((sum, d) => sum + d.r, 0),
+      tools: tools.length,
+      g: tools.filter((t) => t.signal === 'g').length,
+      y: tools.filter((t) => t.signal === 'y').length,
+      r: tools.filter((t) => t.signal === 'r').length,
     };
   });
 
@@ -820,6 +833,8 @@ export async function buildApp(
       drafts: data.drafts,
       ops: data.ops,
       catalog: data.catalog,
+      // 画面の「操作する人」に出す、Mirai-Info の社員名（役割ごとに1人）
+      actors: data.actors,
       // 画面のログアウトはアプリと Cloudflare Access の両方を終える（Access の Cookie が残ると自動ログインする）
       auth: { mode: config.authMode, logoutUrl: accessLogoutUrl(config) },
       // Authenticated boot only; never fall back to the prototype's sample approvers.

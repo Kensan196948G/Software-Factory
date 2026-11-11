@@ -5,13 +5,13 @@ import { ApiError, Errors } from './http.js';
 import { appendAudit } from './audit.js';
 import {
   getCatalogSignals,
-  getCatalogTools,
   getDepartmentName,
+  getMiraiActors,
   getRecentHistory,
   getRequestRow,
   getRequestRowForUpdate,
+  listBootCatalog,
   listComments,
-  listDepartments,
   listHistory,
   listRequests,
   mapRequest,
@@ -398,6 +398,8 @@ export async function createRequest(
 
     // マスタの検証は照合の後。作成の後にマスタが変わっても、同じキーの再送は作成済みの依頼を返す
     // トランザクションの接続で読む（別の接続を待つと、同時の作成で接続プールが詰まる）
+    // 画面は Mirai-Info の部署（selectable）だけを出す。API は旧クライアント・取り込みの互換のため
+    // 旧・機能別の部署コードも受け付ける（同期スクリプトが次の実行で新しい部署へ移す）。
     const dept = await client.query('select 1 from department where code = $1', [input.deptCode]);
     if (!dept.rows[0]) throw Errors.notAllowedValue('deptCode');
     if (input.toolId) {
@@ -1100,6 +1102,7 @@ export async function getBootData(userId: string): Promise<{
   drafts: DraftView[];
   ops: unknown;
   catalog: { departments: unknown[]; tools: unknown[] };
+  actors: unknown;
 }> {
   const { rows } = await listRequests({ limit: 5000 });
   const items = [];
@@ -1115,14 +1118,15 @@ export async function getBootData(userId: string): Promise<{
   const drafts = await listDrafts(userId);
   const ops = await getOpsState();
   // 画面のカタログ（部署・道具）はサーバの正本を起動データに含める。
-  // 画面が持つ見本の一覧と食い違うと、部署コードの検証で依頼を作れないため。
-  const [departments, tools] = await Promise.all([listDepartments(), getCatalogTools({})]);
+  // 部署は Mirai-Info の division に合わせた selectable の 16 部署。
+  const [catalog, actors] = await Promise.all([listBootCatalog(), getMiraiActors()]);
   return {
     seq,
     items,
     drafts: drafts.items,
     ops: ops ? { data: ops.data, version: ops.version } : null,
-    catalog: { departments, tools },
+    catalog: { departments: catalog.departments, tools: catalog.tools },
+    actors,
   };
 }
 

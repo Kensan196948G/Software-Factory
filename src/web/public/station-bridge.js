@@ -30,6 +30,8 @@
   // 画面のカタログ（部署・道具）はサーバの正本を使う。station.js はこの値で CATALOG を組み立てる。
   window.__SF_CATALOG__ =
     boot.catalog && Array.isArray(boot.catalog.departments) && boot.catalog.departments.length ? boot.catalog : null;
+  // 「操作する人」に出す Mirai-Info の社員名（役割ごとに1人）
+  window.__SF_ACTORS__ = boot.actors && typeof boot.actors === 'object' ? boot.actors : null;
 
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const approverState = (() => {
@@ -119,6 +121,8 @@
   }
   function toolIdOf(toolRef) {
     if (!toolRef) return null;
+    // 新しい画面は道具IDそのもの（例: kaijo-01）を持つ。旧画面の `部署|番号` も受け付ける。
+    if (/^[a-z][a-z0-9]*-\d{2}$/.test(String(toolRef))) return String(toolRef);
     const m = /^([a-z]+)\|(\d+)$/.exec(String(toolRef));
     return m ? `${m[1]}-${String(Number(m[2]) + 1).padStart(2, '0')}` : null;
   }
