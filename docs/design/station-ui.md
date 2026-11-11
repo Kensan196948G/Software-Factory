@@ -38,6 +38,7 @@
 | 部署・道具 | 起動データの `catalog`（`listDepartments()` / `getCatalogTools()`） |
 | 依頼の履歴 | 起動データの `items[].history`（`request_history`） |
 | 監査（設定・DevOps・SecOps の操作） | 端末（localStorage）。画面の見本と同時に保持 |
+| 監査（ログイン・役割変更・設定保存など） | `GET /api/audit-logs`（管理者）。依頼の履歴と重ならない種類だけを画面の区分に統合 |
 | 開発ライン・デプロイ・脆弱性・通知・権限・ゲート | 端末（localStorage）。見本 |
 
 - 依頼の同期は既存ブリッジの方式をそのまま使う: 端末の写しとサーバの差分を取り、

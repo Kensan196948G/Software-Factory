@@ -619,7 +619,7 @@ function updPane(){
  if(S.view==='devops'){box.innerHTML=devPane();fitPane(box);return}
  if(S.view==='secops'){box.innerHTML=secPane();fitPane(box);return}
  if(S.view==='settings'){box.innerHTML=setPane();fitPane(box);return}
- if(S.view==='log'&&String(S.sel.log||'').indexOf('A:')===0){const a=S.data.audit.find(x=>'A:'+x.id===S.sel.log);box.innerHTML=a?auditPane(a):emptyBox('audit','記録を選ぶと、ここに中身が出ます');fitPane(box);return}
+ if(S.view==='log'&&String(S.sel.log||'').indexOf('A:')===0){const a=S.data.audit.find(x=>'A:'+x.id===S.sel.log)||ra.find(x=>'A:'+x.id===S.sel.log);box.innerHTML=a?auditPane(a):emptyBox('audit','記録を選ぶと、ここに中身が出ます');fitPane(box);return}
  const r=find(S.sel[S.view]);
  box.innerHTML=r?paneDetail(r,false):emptyBox(S.view==='review'?'check':'inbox',S.view==='review'?'確認・承認を待っている依頼はありません':'依頼を選ぶと、ここに要点が1ページで表示されます');
  fitPane(box);
@@ -631,6 +631,26 @@ function showDetail(id,tab){
  else openDrawer(id,tab);
 }
 function refreshDetail(){if(S.open)renderDrawer();else if(DOCK.includes(S.view))updPane()}
+
+/* ---------- サーバの監査ログ（実行時のみ。依頼の履歴と重ならない種類だけ） ---------- */
+let ra=[],raLoaded=false;
+const RA_AREA={session:'auth',mail_outbox:'settings',ops_state:'settings',job:'devops',release:'devops'};
+const RA_ACT={'session.login':'ログイン','session.login_failed':'ログイン失敗','session.role_switch':'役割を切り替え','ops.save':'設定を保存','mail.enqueue':'メールを送信待ち','mail.sent':'メールを送信','mail.reminder':'リマインダー'};
+function serverAudit(){
+ if(!window.__MSF__||raLoaded)return;raLoaded=true;
+ window.__MSF__.api('GET','/api/audit-logs?limit=300').then(res=>{
+  const items=(res&&Array.isArray(res.items))?res.items:[];
+  ra=items.filter(a=>a&&a.targetType!=='request').map(a=>({
+   id:'SRV-'+a.id,at:a.at,by:a.actor||'',role:rl0(a.role)||a.role||'',
+   area:RA_AREA[a.targetType]||'settings',
+   action:RA_ACT[a.action]||a.action,
+   note:(a.result&&a.result!=='success')?a.result:'',
+   ref:a.targetId||''
+  }));
+  ra.sort((a,b)=>a.at<b.at?1:-1);
+  if(S.view==='log'){if(AFTER.log)AFTER.log();if(String(S.sel.log||'').indexOf('A:')===0)updPane()}
+ }).catch(()=>{raLoaded=false});
+}
 
 /* ===================== ナビ ===================== */
 const NAV=[['dash','ダッシュボード','dash'],['new','新しい依頼','plus'],['review','確認・承認','stamp'],['board','ボード','board'],['list','一覧','list'],['catalog','道具カタログ','grid'],['sep','運用'],['devops','DevOps','code'],['secops','SecOps','shield'],['sep','管理'],['log','監査ログ','audit'],['settings','システム設定','gear']];
@@ -927,7 +947,7 @@ AFTER.catalog=updCatalog;
 
 /* ---------- 監査ログ ---------- */
 const LOGK=[['','すべて','list'],['req','依頼','inbox'],['devops','DevOps','code'],['secops','SecOps','shield'],['settings','設定','gear'],['auth','ログイン','user']];
-function logValid(k){if(!k)return false;if(String(k).indexOf('A:')===0)return S.data.audit.some(a=>'A:'+a.id===k);return !!find(k)}
+function logValid(k){if(!k)return false;if(String(k).indexOf('A:')===0)return S.data.audit.some(a=>'A:'+a.id===k)||ra.some(a=>'A:'+a.id===k);return !!find(k)}
 V.log=function(){
  if(!logValid(S.sel.log)){const a=logRows();if(a[0]){S.sel.log=a[0].key;if(a[0].k==='req')S.dtab='log'}}
  return `${pageHead('audit','監査ログ','依頼の受付・状態の変更・編集に加えて、DevOps・SecOps の操作、システム設定の変更、ログイン・ログアウトを新しい順にすべて記録します。行を押すと、右端のパネルに中身が1ページで出ます。','n')}
@@ -939,6 +959,7 @@ function logRows(){
  const ev=[];
  S.data.items.forEach(r=>(r.history||[]).forEach(x=>ev.push({k:'req',r,x,key:r.id})));
  (S.data.audit||[]).forEach(a=>ev.push({k:a.area,a,x:a,r:find(a.ref)||null,key:'A:'+a.id}));
+ ra.forEach(a=>ev.push({k:a.area,a,x:a,r:find(a.ref)||null,key:'A:'+a.id}));
  ev.sort((a,b)=>a.x.at<b.x.at?1:a.x.at>b.x.at?-1:0);
  const q=S.logq.trim().toLowerCase(),kk=S.logk;
  return ev.filter(e=>(!kk||e.k===kk)&&(!q||[e.x.by,e.x.role,e.x.action,e.x.note,e.r?e.r.id:'',e.r?e.r.title:'',e.a?e.a.ref:'',e.a?refLabel(e.a.ref):'',(AREA[e.k]||AREA.req)[0]].join(' ').toLowerCase().includes(q)));
@@ -1871,6 +1892,7 @@ if(window.__MSF__&&Array.isArray(window.__MSF__.approvers)&&window.__MSF__.appro
 }
 CFGX=S.cfg;normData(S.data);applyMotion();applyOrg();
 render();save(S.data);
+if(window.__MSF__)setTimeout(serverAudit,600);
 {const s0=sessGet();if(s0&&s0.out){authSel=ROLES.some(r=>r.k===s0.role)?s0.role:'requester';S.role=authSel;showAuth(s0.at)}}
 if(S.cfg.startLogin&&!authOpen())showAuth('');
 window.addEventListener('storage',e=>{if(e.key!==SKEY)return;const s1=sessGet();if(s1&&s1.out&&!authOpen())endSession(s1.at)});

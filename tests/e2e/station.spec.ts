@@ -177,11 +177,14 @@ test.describe('ステーション画面', () => {
     await expect(page.locator('#catleft')).toContainText('検索結果');
   });
 
-  test('監査ログに依頼の履歴が出る', async ({ page }) => {
+  test('監査ログに依頼の履歴とサーバの記録が出る', async ({ page }) => {
     await gotoTab(page, 'log');
     await expect(page.locator('#main')).toContainText('監査ログ');
     await expect(page.locator('#logtb tr')).not.toHaveCount(0);
     await expect(page.locator('#main')).toContainText('依頼');
+    // サーバの監査（ログイン・設定など）も区分から見られる
+    await page.click('#main [data-a="logk"][data-v="auth"]');
+    await expect(page.locator('#logtb')).toContainText('ログイン');
   });
 
   test('システム設定の承認者タブにサーバの承認者が出る', async ({ page }) => {
