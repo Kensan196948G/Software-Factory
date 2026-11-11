@@ -148,11 +148,24 @@ export function isAccessJwtEnabled(cfg: Pick<AppConfig, 'authMode' | 'accessTeam
 /**
  * Cloudflare Access のログアウト URL。アプリのセッションだけ消しても Access の Cookie が残ると
  * 次のリクエストで同じ利用者として自動ログインしてしまうため、画面のログアウトは両方を終える。
+ *
+ * ログアウトは **アプリのドメイン**（`<app>/cdn-cgi/access/logout`）で行う。チームドメインの
+ * `/cdn-cgi/access/logout` は、そのドメインの Cookie を持たないブラウザでは
+ * 「No Access cookie found. Please login first.」のエラー面になり、アプリ側の Cookie も残る
+ * （2026-11-11 に staging で実測）。`returnTo` でアプリのルートへ戻し、次のログイン（OTP）へ繋ぐ。
+ *
  * AUTH_MODE=password では null（アプリのログイン画面へ戻す）。
  */
-export function accessLogoutUrl(cfg: Pick<AppConfig, 'authMode' | 'accessTeamDomain'>): string | null {
-  if (cfg.authMode !== 'access' || !cfg.accessTeamDomain) return null;
-  return `${cfg.accessTeamDomain.replace(/\/+$/, '')}/cdn-cgi/access/logout`;
+export function accessLogoutUrl(cfg: Pick<AppConfig, 'authMode' | 'appBaseUrl'>): string | null {
+  if (cfg.authMode !== 'access') return null;
+  try {
+    const base = new URL(cfg.appBaseUrl);
+    if (base.protocol !== 'https:') return null;
+    const returnTo = encodeURIComponent(base.origin + '/');
+    return `${base.origin}/cdn-cgi/access/logout?returnTo=${returnTo}`;
+  } catch {
+    return null;
+  }
 }
 
 /**
