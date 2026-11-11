@@ -194,6 +194,18 @@ test.describe('ステーション画面', () => {
     await expect(page.locator('#rin')).toContainText('サーバの利用者管理');
   });
 
+  test('システム設定で利用者を確認できる', async ({ page }) => {
+    await gotoTab(page, 'settings');
+    await page.click('#setleft .li[data-v="users"]');
+    await expect(page.locator('#rin')).toContainText('利用者を追加');
+    await expect(page.locator('#rin')).toContainText('管理者');
+    await page.click('#rin [data-a="uAdd"]');
+    await expect(page.locator('#modal.open')).toBeVisible();
+    await expect(page.locator('#modal #uEmail')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#modal.open')).toHaveCount(0);
+  });
+
   test('ボードから状態変更のダイアログを開ける', async ({ page }) => {
     await gotoTab(page, 'board');
     const card = page.locator('#work .kc').first();
