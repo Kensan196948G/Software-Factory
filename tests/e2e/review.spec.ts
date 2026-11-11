@@ -154,6 +154,17 @@ test('確認・承認: 判断待ちを左に並べ、右パネルで確かめて
   await expect(page.locator('#rvApprove')).toHaveCount(0);
   await expect(page.locator('#rvNext')).toHaveCount(0);
 
+  // 承認者は「受付」も動かせる。ボタンがあるのに「進められません」と書かない。
+  await setRole(page, 'requester');
+  const title2 = `確認承認 受付 ${Date.now()}`;
+  await createRequest(page, title2);
+  await setRole(page, 'approver');
+  await gotoView(page, 'review');
+  await rows.filter({ hasText: title2 }).click();
+  await expect(page.locator('#rvNext')).toBeVisible();
+  await expect(page.locator('#rpanel')).not.toContainText('では進められません');
+  await expect(page.locator('.rp-who')).toContainText('次に動かすのは 受付担当 です');
+
   // 右端パネルはスクロールせず、ページも横にはみ出さない。
   const fit = await page.evaluate(() => {
     const body = document.querySelector('.rp-body') as HTMLElement | null;
