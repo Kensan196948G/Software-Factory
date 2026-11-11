@@ -3368,9 +3368,16 @@ const SF = (function () {
       d = SF.deptOf(r.dept),
       nx = SF.nextOf(r),
       turn = SF.turnOf(S.role, r, me().name);
+    const canApprove = r.status === 'wait' && SF.canMoveR(S.role, r, 'approved', me().name);
     const canNx = Boolean(nx && SF.canMoveR(S.role, r, nx, me().name));
+    const canBack = r.status !== 'back' && SF.canMoveR(S.role, r, 'back', me().name);
+    const others = SF.STATUSES.filter((s) => s.k !== r.status && SF.canMoveR(S.role, r, s.k, me().name));
+    const canStatus = others.length > 0;
+    // 押せる操作があるか。承認者は「自分の番」でなくても状態を動かせるため、
+    // 「進められません」と書いてボタンを並べる、という食い違いを避ける。
+    const actable = canApprove || canNx || canBack || canStatus;
     const act = [];
-    if (r.status === 'wait' && SF.canMoveR(S.role, r, 'approved', me().name))
+    if (canApprove)
       act.push(
         '<button class="btn go" id="rvApprove" type="button">' + ico('i-check') + '承認する</button>',
       );
@@ -3381,10 +3388,8 @@ const SF = (function () {
           E(SF.statusOf(nx).l) +
           'へ進める</button>',
       );
-    if (r.status !== 'back' && SF.canMoveR(S.role, r, 'back', me().name))
-      act.push('<button class="btn" id="rvBack" type="button">' + ico('i-undo') + '差し戻す</button>');
-    const others = SF.STATUSES.filter((s) => s.k !== r.status && SF.canMoveR(S.role, r, s.k, me().name));
-    if (others.length) act.push('<button class="btn sm" id="rvStatus" type="button">状態を変更</button>');
+    if (canBack) act.push('<button class="btn" id="rvBack" type="button">' + ico('i-undo') + '差し戻す</button>');
+    if (canStatus) act.push('<button class="btn sm" id="rvStatus" type="button">状態を変更</button>');
     act.push('<button class="btn sm" id="rvOpen" type="button">全文を開く</button>');
     return (
       '<div class="rp-head">' +
@@ -3429,7 +3434,9 @@ const SF = (function () {
       '</div>' +
       (turn
         ? '<p class="rp-who">あなたの番です: ' + E(turn) + '（いまの状態になってから ' + SF.stayDays(r) + ' 日）</p>'
-        : '<p class="rp-who">いまの役割（' + E(SF.roleShort(S.role)) + '）では進められません。次に動かすのは ' + E(nextWho(r) || '－') + ' です。</p>') +
+        : actable
+          ? '<p class="rp-who">次に動かすのは ' + E(nextWho(r) || '－') + ' です。</p>'
+          : '<p class="rp-who">いまの役割（' + E(SF.roleShort(S.role)) + '）では進められません。次に動かすのは ' + E(nextWho(r) || '－') + ' です。</p>') +
       '</div>' +
       '<div class="rp-act">' +
       act.join('') +
