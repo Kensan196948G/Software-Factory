@@ -19,7 +19,8 @@ import { resolve } from 'node:path';
 import pg from 'pg';
 
 const { Client } = pg;
-const MIRAI_URL = process.env.MIRAI_INFO_DATABASE_URL || 'postgresql:///mirai_info';
+const MIRAI_URL =
+  process.env.MIRAI_INFO_DATABASE_URL || 'postgresql:///mirai_info?host=/var/run/postgresql';
 const SF_URL = process.env.DATABASE_URL;
 if (!SF_URL) {
   console.error('DATABASE_URL がありません（SF の DB を指定してください）');
