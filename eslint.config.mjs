@@ -14,6 +14,8 @@ export default tseslint.config(
       'playwright-report/**',
       'test-results/**',
       'src/web/public/console.js',
+      // プロトタイプ（docs/design）を正として移植した画面コード。整形・Lintの対象外
+      'src/web/public/station.js',
     ],
   },
   ...tseslint.configs.recommended,
