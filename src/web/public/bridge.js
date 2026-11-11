@@ -993,12 +993,22 @@
   else setTimeout(seedOpsIfNeeded, 800);
 
   // Cloudflare Access のログアウト URL（サーバが起動データへ入れる）。形が違う値は使わない。
+  // 既定はアプリのドメイン（`/cdn-cgi/access/logout`）。チームドメインの URL は互換のため受け付ける。
+  // returnTo は同じアプリの https URL だけを許可し、外部への転送を避ける。
   const logoutUrl = (() => {
     const raw = boot.auth && typeof boot.auth.logoutUrl === 'string' ? boot.auth.logoutUrl : '';
     try {
       const u = new URL(raw);
-      if (u.protocol !== 'https:' || !/\.cloudflareaccess\.com$/.test(u.hostname)) return null;
-      if (u.pathname !== '/cdn-cgi/access/logout') return null;
+      if (u.protocol !== 'https:' || u.pathname !== '/cdn-cgi/access/logout') return null;
+      const sameOrigin = u.hostname === location.hostname;
+      const teamDomain = /\.cloudflareaccess\.com$/.test(u.hostname);
+      if (!sameOrigin && !teamDomain) return null;
+      const back = u.searchParams.get('returnTo');
+      if (back) {
+        const b = new URL(back);
+        if (b.protocol !== 'https:' || b.hostname !== location.hostname) return null;
+        return u.origin + u.pathname + u.search;
+      }
       return u.origin + u.pathname;
     } catch {
       return null;
