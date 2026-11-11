@@ -58,6 +58,7 @@
 | --- | --- | --- |
 | E2E | `tests/e2e/review.spec.ts`（新規）: 一覧順序、バッジ件数、行選択でパネル切替（ドロワーを開かない）、受付→内容確認中→承認待ちの遷移、承認者の承認ダイアログ（受付チェック・承認済みが選択）、依頼者に操作が出ないこと、パネルの非スクロール・横溢れなし | ローカル実サーバ（使い捨て DB）で **1 passed** |
 | a11y | `tests/browser/a11y.spec.ts` に「確認・承認（右端パネル）」を追加（axe-core serious/critical） | **6 passed**（既存5＋新規1） |
+| unit | `tests/unit/review-ui-wiring.test.ts`（新規）: ナビ・描画マップ・一覧順の定義への配線を固定（中身は E2E/a11y で確認） | **1 passed** |
 | typecheck / lint | `pnpm typecheck` / `eslint` | pass |
 
 ### TC への影響（品質工作台）
