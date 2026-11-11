@@ -279,6 +279,16 @@ test.describe('主要画面のアクセシビリティ（axe-core serious/critic
     await expectNoSeriousViolations(page, 'console-home');
   });
 
+  test('確認・承認（右端パネル）', async ({ page }) => {
+    await mount(page, { item: request({ status: 'wait' }) });
+    await page.goto('http://approver.test/');
+    await page.locator('button[data-v="home"]').waitFor();
+    await page.locator('button[data-v="review"]').click();
+    await page.locator('#rpanel').waitFor();
+    await settle(page);
+    await expectNoSeriousViolations(page, 'review');
+  });
+
   test('依頼詳細（ドロワー）', async ({ page }) => {
     await mount(page, { item: request() });
     await page.goto('http://approver.test/');
