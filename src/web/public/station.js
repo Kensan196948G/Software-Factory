@@ -2000,6 +2000,8 @@ document.addEventListener('change',e=>{
   if(t.dataset.bind==='dept'){
    const list=empOf(t.value);
    if(list&&list.length&&!list.some(e=>e.name===S.draft.applicant))S.draft.applicant=list[0].name;
+   // 起票者の選択肢もその部署の名簿に差し替える
+   renderStepBody();return;
   }
   updPreview();return;
  }

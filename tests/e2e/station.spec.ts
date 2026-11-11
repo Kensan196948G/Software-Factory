@@ -227,6 +227,49 @@ test.describe('ステーション画面', () => {
     expect(names).toEqual(expect.arrayContaining(expected.slice(0, 3)));
   });
 
+  test('部署を変えると起票者がその部署の社員になる', async ({ page }) => {
+    const people = await roster(page);
+    await page.click('#nav a[data-v="new"]');
+    await page.waitForSelector('#stepBody');
+    await page.click('#pane [data-a="next"]');
+    await page.waitForTimeout(400);
+    await page.selectOption('#stepBody select[data-bind="dept"]', 'osaka');
+    await page.waitForTimeout(400);
+    const applicant = page.locator('#stepBody select[data-bind="applicant"]');
+    await expect(applicant).toBeVisible();
+    const names = await applicant.locator('option').allInnerTexts();
+    const expected = people
+      .filter((p) => p.divisionCode === 'osaka')
+      .map((p) => (p.section ? `${p.name}（${p.section}）` : p.name));
+    expect(expected.length).toBeGreaterThan(0);
+    expect(names).toEqual(expect.arrayContaining(expected.slice(0, 2)));
+    const value = await applicant.inputValue();
+    expect(expected.some((n) => n === value || n.startsWith(`${value}（`))).toBe(true);
+  });
+
+  test('役割を変えると表示の社員名と部署が変わる', async ({ page }) => {
+    const people = await roster(page);
+    const options = await page.locator('#role option').allInnerTexts();
+    expect(options).toHaveLength(3);
+    await page.selectOption('#role', 'approver');
+    await page.waitForTimeout(400);
+    const avatarName = await page.locator('#actorav .av').getAttribute('title');
+    expect(people.some((p) => p.name === avatarName)).toBe(true);
+    const selected = await page.locator('#role').inputValue();
+    expect(selected).toBe('approver');
+    const label = await page.locator('#role option:checked').innerText();
+    expect(label).toMatch(/（.+）$/);
+    await page.selectOption('#role', 'requester');
+  });
+
+  test('カタログで部署を選ぶと、その部署の道具が出る', async ({ page }) => {
+    await gotoTab(page, 'catalog');
+    await page.click('#catleft .li[data-v="tokyo"]');
+    await expect(page.locator('#rin')).toContainText('東京支店');
+    await expect(page.locator('#rin')).toContainText('工事写真');
+    await expect(page.locator('#rin')).toContainText('入札');
+  });
+
   test('一覧の起票者と部署が Mirai-Info に合う', async ({ page }) => {
     const people = await roster(page);
     const depts = await departmentNames(page);
