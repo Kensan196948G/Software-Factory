@@ -10,6 +10,9 @@ pnpm-lock.yaml
 docs/DocsArchieves/
 docs/patches/
 docs/assets/
+# プロトタイプ（docs/design）を正として移植した画面コードは、原型との差分を保つため整形しない
+src/web/public/station.css
+src/web/public/station.js
 offline-Application/
 db/seed/
 

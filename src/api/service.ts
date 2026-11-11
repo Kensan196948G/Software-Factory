@@ -5,11 +5,13 @@ import { ApiError, Errors } from './http.js';
 import { appendAudit } from './audit.js';
 import {
   getCatalogSignals,
+  getCatalogTools,
   getDepartmentName,
   getRecentHistory,
   getRequestRow,
   getRequestRowForUpdate,
   listComments,
+  listDepartments,
   listHistory,
   listRequests,
   mapRequest,
@@ -1092,7 +1094,13 @@ export async function saveOpsState(
 }
 
 /** 画面起動用のデータ（履歴・コメントを含む）。監査ログには記録しない。 */
-export async function getBootData(userId: string): Promise<{ seq: number; items: unknown[]; drafts: DraftView[]; ops: unknown }> {
+export async function getBootData(userId: string): Promise<{
+  seq: number;
+  items: unknown[];
+  drafts: DraftView[];
+  ops: unknown;
+  catalog: { departments: unknown[]; tools: unknown[] };
+}> {
   const { rows } = await listRequests({ limit: 5000 });
   const items = [];
   for (const row of rows) {
@@ -1106,11 +1114,15 @@ export async function getBootData(userId: string): Promise<{ seq: number; items:
   const seq = rows.reduce((max, r) => Math.max(max, r.seq), 0);
   const drafts = await listDrafts(userId);
   const ops = await getOpsState();
+  // 画面のカタログ（部署・道具）はサーバの正本を起動データに含める。
+  // 画面が持つ見本の一覧と食い違うと、部署コードの検証で依頼を作れないため。
+  const [departments, tools] = await Promise.all([listDepartments(), getCatalogTools({})]);
   return {
     seq,
     items,
     drafts: drafts.items,
     ops: ops ? { data: ops.data, version: ops.version } : null,
+    catalog: { departments, tools },
   };
 }
 

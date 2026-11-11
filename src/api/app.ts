@@ -819,6 +819,7 @@ export async function buildApp(
       items: data.items,
       drafts: data.drafts,
       ops: data.ops,
+      catalog: data.catalog,
       // 画面のログアウトはアプリと Cloudflare Access の両方を終える（Access の Cookie が残ると自動ログインする）
       auth: { mode: config.authMode, logoutUrl: accessLogoutUrl(config) },
       // Authenticated boot only; never fall back to the prototype's sample approvers.
