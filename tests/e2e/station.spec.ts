@@ -79,11 +79,27 @@ async function serverStatus(page: Page, id: string): Promise<string> {
   }, id);
 }
 
+async function roster(page: Page): Promise<{ name: string; divisionCode: string; section: string }[]> {
+  return page.evaluate(async () => {
+    const res = await fetch('/api/mirai/employees');
+    const json = await res.json();
+    return json.items || [];
+  });
+}
+
+async function departmentNames(page: Page): Promise<{ code: string; name: string; shortName: string }[]> {
+  return page.evaluate(async () => {
+    const res = await fetch('/api/catalog/departments');
+    const json = await res.json();
+    return json.items || [];
+  });
+}
+
 async function serverSignal(page: Page, id: string): Promise<string> {
   return page.evaluate(async (rid) => {
     const res = await fetch('/api/requests/' + encodeURIComponent(rid));
     const json = await res.json();
-    return json.request ? (json.request.signalDecided || '') : '';
+    return json.request ? json.request.signalDecided || '' : '';
   }, id);
 }
 
@@ -168,13 +184,108 @@ test.describe('ステーション画面', () => {
     }
   });
 
-  test('道具カタログがサーバの部署を表示する', async ({ page }) => {
+  test('道具カタログが Mirai-Info の16部署を表示する', async ({ page }) => {
     await gotoTab(page, 'catalog');
     await expect(page.locator('#main')).toContainText('道具カタログ');
     const depts = await page.locator('#catleft .li[data-v]').count();
-    expect(depts).toBeGreaterThan(0);
+    expect(depts).toBe(16);
+    await expect(page.locator('#catleft')).toContainText('東京');
+    await expect(page.locator('#catleft')).toContainText('管理');
     await page.fill('#main [data-flt="catq"]', '写真');
     await expect(page.locator('#catleft')).toContainText('検索結果');
+  });
+
+  test('ログイン表示に Mirai-Info の社員名と部署が出る', async ({ page }) => {
+    const people = await roster(page);
+    expect(people.length).toBeGreaterThan(0);
+    const options = await page.locator('#role option').allInnerTexts();
+    expect(options).toHaveLength(3);
+    for (const option of options) expect(option).toMatch(/（.+）$/);
+    const avatarName = await page.locator('#actorav .av').getAttribute('title');
+    expect(avatarName).toBeTruthy();
+    expect(people.some((p) => p.name === avatarName)).toBe(true);
+  });
+
+  test('新しい依頼の部署と起票者が Mirai-Info に合う', async ({ page }) => {
+    const people = await roster(page);
+    await page.click('#nav a[data-v="new"]');
+    await page.waitForSelector('#stepBody');
+    await page.click('#pane [data-a="next"]');
+    await page.waitForTimeout(500);
+    const depts = await page.locator('#stepBody select[data-bind="dept"] option').allInnerTexts();
+    expect(depts).toHaveLength(16);
+    expect(depts).toEqual(expect.arrayContaining(['東京支店', '大阪支店', '管理本部', '技術本部']));
+    const selectedDept = await page.locator('#stepBody select[data-bind="dept"]').inputValue();
+    const applicant = page.locator('#stepBody select[data-bind="applicant"]');
+    await expect(applicant).toBeVisible();
+    const names = await applicant.locator('option').allInnerTexts();
+    expect(names.length).toBeGreaterThan(0);
+    // その部署の社員名簿と一致する（課名の注記は除いて比べる）
+    const expected = people
+      .filter((p) => p.divisionCode === selectedDept)
+      .map((p) => (p.section ? `${p.name}（${p.section}）` : p.name));
+    expect(names).toEqual(expect.arrayContaining(expected.slice(0, 3)));
+  });
+
+  test('部署を変えると起票者がその部署の社員になる', async ({ page }) => {
+    const people = await roster(page);
+    await page.click('#nav a[data-v="new"]');
+    await page.waitForSelector('#stepBody');
+    await page.click('#pane [data-a="next"]');
+    await page.waitForTimeout(400);
+    await page.selectOption('#stepBody select[data-bind="dept"]', 'osaka');
+    await page.waitForTimeout(400);
+    const applicant = page.locator('#stepBody select[data-bind="applicant"]');
+    await expect(applicant).toBeVisible();
+    const names = await applicant.locator('option').allInnerTexts();
+    const expected = people
+      .filter((p) => p.divisionCode === 'osaka')
+      .map((p) => (p.section ? `${p.name}（${p.section}）` : p.name));
+    expect(expected.length).toBeGreaterThan(0);
+    expect(names).toEqual(expect.arrayContaining(expected.slice(0, 2)));
+    const value = await applicant.inputValue();
+    expect(expected.some((n) => n === value || n.startsWith(`${value}（`))).toBe(true);
+  });
+
+  test('役割を変えると表示の社員名と部署が変わる', async ({ page }) => {
+    const people = await roster(page);
+    const options = await page.locator('#role option').allInnerTexts();
+    expect(options).toHaveLength(3);
+    await page.selectOption('#role', 'approver');
+    await page.waitForTimeout(400);
+    const avatarName = await page.locator('#actorav .av').getAttribute('title');
+    expect(people.some((p) => p.name === avatarName)).toBe(true);
+    const selected = await page.locator('#role').inputValue();
+    expect(selected).toBe('approver');
+    const label = await page.locator('#role option:checked').innerText();
+    expect(label).toMatch(/（.+）$/);
+    await page.selectOption('#role', 'requester');
+  });
+
+  test('カタログで部署を選ぶと、その部署の道具が出る', async ({ page }) => {
+    await gotoTab(page, 'catalog');
+    await page.click('#catleft .li[data-v="tokyo"]');
+    await expect(page.locator('#rin')).toContainText('東京支店');
+    await expect(page.locator('#rin')).toContainText('工事写真');
+    await expect(page.locator('#rin')).toContainText('入札');
+  });
+
+  test('一覧の起票者と部署が Mirai-Info に合う', async ({ page }) => {
+    const people = await roster(page);
+    const depts = await departmentNames(page);
+    const names = new Set(people.map((p) => p.name));
+    const shortNames = new Set(depts.map((d) => d.shortName));
+    await gotoTab(page, 'list');
+    const rows = page.locator('#ltb tr');
+    const count = await rows.count();
+    expect(count).toBeGreaterThan(0);
+    for (let i = 0; i < Math.min(count, 5); i += 1) {
+      const cells = rows.nth(i).locator('td');
+      const applicant = await cells.nth(3).innerText();
+      const dept = (await cells.nth(2).innerText()).trim();
+      expect([...names].some((n) => applicant.includes(n))).toBe(true);
+      expect([...shortNames].some((n) => dept.includes(n))).toBe(true);
+    }
   });
 
   test('監査ログに依頼の履歴とサーバの記録が出る', async ({ page }) => {

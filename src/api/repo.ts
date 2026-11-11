@@ -281,13 +281,17 @@ export async function listComments(requestId: string): Promise<CommentEntry[]> {
 }
 
 export async function listDepartments(): Promise<DepartmentRow[]> {
+  // 画面に出すのは Mirai-Info の部署（selectable）だけ。旧・機能別の部署は履歴の参照用に残す。
   return many<DepartmentRow>(
     `select d.code, d.name, d.short_name as "shortName", d.role_desc as "roleDesc", d.sort_order as "sortOrder",
             count(t.id)::int as "toolCount",
             count(*) filter (where t.signal = 'g')::int as g,
             count(*) filter (where t.signal = 'y')::int as y,
             count(*) filter (where t.signal = 'r')::int as r
-       from department d left join catalog_tool t on t.dept_code = d.code
+       from department d
+       left join department_tool m on m.dept_code = d.code
+       left join catalog_tool t on t.id = m.tool_id
+      where d.selectable
       group by d.code
       order by d.sort_order`,
   );
@@ -305,11 +309,11 @@ export async function getCatalogTools(filters: { dept?: string; signal?: string;
     sortOrder: number;
   }[]
 > {
-  const where: string[] = ['1=1'];
+  const where: string[] = ['d.selectable'];
   const params: unknown[] = [];
   if (filters.dept) {
     params.push(filters.dept);
-    where.push(`t.dept_code = $${params.length}`);
+    where.push(`m.dept_code = $${params.length}`);
   }
   if (filters.signal) {
     params.push(filters.signal);
@@ -329,12 +333,16 @@ export async function getCatalogTools(filters: { dept?: string; signal?: string;
     seed_candidate: boolean;
     sort_order: number;
   }>(
-    `select t.id, t.dept_code, d.name as dept_name, t.name, t.description, t.signal, t.seed_candidate, t.sort_order
-       from catalog_tool t join department d on d.code = t.dept_code
+    `select distinct on (t.id) t.id, m.dept_code, d.name as dept_name, t.name, t.description,
+            t.signal, t.seed_candidate, m.sort_order
+       from department_tool m
+       join catalog_tool t on t.id = m.tool_id
+       join department d on d.code = m.dept_code
       where ${where.join(' and ')}
-      order by d.sort_order, t.sort_order`,
+      order by t.id, m.sort_order`,
     params,
   );
+  rows.sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'ja'));
   return rows.map((r) => ({
     id: r.id,
     deptCode: r.dept_code,
@@ -345,6 +353,102 @@ export async function getCatalogTools(filters: { dept?: string; signal?: string;
     seedCandidate: r.seed_candidate,
     sortOrder: r.sort_order,
   }));
+}
+
+/**
+ * 起動データ用のカタログ。部署ごとに出す道具を、部署の並び順で返す。
+ * 同じ道具（例：入札情報）が複数の部署に出るため、部署単位の行を持つ。
+ */
+export async function listBootCatalog(): Promise<{
+  departments: DepartmentRow[];
+  tools: {
+    id: string;
+    deptCode: string;
+    name: string;
+    description: string;
+    signal: Signal;
+    seedCandidate: boolean;
+    sortOrder: number;
+  }[];
+}> {
+  const departments = await listDepartments();
+  const rows = await many<{
+    id: string;
+    dept_code: string;
+    name: string;
+    description: string;
+    signal: Signal;
+    seed_candidate: boolean;
+    sort_order: number;
+  }>(
+    `select t.id, m.dept_code, t.name, t.description, t.signal, t.seed_candidate, m.sort_order
+       from department_tool m
+       join catalog_tool t on t.id = m.tool_id
+       join department d on d.code = m.dept_code
+      where d.selectable
+      order by d.sort_order, m.sort_order`,
+  );
+  return {
+    departments,
+    tools: rows.map((r) => ({
+      id: r.id,
+      deptCode: r.dept_code,
+      name: r.name,
+      description: r.description,
+      signal: r.signal,
+      seedCandidate: r.seed_candidate,
+      sortOrder: r.sort_order,
+    })),
+  };
+}
+
+/** 社員名簿（有効のみ）。部署を指定すると、その部署の人だけを返す。 */
+export async function listMiraiEmployees(dept?: string): Promise<{ name: string; section: string; divisionCode: string }[]> {
+  if (dept) {
+    return many<{ name: string; section: string; divisionCode: string }>(
+      `select name, coalesce(section,'') as section, coalesce(division_code,'') as "divisionCode"
+         from mirai_employee where is_active and division_code = $1 order by section, name`,
+      [dept],
+    );
+  }
+  return many<{ name: string; section: string; divisionCode: string }>(
+    `select name, coalesce(section,'') as section, coalesce(division_code,'') as "divisionCode"
+       from mirai_employee where is_active order by division_code, section, name`,
+  );
+}
+
+/**
+ * 画面に出す 3 つの役割の担当者を、Mirai-Info の社員名簿から選ぶ。
+ * 実際のログイン利用者とは別で、操作を確かめるための「操作する人」の表示に使う。
+ */
+export async function getMiraiActors(): Promise<
+  Record<'requester' | 'desk' | 'approver', { name: string; divisionCode: string; divisionName: string; section: string } | null>
+> {
+  const pick = async (dept: string, section?: string) => {
+    const params: unknown[] = [dept];
+    let where = 'e.is_active and e.division_code = $1';
+    if (section) {
+      params.push(section);
+      where += ` and e.section = $${params.length}`;
+    }
+    const row = await one<{ name: string; section: string; division_code: string; division_name: string }>(
+      `select e.name, coalesce(e.section,'') as section, e.division_code, d.name as division_name
+         from mirai_employee e join department d on d.code = e.division_code
+        where ${where}
+        order by e.employee_no
+        limit 1`,
+      params,
+    );
+    return row
+      ? { name: row.name, divisionCode: row.division_code, divisionName: row.division_name, section: row.section }
+      : null;
+  };
+  const [requester, desk, approver] = await Promise.all([
+    pick('tokyo', '工事部'),
+    pick('kanri', 'DX推進部'),
+    pick('gijutsu', '技術部'),
+  ]);
+  return { requester, desk, approver };
 }
 
 export async function getCatalogSignals(ids: string[]): Promise<Map<string, Signal>> {

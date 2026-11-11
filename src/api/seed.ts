@@ -24,6 +24,25 @@ export interface ToolSeed {
   sort_order: number;
 }
 
+/** Mirai-Info の division に対応する部署（db/seed/mirai-divisions.json）。 */
+export interface MiraiDivisionSeed {
+  code: string;
+  name: string;
+  short_name: string;
+  role_desc: string;
+  sort_order: number;
+  /** この部署に出す道具の出どころ（旧・機能別部署のコード）。 */
+  sources: string[];
+}
+
+/** Mirai-Info の社員名簿の1行（取り込み用）。氏名・部署・課だけを持つ。 */
+export interface MiraiEmployeeSeed {
+  employee_no: string;
+  name: string;
+  division: string;
+  section?: string;
+}
+
 export interface DemoRequestSeed {
   id: string;
   title: string;
@@ -71,6 +90,9 @@ export function loadSeedData() {
     departments: readJson<DepartmentSeed[]>('departments.json'),
     tools: readJson<ToolSeed[]>('catalog.json'),
     demo: readJson<DemoRequestSeed[]>('demo-requests.json'),
+    miraiDivisions: readJson<MiraiDivisionSeed[]>('mirai-divisions.json'),
+    /** CI・新規DB用の見本名簿（実名ではない）。実環境は scripts/ops/sync-mirai-directory で上書きする。 */
+    miraiEmployeesSample: readJson<MiraiEmployeeSeed[]>('mirai-employees.sample.json'),
   };
 }
 
@@ -94,6 +116,74 @@ export async function seedMaster(client: PoolClient): Promise<{ departments: num
     );
   }
   return { departments: departments.length, tools: tools.length };
+}
+
+/**
+ * Mirai-Info の部署（division）に合わせる。
+ *
+ * - 選べる部署を 16 に絞り、旧・機能別の部署は selectable=false にして履歴用に残す。
+ * - 道具は「部署→道具」の対応表で出す（同じ道具を複数の部署に出すため、道具の行は増やさない）。
+ * - 社員名簿は空のときだけ見本名簿を入れる（実環境は同期スクリプトが実名で上書きする）。
+ */
+export async function seedMiraiDirectory(client: PoolClient): Promise<{ departments: number; tools: number; employees: number }> {
+  const { departments, tools, miraiDivisions, miraiEmployeesSample } = loadSeedData();
+  const divisionCodes = new Set(miraiDivisions.map((d) => d.code));
+  const legacyCodes = departments.map((d) => d.code).filter((code) => !divisionCodes.has(code));
+
+  for (const d of miraiDivisions) {
+    await client.query(
+      `insert into department (code, name, short_name, role_desc, sort_order, selectable, source)
+       values ($1,$2,$3,$4,$5,true,'mirai_info')
+       on conflict (code) do update set name=$2, short_name=$3, role_desc=$4, sort_order=$5,
+         selectable=true, source='mirai_info'`,
+      [d.code, d.name, d.short_name, d.role_desc, d.sort_order],
+    );
+  }
+  if (legacyCodes.length) {
+    await client.query(`update department set selectable=false where code = any($1::text[])`, [legacyCodes]);
+  }
+
+  // 部署→道具（同じ道具を複数の部署に出す。division 内では重複させない）
+  const byDept = new Map<string, ToolSeed[]>();
+  for (const t of tools) {
+    const list = byDept.get(t.dept_code) ?? [];
+    list.push(t);
+    byDept.set(t.dept_code, list);
+  }
+  for (const list of byDept.values()) list.sort((a, b) => a.sort_order - b.sort_order);
+
+  await client.query(`delete from department_tool where dept_code = any($1::text[])`, [miraiDivisions.map((d) => d.code)]);
+  let mapped = 0;
+  for (const d of miraiDivisions) {
+    const seen = new Set<string>();
+    const rows: [string, string, number][] = [];
+    for (const source of d.sources) {
+      for (const t of byDept.get(source) ?? []) {
+        if (seen.has(t.id)) continue;
+        seen.add(t.id);
+        rows.push([d.code, t.id, rows.length + 1]);
+      }
+    }
+    for (const [dept, toolId, order] of rows) {
+      await client.query(`insert into department_tool (dept_code, tool_id, sort_order) values ($1,$2,$3)`, [dept, toolId, order]);
+    }
+    mapped += rows.length;
+  }
+
+  // 見本名簿は、まだ名簿が無いときだけ入れる（実環境の実名を上書きしない）
+  let employees = 0;
+  const count = await client.query<{ n: string }>('select count(*)::text as n from mirai_employee');
+  if (Number(count.rows[0]?.n ?? '0') === 0) {
+    for (const e of miraiEmployeesSample) {
+      await client.query(
+        `insert into mirai_employee (employee_no, name, division_code, section)
+         values ($1,$2,$3,$4) on conflict (employee_no) do nothing`,
+        [e.employee_no, e.name, divisionCodes.has(e.division) ? e.division : null, e.section ?? ''],
+      );
+      employees += 1;
+    }
+  }
+  return { departments: miraiDivisions.length, tools: mapped, employees };
 }
 
 /** 初期管理者（個人利用MVP）。既存なら何もしない。 */
@@ -168,7 +258,12 @@ function buildHistory(seed: DemoRequestSeed): { at: Date; actor: string; role: s
 /** 見本データ9件を投入する。呼び出し側が空であることを保証する（reset/seed 内）。 */
 export async function seedDemo(client: PoolClient): Promise<number> {
   const { demo } = loadSeedData();
+  // 旧スキーマ（Mirai-Info の部署がまだ無い DB）でも見本を入れられるように、無い部署は先頭へ寄せる。
+  const first = await client.query<{ code: string }>('select code from department order by sort_order limit 1');
+  const fallbackDept = first.rows[0]?.code ?? 'keiei';
   for (const seed of demo) {
+    const exists = await client.query('select 1 from department where code = $1', [seed.dept_code]);
+    const deptCode = exists.rowCount ? seed.dept_code : fallbackDept;
     const year = Number(seed.id.slice(4, 8));
     const seq = Number(seed.id.slice(9));
     const createdAt = daysAgo(seed.created_days_ago);
@@ -189,7 +284,7 @@ export async function seedDemo(client: PoolClient): Promise<number> {
         year,
         createdAt,
         seed.applicant,
-        seed.dept_code,
+        deptCode,
         seed.contact,
         seed.title,
         seed.kind,
@@ -293,14 +388,22 @@ async function reconcileCounters(client: PoolClient): Promise<void> {
   }
 }
 
-export async function seedAll(client: PoolClient): Promise<{ departments: number; tools: number; demo: number; admin: string }> {
+export async function seedAll(client: PoolClient): Promise<{
+  departments: number;
+  tools: number;
+  demo: number;
+  admin: string;
+  mirai: { departments: number; tools: number; employees: number };
+}> {
   const master = await seedMaster(client);
+  // 画面に出す部署・道具は Mirai-Info に合わせる（旧・機能別の部署は selectable=false で残る）
+  const mirai = await seedMiraiDirectory(client);
   const admin = await seedAdmin(client);
   const hasRequests = await client.query('select 1 from request limit 1');
   let demo = 0;
   if (!hasRequests.rowCount) demo = await seedDemo(client);
   await reconcileCounters(client);
-  return { ...master, demo, admin: admin.email };
+  return { ...master, demo, admin: admin.email, mirai };
 }
 
 export function demoRequestCount(): number {

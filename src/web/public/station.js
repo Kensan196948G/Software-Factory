@@ -234,7 +234,7 @@ const CATALOG=(()=>{
  return c.departments.map(d=>{
   const st=DEPT_STYLE[d.code]||['grid','#64748b'];
   return {id:d.code,short:d.shortName||d.name,name:d.name,icon:st[0],color:st[1],role:d.roleDesc||'',
-   tools:(tools.get(d.code)||[]).map(t=>[t.name,t.description,t.signal,!!t.seedCandidate])};
+   tools:(tools.get(d.code)||[]).map(t=>[t.name,t.description,t.signal,!!t.seedCandidate,t.id])};
  });
 })();
 
@@ -298,7 +298,12 @@ const STEPS=[
 
 const statusOf=k=>STATUSES.find(s=>s.k===k)||STATUSES[0];
 const deptOf=id=>CATALOG.find(d=>d.id===id);
-function toolOf(ref){if(!ref)return null;const p=String(ref).split('|');const dep=deptOf(p[0]);if(!dep)return null;const t=dep.tools[+p[1]];return t?{dept:dep,name:t[0],desc:t[1],c:t[2]}:null}
+function toolOf(ref){
+ if(!ref)return null;
+ for(const dep of CATALOG){for(const t of dep.tools){if(t[4]===ref)return {dept:dep,name:t[0],desc:t[1],c:t[2],id:t[4]}}}
+ const p=String(ref).split('|');const dep=deptOf(p[0]);if(!dep)return null;const t=dep.tools[+p[1]];
+ return t?{dept:dep,name:t[0],desc:t[1],c:t[2],id:t[4]}:null;
+}
 const roleOf=k=>ROLES.find(r=>r.k===k)||ROLES[0];
 
 /* ===================== 業務ロジック（信号・ものさし・合格条件・権限・注文書） ===================== */
@@ -425,10 +430,11 @@ function nextId(data){data.seq=(data.seq||0)+1;return 'REQ-'+new Date().getFullY
 function validImport(o){return o&&Array.isArray(o.items)&&o.items.every(x=>x&&typeof x.id==='string'&&typeof x.title==='string')}
 function blank(role){
  const ro=roleOf(role);
+ const a=window.__SF_ACTORS__&&window.__SF_ACTORS__[role];
  const u=window.__MSF__&&window.__MSF__.user;
- const deptOk=u&&u.deptCode&&CATALOG.some(d=>d.id===u.deptCode);
- const dept=deptOk?u.deptCode:(CATALOG.some(d=>d.id===ro.dept)?ro.dept:(CATALOG[0]?CATALOG[0].id:'keiei'));
- return {id:'',createdAt:'',updatedAt:'',applicant:(u?String(u.displayName||ro.name):ro.name),dept,contact:'',title:'',kind:KINDS[0],toolRef:'',
+ const cands=[a&&a.divisionCode,u&&u.deptCode,ro.dept].filter(Boolean);
+ const dept=cands.find(c=>CATALOG.some(d=>d.id===c))||(CATALOG[0]?CATALOG[0].id:'keiei');
+ return {id:'',createdAt:'',updatedAt:'',applicant:(a?String(a.name):(u?String(u.displayName||ro.name):ro.name)),dept,contact:'',title:'',kind:KINDS[0],toolRef:'',
   problem:'',purpose:'',users:[],people:'',places:[],scope:'',outScope:'',criteria:['','',''],constraints:CONSTRAINTS.slice(0,2),
   constraintsOther:'',data:[],parties:'社内のみ',approvals:[],decides:'',freq:'',minutes:'',dataReady:'',spread:'',
   wish:'',attachments:[],approver:(CFGX?CFGX.approvers[0]:APPROVERS[0]),status:'received',signalFinal:'',history:[],comments:[]};
@@ -502,11 +508,33 @@ const loaded=load();
 const S={data:loaded.data,persistent:loaded.persistent,role:(window.__MSF__&&window.__MSF__.initialRole?window.__MSF__.initialRole():'requester'),view:'dash',sel:{},step:0,draft:null,editId:null,dpTab:'card',fq:'',fd:'',fs:'',fc:'',open:null,dtab:'sum',pickDept:'',fresh:null,cat:'koji',catTool:'',catq:'',logq:'',devTab:'line',secTab:'vuln',setTab:'personal',logk:'',cfg:null};
 const me=()=>{
  const ro=roleOf(S.role);
+ const a=window.__SF_ACTORS__&&window.__SF_ACTORS__[S.role];
+ if(a)return Object.assign({},ro,{name:String(a.name||ro.name),dept:String(a.divisionCode||ro.dept),divisionName:String(a.divisionName||''),section:String(a.section||'')});
  const u=window.__MSF__&&window.__MSF__.user;
  if(!u)return ro;
  return Object.assign({},ro,{name:String(u.displayName||ro.name),dept:String(u.deptCode||ro.dept)});
 };
 const find=id=>S.data.items.find(x=>x.id===id);
+/* ---------- 社員名簿（Mirai-Info） ---------- */
+const EMP={};let empLoading=false,empLoaded=false;
+function empOf(dept){return EMP[dept]||null}
+function loadEmployees(){
+ if(!window.__MSF__||empLoaded||empLoading)return;
+ empLoading=true;
+ window.__MSF__.api('GET','/api/mirai/employees').then(res=>{
+  const items=(res&&Array.isArray(res.items))?res.items:[];
+  items.forEach(e=>{const d=e.divisionCode||'';if(!d)return;(EMP[d]=EMP[d]||[]).push(e)});
+  empLoaded=true;
+  if(S.view==='new'){const a=document.activeElement;if(!(a&&a.dataset&&a.dataset.bind==='applicant'))renderStepBody()}
+ }).catch(()=>{empLoading=false});
+}
+function applicantField(d){
+ const list=empOf(d.dept);
+ if(!list||!list.length)return inp('applicant','例：社員名');
+ const has=list.some(e=>e.name===d.applicant);
+ const cur=has?d.applicant:(d.applicant||list[0].name);
+ return `<select data-bind="applicant">${list.map(e=>`<option value="${E(e.name)}"${cur===e.name?' selected':''}>${E(e.name)}${e.section?`（${E(e.section)}）`:''}</option>`).join('')}${has||!cur?'':`<option value="${E(cur)}" selected>${E(cur)}</option>`}</select>`;
+}
 const colorOf=r=>r.signalFinal||judge(r).c;
 const reportedSync=new WeakSet();
 function reportSync(res){
@@ -609,7 +637,7 @@ function catPane(){
  const reqN=ref=>S.data.items.filter(r=>r.toolRef===ref).length;
  return `<div class="dp-h" style="align-items:center">${cico(d.id,'lg')}<div class="dp-t"><h2>${E(d.name)}</h2><div class="hint">${E(d.role)}</div></div></div>
  <div class="btns xs" style="margin:10px 0 2px"><span class="hint">${I('grid','sm')} 道具 ${d.tools.length}件</span>${sig('g')}<b>${n.g}</b>${sig('y')}<b>${n.y}</b>${sig('r')}<b>${n.r}</b></div>
- ${d.tools.map((t,j)=>{const ref=d.id+'|'+j,c=t[2],k=reqN(ref);return `<div class="trow ${c}${ref===S.catTool?' on':''}" style="--i:${j}"><span class="lamp ${c}"></span><div style="min-width:0"><b class="cl1" title="${E(t[0])}">${E(t[0])}</b><div class="hint cl2" title="${E(t[1])}">${E(t[1])}</div></div><div class="tr-a">${k?`<span class="badge b-acc" title="この道具の依頼 ${k}件">${I('inbox')}${k}</span>`:''}<button class="btn sm ${c==='r'?'ghost':''}" data-a="useTool" data-v="${ref}" type="button" title="${c==='r'?'赤の道具は相談として依頼します':'この道具で依頼をはじめます'}">${I(c==='r'?'msg':'plus')}${c==='r'?'相談':'依頼'}</button></div></div>`}).join('')}
+ ${d.tools.map((t,j)=>{const ref=t[4]||(d.id+'|'+j),c=t[2],k=reqN(ref);return `<div class="trow ${c}${ref===S.catTool?' on':''}" style="--i:${j}"><span class="lamp ${c}"></span><div style="min-width:0"><b class="cl1" title="${E(t[0])}">${E(t[0])}</b><div class="hint cl2" title="${E(t[1])}">${E(t[1])}</div></div><div class="tr-a">${k?`<span class="badge b-acc" title="この道具の依頼 ${k}件">${I('inbox')}${k}</span>`:''}<button class="btn sm ${c==='r'?'ghost':''}" data-a="useTool" data-v="${ref}" type="button" title="${c==='r'?'赤の道具は相談として依頼します':'この道具で依頼をはじめます'}">${I(c==='r'?'msg':'plus')}${c==='r'?'相談':'依頼'}</button></div></div>`}).join('')}
  <div class="note n-acc" style="margin:10px 0 0">${I('info')}<div>色は目安です。最終的な色は承認者が決めます。赤の道具は「材料集め・表示」までにとどめ、決めるのは人です。</div></div>`;
 }
 function updPane(){
@@ -656,7 +684,8 @@ function serverAudit(){
 const NAV=[['dash','ダッシュボード','dash'],['new','新しい依頼','plus'],['review','確認・承認','stamp'],['board','ボード','board'],['list','一覧','list'],['catalog','道具カタログ','grid'],['sep','運用'],['devops','DevOps','code'],['secops','SecOps','shield'],['sep','管理'],['log','監査ログ','audit'],['settings','システム設定','gear']];
 function renderNav(){
  const it=S.data.items,c=k=>it.filter(r=>r.status===k).length;
- const cnt={review:[c('received')+c('review')+c('wait')+c('back'),c('wait')>0],board:[c('approved')+c('dev')+c('verify')+c('field'),false],list:[it.length,false],catalog:[CATALOG.reduce((a,d)=>a+d.tools.length,0),false]};
+ const toolIds=new Set();CATALOG.forEach(d=>d.tools.forEach(t=>{if(t[4])toolIds.add(t[4])}));
+ const cnt={review:[c('received')+c('review')+c('wait')+c('back'),c('wait')>0],board:[c('approved')+c('dev')+c('verify')+c('field'),false],list:[it.length,false],catalog:[toolIds.size||CATALOG.reduce((a,d)=>a+d.tools.length,0),false]};
  const dk=devKpi(),sk=secKpi();cnt.devops=[dk.mine,dk.mine>0];cnt.secops=[sk.over+sk.alert,sk.over+sk.alert>0];
  $('#nav').innerHTML=NAV.map(n=>{
   if(n[0]==='sep')return n[1]?`<div class="sep t">${n[1]}</div>`:'<div class="sep"></div>';
@@ -758,10 +787,10 @@ function stepHTML(i){
   <div class="choices">${KINDS.map((k,j)=>`<button type="button" class="choice${d.kind===k?' on':''}" data-a="one" data-f="kind" data-v="${E(k)}"><span class="ib">${I(kic[j])}</span><span><b>${E(k)}</b><small>${E(kdesc[j])}</small></span></button>`).join('')}</div>
   <div class="lbl" style="margin-top:14px">${I('grid','sm')}部署別 道具カタログから選ぶ（任意）</div>
   <div class="tiles">${CATALOG.map(c=>`<button type="button" class="tile${dep===c.id?' on':''}" data-a="pick" data-v="${c.id}" style="--cc:${c.color}"><span class="cico">${I(c.icon)}</span><span>${E(c.short)}</span></button>`).join('')}</div>
-  ${dep?`<div class="tools">${deptOf(dep).tools.map((t,j)=>{const ref=dep+'|'+j;return `<button type="button" class="tool${d.toolRef===ref?' on':''}" data-a="tool" data-v="${ref}" style="--i:${j}"><span class="lamp ${t[2]}"></span><span><b>${E(t[0])}</b><small>${E(t[1])}</small></span></button>`}).join('')}</div>${d.toolRef?`<div style="margin-top:8px"><button type="button" class="btn ghost sm" data-a="tool" data-v="">${I('x')}選択を外す</button></div>`:''}`:`<div class="hint">${I('info','sm')} 部署を選ぶと、その部署の道具の候補が出ます。丸の色はカタログ上の信号の色です。</div>`}`;
+  ${dep?`<div class="tools">${deptOf(dep).tools.map((t,j)=>{const ref=t[4]||(dep+'|'+j);return `<button type="button" class="tool${d.toolRef===ref?' on':''}" data-a="tool" data-v="${ref}" style="--i:${j}"><span class="lamp ${t[2]}"></span><span><b>${E(t[0])}</b><small>${E(t[1])}</small></span></button>`}).join('')}</div>${d.toolRef?`<div style="margin-top:8px"><button type="button" class="btn ghost sm" data-a="tool" data-v="">${I('x')}選択を外す</button></div>`:''}`:`<div class="hint">${I('info','sm')} 部署を選ぶと、その部署の道具の候補が出ます。丸の色はカタログ上の信号の色です。</div>`}`;
  }
  if(i===1){
-  return `<div class="row">${fld('起票者',1,inp('applicant','例：山田 太郎'),'','user')}${fld('連絡先',0,inp('contact','例：内線 1234'),'','msg')}</div>
+  return `<div class="row">${fld('起票者',1,applicantField(d),'部署の社員名簿（Mirai-Info）から選べます','user')}${fld('連絡先',0,inp('contact','例：内線 1234'),'','msg')}</div>
   ${fld('所属部署',1,`<select data-bind="dept">${CATALOG.map(c=>`<option value="${c.id}"${d.dept===c.id?' selected':''}>${E(c.name)}</option>`).join('')}</select>`,'','layers')}
   ${fld('だれが使う？',1,chipsM('users',USERS),'','users')}
   <div class="row">${fld('使う人のおよその人数',0,inp('people','例：40','number'),'人','users')}<div class="fld"></div></div>
@@ -1966,6 +1995,16 @@ document.addEventListener('change',e=>{
  const t=e.target;if(!t)return;
  if(t.dataset&&t.dataset.cfg!==undefined){setCfg(t);return}
  if(t.name==='authrole'){authSel=t.value;$$('#auth .who label').forEach(l=>l.classList.toggle('on',l.contains(t)));return}
+ if(t.dataset&&t.dataset.bind!==undefined&&S.draft){
+  S.draft[t.dataset.bind]=t.value;
+  if(t.dataset.bind==='dept'){
+   const list=empOf(t.value);
+   if(list&&list.length&&!list.some(e=>e.name===S.draft.applicant))S.draft.applicant=list[0].name;
+   // 起票者の選択肢もその部署の名簿に差し替える
+   renderStepBody();return;
+  }
+  updPreview();return;
+ }
  if(t.id==='role'){setRole(t.value);return}
  if(t.id==='imp'){importFile(t);return}
  if(t.id==='att'&&S.draft){Array.from(t.files||[]).forEach(f=>S.draft.attachments.push({name:f.name,size:f.size}));t.value='';$('#attL').innerHTML=attHtml();return}
@@ -1990,7 +2029,7 @@ function tickClock(){const el=$('#clock');if(!el)return;const d=new Date();el.in
 /* ===================== 起動 ===================== */
 try{const th=localStorage.getItem(KEY+'-theme');if(th)document.documentElement.dataset.theme=th}catch(e){}
 $$('[data-ic]').forEach(el=>el.insertAdjacentHTML('afterbegin',I(el.dataset.ic)));
-const ROLE_OPTS=(()=>{const u=window.__MSF__&&window.__MSF__.user;return ROLES.map(r=>`<option value="${r.k}">${E(u?u.displayName:r.name)}（${E(r.l)}）</option>`)})().join('');
+const ROLE_OPTS=(()=>{const A=window.__SF_ACTORS__,u=window.__MSF__&&window.__MSF__.user;return ROLES.map(r=>{const a=A&&A[r.k];const label=a&&a.name?`${a.name}（${a.divisionName||r.l}）`:`${u?u.displayName:r.name}（${r.l}）`;return `<option value="${r.k}">${E(label)}</option>`}).join('')})();
 $('#role').innerHTML=ROLE_OPTS;
 updTheme();tickClock();setInterval(tickClock,1000);
 S.cfg=loadCfg();
@@ -1999,7 +2038,7 @@ if(window.__MSF__&&Array.isArray(window.__MSF__.approvers)&&window.__MSF__.appro
 }
 CFGX=S.cfg;normData(S.data);applyMotion();applyOrg();
 render();save(S.data);
-if(window.__MSF__)setTimeout(serverAudit,600);
+if(window.__MSF__){setTimeout(serverAudit,600);loadEmployees();}
 {const s0=sessGet();if(s0&&s0.out){authSel=ROLES.some(r=>r.k===s0.role)?s0.role:'requester';S.role=authSel;showAuth(s0.at)}}
 if(S.cfg.startLogin&&!authOpen())showAuth('');
 window.addEventListener('storage',e=>{if(e.key!==SKEY)return;const s1=sessGet();if(s1&&s1.out&&!authOpen())endSession(s1.at)});

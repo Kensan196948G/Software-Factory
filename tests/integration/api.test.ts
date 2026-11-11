@@ -441,11 +441,11 @@ describe('不正な遷移は拒否して監査ログに残す', () => {
 });
 
 describe('一覧・ホーム・カタログ・出力', () => {
-  it('カタログは19部署・118件（青52/黄47/赤19）', async () => {
+  it('カタログはMirai-Infoの16部署・118件（青52/黄47/赤19）', async () => {
     const auth = await loginAs(app);
     const res = await app.inject({ method: 'GET', url: '/api/catalog/summary', headers: { cookie: auth.cookie } });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ departments: 19, tools: 118, g: 52, y: 47, r: 19 });
+    expect(res.json()).toEqual({ departments: 16, tools: 118, g: 52, y: 47, r: 19 });
   });
 
   it('受付担当のホームに「あなたの番」が出る', async () => {
