@@ -388,13 +388,6 @@ async function reconcileCounters(client: PoolClient): Promise<void> {
   }
 }
 
-async function miraiCounts(client: PoolClient): Promise<{ departments: number; tools: number; employees: number }> {
-  const d = await client.query<{ n: string }>(`select count(*)::text as n from department where selectable`);
-  const m = await client.query<{ n: string }>(`select count(*)::text as n from department_tool`);
-  const e = await client.query<{ n: string }>(`select count(*)::text as n from mirai_employee where is_active`);
-  return { departments: Number(d.rows[0]?.n ?? 0), tools: Number(m.rows[0]?.n ?? 0), employees: Number(e.rows[0]?.n ?? 0) };
-}
-
 export async function seedAll(client: PoolClient): Promise<{
   departments: number;
   tools: number;
