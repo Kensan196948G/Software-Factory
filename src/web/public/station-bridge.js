@@ -154,6 +154,8 @@
       parties: PARTY_LABEL[r.parties] || '社内のみ',
       approvals: Array.isArray(r.approvals) ? r.approvals : [],
       decides: r.decides || '',
+      // サーバが決めた候補色（一覧・詳細の両方が返す）。画面の judge() と差が出る入力があるため、あれば優先する。
+      suggested: typeof r.suggested === 'string' ? r.suggested : null,
       freq: r.frequency || '',
       minutes: r.minutesPerTime === null || r.minutesPerTime === undefined ? '' : String(r.minutesPerTime),
       dataReady: r.dataReady === null || r.dataReady === undefined ? '' : String(r.dataReady),

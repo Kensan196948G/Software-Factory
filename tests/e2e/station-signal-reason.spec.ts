@@ -77,10 +77,15 @@ async function detail(page: Page, id: string): Promise<RequestDetail['request']>
 
 async function transition(page: Page, id: string, to: string): Promise<void> {
   const current = await detail(page, id);
-  const res = await callWith<{ detail?: { version: number } }>(page.request, 'POST', `/api/requests/${encodeURIComponent(id)}/transitions`, {
-    to,
-    version: current.version,
-  });
+  const res = await callWith<{ detail?: { version: number } }>(
+    page.request,
+    'POST',
+    `/api/requests/${encodeURIComponent(id)}/transitions`,
+    {
+      to,
+      version: current.version,
+    },
+  );
   expect(res.status, `transition ${to}`).toBe(200);
 }
 
@@ -145,28 +150,33 @@ test.describe('候補よりゆるい信号の承認理由', () => {
     await page.selectOption('#role', 'approver');
     await expect.poll(async () => (await me(page)).actingRole).toBe('approver');
     await open(page);
-    await openApproval(page, id);
+    // 共有のセッションを元の役割（受付担当）に戻す。後続の試験が前提にしている。
+    try {
+      await openApproval(page, id);
 
-    // 候補は黄。青（候補よりゆるい）を選び、メモは空のまま送ろうとする。
-    await page.check('#modal input[name="fc"][value="g"]');
-    await page.click('#modal [data-a="sok"]');
+      // 候補は黄。青（候補よりゆるい）を選び、メモは空のまま送ろうとする。
+      await page.check('#modal input[name="fc"][value="g"]');
+      await page.click('#modal [data-a="sok"]');
 
-    await expect(page.locator('#toast')).toContainText('候補よりゆるい色にする理由をメモに書いてください');
-    await expect(page.locator('#modal.open')).toHaveCount(1);
-    expect((await detail(page, id)).status).toBe('wait');
-    expect((await detail(page, id)).comments).toHaveLength(0);
+      await expect(page.locator('#toast')).toContainText('候補よりゆるい色にする理由をメモに書いてください');
+      await expect(page.locator('#modal.open')).toHaveCount(1);
+      expect((await detail(page, id)).status).toBe('wait');
+      expect((await detail(page, id)).comments).toHaveLength(0);
 
-    // メモを書けば通り、利用者のメモが理由（コメント）として残る。自動の履歴文は理由にならない。
-    const reason = '現場の実測で青と判断した（E2E）';
-    await page.fill('#nnote', reason);
-    await page.click('#modal [data-a="sok"]');
+      // メモを書けば通り、利用者のメモが理由（コメント）として残る。自動の履歴文は理由にならない。
+      const reason = '現場の実測で青と判断した（E2E）';
+      await page.fill('#nnote', reason);
+      await page.click('#modal [data-a="sok"]');
 
-    await expect.poll(async () => (await detail(page, id)).status, { timeout: 30_000 }).toBe('approved');
-    const approved = await detail(page, id);
-    expect(approved.signalDecided).toBe('g');
-    expect(approved.comments.map((c) => c.text)).toEqual([reason]);
-    expect(approved.comments.map((c) => c.text)).not.toContain('信号の色を「青」に決定');
-    // サーバの履歴には決定内容が残る（自動文は履歴であって、理由ではない）。
-    expect(approved.history.at(-1)?.note ?? '').toContain(reason);
+      await expect.poll(async () => (await detail(page, id)).status, { timeout: 30_000 }).toBe('approved');
+      const approved = await detail(page, id);
+      expect(approved.signalDecided).toBe('g');
+      expect(approved.comments.map((c) => c.text)).toEqual([reason]);
+      expect(approved.comments.map((c) => c.text)).not.toContain('信号の色を「青」に決定');
+      // サーバの履歴には決定内容が残る（自動文は履歴であって、理由ではない）。
+      expect(approved.history.at(-1)?.note ?? '').toContain(reason);
+    } finally {
+      await callWith(page.request, 'POST', '/api/auth/role', { role: 'desk' }).catch(() => undefined);
+    }
   });
 });

@@ -1809,7 +1809,7 @@ function applyStatus(id){
  let extra='',fc='';
  if(v==='approved'){fc=($('#modal input[name=fc]:checked')||{}).value;if(!fc){toast('信号の色を選んでください','bad');return}if(fc==='r'&&!$('#redok').checked){toast('赤信号の確認にチェックしてください','bad','shield');return}
    // 候補よりゆるい色は、利用者のメモが無ければ送らない（サーバの規則と同じ。自動の履歴文を理由にしない）。
-   const cand=judge(r).c;
+   const cand=(typeof r.suggested==='string'&&RANK[r.suggested]!==undefined)?r.suggested:judge(r).c;
    if(RANK[fc]<RANK[cand]&&!note){toast('候補よりゆるい色にする理由をメモに書いてください','bad');return}
    r.signalFinal=fc;extra='信号の色を「'+COLORS[fc].l+'」に決定'}
  // 履歴の表示用の文（extra）と、サーバへ送る理由（利用者のメモ）を分ける。理由は画面の履歴文から作らない。
