@@ -1742,7 +1742,8 @@ function renderDrawer(){
 
 /* ---------- モーダル ---------- */
 function modal(title,body,foot){modalHook=null;$('#modal').innerHTML=`<div class="card"><h2 class="mt0">${title}</h2><div>${body}</div>${foot?`<div class="mft">${foot}</div>`:''}</div>`;$('#modal').classList.add('open')}
-function closeModal(){$('#modal').classList.remove('open');modalHook=null;confirmFn=null;setBusy(false)}
+/* 閉じたら中身も消す（入力したパスワードなどを DOM に残さない。開く前と同じ空の状態へ戻す） */
+function closeModal(){const m=$('#modal');m.classList.remove('open');m.innerHTML='';modalHook=null;confirmFn=null;setBusy(false)}
 function confirmBox(t,msg,ok,fn,danger){modal(I('alert')+E(t),`<p style="margin:0">${E(msg)}</p>`,`<button class="btn ghost" data-a="closeModal" type="button">キャンセル</button><button class="btn ${danger?'bad':''}" data-a="cfok" type="button">${I('check')}${E(ok)}</button>`);confirmFn=fn}
 function openStatus(r,preset){
  const j=judge(r),def=preset||NEXT[r.status],any=STATUSES.some(s=>canMove(S.role,r.status,s.k));
@@ -1753,17 +1754,19 @@ function openStatus(r,preset){
   <div class="apv" id="apv" style="display:none"><b>${I('flag','sm')} 信号の色を決める</b> <span class="hint">候補：${sig(j.c)}　迷ったら1つ上の色に</span>
    <div class="sgopts">${['g','y','r'].map(c=>`<label><input type="radio" name="fc" value="${c}"${(r.signalFinal||j.c)===c?' checked':''}>${sig(c)}<span class="hint">${COLORS[c].n}</span></label>`).join('')}</div>
    <div class="redw" id="redw"><label><input type="checkbox" id="redok"><span>赤信号の仕事は<b>AIに決めさせません</b>。道具の範囲が「材料集め・表示」までで、決定は人が行うことを確認しました。</span></label></div></div>
-  <div class="lbl" style="margin-top:12px">${I('msg','sm')}メモ <span class="hint">（差戻し・見送りは必須）</span></div><textarea id="nnote" rows="2" style="min-height:64px" placeholder="例：合格の条件を数字で書き直してください"></textarea>`,
+  <div class="lbl" style="margin-top:12px">${I('msg','sm')}メモ <span class="hint">（差戻し・見送り・取消${needReason(r.status,'dev')?'・実装中への戻し':''}は必須）</span></div><textarea id="nnote" rows="2" style="min-height:64px" placeholder="例：合格の条件を数字で書き直してください"></textarea>`,
   `<button class="btn ghost" data-a="closeModal" type="button">キャンセル</button><button class="btn" data-a="sok" data-id="${E(r.id)}" type="button"${any?'':' disabled'}>${I('check')}変更する</button>`);
  const upd=()=>{const v=($('#modal input[name=ns]:checked')||{}).value,fc=($('#modal input[name=fc]:checked')||{}).value;const a=$('#apv');if(a)a.style.display=v==='approved'?'block':'none';const w=$('#redw');if(w)w.classList.toggle('show',v==='approved'&&fc==='r')};
  modalHook=upd;upd();
 }
+/* 理由（メモ）が必須の状態変更。サーバの isReasonRequired（src/shared/domain.ts）が必須とする組をすべて含む（差戻し・見送りは従来どおり常に必須） */
+function needReason(from,to){return ['back','hold','cancel'].includes(to)||(to==='dev'&&['field','release_wait'].includes(from))}
 function applyStatus(id){
  const r=find(id);if(!r)return;
  const v=($('#modal input[name=ns]:checked')||{}).value,note=$('#nnote').value.trim();
  if(!v){toast('変更先を選んでください','bad');return}
  if(!canMove(S.role,r.status,v)){toast('いまの役割ではできません','bad','lock');return}
- if(['back','hold'].includes(v)&&!note){toast('理由をメモに書いてください','bad');return}
+ if(needReason(r.status,v)&&!note){toast('理由をメモに書いてください','bad');return}
  let extra='',fc='';
  if(v==='approved'){fc=($('#modal input[name=fc]:checked')||{}).value;if(!fc){toast('信号の色を選んでください','bad');return}if(fc==='r'&&!$('#redok').checked){toast('赤信号の確認にチェックしてください','bad','shield');return}r.signalFinal=fc;extra='信号の色を「'+COLORS[fc].l+'」に決定'}
  const now=nowISO();r.history=r.history||[];r.history.push({at:now,by:me().name,role:me().l,action:'状態を「'+statusOf(v).l+'」に変更',note:[extra,note].filter(Boolean).join('／')});
@@ -1946,7 +1949,7 @@ const ACT={
   try{
    await window.__MSF__.api('POST','/api/admin/users',{email:email.trim(),displayName:name.trim(),deptCode:dept,password:pass,roles,isAdmin:admin});
    closeModal();toast('利用者を追加しました','ok','user');loadUsers(true);
-  }catch(err){toast((err&&err.message)||'追加できませんでした','bad')}
+  }catch(err){const p=g('uPass');if(p)p.value='';toast((err&&err.message)||'追加できませんでした','bad')}
  },
  async uToggle(el){
   const id=el.dataset.id,on=el.dataset.v==='1';
@@ -1958,7 +1961,7 @@ const ACT={
   const elp=$('#uNewPw');const pw=elp?elp.value:'';
   if(!pw){toast('新しいパスワードを入れてください','bad');return}
   try{await window.__MSF__.api('PATCH','/api/admin/users/'+encodeURIComponent(el.dataset.id),{password:pw});closeModal();toast('パスワードを再設定しました','ok','lock')}
-  catch(err){toast((err&&err.message)||'再設定できませんでした','bad')}
+  catch(err){if(elp)elp.value='';toast((err&&err.message)||'再設定できませんでした','bad')}
  },
  apvAdd(){apvAdd()},
  apvDel(el){if(!may('cfg')){toast('システム設定を変えられるのは受付担当（IT・DX）です','bad','lock');return}const a=el.dataset.v;if(S.cfg.approvers.length<2)return;
