@@ -626,6 +626,8 @@ function fitScale(el,avail){
 }
 function fitPane(el){
  if(!el)return;el.style.transform='';el.style.width='';el.classList.remove('tight');
+ // 中身を縮小せず、パネルの中で縦にスクロールさせる面（利用者一覧）は、縮小の対象にしない
+ if(el.classList.contains('pane-scroll'))return;
  if(isNarrow())return;
  const avail=el.parentElement.clientHeight;if(!avail)return;
  let k=fitScale(el,avail);
@@ -685,11 +687,17 @@ function catPane(){
 }
 function updPane(){
  const box=$('#rin');if(!box)return;
+ box.classList.remove('pane-scroll');
  if(S.view==='new'){box.innerHTML='';updPreview();return}
  if(S.view==='catalog'){box.innerHTML=catPane();fitPane(box);return}
  if(S.view==='devops'){box.innerHTML=devPane();fitPane(box);return}
  if(S.view==='secops'){box.innerHTML=secPane();fitPane(box);return}
- if(S.view==='settings'){box.innerHTML=setPane();fitPane(box);return}
+ if(S.view==='settings'){
+  box.innerHTML=setPane();
+  // 利用者一覧は、行が増えると下端の行・ボタンがパネルの外へ出る。縮小せず、パネルの中で縦にスクロールさせる
+  box.classList.toggle('pane-scroll',S.setTab==='users');
+  fitPane(box);return;
+ }
  if(S.view==='log'&&String(S.sel.log||'').indexOf('A:')===0){const a=S.data.audit.find(x=>'A:'+x.id===S.sel.log)||ra.find(x=>'A:'+x.id===S.sel.log);box.innerHTML=a?auditPane(a):emptyBox('audit','記録を選ぶと、ここに中身が出ます');fitPane(box);return}
  const r=find(S.sel[S.view]);
  box.innerHTML=r?paneDetail(r,false):emptyBox(S.view==='review'?'check':'inbox',S.view==='review'?'確認・承認を待っている依頼はありません':'依頼を選ぶと、ここに要点が1ページで表示されます');
@@ -1381,7 +1389,7 @@ function devPane(){
   ai:()=>abtn('ai','devAI',l.pr?'AIで直す（再実装）':'AIで実装する','bot',{id,cls:'ai',ready:nx.k==='ai',off:busy?'実行中です':l.merged?'マージ済みです':l.ai.cost>=100?'AI作業の費用が上限に達しています（人が対応してください）':!okSt?'依頼を「実装中」にしてから実行します':''}),
   check:()=>abtn('check','devCheck','自動検査を実行','shieldok',{id,ready:nx.k==='check',off:busy?'実行中です':!l.pr?'まだ PR がありません':l.merged?'マージ済みです':''}),
   review:()=>abtn('review','devReview','レビューで承認','stamp',{id,cls:'ok',ready:nx.k==='review',off:busy?'実行中です':!c.ok?'必須の検査がすべて合格してから承認します':l.review==='ok'?'承認済みです':''}),
-  merge:()=>abtn('merge','devMerge','マージする','loop',{id,ready:nx.k==='merge',off:l.merged?'マージ済みです':l.review!=='ok'?'レビューの承認が必要です':!c.ok?'必須の検査に合格していません':''}),
+  merge:()=>abtn('merge','devMergeSample','マージする','loop',{id,ready:nx.k==='merge',off:l.merged?'マージ済みです':l.review!=='ok'?'レビューの承認が必要です':!c.ok?'必須の検査に合格していません':''}),
   stg:()=>abtn('stg','devStg','ステージングに配備','layers',{id,ready:nx.k==='stg',off:!l.merged?'マージしてから配備します':l.stg===l.ver?'配備済みです':''}),
   prod:()=>abtn('prod','devProd','本番にデプロイ','flag',{id,cls:'ok',ready:nx.k==='prod',off:l.stg!==l.ver?'ステージングに配備してから出します':l.prod===l.ver?'本番に出ています':!prodSt?'依頼が「現場試用」になってから出します':''})
  };
@@ -1922,7 +1930,8 @@ const ACT={
  },
  devReview(el){const l=lineOf(el.dataset.id);if(!l||l.running)return;if(!may('review')){toast('この操作ができるのは '+whoCanT('review')+' です','bad','lock');return}if(!ckState(l).ok||l.review==='ok')return;
   l.review='ok';l.reviewBy=me().name;addAudit('devops','レビューで承認','PR #'+l.pr,l.req);persist();devRefresh();toast(l.req+'：PR #'+l.pr+' をレビューで承認しました','ok','stamp')},
- devMerge(el){const l=lineOf(el.dataset.id);if(!l||l.running)return;if(!may('merge')){toast('この操作ができるのは '+whoCanT('merge')+' です','bad','lock');return}if(l.merged||l.review!=='ok'||!ckState(l).ok)return;
+ /* 見本（サーバ接続なしで動く画面）の「マージする」。実ジョブ側の同名の処理と取り違えないよう別名にする */
+ devMergeSample(el){const l=lineOf(el.dataset.id);if(!l||l.running)return;if(!may('merge')){toast('この操作ができるのは '+whoCanT('merge')+' です','bad','lock');return}if(l.merged||l.review!=='ok'||!ckState(l).ok)return;
   l.merged=true;addAudit('devops','マージ','PR #'+l.pr+' を main にマージ',l.req);persist();devRefresh();toast(l.req+'：PR #'+l.pr+' をマージしました','ok','loop')},
  devStg(el){const l=lineOf(el.dataset.id),r=l&&find(l.req);if(!l||!r)return;if(!may('stg')){toast('この操作ができるのは '+whoCanT('stg')+' です','bad','lock');return}if(!l.merged||l.stg===l.ver)return;
   const v=S.data.devsec;v.dseq=(v.dseq||0)+1;v.deploys.push({id:'DEP-'+pad(v.dseq,4),at:nowISO(),env:'stg',kind:'deploy',req:l.req,ver:l.ver,by:me().name});l.stg=l.ver;
