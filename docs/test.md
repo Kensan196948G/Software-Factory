@@ -6,7 +6,7 @@
 pnpm typecheck      # 型チェック（Web/テスト + API）
 pnpm lint           # ESLint（--max-warnings=0）
 pnpm test           # unit（43）+ integration（24）
-pnpm test:e2e       # Playwright（9シナリオ）
+pnpm test:e2e       # Playwright（現行の構成と件数は §8）
 pnpm build          # API + Web
 pnpm db:verify      # DB整合性（19/118/採番/監査連鎖）
 node scripts/secret-scan.mjs
@@ -49,6 +49,8 @@ BASE_URL=... SMOKE_EMAIL=... SMOKE_PASSWORD=... pnpm exec tsx scripts/smoke.ts
 | `tests/e2e/console.spec.ts`      | コンソール原本UI: ログイン、登録→DB永続、役割切替、承認（承認者のみ）、監査ログとCSV、承認依頼メールの表示と送信BOX、0件検索、ログイン失敗、下書きの別端末再開、運用データのDB復元                                                |
 
 ## 4. E2E のシナリオ
+
+> 本節と §3 の `tests/e2e/console.spec.ts` は旧コンソール（2026-11-11 より前の画面）の記録である。現行の E2E は §8 を参照する。
 
 1. ログインしてコンソールが表示される
 2. ログイン失敗はエラーを表示する
@@ -151,6 +153,8 @@ URL に資格情報とクエリ（`http://user:<token>@127.0.0.1:8782/healthz?to
 
 ## 7. アクセシビリティ自動検査（2026-11-04 追加）
 
+> 本節は旧コンソールの記録である。2026-11-11 の画面置き換え（PR #170）で、`tests/browser/` は `tests/browser-legacy/` へ退避され、`playwright.approver.config.ts` と `pnpm test:browser:approver` は削除された。現行のアクセシビリティ検査は `tests/e2e/station-a11y.spec.ts`（§8）である。
+
 ### 7-1. 実行方法
 
 ```bash
@@ -180,7 +184,7 @@ CI の E2E ジョブは `pnpm install` で `@axe-core/playwright` を入れる�
 | 3   | 依頼詳細                  | 一覧の行を開いたドロワー `#drawer`                               | `#drawer` のみ |
 | 4   | 注文書タブ                | ドロワーの `[data-dt="yaml"]`                                    | `#drawer` のみ |
 | 5   | 承認者選択（ウィザード6） | 「新しい依頼」→ 道具 → … → 承認者選択                            | ページ全体     |
-| 6   | 確認・承認（右端パネル）  | ナビの「確認・承認」                                              | ページ全体     |
+| 6   | 確認・承認（右端パネル）  | ナビの「確認・承認」                                             | ページ全体     |
 
 - 既存の `tests/browser/approver.spec.ts` と同じく、`page.route('**/*')` で全通信を横取りする。実サーバ・DB・メール・本番/Staging には接続しない。
 - データはすべて作り物（`架空 同名` / `first@example.com` 等）。実データは使わない。
@@ -209,16 +213,16 @@ CI の E2E ジョブは `pnpm install` で `@axe-core/playwright` を入れる�
 
 ### 7-5. 実測結果（2026-11-04）
 
-| 項目                         | 結果                                                                                                                                                                                                |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm test:browser:approver` | **30 / 30 PASS**（承認者16 + a11y5 + 管理UI9、skip 0。管理UI9は PR #86 で追加、PR #88 で必須E2Eへ読込み。旧 21/21 は管理UI追加前の記録）                                                            |
-| アクセシビリティ5画面        | **5 / 5 PASS**（serious/critical 0。除外は上表の7件のみ）                                                                                                                                           |
-| 2026-11-11 追記（確認・承認） | 当該1画面を追加。**6 / 6 PASS**（serious/critical 0、既知の除外の追加なし）。`pnpm typecheck` / `eslint` も pass                                                                    |
-| `pnpm typecheck`             | **PASS**（エラー0）                                                                                                                                                                                 |
-| `pnpm lint`                  | **PASS**（警告0、max-warnings=0）                                                                                                                                                                   |
-| `pnpm test:unit`             | **644 / 644 PASS**（18ファイル）                                                                                                                                                                    |
-| 検出確認（mutation check）   | allowlist を一時的に外すと `.offline` の color-contrast で**失敗**することを確認（空振りしない）                                                                                                    |
-| `pnpm test:e2e`（全体）      | 必須e2eジョブで実行（exact-head CI）。デフォルト収集139件＋管理UI9件の読込み＝**148件**（skip 1はAccess資格情報が無い既存項目）。ブラウザ設定の30件はサーバ不要で、うち管理UI9件を必須E2Eにも読込み |
+| 項目                          | 結果                                                                                                                                                                                                |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm test:browser:approver`  | **30 / 30 PASS**（承認者16 + a11y5 + 管理UI9、skip 0。管理UI9は PR #86 で追加、PR #88 で必須E2Eへ読込み。旧 21/21 は管理UI追加前の記録）                                                            |
+| アクセシビリティ5画面         | **5 / 5 PASS**（serious/critical 0。除外は上表の7件のみ）                                                                                                                                           |
+| 2026-11-11 追記（確認・承認） | 当該1画面を追加。**6 / 6 PASS**（serious/critical 0、既知の除外の追加なし）。`pnpm typecheck` / `eslint` も pass                                                                                    |
+| `pnpm typecheck`              | **PASS**（エラー0）                                                                                                                                                                                 |
+| `pnpm lint`                   | **PASS**（警告0、max-warnings=0）                                                                                                                                                                   |
+| `pnpm test:unit`              | **644 / 644 PASS**（18ファイル）                                                                                                                                                                    |
+| 検出確認（mutation check）    | allowlist を一時的に外すと `.offline` の color-contrast で**失敗**することを確認（空振りしない）                                                                                                    |
+| `pnpm test:e2e`（全体）       | 必須e2eジョブで実行（exact-head CI）。デフォルト収集139件＋管理UI9件の読込み＝**148件**（skip 1はAccess資格情報が無い既存項目）。ブラウザ設定の30件はサーバ不要で、うち管理UI9件を必須E2Eにも読込み |
 
 CI のステップ名は `E2E（9シナリオ）` のまま（workflow を変更しない方針）だが、実行内容は
 デフォルトの全 E2E＋読込み9件であり、名称は実態より小さい。workflow を触る別作業で名称を直す。
@@ -228,3 +232,19 @@ CI のステップ名は `E2E（9シナリオ）` のまま（workflow を変更
 - axe-core の自動検査は、色・名前・構造など機械的に判定できる範囲だけ。読み上げ順の自然さ・業務文脈の分かりやすさ・キーボード操作の実走は検査しない。
 - 上表の7件は自動検査では検出されない（既知の負債）。Backlog 6 で解消する。
 - `moderate` / `minor` は合否にしないため、増えても気づかない。必要なら別途レポート化する。
+
+## 8. 現行の E2E（2026-11-13）
+
+2026-11-11 に WebUI をステーション画面へ置き換えた（PR #170）。現行の E2E は `tests/e2e/` の 4 ファイルで、実サーバ・実 DB に対して動く。
+件数は 2026-11-13 に隔離 DB（`mirai_sf_relready_a_20261113_test`、`127.0.0.1:18996`）で実行した値である（**38 passed** を 2 回連続。`docs/production/36-release-readiness-20261113.md` §9）。最新は CI を正とする。
+
+| ファイル                               | 件数 | 内容                                                                                                                                            |
+| -------------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/e2e/auth.setup.ts`              | 1    | 1 回だけログインし、セッションを全試験で共有する（ログイン試行の上限を避ける）                                                                  |
+| `tests/e2e/station-a11y.spec.ts`       | 2    | 主要 9 画面と狭い画面の axe（serious / critical）                                                                                               |
+| `tests/e2e/station-regression.spec.ts` | 17   | 回帰: 永続化、権限、理由が必要な遷移（差戻し・取消）、一覧の検索・絞り込み・CSV、利用者管理、監査ログと CSV、承認依頼メール、注文書、ログアウト |
+| `tests/e2e/station.spec.ts`            | 18   | 全画面の表示、依頼の登録 → 確認 → 承認、一覧、道具カタログ、Mirai-Info の部署・社員名、監査ログ、システム設定、ボード、テーマ、狭い画面         |
+
+- 実行: `pnpm test:e2e`（開発 DB を使う）。CI は `pnpm exec playwright test`（使い捨ての DB）。ファイル名の順に 1 ワーカーで実行する。
+- 旧画面の E2E は `tests/e2e-legacy/` と `tests/browser-legacy/` に退避してあり、CI では実行されない。旧 E2E との対応表・未被覆・見つけた不具合は `docs/production/36-release-readiness-20261113.md` §6〜§8 にある。
+- 業務ルールの深い部分（冪等・版競合・承認・開発ライン）は `tests/integration/` が検証する。
