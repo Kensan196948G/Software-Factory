@@ -23,8 +23,9 @@ type ApiResult = { status: number; json: Record<string, unknown> | null };
 
 const RUN = Date.now().toString(36);
 const SELECT = '#stepBody select[data-bind="approverUserId"]';
+/** このファイルが作る承認者のメール（後始末は、この形の有効な利用者をサーバの一覧から探して無効化する）。 */
+const OWN_EMAIL = /^apv-[a-z0-9]+-\d+@example\.com$/;
 let serial = 0;
-const created: string[] = [];
 
 async function open(page: Page): Promise<void> {
   // ログインは auth.setup.ts の共有セッションを使う（試行回数の上限を避ける）
@@ -54,13 +55,19 @@ async function api(page: Page, method: string, path: string, body?: unknown): Pr
   );
 }
 
+async function actingRole(page: Page): Promise<string> {
+  const me = await api(page, 'GET', '/api/auth/me');
+  return String((me.json?.user as { actingRole?: string } | undefined)?.actingRole ?? '');
+}
+
+/** 画面の「操作する人」を切り替え、サーバのセッションの役割が変わるまで待つ（切替の API は非同期）。 */
 async function setRole(page: Page, role: Role): Promise<void> {
   if ((await page.locator('#role').inputValue()) !== role) await page.selectOption('#role', role);
   await expect.poll(async () => page.evaluate(() => (window as unknown as SFWindow).__SF.S.role)).toBe(role);
-  await page.waitForTimeout(200);
+  await expect.poll(async () => actingRole(page)).toBe(role);
 }
 
-/** 架空の承認者を 1 人作る（管理者の API）。作った人は afterEach で無効化する。 */
+/** 架空の承認者を 1 人作る（管理者の API）。作った人は afterEach の sweepApprovers で無効化する。 */
 async function createApprover(page: Page, displayName: string): Promise<Approver> {
   serial += 1;
   const depts = await api(page, 'GET', '/api/catalog/departments');
@@ -78,13 +85,28 @@ async function createApprover(page: Page, displayName: string): Promise<Approver
   expect(res.status).toBe(201);
   const user = res.json?.user as { id: string } | undefined;
   expect(user?.id).toBeTruthy();
-  created.push(user!.id);
   return { id: user!.id, displayName, email };
 }
 
 async function deactivate(page: Page, id: string): Promise<void> {
   const res = await api(page, 'PATCH', `/api/admin/users/${id}`, { isActive: false });
   expect(res.status).toBe(200);
+  expect((res.json?.user as { isActive?: boolean } | undefined)?.isActive).toBe(false);
+}
+
+/**
+ * このファイルが作った承認者を、有効なまま残さない。
+ * 手元の一覧ではなくサーバの利用者一覧から探すので、途中で失敗した回や前回の実行の残りも無効化できる。
+ */
+async function sweepApprovers(page: Page): Promise<void> {
+  const own = async () => {
+    const list = await api(page, 'GET', '/api/admin/users');
+    expect(list.status).toBe(200);
+    const items = (list.json?.items as { id: string; email: string; isActive: boolean }[] | undefined) ?? [];
+    return items.filter((u) => u.isActive && OWN_EMAIL.test(u.email));
+  };
+  for (const user of await own()) await deactivate(page, user.id);
+  expect(await own()).toHaveLength(0);
 }
 
 /** STEP 1〜6 を埋めて STEP 7（承認者）を開く。 */
@@ -213,8 +235,12 @@ test.describe('ステーション画面の承認者選択（利用者ID）', () 
     await page.unrouteAll({ behavior: 'ignoreErrors' });
     await page.goto('/');
     await page.waitForSelector('#nav');
-    for (const id of created.splice(0)) await api(page, 'PATCH', `/api/admin/users/${id}`, { isActive: false });
-    if (initialRole) await api(page, 'POST', '/api/auth/role', { role: initialRole });
+    await sweepApprovers(page);
+    if (initialRole) {
+      const res = await api(page, 'POST', '/api/auth/role', { role: initialRole });
+      expect(res.status).toBe(200);
+      expect(await actingRole(page)).toBe(initialRole);
+    }
   });
 
   test('同名の承認者を選択肢で区別でき、選んだ人の利用者IDで登録される', async ({ page }) => {
@@ -249,6 +275,27 @@ test.describe('ステーション画面の承認者選択（利用者ID）', () 
     expect(saved.approver).toBe(name);
     const post = posts.find((r) => new URL(r.url()).pathname === '/api/requests');
     expect(post?.postDataJSON()).toMatchObject({ approverUserId: second.id, approver: name });
+  });
+
+  test('Object の継承プロパティと同じ表示名でも、同名の承認者を区別できる', async ({ page }) => {
+    // 同名かどうかを数える入れ物が素のオブジェクトだと、constructor や __proto__ で数え間違える
+    const pairs: [Approver, Approver][] = [];
+    for (const name of ['constructor', '__proto__']) {
+      pairs.push([await createApprover(page, name), await createApprover(page, name)]);
+    }
+    await open(page);
+    await setRole(page, 'requester');
+    await toStep7(page, `承認者ID 継承名 ${RUN}`);
+
+    const select = page.locator(SELECT);
+    for (const [first, second] of pairs) {
+      await expect(select.locator(`option[value="${first.id}"]`)).toHaveText(`${first.displayName}（${first.email}）`);
+      await expect(select.locator(`option[value="${second.id}"]`)).toHaveText(`${second.displayName}（${second.email}）`);
+    }
+    const [, target] = pairs[0]!;
+    await select.selectOption(target.id);
+    await expect(select).toHaveValue(target.id);
+    await expect(page.locator('#rin')).toContainText(target.email);
   });
 
   test('編集で承認者を別の人へ変えると、サーバの承認者が変わる', async ({ page }) => {
@@ -391,7 +438,7 @@ test.describe('ステーション画面の承認者選択（利用者ID）', () 
   });
 
   test('候補の表示名の HTML 文字は文字列として表示され、実行されない', async ({ page }) => {
-    const markup = `<img src=x onerror="window.__xss=1">${RUN}`;
+    const markup = `</option></select><img src=x onerror="window.__xss=1">${RUN}`;
     const evil = await createApprover(page, markup);
     await open(page);
     await setRole(page, 'requester');
@@ -405,6 +452,34 @@ test.describe('ステーション画面の承認者選択（利用者ID）', () 
     await page.click('#setleft .li[data-v="approvers"]');
     await expect(page.locator('#rin')).toContainText(markup);
     await expect(page.locator('img[src="x"]')).toHaveCount(0);
+    expect(await page.evaluate(() => (window as unknown as SFWindow).__xss)).toBeUndefined();
+  });
+
+  test('同名の候補に併記するメールの HTML 文字も文字列として表示され、実行されない', async ({ page }) => {
+    // サーバはメールの形を検証するので、起動データの名簿だけを書き換えて画面の表示を確かめる（サーバ・DB は変えない）
+    const name = '架空 同名 </option><option value="x">';
+    const roster = [
+      { id: randomUUID(), displayName: name, email: '<img src=x onerror="window.__xss=1">@example.com', deptCode: '' },
+      { id: randomUUID(), displayName: name, email: '"></select><script>window.__xss=1</script>@example.com', deptCode: '' },
+    ];
+    await openWithBoot(page, (boot) => {
+      boot.approvers = roster;
+    });
+    await setRole(page, 'requester');
+    await toStep7(page, `承認者ID メール表示 ${RUN}`);
+
+    const select = page.locator(SELECT);
+    await expect(select.locator('option')).toHaveCount(3);
+    for (const entry of roster) {
+      await expect(select.locator(`option[value="${entry.id}"]`)).toHaveText(`${name}（${entry.email}）`);
+    }
+    await select.selectOption(roster[1]!.id);
+    await expect(page.locator('#rin')).toContainText(roster[1]!.email);
+    await page.click('#nav a[data-v="settings"]');
+    await page.click('#setleft .li[data-v="approvers"]');
+    await expect(page.locator('#rin')).toContainText(roster[0]!.email);
+    await expect(page.locator('img[src="x"]')).toHaveCount(0);
+    await expect(page.locator('option[value="x"]')).toHaveCount(0);
     expect(await page.evaluate(() => (window as unknown as SFWindow).__xss)).toBeUndefined();
   });
 
@@ -436,15 +511,22 @@ test.describe('ステーション画面の承認者選択（利用者ID）', () 
   test('サーバ接続の処理を読めないときは、見本の承認者で登録できない', async ({ page }) => {
     await page.route('**/station-bridge.js*', (route) => route.fulfill({ status: 503, body: '' }));
     await page.addInitScript(() => localStorage.clear());
+    const posts = watch(page, 'POST');
     await page.goto('/');
     await page.waitForSelector('#nav');
-    await toStep7(page, `承認者ID 接続なし ${RUN}`);
+    const title = `承認者ID 接続なし ${RUN}`;
+    await toStep7(page, title);
 
     await expect(page.locator(SELECT)).toBeDisabled();
     await expect(page.locator('#stepBody')).not.toContainText('鈴木 一郎');
     await page.click('#pane [data-a="submit"]');
     await expect(page.locator('#err')).toBeVisible();
     await expect(page.locator('#pane')).toContainText('承認者（業務責任者）');
+    await expect(page.locator('#stamp')).toBeHidden();
+    await expect(page.locator('#toast')).not.toContainText('受け付けました');
+    // 送信前に止まり、依頼の POST は 1 回も出ない（サーバにも作られない）
+    expect(posts).toHaveLength(0);
+    expect(await findByTitle(page, title)).toBeNull();
   });
 
   test('オフライン単体の見本は、これまでどおり名前の一覧から選べる', async ({ page }) => {

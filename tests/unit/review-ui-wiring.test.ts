@@ -40,6 +40,10 @@ it('サーバ接続時の承認者は利用者IDで選び、表示名から利�
   // 表示名の一致で利用者 ID を決める処理（同名の先頭の人に割り当ててしまう）を残さない
   expect(js).not.toMatch(/displayName\s*===\s*d\.approver/);
   expect(js).not.toMatch(/approvers\.find\(/);
+  // 同名かどうかは Map で数える（素のオブジェクトだと constructor などの表示名で数え間違え、併記が出ない）
+  expect(js).toContain('const APV_DUP=APV.items.reduce((c,a)=>c.set(a.displayName,(c.get(a.displayName)||0)+1),new Map());');
+  expect(js).toContain('if(!(APV_DUP.get(a.displayName)>1))return String(a.displayName);');
+  expect(js).not.toMatch(/APV_DUP\[/);
 });
 
 it('承認者の未選択・名簿外・名簿なしは登録の前に止め、先頭の人へ自動で割り当てない', () => {

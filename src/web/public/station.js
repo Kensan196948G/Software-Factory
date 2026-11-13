@@ -439,9 +439,9 @@ const APV=(()=>{
  return {available:false,reason:String((st&&st.reason)||'承認者一覧を取得できませんでした。'),items:[]};
 })();
 const APV_BY_ID=new Map(APV.items.map(a=>[a.id,a]));
-const APV_DUP=APV.items.reduce((c,a)=>{c[a.displayName]=(c[a.displayName]||0)+1;return c},{});
+const APV_DUP=APV.items.reduce((c,a)=>c.set(a.displayName,(c.get(a.displayName)||0)+1),new Map());
 function apvLabel(a){
- if(!(APV_DUP[a.displayName]>1))return String(a.displayName);
+ if(!(APV_DUP.get(a.displayName)>1))return String(a.displayName);
  const dp=a.deptCode?deptOf(a.deptCode):null;
  return a.displayName+'（'+(a.email||(dp?dp.short:a.deptCode)||String(a.id).slice(0,8))+'）';
 }
