@@ -262,6 +262,7 @@ test.describe('保存に失敗したときの画面', () => {
     await page.click('#pane [data-a="submit"]');
     // 応答が落ちたことを待ってから次へ進む（送信中に押して無視された、で通らないようにする）。
     await expect(page.locator('#toast')).toContainText('通信できませんでした');
+    await expect.poll(async () => page.evaluate(() => Boolean((window as unknown as { __SF?: { S?: { submitting?: boolean } } }).__SF?.S?.submitting))).toBe(false);
     expect(await countByTitle(page, title)).toBe(1);
 
     // 内容を直してから、やり直す。作成の本文は初回のままで、直した内容は PATCH で送られる。
@@ -275,7 +276,7 @@ test.describe('保存に失敗したときの画面', () => {
     expect(keys[0]).not.toBe('');
     expect(keys[1]).toBe(keys[0]); // 同じ冪等キーで照合している
     expect(bodies[0]?.title).toBe(title); // 初回の本文（スナップショット）
-    expect(bodies[1]?.title).toBe(title); // 再試行も同じ本文（直した内容は PATCH）
+    expect(bodies[1]).toEqual(bodies[0]); // 再試行も同じ本文（直した内容は PATCH）
     expect(await countByTitle(page, title)).toBe(0);
     await page.unroute('**/api/requests');
   });
@@ -370,6 +371,98 @@ test.describe('保存に失敗したときの画面', () => {
     await expect.poll(async () => await countByTitle(page, fixed), { timeout: 30_000 }).toBe(1);
     expect(bodies).toHaveLength(2);
     expect(bodies[1]?.title).toBe(fixed);
+    await page.unroute('**/api/requests');
+  });
+
+  test('応答喪失後の再試行が 4xx でも、作成済みの依頼を二重に作らない', async ({ page }) => {
+    const title = `E2E 保存失敗 再試行4xx ${stamp()}`;
+    await open(page);
+    await fillRequest(page, title);
+
+    const keys: string[] = [];
+    let posts = 0;
+    await page.route('**/api/requests', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      posts += 1;
+      keys.push(String(route.request().headers()['idempotency-key'] ?? ''));
+      if (posts === 1) {
+        await route.fetch();
+        await route.abort('connectionreset'); // サーバには作成されるが応答を落とす
+        return;
+      }
+      if (posts === 2) {
+        return route.fulfill({
+          status: 429,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: { code: 'ERR-429', message: '混雑しています（E2E の故障）' } }),
+        });
+      }
+      return route.continue();
+    });
+
+    await page.click('#pane [data-a="submit"]');
+    await expect(page.locator('#toast')).toContainText('通信できませんでした');
+    await expect.poll(async () => page.evaluate(() => Boolean((window as unknown as { __SF?: { S?: { submitting?: boolean } } }).__SF?.S?.submitting))).toBe(false);
+    expect(await countByTitle(page, title)).toBe(1);
+
+    // 再試行は 429。ここで冪等キーを捨てると、次の再試行で二重に作ってしまう。
+    await page.click('#pane [data-a="submit"]');
+    await expect(page.locator('#toast')).toContainText('混雑しています（E2E の故障）');
+
+    // 3 回目は同じキーで照合し、作成済みの依頼に合流する（増えない）。
+    await page.click('#pane [data-a="submit"]');
+    await expect.poll(async () => await countByTitle(page, title), { timeout: 30_000 }).toBe(1);
+    expect(posts).toBe(3);
+    expect(keys[2]).toBe(keys[0]);
+    await page.unroute('**/api/requests');
+  });
+
+  test('作成済みの依頼が更新されていたら、二重に作らず最新を開く', async ({ page }) => {
+    const title = `E2E 保存失敗 作成済み更新 ${stamp()}`;
+    await open(page);
+    await fillRequest(page, title);
+
+    let posts = 0;
+    await page.route('**/api/requests', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      posts += 1;
+      if (posts === 1) {
+        await route.fetch();
+        await route.abort('connectionreset');
+        return;
+      }
+      return route.continue();
+    });
+
+    await page.click('#pane [data-a="submit"]');
+    await expect(page.locator('#toast')).toContainText('通信できませんでした');
+    await expect.poll(async () => page.evaluate(() => Boolean((window as unknown as { __SF?: { S?: { submitting?: boolean } } }).__SF?.S?.submitting))).toBe(false);
+    const list = await callWith<RequestList>(page.request, 'GET', `/api/requests?q=${encodeURIComponent(title)}`);
+    const id = list.body.items.find((x) => x.title === title)?.id ?? '';
+    expect(id).toMatch(/^REQ-\d{4}-\d{4}$/);
+
+    // 別の操作で、作成済みの依頼を更新しておく（冪等照合のときに「触られている」状態にする）。
+    const current = await detail(page, id);
+    const moved = await callWith(page.request, 'POST', `/api/requests/${encodeURIComponent(id)}/transitions`, {
+      to: 'review',
+      version: current.version,
+    });
+    expect(moved.status).toBe(200);
+
+    // 再試行は「作成済みだが更新されている」と判定される。二重に作らず、最新を開く。
+    await page.click('#pane [data-a="submit"]');
+    await expect(page.locator('#toast')).toContainText('作成済み');
+    expect(await countByTitle(page, title)).toBe(1);
+    const state = await page.evaluate((reqId) => {
+      const w = window as unknown as {
+        __SF?: { S: { draft: unknown; data: { items: { id: string }[] } } };
+      };
+      return {
+        draft: Boolean(w.__SF?.S.draft),
+        adopted: Boolean(w.__SF?.S.data.items.some((x) => x.id === reqId)),
+      };
+    }, id);
+    expect(state).toEqual({ draft: false, adopted: true });
     await page.unroute('**/api/requests');
   });
 });
