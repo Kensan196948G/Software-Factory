@@ -417,6 +417,8 @@ main.split{padding:0;display:grid;grid-template-columns:minmax(0,1fr) var(--rw);
 .work{overflow:auto;padding:20px 22px 40px;min-width:0;min-height:0}
 .rpane{border-left:1px solid var(--line);background:var(--panel);overflow:hidden;overflow:clip;min-width:0;min-height:0;box-shadow:-6px 0 18px rgba(16,24,40,.05)}
 .rin{padding:14px 18px 16px;transform-origin:0 0}
+/* 利用者一覧など、行が増える面は縮小せず、パネルの中で縦にスクロールさせる（下端のボタンを押せるようにする） */
+.rin.pane-scroll{height:100%;max-height:100%;overflow:auto;overscroll-behavior:contain}
 .rin.tight{padding-top:10px;padding-bottom:10px}
 .rin.tight .metas{flex-wrap:nowrap;overflow:hidden;-webkit-mask-image:linear-gradient(90deg,#000 86%,transparent);mask-image:linear-gradient(90deg,#000 86%,transparent)}
 .rin.tight .metas .mp{flex:none;max-width:62%}
