@@ -353,9 +353,14 @@
     return data;
   }
 
+  /**
+   * 遷移の理由としてサーバへ送る文。画面の履歴文（`note`）は「信号の色を決定」のような
+   * 自動生成の文を含むため理由に使わない。理由が必須な遷移では、画面が利用者のメモを
+   * `reason` に入れる（空なら送らない＝サーバが拒否する）。
+   */
   function lastNote(it) {
     const h = (it.history || [])[it.history.length - 1];
-    return h && h.note ? String(h.note) : '';
+    return h && h.reason ? String(h.reason) : '';
   }
 
   const CONFLICT_MESSAGE =
