@@ -965,6 +965,12 @@ async function submit(){
  if(!res||res.ok!==true){
   // 保存できていないので、画面の依頼・受付スタンプ・入力の消去を確定させない（入力を残してやり直せる）。
   const at=S.data.items.indexOf(item);if(at>=0)S.data.items.splice(at,1);
+  // 作成が「確定的に拒否」された（4xx。408 を除く）ときは、サーバに依頼は無い。冪等キーと送信本文を捨てて、
+  // 直した内容で送り直せるようにする（古い本文を送り続けて同じ 4xx を繰り返さない）。
+  const createFailure=(res&&Array.isArray(res.failures)?res.failures:[]).find(f=>f&&f.stage==='create');
+  if(createFailure&&createFailure.status>=400&&createFailure.status<500&&createFailure.status!==408&&createFailure.status!==409){
+   delete d.__idem;delete d.__postAs;
+  }
   save(S.data);render();
   if(!window.__MSF__)toast((res&&res.error)||'保存できませんでした','bad');
   return;
