@@ -191,4 +191,37 @@ test.describe('保存に失敗したときの画面', () => {
     await expect.poll(async () => (await detail(page, id)).title, { timeout: 30_000 }).toBe(after);
     expect((await detail(page, id)).version).toBeGreaterThan(1);
   });
+
+  test('送信中の修正を消さず、二重送信もしない', async ({ page }) => {
+    const title = `E2E 保存失敗 送信中 ${stamp()}`;
+    await open(page);
+    await fillRequest(page, title);
+
+    let posts = 0;
+    await page.route('**/api/requests', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      posts += 1;
+      await new Promise((r) => setTimeout(r, 800));
+      return route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'ERR-500', message: '保存に失敗しました（E2E の故障）' } }),
+      });
+    });
+
+    // 送信を 2 回押しても、サーバへの POST は 1 回だけ。
+    await page.click('#pane [data-a="submit"]');
+    await page.click('#pane [data-a="submit"]');
+
+    // 応答を待つ間に、利用者がステップ 3 へ戻って件名を直す。
+    await page.click('#main [data-a="step"][data-v="2"]');
+    const edited = `${title}（送信中に修正）`;
+    await page.fill('#stepBody [data-bind="title"]', edited);
+
+    await expect(page.locator('#toast')).toContainText('保存に失敗しました（E2E の故障）');
+    expect(posts).toBe(1);
+    // 送信前のスナップショットへ戻さず、送信中に直した内容を残す。
+    await expect(page.locator('#stepBody [data-bind="title"]')).toHaveValue(edited);
+    expect(await countByTitle(page, edited)).toBe(0);
+  });
 });
