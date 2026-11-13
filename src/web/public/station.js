@@ -588,8 +588,11 @@ function reportSync(res){
 }
 function persist(opts){
  syncLines(S.data);
- if(!save(S.data)&&S.persistent){S.persistent=false;renderNav()}
+ const cached=save(S.data);
+ if(!cached&&S.persistent){S.persistent=false;renderNav()}
  if(window.__MSF__)return window.__MSF__.persist(S.data,opts).then(res=>{reportSync(res);return res});
+ // サーバが無いとき（見本・オフライン）は、ローカル保存の成否をそのまま結果にする。失敗を成功として扱わない。
+ if(!cached)return Promise.resolve({ok:false,error:'このブラウザに保存できませんでした（容量や設定を確認してください）',ids:{},notices:[]});
  return Promise.resolve({ok:true,ids:{},notices:[]});
 }
 let lastView=null,lastSel=null,modalHook=null,confirmFn=null;
@@ -925,21 +928,75 @@ function startNew(ref){
  if(ref&&S.draft.toolRef){const tl=toolOf(ref);toast('「'+tl.name+'」で依頼をはじめます（件名・部署・信号の候補に反映）','','grid')}
 }
 function startEdit(id){const r=find(id);if(!r)return;S.draft=JSON.parse(JSON.stringify(r));if(!(S.draft.criteria||[]).length)S.draft.criteria=[''];S.editId=id;S.step=0;S.pickDept='';go('new')}
-function submit(){
+function idemKey(){try{return crypto.randomUUID()}catch(e){return 'idem-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10)}}
+async function submit(){
  for(let i=0;i<STEPS.length;i++){const e=validate(i);if(e.length){S.step=i;render();showErr(e);return}}
+ if(S.submitting)return;
+ S.submitting=true;
+ try{
  const d=S.draft,now=nowISO();
  d.criteria=d.criteria.map(x=>x.trim()).filter(Boolean);
  if(S.editId){
-  d.updatedAt=now;d.history=d.history||[];d.history.push({at:now,by:me().name,role:me().l,action:'内容を編集',note:''});
-  const k=S.data.items.findIndex(x=>x.id===S.editId);if(k>=0)S.data.items[k]=d;persist();
-  const id=d.id;S.draft=null;S.editId=null;S.fresh=id;go('board',id);toast(id+' を更新しました','ok');return;
+  // 送るのは複製。失敗したときに、送信中に利用者が直した S.draft を巻き戻さないため。
+  const item=JSON.parse(JSON.stringify(d));
+  item.updatedAt=now;item.history=item.history||[];item.history.push({at:now,by:me().name,role:me().l,action:'内容を編集',note:''});
+  const k=S.data.items.findIndex(x=>x.id===S.editId),prev=k>=0?S.data.items[k]:null;
+  if(k>=0)S.data.items[k]=item;
+  const sentSig=JSON.stringify(item);
+  const res=await persist();
+  if(!res||res.ok!==true){
+   // 送った内容のままなら戻す。競合（409）で画面が取り直したときは中身が変わっているので、取り直しを正とする。
+   if(k>=0&&JSON.stringify(S.data.items[k])===sentSig)S.data.items[k]=prev;
+   save(S.data);render();if(S.open)renderDrawer();
+   if(!window.__MSF__)toast((res&&res.error)||'保存できませんでした','bad');
+   return;
+  }
+  const id=item.id;S.draft=null;S.editId=null;S.fresh=id;go('board',id);toast(id+' を更新しました','ok');return;
  }
-d.id=nextId(S.data);d.createdAt=now;d.updatedAt=now;d.status='received';
- d.history=[{at:now,by:d.applicant,role:me().l,action:'受付',note:'依頼を登録しました'}];
- S.data.items.push(d);persist();S.fresh=d.id;S.draft=null;
- const sp=$('#stamp');$('#stampNo').textContent=d.id;$('#stampDate').textContent=fmt(now,false);
+ // 応答が失われても二重に作らないよう、最初の試行で決めた冪等キーと送信本文を控える（再試行は同じキーで照合する）。
+ if(!d.__idem){d.__idem=idemKey();d.__postAs=JSON.parse(JSON.stringify(d))}
+ d.__tries=(d.__tries||0)+1;
+ // 登録も複製を送る（S.draft には送信のための id・状態・履歴を入れない）。
+ const item=JSON.parse(JSON.stringify(d));
+ item.id=nextId(S.data);item.createdAt=now;item.updatedAt=now;item.status='received';
+ item.history=[{at:now,by:item.applicant,role:me().l,action:'受付',note:'依頼を登録しました'}];
+ S.data.items.push(item);
+ const res=await persist();
+ if(!res||res.ok!==true){
+  const failures=res&&Array.isArray(res.failures)?res.failures:[];
+  // 以前の試行の応答が失われた後、作成済みの依頼が他の人に更新されていた（冪等照合の競合）。
+  // ここで同じキーのまま再試行すると同じ 409 を繰り返すので、作成済みの最新を採用して画面を開き直す。
+  const replayConflict=failures.find(f=>f&&f.stage==='content'&&f.status===409);
+  if(replayConflict&&replayConflict.serverId&&window.__MSF__&&typeof window.__MSF__.adoptRequest==='function'){
+   // 先に手元の複製を外してから採用する（同じ id があると採用側が画面へ加えない）。
+   const at=S.data.items.indexOf(item);if(at>=0)S.data.items.splice(at,1);
+   const adopted=await window.__MSF__.adoptRequest(replayConflict.serverId);
+   if(adopted){
+    S.draft=null;S.editId=null;S.fresh=adopted.id;S.step=0;save(S.data);
+    go('board',adopted.id);
+    toast('この依頼は作成済みでした（他の人が更新しています）。最新の内容を開きました','bad','info');
+    return;
+   }
+   S.data.items.push(item);
+  }
+  // 保存できていないので、画面の依頼・受付スタンプ・入力の消去を確定させない（入力を残してやり直せる）。
+  const at=S.data.items.indexOf(item);if(at>=0)S.data.items.splice(at,1);
+  // 作成が「確定的に拒否」された（4xx。408/409 を除く）ときは、サーバに依頼は無い。冪等キーと送信本文を捨てて、
+  // 直した内容で送り直せるようにする（古い本文を送り続けて同じ 4xx を繰り返さない）。
+  // ただし、以前の試行の応答が失われている可能性があるとき（2 回目以降）は、作成済みの依頼を二重に作らないため残す。
+  const createFailure=failures.find(f=>f&&f.stage==='create'&&f.id===item.id);
+  if(createFailure&&d.__tries===1&&createFailure.status>=400&&createFailure.status<500&&createFailure.status!==408&&createFailure.status!==409){
+   delete d.__idem;delete d.__postAs;delete d.__tries;
+  }
+  save(S.data);render();
+  if(!window.__MSF__)toast((res&&res.error)||'保存できませんでした','bad');
+  return;
+ }
+ S.fresh=item.id;S.draft=null;
+ const sp=$('#stamp');$('#stampNo').textContent=item.id;$('#stampDate').textContent=fmt(now,false);
  sp.classList.add('show');const h=$('.hanko',sp);h.style.animation='none';void h.offsetWidth;h.style.animation='';
- setTimeout(()=>{sp.classList.remove('show');go('board');toast('受け付けました（'+d.id+'）','ok','stamp');confetti(90)},RM?300:1500);
+ setTimeout(()=>{sp.classList.remove('show');go('board');toast('受け付けました（'+item.id+'）','ok','stamp');confetti(90)},RM?300:1500);
+ }finally{S.submitting=false}
 }
 
 /* ---------- 確認・承認 ---------- */
