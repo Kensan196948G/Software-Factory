@@ -917,21 +917,36 @@ function startNew(ref){
  if(ref&&S.draft.toolRef){const tl=toolOf(ref);toast('「'+tl.name+'」で依頼をはじめます（件名・部署・信号の候補に反映）','','grid')}
 }
 function startEdit(id){const r=find(id);if(!r)return;S.draft=JSON.parse(JSON.stringify(r));if(!(S.draft.criteria||[]).length)S.draft.criteria=[''];S.editId=id;S.step=0;S.pickDept='';go('new')}
-function submit(){
+let submitting=false;
+async function submit(){
  for(let i=0;i<STEPS.length;i++){const e=validate(i);if(e.length){S.step=i;render();showErr(e);return}}
+ if(submitting)return;
+ submitting=true;
+ try{
  const d=S.draft,now=nowISO();
+ const before=JSON.parse(JSON.stringify(d));
  d.criteria=d.criteria.map(x=>x.trim()).filter(Boolean);
  if(S.editId){
   d.updatedAt=now;d.history=d.history||[];d.history.push({at:now,by:me().name,role:me().l,action:'内容を編集',note:''});
-  const k=S.data.items.findIndex(x=>x.id===S.editId);if(k>=0)S.data.items[k]=d;persist();
+  const k=S.data.items.findIndex(x=>x.id===S.editId),prev=k>=0?S.data.items[k]:null;
+  if(k>=0)S.data.items[k]=d;
+  const res=await persist();
+  if(!res||res.ok!==true){if(k>=0)S.data.items[k]=prev;S.draft=before;save(S.data);render();if(S.open)renderDrawer();return}
   const id=d.id;S.draft=null;S.editId=null;S.fresh=id;go('board',id);toast(id+' を更新しました','ok');return;
  }
-d.id=nextId(S.data);d.createdAt=now;d.updatedAt=now;d.status='received';
+ d.id=nextId(S.data);d.createdAt=now;d.updatedAt=now;d.status='received';
  d.history=[{at:now,by:d.applicant,role:me().l,action:'受付',note:'依頼を登録しました'}];
- S.data.items.push(d);persist();S.fresh=d.id;S.draft=null;
+ S.data.items.push(d);
+ const res=await persist();
+ if(!res||res.ok!==true){
+  // 保存できていないので、画面の依頼・受付スタンプ・入力の消去を確定させない（入力を残してやり直せる）。
+  S.data.items=S.data.items.filter(x=>x!==d);S.draft=before;save(S.data);render();return;
+ }
+ S.fresh=d.id;S.draft=null;
  const sp=$('#stamp');$('#stampNo').textContent=d.id;$('#stampDate').textContent=fmt(now,false);
  sp.classList.add('show');const h=$('.hanko',sp);h.style.animation='none';void h.offsetWidth;h.style.animation='';
  setTimeout(()=>{sp.classList.remove('show');go('board');toast('受け付けました（'+d.id+'）','ok','stamp');confetti(90)},RM?300:1500);
+ }finally{submitting=false}
 }
 
 /* ---------- 確認・承認 ---------- */
