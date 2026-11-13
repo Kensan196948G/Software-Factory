@@ -14,6 +14,7 @@ import { readFile } from 'node:fs/promises';
  * - テストデータは架空（example.com）。起票者と部署は見本名簿（Mirai-Info の構造）から選ぶ
  *   （station.spec.ts の「一覧の起票者と部署が Mirai-Info に合う」が新しい依頼の行も見るため）。
  * - 追加のログインは 2 回だけ（管理者でない利用者・ログアウト）。共有のセッションは失効させない。
+ * - 試験は互いに独立している（順序・再実行・単独実行に依存しない。利用者も依頼も試験ごとに作る）。
  * - 承認者（STEP 7）の選び方そのものは検証しない（別の試験で扱う）。
  */
 
@@ -67,8 +68,14 @@ const stamp = (): string => `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
 /* ───────── サーバ（API）を直接呼ぶ。画面の表示とは独立に、サーバの正本を確かめるために使う ───────── */
 
-async function callWith<T>(request: APIRequestContext, method: string, path: string, data?: unknown): Promise<Called<T>> {
-  const headers: Record<string, string> = {};
+async function callWith<T>(
+  request: APIRequestContext,
+  method: string,
+  path: string,
+  data?: unknown,
+  extraHeaders: Record<string, string> = {},
+): Promise<Called<T>> {
+  const headers: Record<string, string> = { ...extraHeaders };
   if (method !== 'GET') {
     const res = await request.get('/api/auth/csrf');
     const json = (await res.json()) as { csrf: string | null };
@@ -86,8 +93,14 @@ async function callWith<T>(request: APIRequestContext, method: string, path: str
 }
 
 /** 共有のセッション（auth.setup.ts の管理者）でサーバを呼ぶ。 */
-function call<T>(page: Page, method: string, path: string, data?: unknown): Promise<Called<T>> {
-  return callWith<T>(page.request, method, path, data);
+function call<T>(
+  page: Page,
+  method: string,
+  path: string,
+  data?: unknown,
+  extraHeaders: Record<string, string> = {},
+): Promise<Called<T>> {
+  return callWith<T>(page.request, method, path, data, extraHeaders);
 }
 
 const codeOf = (res: Called<unknown>): string => (res.body as ApiError | null)?.error?.code ?? '';
@@ -143,14 +156,62 @@ async function createViaApi(page: Page, title: string): Promise<{ id: string; de
   return { id: res.body.request.id, deptCode: person.divisionCode, applicant: person.name };
 }
 
-/** 準備用: API で状態を進める（役割はサーバのセッションの役割）。 */
-async function transitionApi(page: Page, id: string, to: string, extra: Record<string, unknown> = {}): Promise<Called<unknown>> {
+/** API で状態の変更を送る（役割はサーバのセッションの役割。CSRF と最新の版を付ける）。 */
+async function transitionApi(
+  page: Page,
+  id: string,
+  to: string,
+  extra: Record<string, unknown> = {},
+  extraHeaders: Record<string, string> = {},
+): Promise<Called<unknown>> {
   const current = await detail(page, id);
-  return call(page, 'POST', `/api/requests/${encodeURIComponent(id)}/transitions`, {
-    to,
-    version: current.version,
-    ...extra,
+  return call(
+    page,
+    'POST',
+    `/api/requests/${encodeURIComponent(id)}/transitions`,
+    { to, version: current.version, ...extra },
+    extraHeaders,
+  );
+}
+
+/**
+ * サーバの規則を画面を通さずに確かめる: 理由なし（未指定・空白だけ）の遷移は 400 ERR-102 で拒否され、
+ * 状態・版・履歴が変わらない。画面が送る前に止める作りでも、サーバの規則が緩んだら落ちるようにする。
+ */
+async function expectReasonRequiredByServer(page: Page, id: string, to: 'back' | 'cancel'): Promise<void> {
+  for (const extra of [{}, { reason: '   ' }]) {
+    const before = await detail(page, id);
+    const denied = await transitionApi(page, id, to, extra);
+    expect(denied.status).toBe(400);
+    expect(codeOf(denied)).toBe('ERR-102');
+    expect(messageOf(denied)).toContain('理由');
+    const after = await detail(page, id);
+    expect(after.status).toBe(before.status);
+    expect(after.version).toBe(before.version);
+    expect(after.history).toHaveLength(before.history.length);
+    expect(after.comments).toHaveLength(before.comments.length);
+  }
+}
+
+/** 準備用: API で架空の利用者（依頼者の役割だけ）を 1 人作る。試験ごとに別の利用者を使う。 */
+async function createRequesterViaApi(page: Page): Promise<{ id: string; email: string; password: string }> {
+  const mark = stamp();
+  const email = `e2e-regression-${mark}@example.com`;
+  const password = `E2e-${mark}-${Math.random().toString(36).slice(2, 12)}`;
+  const depts = await call<{ items: { code: string }[] }>(page, 'GET', '/api/catalog/departments');
+  const deptCode = depts.body.items[0]?.code ?? '';
+  const res = await call<{ user: ManagedUser }>(page, 'POST', '/api/admin/users', {
+    email,
+    displayName: `E2E 回帰 利用者 ${mark}`,
+    deptCode,
+    password,
+    roles: ['requester'],
+    isAdmin: false,
   });
+  expect(res.status, messageOf(res)).toBe(201);
+  expect(res.body.user.roles).toEqual(['requester']);
+  expect(res.body.user.isActive).toBe(true);
+  return { id: res.body.user.id, email, password };
 }
 
 /** 準備用: 受付 → 内容確認中 →（承認待ち →（承認済み））まで進める。終わったら受付担当に戻す。 */
@@ -405,11 +466,27 @@ test.describe('回帰: 権限', () => {
     await advance(page, id, 'wait');
     await switchServerRole(page, 'requester');
 
-    const approve = await transitionApi(page, id, 'approved', { signal: 'g', checklistAcknowledged: true });
+    // 監査の API は拒否の中身（どの状態へ送ったか）を返さないので、要求ごとの相関 ID で突き合わせる
+    const mark = stamp();
+    const approveCid = `e2e-deny-approved-${mark}`;
+    const backCid = `e2e-deny-back-${mark}`;
+    const approve = await transitionApi(
+      page,
+      id,
+      'approved',
+      { signal: 'g', checklistAcknowledged: true },
+      { 'x-correlation-id': approveCid },
+    );
     expect(approve.status).toBe(409);
     expect(codeOf(approve)).toBe('ERR-201');
     expect(messageOf(approve)).toContain('承認者だけ');
-    const back = await transitionApi(page, id, 'back', { reason: 'E2E 回帰: 依頼者は差し戻せない' });
+    const back = await transitionApi(
+      page,
+      id,
+      'back',
+      { reason: 'E2E 回帰: 依頼者は差し戻せない' },
+      { 'x-correlation-id': backCid },
+    );
     expect(back.status).toBe(409);
     expect(codeOf(back)).toBe('ERR-201');
 
@@ -417,15 +494,16 @@ test.describe('回帰: 権限', () => {
     expect(after.status).toBe('wait');
     expect(after.signalDecided).toBeNull();
 
-    const audit = await call<{ items: { action: string; targetId: string | null; result: string }[] }>(
-      page,
-      'GET',
-      '/api/audit-logs?limit=500',
-    );
+    const audit = await call<{
+      items: { action: string; targetId: string | null; result: string; role: string; correlationId: string | null }[];
+    }>(page, 'GET', '/api/audit-logs?limit=500');
     expect(audit.status).toBe(200);
+    // この依頼はこの試験だけが使う。拒否の記録は、送った 2 つの要求（承認・差戻し）に 1 件ずつ
     const denied = audit.body.items.filter((a) => a.targetId === id && a.action === 'request.transition_denied');
-    expect(denied.length).toBeGreaterThanOrEqual(2);
-    expect(denied.every((a) => a.result === 'denied')).toBe(true);
+    expect(denied).toHaveLength(2);
+    expect(denied.every((a) => a.result === 'denied' && a.role === 'requester')).toBe(true);
+    expect(denied.filter((a) => a.correlationId === approveCid)).toHaveLength(1);
+    expect(denied.filter((a) => a.correlationId === backCid)).toHaveLength(1);
   });
 
   test('受付担当は承認済みへ進められない（画面は無効、サーバは拒否）', async ({ page }) => {
@@ -455,8 +533,12 @@ test.describe('回帰: 理由が必要な遷移', () => {
   test('差戻しは理由が必須。理由つきで差し戻すと理由が残り、依頼者が再提出できる', async ({ page }) => {
     const { id } = await createViaApi(page, `E2E 回帰 差戻し ${stamp()}`);
     const reason = `E2E 回帰: 合格の条件を数字で書き直してください ${stamp()}`;
-    await open(page);
 
+    // サーバ: 理由なしの差戻しを拒否する（画面は送る前に止めるので、API で直接確かめる）
+    await expectReasonRequiredByServer(page, id, 'back');
+
+    // 画面: 理由なしでは送らず、理由を求めてダイアログを開いたままにする
+    await open(page);
     await selectInReview(page, id);
     await page.click(`#rin [data-a="status"][data-id="${id}"][data-v="back"]`);
     await expect(page.locator('#modal.open input[name="ns"][value="back"]')).toBeChecked();
@@ -489,19 +571,23 @@ test.describe('回帰: 理由が必要な遷移', () => {
     const title = `E2E 回帰 取消 ${stamp()}`;
     const { id } = await createViaApi(page, title);
     const reason = `E2E 回帰: 重複のため取り消します ${stamp()}`;
-    await open(page);
 
+    // サーバ: 理由なしの取消を拒否する（画面の作りに関係なく、API で直接確かめる）
+    await expectReasonRequiredByServer(page, id, 'cancel');
+
+    // 画面: 理由なしで「取消」を確定しても取消にならない。落ち着いた後の表示は「受付」のままで、サーバの状態も変わらない
+    // （途中のトーストの出方には依存しない。送る前に止める作りでも、送ってから拒否されて戻す作りでも成り立つ）
+    await open(page);
     await selectInReview(page, id);
     await page.click(`#rin ${STATUS_DIALOG}`);
     await page.check('#modal input[name="ns"][value="cancel"]');
     await page.click('#modal [data-a="sok"]');
-    // サーバが理由なしの取消を拒否し（ERR-102）、画面はサーバの状態へ戻る
-    await expect(page.locator('#toast')).toContainText('理由をメモに書いてください');
     await expect
       .poll(async () =>
         page.evaluate((rid) => (window as unknown as SFWindow).__SF.S.data.items.find((r) => r.id === rid)?.status ?? '', id),
       )
       .toBe('received');
+    await expect(page.locator(`#work .li[data-id="${id}"] .badge`)).toHaveText('受付');
     expect(await serverStatus(page, id)).toBe('received');
 
     // ダイアログが閉じていれば開き直す（画面が送る前に理由を求めて開いたままにする作りでも、同じ手順で続けられる）
@@ -593,70 +679,82 @@ test.describe('回帰: 一覧', () => {
   });
 });
 
-test.describe.serial('回帰: 利用者管理', () => {
-  // この 2 件は同じ架空の利用者を使う（追加 → 別の利用者としてログイン → 無効化）
-  const account = { email: '', password: '', name: '', id: '' };
-
+test.describe('回帰: 利用者管理', () => {
+  // 2 件はそれぞれ別の架空の利用者を作る（順序や再実行に依存しない。片方だけ実行しても通る）
   test('利用者を追加すると一覧に現れ、無効化と有効化を切り替えられる', async ({ page }) => {
     const mark = stamp();
-    account.email = `e2e-regression-${mark}@example.com`;
-    account.name = `E2E 回帰 利用者 ${mark}`;
-    account.password = `E2e-${mark}-${Math.random().toString(36).slice(2, 12)}`;
-
-    await gotoTab(page, 'settings');
-    await page.click('#setleft .li[data-v="users"]');
-    await expect(page.locator('#rin [data-a="uAdd"]')).toBeVisible();
-    const adminRow = page.locator('#rin .dlist .li').filter({ hasText: ADMIN_EMAIL });
-    await expect(adminRow).toHaveCount(1);
-    await expect(adminRow).toContainText('管理者');
-
-    await page.click('#rin [data-a="uAdd"]');
-    await page.fill('#modal #uName', account.name);
-    await page.fill('#modal #uEmail', account.email);
-    await page.fill('#modal #uPass', account.password);
-    await expect(page.locator('#modal input[name="urole"][value="requester"]')).toBeChecked();
-    await page.click('#modal [data-a="uAddOk"]');
-    await expect(page.locator('#toast')).toContainText('利用者を追加しました');
-    await expect(page.locator('#modal.open')).toHaveCount(0);
-
-    const row = page.locator('#rin .dlist .li').filter({ hasText: account.email });
-    await expect(row).toHaveCount(1);
-    await expect(row).toContainText(account.name);
-    await expect(row).toContainText('依頼者');
-    // パスワードは一覧・トースト・端末の保存領域に出ない（入力欄そのものの扱いは 36 の「既知の不具合」を参照）
-    expect(await page.locator('#rin').innerText()).not.toContain(account.password);
-    expect(await page.locator('#toast').innerText()).not.toContain(account.password);
-    expect(await page.evaluate((pw) => JSON.stringify(Object.entries(localStorage)).includes(pw), account.password)).toBe(false);
-
+    const account = {
+      email: `e2e-regression-${mark}@example.com`,
+      name: `E2E 回帰 利用者 ${mark}`,
+      password: `E2e-${mark}-${Math.random().toString(36).slice(2, 12)}`,
+    };
     const find = async (): Promise<ManagedUser | undefined> =>
       (await call<{ items: ManagedUser[] }>(page, 'GET', '/api/admin/users')).body.items.find((u) => u.email === account.email);
-    const created = await find();
-    expect(created).toBeDefined();
-    expect(created?.roles).toEqual(['requester']);
-    expect(created?.isAdmin).toBe(false);
-    expect(created?.isActive).toBe(true);
-    account.id = created?.id ?? '';
-    // 自分自身（管理者）の行は操作しない
-    expect(account.id).not.toBe((await me(page)).id);
 
-    const toggle = page.locator(`#rin [data-a="uToggle"][data-id="${account.id}"]`);
-    await expect(toggle).toHaveText('無効にする');
-    await toggle.click();
-    await expect.poll(async () => (await find())?.isActive).toBe(false);
-    await expect(toggle).toHaveText('有効に戻す');
-    await expect(row).toContainText('無効');
+    try {
+      await gotoTab(page, 'settings');
+      await page.click('#setleft .li[data-v="users"]');
+      await expect(page.locator('#rin [data-a="uAdd"]')).toBeVisible();
+      const adminRow = page.locator('#rin .dlist .li').filter({ hasText: ADMIN_EMAIL });
+      await expect(adminRow).toHaveCount(1);
+      await expect(adminRow).toContainText('管理者');
 
-    await toggle.click();
-    await expect.poll(async () => (await find())?.isActive).toBe(true);
-    await expect(toggle).toHaveText('無効にする');
+      await page.click('#rin [data-a="uAdd"]');
+      await page.fill('#modal #uName', account.name);
+      await page.fill('#modal #uEmail', account.email);
+      await page.fill('#modal #uPass', account.password);
+      await expect(page.locator('#modal input[name="urole"][value="requester"]')).toBeChecked();
+      await page.click('#modal [data-a="uAddOk"]');
+      await expect(page.locator('#toast')).toContainText('利用者を追加しました');
+      await expect(page.locator('#modal.open')).toHaveCount(0);
+
+      const row = page.locator('#rin .dlist .li').filter({ hasText: account.email });
+      await expect(row).toHaveCount(1);
+      await expect(row).toContainText(account.name);
+      await expect(row).toContainText('依頼者');
+      // パスワードは一覧・トースト・端末の保存領域に出ない（入力欄そのものの扱いは 36 の「見つけた不具合」を参照）
+      expect(await page.locator('#rin').innerText()).not.toContain(account.password);
+      expect(await page.locator('#toast').innerText()).not.toContain(account.password);
+      expect(await page.evaluate((pw) => JSON.stringify(Object.entries(localStorage)).includes(pw), account.password)).toBe(
+        false,
+      );
+
+      const created = await find();
+      expect(created).toBeDefined();
+      expect(created?.roles).toEqual(['requester']);
+      expect(created?.isAdmin).toBe(false);
+      expect(created?.isActive).toBe(true);
+      const userId = created?.id ?? '';
+      // 自分自身（管理者）の行は操作しない
+      expect(userId).not.toBe((await me(page)).id);
+
+      const toggle = page.locator(`#rin [data-a="uToggle"][data-id="${userId}"]`);
+      await expect(toggle).toHaveText('無効にする');
+      await toggle.click();
+      await expect.poll(async () => (await find())?.isActive).toBe(false);
+      await expect(toggle).toHaveText('有効に戻す');
+      await expect(row).toContainText('無効');
+
+      await toggle.click();
+      await expect.poll(async () => (await find())?.isActive).toBe(true);
+      await expect(toggle).toHaveText('無効にする');
+    } finally {
+      // 後片付け: この試験が作った利用者は、成否にかかわらず無効にしておく（有効な試験用の利用者を残さない）
+      const left = await find();
+      if (left?.isActive) await call(page, 'PATCH', `/api/admin/users/${left.id}`, { isActive: false });
+    }
   });
 
   test('管理者でない利用者には利用者管理を出さずサーバも拒否する。無効化するとセッションが使えなくなる', async ({
     page,
     baseURL,
   }) => {
-    expect(account.id, '前の試験で利用者を追加できていること').not.toBe('');
+    const account = await createRequesterViaApi(page);
+    // 管理者が作った依頼を差戻しにしておく。依頼者が動かせるのは「本人の依頼」の差戻し → 再提出だけ
     const { id: requestId } = await createViaApi(page, `E2E 回帰 他人の依頼 ${stamp()}`);
+    const returned = await transitionApi(page, requestId, 'back', { reason: 'E2E 回帰: 所有者の境界を確かめるために差し戻す' });
+    expect(returned.status, messageOf(returned)).toBe(200);
+
     const other = await loginInNewContext(page, baseURL, account.email, account.password);
     try {
       const who = await callWith<{ user: SessionUser }>(other.context.request, 'GET', '/api/auth/me');
@@ -678,15 +776,26 @@ test.describe.serial('回帰: 利用者管理', () => {
       expect(role.status).toBe(403);
       expect(codeOf(role)).toBe('ERR-101');
 
-      // ほかの人の依頼は動かせない
+      // 所有者の境界: 依頼者に許される再提出（差戻し → 受付）でも、ほかの人の依頼は動かせない
       const before = await detail(page, requestId);
+      expect(before.status).toBe('back');
       const move = await callWith(other.context.request, 'POST', `/api/requests/${requestId}/transitions`, {
-        to: 'review',
+        to: 'received',
         version: before.version,
       });
       expect(move.status).toBe(409);
       expect(codeOf(move)).toBe('ERR-201');
+      expect(messageOf(move)).toContain('ほかの人の依頼は動かせません');
+      const unchanged = await detail(page, requestId);
+      expect(unchanged.status).toBe('back');
+      expect(unchanged.version).toBe(before.version);
+
+      // 同じ再提出を、依頼を作った本人が依頼者の役割で送ると通る（拒否の理由は所有者の違いだけ）
+      await switchServerRole(page, 'requester');
+      const own = await transitionApi(page, requestId, 'received');
+      expect(own.status, messageOf(own)).toBe(200);
       expect(await serverStatus(page, requestId)).toBe('received');
+      await switchServerRole(page, 'desk');
 
       // 管理者が無効化すると、その利用者のセッションは使えなくなる
       const off = await call<{ user: ManagedUser }>(page, 'PATCH', `/api/admin/users/${account.id}`, { isActive: false });
@@ -698,6 +807,8 @@ test.describe.serial('回帰: 利用者管理', () => {
       await expect(other.page).toHaveURL(/\/login$/);
     } finally {
       await other.context.close();
+      // 後片付け: 途中で失敗しても、この試験が作った利用者は無効にしておく
+      await call(page, 'PATCH', `/api/admin/users/${account.id}`, { isActive: false });
     }
     // 共有のセッション（管理者）は影響を受けない
     expect((await me(page)).email).toBe(ADMIN_EMAIL);
