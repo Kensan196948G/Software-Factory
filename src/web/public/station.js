@@ -920,6 +920,7 @@ function startNew(ref){
  if(ref&&S.draft.toolRef){const tl=toolOf(ref);toast('「'+tl.name+'」で依頼をはじめます（件名・部署・信号の候補に反映）','','grid')}
 }
 function startEdit(id){const r=find(id);if(!r)return;S.draft=JSON.parse(JSON.stringify(r));if(!(S.draft.criteria||[]).length)S.draft.criteria=[''];S.editId=id;S.step=0;S.pickDept='';go('new')}
+function idemKey(){try{return crypto.randomUUID()}catch(e){return 'idem-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10)}}
 let submitting=false;
 async function submit(){
  for(let i=0;i<STEPS.length;i++){const e=validate(i);if(e.length){S.step=i;render();showErr(e);return}}
@@ -934,16 +935,19 @@ async function submit(){
   item.updatedAt=now;item.history=item.history||[];item.history.push({at:now,by:me().name,role:me().l,action:'内容を編集',note:''});
   const k=S.data.items.findIndex(x=>x.id===S.editId),prev=k>=0?S.data.items[k]:null;
   if(k>=0)S.data.items[k]=item;
+  const sentSig=JSON.stringify(item);
   const res=await persist();
   if(!res||res.ok!==true){
-   // 競合（409）で画面が取り直した最新は、送った複製のときだけ戻す（取り直しを上書きしない）。
-   if(k>=0&&S.data.items[k]===item)S.data.items[k]=prev;
+   // 送った内容のままなら戻す。競合（409）で画面が取り直したときは中身が変わっているので、取り直しを正とする。
+   if(k>=0&&JSON.stringify(S.data.items[k])===sentSig)S.data.items[k]=prev;
    save(S.data);render();if(S.open)renderDrawer();
    if(!window.__MSF__)toast((res&&res.error)||'保存できませんでした','bad');
    return;
   }
   const id=item.id;S.draft=null;S.editId=null;S.fresh=id;go('board',id);toast(id+' を更新しました','ok');return;
  }
+ // 応答が失われても二重に作らないよう、最初の試行で決めた冪等キーと送信本文を控える（再試行は同じキーで照合する）。
+ if(!d.__idem){d.__idem=idemKey();d.__postAs=JSON.parse(JSON.stringify(d))}
  // 登録も複製を送る（S.draft には送信のための id・状態・履歴を入れない）。
  const item=JSON.parse(JSON.stringify(d));
  item.id=nextId(S.data);item.createdAt=now;item.updatedAt=now;item.status='received';

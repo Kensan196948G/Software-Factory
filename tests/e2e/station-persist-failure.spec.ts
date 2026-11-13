@@ -198,10 +198,19 @@ test.describe('保存に失敗したときの画面', () => {
     await fillRequest(page, title);
 
     let posts = 0;
+    let startedPost: () => void = () => undefined;
+    let releasePost: () => void = () => undefined;
+    const started = new Promise<void>((r) => {
+      startedPost = r;
+    });
+    const gate = new Promise<void>((r) => {
+      releasePost = r;
+    });
     await page.route('**/api/requests', async (route) => {
       if (route.request().method() !== 'POST') return route.continue();
       posts += 1;
-      await new Promise((r) => setTimeout(r, 800));
+      startedPost();
+      await gate;
       return route.fulfill({
         status: 500,
         contentType: 'application/json',
@@ -211,17 +220,92 @@ test.describe('保存に失敗したときの画面', () => {
 
     // 送信を 2 回押しても、サーバへの POST は 1 回だけ。
     await page.click('#pane [data-a="submit"]');
+    await started; // 送信が始まったことを確かめてから次の操作をする
     await page.click('#pane [data-a="submit"]');
 
     // 応答を待つ間に、利用者がステップ 3 へ戻って件名を直す。
     await page.click('#main [data-a="step"][data-v="2"]');
     const edited = `${title}（送信中に修正）`;
     await page.fill('#stepBody [data-bind="title"]', edited);
+    releasePost();
 
     await expect(page.locator('#toast')).toContainText('保存に失敗しました（E2E の故障）');
     expect(posts).toBe(1);
     // 送信前のスナップショットへ戻さず、送信中に直した内容を残す。
     await expect(page.locator('#stepBody [data-bind="title"]')).toHaveValue(edited);
     expect(await countByTitle(page, edited)).toBe(0);
+  });
+
+  test('応答が失われても、やり直しで二重に登録しない', async ({ page }) => {
+    const title = `E2E 保存失敗 応答喪失 ${stamp()}`;
+    await open(page);
+    await fillRequest(page, title);
+
+    let lost = false;
+    await page.route('**/api/requests', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      if (lost) return route.continue();
+      lost = true;
+      // サーバには届く（作成される）が、応答を落とす。
+      await route.fetch();
+      await route.abort('connectionreset');
+    });
+
+    await page.click('#pane [data-a="submit"]');
+    await expect(page.locator('#toast')).not.toContainText('受け付けました');
+    // サーバには 1 件できている（画面は失敗と見ている）。
+    expect(await countByTitle(page, title)).toBe(1);
+
+    // やり直す。同じ冪等キーで照合するので、二重に作らない。
+    await page.unroute('**/api/requests');
+    await page.click('#pane [data-a="submit"]');
+    await expect.poll(async () => await countByTitle(page, title), { timeout: 30_000 }).toBe(1);
+  });
+
+  test('競合（409）で取り直した最新を、失敗の巻き戻しで上書きしない', async ({ page }) => {
+    const before = `E2E 競合 前 ${stamp()}`;
+    const after = `E2E 競合 後 ${stamp()}`;
+    await open(page);
+    await fillRequest(page, before);
+    await page.click('#pane [data-a="submit"]');
+    await expect.poll(async () => countByTitle(page, before), { timeout: 30_000 }).toBe(1);
+    const list = await callWith<RequestList>(page.request, 'GET', `/api/requests?q=${encodeURIComponent(before)}`);
+    const id = list.body.items.find((x) => x.title === before)?.id ?? '';
+
+    // 画面で編集を開き、件名を変える（まだ送らない）。
+    await gotoTab(page, 'review');
+    await page.click(`#work .li[data-id="${id}"]`);
+    await expect(page.locator('#rin .dp-h')).toContainText(id);
+    await page.click(`#rin [data-a="edit"][data-id="${id}"]`);
+    await page.waitForSelector('#stepBody');
+    await page.click('#main [data-a="step"][data-v="2"]');
+    await page.fill('#stepBody [data-bind="title"]', after);
+    await page.click('#main [data-a="step"][data-v="6"]');
+
+    // 画面が見ている版を古くする（別の操作でサーバの版だけ進める）。
+    const current = await detail(page, id);
+    await callWith(page.request, 'POST', `/api/requests/${encodeURIComponent(id)}/transitions`, {
+      to: 'review',
+      version: current.version,
+    });
+
+    await page.click('#pane [data-a="submit"]');
+
+    await expect(page.locator('#toast')).toContainText('他の人が先に更新しました');
+    // サーバは編集前のまま。画面の一覧も、取り直した最新（編集前）に戻る（古い写しを戻さない）。
+    expect((await detail(page, id)).title).toBe(before);
+    await expect
+      .poll(
+        async () =>
+          page.evaluate((reqId) => {
+            const w = window as unknown as { __SF?: { S: { data: { items: { id: string; title: string }[] } } } };
+            return w.__SF?.S.data.items.find((x) => x.id === reqId)?.title ?? null;
+          }, id),
+        { timeout: 15_000 },
+      )
+      .toBe(before);
+    // 利用者の入力は残っている（やり直せる）。
+    await page.click('#main [data-a="step"][data-v="2"]');
+    await expect(page.locator('#stepBody [data-bind="title"]')).toHaveValue(after);
   });
 });
