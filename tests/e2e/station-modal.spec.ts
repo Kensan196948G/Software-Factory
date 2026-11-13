@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 
 /**
  * ステーション画面のダイアログの回帰 E2E（実サーバ・実DB。CI は使い捨ての DB）。
@@ -10,6 +10,7 @@ import { expect, test, type Page } from '@playwright/test';
  *
  * データはすべて架空（example.com）。ログインは auth.setup.ts の共有セッションを使い、追加のログインはしない。
  * seed の依頼と管理者自身は変更しない（この試験が作った依頼・利用者だけを操作する）。
+ * 後片付け: 追加した利用者は最後に無効化する。依頼は物理削除の API が無いため、DB に残る（CI は使い捨ての DB）。
  */
 
 type Role = 'requester' | 'desk' | 'approver';
@@ -42,6 +43,7 @@ interface ManagedUser {
   email: string;
   roles: string[];
   isAdmin: boolean;
+  isActive: boolean;
 }
 
 /** 作り物のパスワード（実在のものではない）。画面に残らないことを確かめるための固定値。 */
@@ -49,8 +51,21 @@ const SYNTHETIC_PASSWORD_ADD = 'Synthetic-test-pass-add-2026';
 const SYNTHETIC_PASSWORD_CANCEL = 'Synthetic-test-pass-cancel-2026';
 const SYNTHETIC_PASSWORD_RESET = 'Synthetic-test-pass-reset-2026';
 const SYNTHETIC_PASSWORD_REJECTED = 'Synthetic-test-pass-rejected-2026';
+const SYNTHETIC_PASSWORD_OFFLINE = 'Synthetic-test-pass-offline-2026';
+const SYNTHETIC_PASSWORD_STALE = 'Synthetic-test-pass-stale-2026';
+const SYNTHETIC_PASSWORD_KEPT = 'Synthetic-test-pass-kept-2026';
 /** サーバの方針（10文字以上）に届かない、拒否されるための値。 */
 const TOO_SHORT_PASSWORD = 'short-7';
+const SYNTHETIC_PASSWORDS = [
+  SYNTHETIC_PASSWORD_ADD,
+  SYNTHETIC_PASSWORD_CANCEL,
+  SYNTHETIC_PASSWORD_RESET,
+  SYNTHETIC_PASSWORD_REJECTED,
+  SYNTHETIC_PASSWORD_OFFLINE,
+  SYNTHETIC_PASSWORD_STALE,
+  SYNTHETIC_PASSWORD_KEPT,
+  TOO_SHORT_PASSWORD,
+];
 
 const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'admin@example.com';
 const STATUS_DIALOG = '[data-a="status"][title="状態を変更"]';
@@ -60,14 +75,14 @@ const stamp = (): string => `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
 /* ───────── サーバ（API）を直接呼ぶ。画面とは独立に、サーバの正本を確かめるために使う ───────── */
 
-async function call<T>(page: Page, method: string, path: string, data?: unknown): Promise<Called<T>> {
+async function callWith<T>(request: APIRequestContext, method: string, path: string, data?: unknown): Promise<Called<T>> {
   const headers: Record<string, string> = {};
   if (method !== 'GET') {
-    const res = await page.request.get('/api/auth/csrf');
+    const res = await request.get('/api/auth/csrf');
     const json = (await res.json()) as { csrf: string | null };
     if (json.csrf) headers['x-csrf-token'] = json.csrf;
   }
-  const res = await page.request.fetch(path, { method, headers, ...(data === undefined ? {} : { data }) });
+  const res = await request.fetch(path, { method, headers, ...(data === undefined ? {} : { data }) });
   const text = await res.text();
   let body: unknown = null;
   try {
@@ -76,6 +91,11 @@ async function call<T>(page: Page, method: string, path: string, data?: unknown)
     body = null;
   }
   return { status: res.status(), body: body as T };
+}
+
+/** 共有のセッション（auth.setup.ts の管理者）でサーバを呼ぶ。 */
+function call<T>(page: Page, method: string, path: string, data?: unknown): Promise<Called<T>> {
+  return callWith<T>(page.request, method, path, data);
 }
 
 async function me(page: Page): Promise<SessionUser> {
@@ -162,6 +182,19 @@ async function openUsers(page: Page): Promise<void> {
   await expect(page.locator('#rin [data-a="uAdd"]')).toBeVisible();
 }
 
+/**
+ * 利用者の行の「パスワード」からダイアログを開く。
+ * 右端のパネルはスクロールせず縮小して収める作りで、利用者が多い DB（同じ DB で試験を繰り返したとき）では
+ * 下の行がパネルの外へ切れてマウスで押せない。ここで確かめたいのはダイアログの中身なので、行の位置に
+ * 左右されないよう、ボタンへ click イベントを直接送る（画面の処理は document の click で受けている）。
+ */
+async function openPasswordDialog(page: Page, userId: string): Promise<void> {
+  const button = page.locator(`#rin [data-a="uPw"][data-id="${userId}"]`);
+  await expect(button).toHaveCount(1);
+  await button.dispatchEvent('click');
+  await expect(page.locator('#modal.open #uNewPw')).toBeVisible();
+}
+
 /** これ以降に出たトーストをすべて記録する（トーストは約 3 秒で消えるため、後から読めるようにする）。 */
 async function watchToasts(page: Page): Promise<() => Promise<{ text: string; cls: string }[]>> {
   await page.evaluate(() => {
@@ -189,6 +222,37 @@ function watchRequestWrites(page: Page): string[] {
     if (req.method() !== 'GET' && path.startsWith('/api/requests')) sent.push(`${req.method()} ${path}`);
   });
   return sent;
+}
+
+/**
+ * 画面が次に送る 1 件（method と path が一致するもの）を、サーバへ届く前に止める。
+ * held は画面が送った時点で解決する。release() で送り、応答はサーバのものをそのまま返す。
+ */
+async function holdNext(page: Page, method: string, path: string): Promise<{ held: Promise<void>; release: () => void }> {
+  let seen: () => void = () => undefined;
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => (seen = resolve));
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let used = false;
+  await page.route(
+    (url) => url.pathname === path,
+    async (route) => {
+      if (used || route.request().method() !== method) return route.fallback();
+      used = true;
+      seen();
+      await gate;
+      await route.continue();
+    },
+  );
+  return { held, release };
+}
+
+/** 画面が送る該当のリクエストを、通信の失敗にする（サーバへは届かない）。 */
+async function failRequests(page: Page, method: string, path: string): Promise<void> {
+  await page.route(
+    (url) => url.pathname === path,
+    (route) => (route.request().method() === method ? route.abort('failed') : route.fallback()),
+  );
 }
 
 /** 文字列が、入力欄の値・DOM・端末の保存領域のどこにも無いことを確かめるための調査。 */
@@ -254,8 +318,43 @@ test.afterEach(async ({ page }) => {
 });
 
 test.describe.serial('ダイアログ: 入力したパスワードを残さない', () => {
-  // 3 件は同じ架空の利用者を使う（追加 → 再設定 → 拒否）。管理者自身のパスワードは変えない
+  // 同じ架空の利用者を使う（追加 → 再設定 → 拒否 → 通信の失敗 → 入れ違い）。管理者自身のパスワードは変えない
   const account = { email: '', name: '', id: '' };
+  const consoleLines: string[] = [];
+
+  test.beforeEach(({ page }) => {
+    consoleLines.length = 0;
+    page.on('console', (message) => consoleLines.push(message.text()));
+    page.on('pageerror', (error) => consoleLines.push(String(error)));
+  });
+
+  // 入力したパスワードを、ブラウザのコンソールにも出さない
+  test.afterEach(() => {
+    expect(consoleLines.filter((line) => SYNTHETIC_PASSWORDS.some((pw) => line.includes(pw))).length).toBe(0);
+  });
+
+  // 後片付け: 追加した利用者（依頼者の役割だけ）を無効化する。失敗は隠さない
+  test.afterAll(async ({ browser }, testInfo) => {
+    if (!account.email) return; // 利用者を追加する前に終わった
+    const context = await browser.newContext({
+      baseURL: testInfo.project.use.baseURL,
+      storageState: testInfo.project.use.storageState,
+    });
+    try {
+      const list = await callWith<{ items: ManagedUser[] }>(context.request, 'GET', '/api/admin/users');
+      expect(list.status).toBe(200);
+      const created = list.body.items.find((u) => u.email === account.email);
+      if (!created) return; // 追加そのものが失敗していた（片付けるものが無い）
+      expect(created.isAdmin).toBe(false);
+      const res = await callWith<{ user: ManagedUser }>(context.request, 'PATCH', `/api/admin/users/${created.id}`, {
+        isActive: false,
+      });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(res.body.user.isActive).toBe(false);
+    } finally {
+      await context.close();
+    }
+  });
 
   test('利用者を追加した後、入力したパスワードが画面のどこにも残らない', async ({ page }) => {
     const mark = stamp();
@@ -324,7 +423,7 @@ test.describe.serial('ダイアログ: 入力したパスワードを残さな�
     expect(account.id, '前の試験で利用者を追加できていること').not.toBe('');
     await openUsers(page);
     const toasts = await watchToasts(page);
-    await page.click(`#rin [data-a="uPw"][data-id="${account.id}"]`);
+    await openPasswordDialog(page, account.id);
     await expect(page.locator('#modal.open')).toContainText(account.email);
     await page.fill('#modal #uNewPw', SYNTHETIC_PASSWORD_RESET);
     const patched = page.waitForResponse(
@@ -363,7 +462,7 @@ test.describe.serial('ダイアログ: 入力したパスワードを残さな�
     await expect(page.locator('#modal.open')).toHaveCount(0);
 
     // 再設定: 方針（10文字以上）に届かないパスワード
-    await page.click(`#rin [data-a="uPw"][data-id="${account.id}"]`);
+    await openPasswordDialog(page, account.id);
     await page.fill('#modal #uNewPw', TOO_SHORT_PASSWORD);
     await page.click('#modal [data-a="uPwOk"]');
     await expect.poll(async () => (await toasts()).map((t) => t.text)).toContain('パスワードは10文字以上にしてください');
@@ -379,6 +478,104 @@ test.describe.serial('ダイアログ: 入力したパスワードを残さな�
       (u) => u.email === ADMIN_EMAIL,
     );
     expect(admin?.isAdmin).toBe(true);
+  });
+
+  test('通信に失敗したときもダイアログを開いたまま、パスワード欄だけを空にする', async ({ page }) => {
+    expect(account.id, '前の試験で利用者を追加できていること').not.toBe('');
+    await openUsers(page);
+    const before = (await call<{ items: ManagedUser[] }>(page, 'GET', '/api/admin/users')).body.items.length;
+    const toasts = await watchToasts(page);
+    const email = `e2e-modal-offline-${stamp()}@example.com`;
+
+    // 追加: リクエストがサーバへ届かない
+    await failRequests(page, 'POST', '/api/admin/users');
+    await page.click('#rin [data-a="uAdd"]');
+    await page.fill('#modal #uName', 'E2E ダイアログ 通信失敗');
+    await page.fill('#modal #uEmail', email);
+    await page.fill('#modal #uPass', SYNTHETIC_PASSWORD_OFFLINE);
+    await page.click('#modal [data-a="uAddOk"]');
+    await expect.poll(async () => (await toasts()).filter((t) => /\bbad\b/.test(t.cls)).length).toBe(1);
+    await expect(page.locator('#modal.open')).toHaveCount(1);
+    await expect(page.locator('#modal #uPass')).toHaveValue('');
+    await expect(page.locator('#modal #uEmail')).toHaveValue(email);
+    await expect(page.locator('#modal #uName')).toHaveValue('E2E ダイアログ 通信失敗');
+    expect(await traces(page, SYNTHETIC_PASSWORD_OFFLINE)).toEqual(NO_TRACE);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#modal.open')).toHaveCount(0);
+
+    // 再設定: リクエストがサーバへ届かない
+    await failRequests(page, 'PATCH', `/api/admin/users/${account.id}`);
+    await openPasswordDialog(page, account.id);
+    await page.fill('#modal #uNewPw', SYNTHETIC_PASSWORD_OFFLINE);
+    await page.click('#modal [data-a="uPwOk"]');
+    await expect.poll(async () => (await toasts()).filter((t) => /\bbad\b/.test(t.cls)).length).toBe(2);
+    await expect(page.locator('#modal.open')).toHaveCount(1);
+    await expect(page.locator('#modal #uNewPw')).toHaveValue('');
+    expect(await traces(page, SYNTHETIC_PASSWORD_OFFLINE)).toEqual(NO_TRACE);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#modal.open')).toHaveCount(0);
+
+    const shown = await toasts();
+    expect(shown.filter((t) => /\bok\b/.test(t.cls))).toEqual([]);
+    expect(shown.some((t) => t.text.includes(SYNTHETIC_PASSWORD_OFFLINE))).toBe(false);
+    expect((await call<{ items: ManagedUser[] }>(page, 'GET', '/api/admin/users')).body.items.length).toBe(before);
+  });
+
+  test('先の送信が後から失敗しても、開き直した別のダイアログのパスワードを消さない', async ({ page }) => {
+    expect(account.id, '前の試験で利用者を追加できていること').not.toBe('');
+    await openUsers(page);
+    const before = (await call<{ items: ManagedUser[] }>(page, 'GET', '/api/admin/users')).body.items.length;
+    const toasts = await watchToasts(page);
+
+    // 追加: 1 件目（既に使われているメールアドレス）を、サーバへ届く前に止めておく
+    const firstAdd = await holdNext(page, 'POST', '/api/admin/users');
+    await page.click('#rin [data-a="uAdd"]');
+    await page.fill('#modal #uName', 'E2E ダイアログ 入れ違い 1');
+    await page.fill('#modal #uEmail', account.email);
+    await page.fill('#modal #uPass', SYNTHETIC_PASSWORD_STALE);
+    await page.click('#modal [data-a="uAddOk"]');
+    await firstAdd.held;
+    // 応答を待つあいだに閉じ、2 件目のダイアログを開いて入力する（まだ送らない）
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#modal.open')).toHaveCount(0);
+    const secondEmail = `e2e-modal-second-${stamp()}@example.com`;
+    await page.click('#rin [data-a="uAdd"]');
+    await page.fill('#modal #uName', 'E2E ダイアログ 入れ違い 2');
+    await page.fill('#modal #uEmail', secondEmail);
+    await page.fill('#modal #uPass', SYNTHETIC_PASSWORD_KEPT);
+    // 1 件目がサーバに拒否される（ERR-004）。2 件目の入力はそのまま残る
+    firstAdd.release();
+    await expect.poll(async () => (await toasts()).map((t) => t.text)).toContain('このメールアドレスは既に使われています');
+    await expect(page.locator('#modal.open')).toHaveCount(1);
+    await expect(page.locator('#modal #uPass')).toHaveValue(SYNTHETIC_PASSWORD_KEPT);
+    await expect(page.locator('#modal #uEmail')).toHaveValue(secondEmail);
+    await expect(page.locator('#modal #uName')).toHaveValue('E2E ダイアログ 入れ違い 2');
+    expect(await traces(page, SYNTHETIC_PASSWORD_STALE)).toEqual({ ...NO_TRACE, filledPasswordFields: 1 });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#modal.open')).toHaveCount(0);
+    expect(await traces(page, SYNTHETIC_PASSWORD_KEPT)).toEqual(NO_TRACE);
+
+    // 再設定: 1 件目（方針に届かないパスワード）を止めておき、開き直して別の値を入れる
+    const firstReset = await holdNext(page, 'PATCH', `/api/admin/users/${account.id}`);
+    await openPasswordDialog(page, account.id);
+    await page.fill('#modal #uNewPw', TOO_SHORT_PASSWORD);
+    await page.click('#modal [data-a="uPwOk"]');
+    await firstReset.held;
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#modal.open')).toHaveCount(0);
+    await openPasswordDialog(page, account.id);
+    await page.fill('#modal #uNewPw', SYNTHETIC_PASSWORD_KEPT);
+    firstReset.release();
+    await expect.poll(async () => (await toasts()).map((t) => t.text)).toContain('パスワードは10文字以上にしてください');
+    await expect(page.locator('#modal.open')).toHaveCount(1);
+    await expect(page.locator('#modal #uNewPw')).toHaveValue(SYNTHETIC_PASSWORD_KEPT);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#modal.open')).toHaveCount(0);
+    expect(await traces(page, SYNTHETIC_PASSWORD_KEPT)).toEqual(NO_TRACE);
+
+    // どちらも成功していない（利用者は増えず、成功の表示も出ていない）
+    expect((await toasts()).filter((t) => /\bok\b/.test(t.cls))).toEqual([]);
+    expect((await call<{ items: ManagedUser[] }>(page, 'GET', '/api/admin/users')).body.items.length).toBe(before);
   });
 });
 

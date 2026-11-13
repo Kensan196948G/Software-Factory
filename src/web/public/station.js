@@ -1946,10 +1946,11 @@ const ACT={
   if(!name.trim()||!email.trim()||!pass){toast('表示名・メールアドレス・初期パスワードを入れてください','bad');return}
   if(!roles.length){toast('役割を1つ以上選んでください','bad');return}
   const admin=!!(g('uAdmin')&&g('uAdmin').checked);
+  const passEl=g('uPass'); // 送信したダイアログの欄（待つあいだに開き直された別のダイアログの入力は消さない）
   try{
    await window.__MSF__.api('POST','/api/admin/users',{email:email.trim(),displayName:name.trim(),deptCode:dept,password:pass,roles,isAdmin:admin});
    closeModal();toast('利用者を追加しました','ok','user');loadUsers(true);
-  }catch(err){const p=g('uPass');if(p)p.value='';toast((err&&err.message)||'追加できませんでした','bad')}
+  }catch(err){if(passEl)passEl.value='';toast((err&&err.message)||'追加できませんでした','bad')}
  },
  async uToggle(el){
   const id=el.dataset.id,on=el.dataset.v==='1';

@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { STATUSES, isReasonRequired, isTransitionDefined } from '@shared/domain.js';
+import type { Status } from '@shared/domain.js';
 
 // ステーション画面（src/web/public/station.js）のダイアログの決まりを固定する。
 // 画面の動きは tests/e2e/station-modal.spec.ts が確かめる。ここは、画面の関数を取り出して
@@ -14,26 +15,43 @@ function lineOf(name: string): string {
   return line;
 }
 
-it('理由が必須の状態変更を、画面がサーバと同じかそれ以上に止める', () => {
+it('理由が必須の状態変更の判定が、全組でサーバの決まりと一致する（画面だけの必須は差戻し・見送りに限る）', () => {
   const needReason = new Function(`${lineOf('needReason')};return needReason;`)() as (from: string, to: string) => boolean;
-  const missed: string[] = [];
+  // 画面だけが理由を求める組。修正前から、画面は差戻し・見送りを変更前の状態に関係なく必須にしている。
+  // サーバに定義のある遷移では「承認待ち以外からの見送り」だけがこれに当たる（差戻しは定義のある組すべてがサーバでも必須）。
+  // 定義の無い遷移（サーバが ERR-201 で拒否する）では、差戻し・見送りへの変更がこれに当たる。
+  const screenOnly = (from: Status, to: Status): boolean =>
+    isTransitionDefined(from, to) ? to === 'hold' && from !== 'wait' : to === 'back' || to === 'hold';
+
+  const missed: string[] = []; // サーバは必須なのに、画面が理由なしで送ってしまう
+  const excess: string[] = []; // サーバも上の例外も求めないのに、画面が止めてしまう
+  const screenOnlyDefined: string[] = [];
+  let pairs = 0;
   let required = 0;
   for (const from of STATUSES) {
     for (const to of STATUSES) {
-      if (!isTransitionDefined(from, to) || !isReasonRequired(from, to)) continue;
-      required += 1;
-      if (!needReason(from, to)) missed.push(`${from} → ${to}`);
+      pairs += 1;
+      const server = isReasonRequired(from, to);
+      const actual = needReason(from, to);
+      if (server) required += 1;
+      if (server && !actual) missed.push(`${from} → ${to}`);
+      if (actual !== (server || screenOnly(from, to))) excess.push(`${from} → ${to}: 画面=${actual} サーバ=${server}`);
+      if (isTransitionDefined(from, to) && actual && !server) screenOnlyDefined.push(`${from} → ${to}`);
     }
   }
+  expect(pairs).toBe(STATUSES.length * STATUSES.length);
   expect(required).toBeGreaterThan(0);
-  // サーバが理由を求める遷移を、画面が理由なしで送ってしまう組が無い（取消を含む）
   expect(missed).toEqual([]);
+  expect(excess).toEqual([]);
+  // 定義のある遷移で画面のほうが厳しいのは、この 3 組だけ（増えても減っても気づけるようにする）
+  expect(screenOnlyDefined).toEqual(['received → hold', 'review → hold', 'back → hold']);
+
   expect(needReason('received', 'cancel')).toBe(true);
   expect(needReason('field', 'dev')).toBe(true);
   expect(needReason('release_wait', 'dev')).toBe(true);
-  // 理由が要らない遷移まで止めない
   expect(needReason('received', 'review')).toBe(false);
   expect(needReason('verify', 'dev')).toBe(false);
+  expect(needReason('approved', 'dev')).toBe(false);
   expect(needReason('wait', 'approved')).toBe(false);
   // 状態変更の送信前チェックがこの判定を通る
   expect(js).toContain("if(needReason(r.status,v)&&!note){toast('理由をメモに書いてください','bad');return}");
