@@ -51,6 +51,12 @@ async function createRequest(page: Page, title: string): Promise<string> {
   await next();
   await page.click('#stepBody [data-a="one"][data-f="decides"][data-v="g"]');
   await next();
+  // 承認者は利用者 ID で選ぶ（未選択では登録できない）。ここではログイン中の本人を選ぶ
+  const me = await page.evaluate(async () => {
+    const res = await fetch('/api/auth/me');
+    return ((await res.json()) as { user: { id: string } }).user.id;
+  });
+  await page.selectOption('#stepBody select[data-bind="approverUserId"]', me);
   await page.click('#pane [data-a="submit"]');
   await expect
     .poll(

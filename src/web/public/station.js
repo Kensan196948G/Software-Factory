@@ -4,6 +4,7 @@
 const KEY='sf-station-v1';
 const OSRM=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 let RM=OSRM,CFGX=null;
+const MSF_ON=!!(window.__MSF__||document.getElementById('msf-boot'));
 try{const c0=JSON.parse(localStorage.getItem(KEY+'-settings')||'null');if(c0&&c0.motion==='reduce'){RM=true;document.documentElement.classList.add('rm')}}catch(e){}
 const $=(s,el)=>(el||document).querySelector(s);
 const $$=(s,el)=>Array.from((el||document).querySelectorAll(s));
@@ -428,6 +429,48 @@ function load(){
 function save(data){memory=data;try{localStorage.setItem(KEY,JSON.stringify(data));return true}catch(e){return false}}
 function nextId(data){data.seq=(data.seq||0)+1;return 'REQ-'+new Date().getFullYear()+'-'+pad(data.seq,4)}
 function validImport(o){return o&&Array.isArray(o.items)&&o.items.every(x=>x&&typeof x.id==='string'&&typeof x.title==='string')}
+/* ---------- 承認者（サーバ接続時は表示名ではなく利用者IDで選ぶ） ---------- */
+const APV=(()=>{
+ if(!MSF_ON)return {available:false,reason:'',items:[]};
+ const m=window.__MSF__;
+ if(!m)return {available:false,reason:'サーバ接続用の画面処理を読み込めませんでした。再読み込みしてください。',items:[]};
+ const st=m.approverState;
+ if(st&&st.available===true&&Array.isArray(st.items))return {available:true,reason:'',items:st.items};
+ return {available:false,reason:String((st&&st.reason)||'承認者一覧を取得できませんでした。'),items:[]};
+})();
+const APV_BY_ID=new Map(APV.items.map(a=>[a.id,a]));
+const APV_DUP=APV.items.reduce((c,a)=>{c[a.displayName]=(c[a.displayName]||0)+1;return c},{});
+function apvLabel(a){
+ if(!(APV_DUP[a.displayName]>1))return String(a.displayName);
+ const dp=a.deptCode?deptOf(a.deptCode):null;
+ return a.displayName+'（'+(a.email||(dp?dp.short:a.deptCode)||String(a.id).slice(0,8))+'）';
+}
+function apvShow(r){const a=MSF_ON&&r.approverUserId?APV_BY_ID.get(String(r.approverUserId)):null;return a?apvLabel(a):(r.approver||'')}
+function apvErr(d){
+ if(!MSF_ON)return d.approver?'':'承認者を選んでください';
+ if(!APV.available)return APV.reason||'承認者一覧を取得できませんでした。画面を再読み込みしてください';
+ if(!APV.items.length)return '有効な承認者が登録されていません。管理者に確認してください';
+ const id=String(d.approverUserId||'');
+ if(!id)return d.approver?'承認者を選び直してください（利用者IDが未設定のため、名前だけでは決められません）':'承認者を選んでください';
+ if(!APV_BY_ID.has(id))return '選ばれている承認者は現在利用できません。承認者を選び直してください';
+ return '';
+}
+function apvSelect(d){
+ if(!MSF_ON){const L=(CFGX?CFGX.approvers:APPROVERS).slice();if(d.approver&&!L.includes(d.approver))L.push(d.approver);return `<select data-bind="approver">${L.map(a=>`<option${d.approver===a?' selected':''}>${E(a)}</option>`).join('')}</select>`}
+ const id=String(d.approverUserId||'');
+ if(!APV.available)return '<select data-bind="approverUserId" aria-label="承認者（業務責任者）" disabled><option value="" selected>承認者一覧を取得できません</option></select>';
+ if(!APV.items.length)return '<select data-bind="approverUserId" aria-label="承認者（業務責任者）" disabled><option value="" selected>有効な承認者がいません</option></select>';
+ return `<select data-bind="approverUserId" aria-label="承認者（業務責任者）">${id&&!APV_BY_ID.has(id)?`<option value="${E(id)}" selected disabled>現在の承認者: ${E(d.approver||'（不明）')}（現在は選択できません）</option>`:''}<option value=""${id?'':' selected'}>${E(!id&&d.approver?'承認者を選択してください（現在: '+d.approver+'／利用者IDが未設定）':'承認者を選択してください')}</option>${APV.items.map(a=>`<option value="${E(a.id)}"${id===a.id?' selected':''}>${E(apvLabel(a))}</option>`).join('')}</select>`;
+}
+function apvHint(d){
+ const e=apvErr(d);
+ if(!MSF_ON||!e||(APV.available&&APV.items.length&&!d.approverUserId&&!d.approver))return '信号の色の最終決定と承認を行う人';
+ return `<span role="alert" style="color:var(--bad);font-weight:600">${E(e)}</span>`;
+}
+function bindDraft(d,k,v){
+ if(k==='approverUserId'){const a=APV_BY_ID.get(v);d.approverUserId=a?a.id:null;d.approver=a?String(a.displayName):'';return}
+ d[k]=v;
+}
 function blank(role){
  const ro=roleOf(role);
  const a=window.__SF_ACTORS__&&window.__SF_ACTORS__[role];
@@ -437,7 +480,7 @@ function blank(role){
  return {id:'',createdAt:'',updatedAt:'',applicant:(a?String(a.name):(u?String(u.displayName||ro.name):ro.name)),dept,contact:'',title:'',kind:KINDS[0],toolRef:'',
   problem:'',purpose:'',users:[],people:'',places:[],scope:'',outScope:'',criteria:['','',''],constraints:CONSTRAINTS.slice(0,2),
   constraintsOther:'',data:[],parties:'社内のみ',approvals:[],decides:'',freq:'',minutes:'',dataReady:'',spread:'',
-  wish:'',attachments:[],approver:(CFGX?CFGX.approvers[0]:APPROVERS[0]),status:'received',signalFinal:'',history:[],comments:[]};
+  wish:'',attachments:[],approver:(MSF_ON?'':(CFGX?CFGX.approvers[0]:APPROVERS[0])),approverUserId:null,status:'received',signalFinal:'',history:[],comments:[]};
 }
 
 /* ===================== サンプルデータ ===================== */
@@ -611,7 +654,7 @@ function contentHTML(r){
  return `<div class="g2c"><div class="blk"><h5>${I('msg','sm')}困りごと</h5>${txt(r.problem)}</div><div class="blk"><h5>${I('target','sm')}目的</h5>${txt(r.purpose)}</div></div>
  <div class="g2c"><div class="blk"><h5>${I('box','sm')}作るもの</h5>${capList(lines(r.scope),3)}</div><div class="blk"><h5>${I('x','sm')}今回は作らない</h5>${capList(lines(r.outScope),3)}</div></div>
  <div class="blk" style="margin-top:7px"><h5>${I('check','sm')}合格の条件（${crit.length}件）</h5>${capList(crit,4,true,true)}</div>
- <div class="metas">${mp('起票',r.applicant||'－')}${mp('部署',dep?dep.short:'－',dep?dep.name:'')}${mp('区分',r.kind||'－')}${mp('カタログ',tl?tl.name:'カタログ外')}${mp('使う人',users||'－')}${mp('場所',(r.places||[]).join('・')||'－')}${mp('扱う情報',dataL.length?dataL.join('・'):'特になし')}${mp('相手',r.parties||'社内のみ')}${mp('守ること',cons.length+'件',cons.join(' ／ ')||'なし')}${mp('人に聞く',(r.approvals||[]).length+'件',(r.approvals||[]).join(' ／ ')||'なし')}${mp('承認者',r.approver||'－')}${mp('希望',r.wish||'－')}${(r.attachments||[]).length?mp('添付',r.attachments.length+'件',r.attachments.map(a=>a.name).join(' ／ ')):''}</div>`;
+ <div class="metas">${mp('起票',r.applicant||'－')}${mp('部署',dep?dep.short:'－',dep?dep.name:'')}${mp('区分',r.kind||'－')}${mp('カタログ',tl?tl.name:'カタログ外')}${mp('使う人',users||'－')}${mp('場所',(r.places||[]).join('・')||'－')}${mp('扱う情報',dataL.length?dataL.join('・'):'特になし')}${mp('相手',r.parties||'社内のみ')}${mp('守ること',cons.length+'件',cons.join(' ／ ')||'なし')}${mp('人に聞く',(r.approvals||[]).length+'件',(r.approvals||[]).join(' ／ ')||'なし')}${mp('承認者',apvShow(r)||'－')}${mp('希望',r.wish||'－')}${(r.attachments||[]).length?mp('添付',r.attachments.length+'件',r.attachments.map(a=>a.name).join(' ／ ')):''}</div>`;
 }
 /* 依頼の詳細パネル（右端固定・ドロワー共通）。全文は「注文書」タブにあります */
 function paneDetail(r,overlay){
@@ -823,7 +866,7 @@ function stepHTML(i){
   return `<div class="row">${fld('その手間の頻度',0,segO('freq',FREQ),'','calendar')}${fld('1回あたりの手間（分）',0,inp('minutes','例：15','number'),'','clock')}</div>
   ${fld('元になるデータ',0,segO('dataReady',READY),'','db')}
   ${fld('ほかに広げられそう？',0,segO('spread',SPREAD),'','globe')}
-  <div class="row">${fld('承認者（業務責任者）',1,`<select data-bind="approver">${(()=>{const L=(CFGX?CFGX.approvers:APPROVERS).slice();if(d.approver&&!L.includes(d.approver))L.push(d.approver);return L})().map(a=>`<option${d.approver===a?' selected':''}>${a}</option>`).join('')}</select>`,'信号の色の最終決定と承認を行う人','stamp')}${fld('希望時期',0,inp('wish','','date'),'目安。着手順は別途決めます','calendar')}</div>
+  <div class="row">${fld('承認者（業務責任者）',1,apvSelect(d),apvHint(d),'stamp')}${fld('希望時期',0,inp('wish','','date'),'目安。着手順は別途決めます','calendar')}</div>
   ${fld('添付ファイル',0,`<input type="file" id="att" multiple><div class="hint" id="attL" style="margin-top:6px">${attHtml()}</div>`,'サンプルではファイル名と大きさだけを記録します','clip')}`;
  }
  return '';
@@ -837,7 +880,7 @@ function validate(i){
  if(i===3&&!d.scope.trim())e.push('作るものを1つ以上書いてください');
  if(i===4&&!d.criteria.filter(x=>x.trim()).length)e.push('合格の条件を1つ以上書いてください');
  if(i===5&&!d.decides)e.push('「この道具は何をしますか」を選んでください');
- if(i===6&&!d.approver)e.push('承認者を選んでください');
+ if(i===6){const m=apvErr(d);if(m)e.push(m)}
  return e;
 }
 function showErr(list){const e=$('#err');if(!e)return;e.innerHTML=I('alert')+'<div>'+list.map(E).join('<br>')+'</div>';e.style.display='flex';const p=$('#pane');p.classList.remove('shake','rise');void p.offsetWidth;p.classList.add('shake');toast(list[0],'bad')}
@@ -883,10 +926,6 @@ function submit(){
   const k=S.data.items.findIndex(x=>x.id===S.editId);if(k>=0)S.data.items[k]=d;persist();
   const id=d.id;S.draft=null;S.editId=null;S.fresh=id;go('board',id);toast(id+' を更新しました','ok');return;
  }
- if(window.__MSF__&&Array.isArray(window.__MSF__.approvers)){
- const ap=window.__MSF__.approvers.find(a=>a.displayName===d.approver);
- if(ap)d.approverUserId=ap.id;
-}
 d.id=nextId(S.data);d.createdAt=now;d.updatedAt=now;d.status='received';
  d.history=[{at:now,by:d.applicant,role:me().l,action:'受付',note:'依頼を登録しました'}];
  S.data.items.push(d);persist();S.fresh=d.id;S.draft=null;
@@ -1531,7 +1570,7 @@ function setSum(k){
  const c=S.cfg;
  return {personal:'テーマ：'+{auto:'自動',light:'ライト',dark:'ダーク'}[themeNow()]+'／動き：'+(c.motion==='reduce'?'減らす':'PCに合わせる'),
   general:'組織名：'+(c.org||'（なし）')+'／スタンプ：'+c.stampName+'／起動時：'+(c.startLogin?'ログイン画面':'そのまま使う'),
-  approvers:c.approvers.length+'人：'+c.approvers.join('・'),
+  approvers:MSF_ON?(APV.available?APV.items.length+'人：'+APV.items.map(a=>a.displayName).join('・'):'承認者一覧を取得できません'):c.approvers.length+'人：'+c.approvers.join('・'),
   users:(window.__MSF__?(UA.loaded?UA.items.length+'人（有効 '+UA.items.filter(u=>u.isActive).length+'人）':'サーバの利用者を読み込みます'):'サーバ接続時のみ'),
   mail:(window.__MSF__?(MA.summary?('送信待ち '+MA.summary.pending+'・失敗 '+MA.summary.failed+'（'+MA.summary.mode+'）'):'承認依頼メールの状態'):'サーバ接続時のみ'),
   roles:'3つの役割と、できること（参照のみ）',
@@ -1565,8 +1604,8 @@ function setPane(){
   <label class="tog${ro?' dis':''}"><input type="checkbox" data-cfg="startLogin"${c.startLogin?' checked':''}${dis}><span class="sw"></span><span class="tx"><b>起動したとき、ログイン画面から始める</b><small>オフにすると、前回の人のまま使い始めます</small></span></label>`;
  else if(k==='users')b=usersHTML();
  else if(k==='mail')b=mailHTML();
- else if(k==='approvers')b=window.__MSF__?`<div class="hint" style="margin-top:6px">新しい依頼の STEP 7 で選べる承認者です。承認者の追加・変更はサーバの利用者管理で行います（この画面では参照のみ）。</div>
-  ${c.approvers.map((a,i)=>`<div class="apvrow" style="--i:${i}">${av(a)}<b style="flex:1">${E(a)}</b>${i===0?'<span class="badge b-acc">新しい依頼の最初の候補</span>':''}<span class="lkic" title="サーバの利用者管理で変更します">${I('lock','sm')}</span></div>`).join('')}
+ else if(k==='approvers')b=MSF_ON?`<div class="hint" style="margin-top:6px">新しい依頼の STEP 7 で選べる承認者です。承認者の追加・変更はサーバの利用者管理で行います（この画面では参照のみ）。</div>
+  ${APV.available?(APV.items.map((a,i)=>`<div class="apvrow" style="--i:${i}">${av(a.displayName)}<b style="flex:1">${E(apvLabel(a))}</b><span class="lkic" title="サーバの利用者管理で変更します">${I('lock','sm')}</span></div>`).join('')||`<div class="note n-warn">${I('alert')}<div>有効な承認者が登録されていません。</div></div>`):`<div class="note n-bad">${I('alert')}<div>${E(APV.reason)}</div></div>`}
   <div class="note n-acc">${I('info')}<div>承認者名簿はサーバ（PostgreSQL）から読み込んでいます。変更は管理の手順で行ってください。</div></div>`:`<div class="hint" style="margin-top:6px">新しい依頼の STEP 7 で選べる承認者です。いま入っている依頼の承認者は変わりません。</div>
   ${c.approvers.map((a,i)=>`<div class="apvrow" style="--i:${i}">${av(a)}<b style="flex:1">${E(a)}</b>${i===0?'<span class="badge b-acc">新しい依頼の最初の候補</span>':''}<button class="btn ghost sm icon dng" data-a="apvDel" data-v="${E(a)}" type="button" title="${c.approvers.length<2?'最低1人は必要です':'外す'}"${ro||c.approvers.length<2?' disabled':''}>${I('trash')}</button></div>`).join('')}
   <div class="inrow"><input id="apvNew" maxlength="20" placeholder="名前を入力して追加（Enter）"${dis}><button class="btn sm" data-a="apvAdd" type="button"${dis}>${I('plus')}追加</button></div>`;
@@ -1987,7 +2026,7 @@ document.addEventListener('click',e=>{
 });
 document.addEventListener('input',e=>{
  const t=e.target;if(!t||!t.dataset)return;
- if(t.dataset.bind!==undefined&&S.draft){S.draft[t.dataset.bind]=t.value;updPreview();return}
+ if(t.dataset.bind!==undefined&&S.draft){bindDraft(S.draft,t.dataset.bind,t.value);updPreview();return}
  if(t.dataset.crit!==undefined&&S.draft){S.draft.criteria[+t.dataset.crit]=t.value;const L=lint(t.value),box=t.nextElementSibling;t.className=L.ok?'good':L.level==='empty'?'':'vague';box.className='lint '+(L.level==='empty'?'':L.level);box.innerHTML=lintMsg(L);updPreview();return}
  if(t.dataset.flt){S[t.dataset.flt]=t.value;if(S.view==='board'){render();return}$('#main').classList.remove('anim','anim-d');const f={list:updList,catalog:updCatalog,log:updLog}[S.view];if(f)f()}
 });
@@ -1996,7 +2035,8 @@ document.addEventListener('change',e=>{
  if(t.dataset&&t.dataset.cfg!==undefined){setCfg(t);return}
  if(t.name==='authrole'){authSel=t.value;$$('#auth .who label').forEach(l=>l.classList.toggle('on',l.contains(t)));return}
  if(t.dataset&&t.dataset.bind!==undefined&&S.draft){
-  S.draft[t.dataset.bind]=t.value;
+  bindDraft(S.draft,t.dataset.bind,t.value);
+  if(t.dataset.bind==='approverUserId'){const h=t.closest('.fld')&&$('.hint',t.closest('.fld'));if(h)h.innerHTML=apvHint(S.draft)}
   if(t.dataset.bind==='dept'){
    const list=empOf(t.value);
    if(list&&list.length&&!list.some(e=>e.name===S.draft.applicant))S.draft.applicant=list[0].name;
