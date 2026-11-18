@@ -43,7 +43,7 @@ import type { Role, Signal, Status } from '../shared/domain.js';
 import type { RequestDetail, RequestRecord, SessionUser } from '../shared/types.js';
 import type { RequestInput, TransitionInput } from './schemas.js';
 import { buildOrderYaml } from '../shared/order.js';
-import { defaultDevlineDeps, handoffOrder, type DevlineDeps } from './devline-handoff.js';
+import { defaultDevlineDeps, handoffOrder, refuseRedHandoff, type DevlineDeps } from './devline-handoff.js';
 import { canHandoff } from '../shared/devline.js';
 import { buildCsv, buildExportJson, measureOf } from '../shared/export.js';
 import { deliverOutboxMail, enqueueApprovalMailInTx, latestMailForRequest } from './mail-outbox.js';
@@ -577,6 +577,9 @@ export async function updateRequest(
     const nextStatus = afterApproval ? 'wait' : row.status;
     const signal = afterApproval ? null : row.signal_decided;
     if (afterApproval) warnings.push({ code: 'ERR-202', message: '承認後に内容を変えたため、承認をやり直す必要があります' });
+    // 注文書の版（order_version）は「承認のたびに +1」だけ進める（docs/development-line-handoff.md）。
+    // 承認後の編集では版を動かさず、status=wait と signal_decided=null で古い注文書を無効にする。
+    // ここでも +1 すると、編集で 1→2、再承認で 2→3 となり、承認 2 回で版が 2 つ飛ぶ（E2E A8 の F-1）。
     // 投入先（L-12）は内容の更新では変えない（専用の口に一本化する）。
     // ここで変えると、投入済み・結果未確定の依頼で `request.target_repo_id` だけが動き、
     // job と Issue の repo と食い違う状態（次の投入が ERR-405）を作れてしまう。
@@ -596,8 +599,8 @@ export async function updateRequest(
         problem=$8, purpose=$9, users=$10, people=$11, places=$12, scope=$13, out_of_scope=$14,
         criteria=$15, decides=$16, data_handling=$17, parties=$18, constraints=$19, constraints_other=$20,
         requires_human_approval=$21, frequency=$22, minutes_per_time=$23, data_ready=$24, spread=$25,
-        wish_date=$26, approver=$27, approver_user_id=$32, status=$28, signal_decided=$29, order_version=order_version + $30,
-        version=version+1, updated_at=now(), updated_by=$31
+        wish_date=$26, approver=$27, approver_user_id=$31, status=$28, signal_decided=$29, order_version=order_version,
+        version=version+1, updated_at=now(), updated_by=$30
       where id=$1`,
       [
         id,
@@ -629,7 +632,6 @@ export async function updateRequest(
         input.approver,
         nextStatus,
         signal,
-        afterApproval ? 1 : 0,
         actor.userId,
         resolvedApproverUserId,
       ],
@@ -1282,6 +1284,8 @@ export async function handoffToGithub(
 
   const row = await getRequestRow(id);
   if (!row) throw Errors.notFound('依頼');
+  // 赤信号の注文書は投入しない（F-2）。issue_no が既にある旧データでも、新たな投入としては扱わない。
+  await refuseRedHandoff(id, actor, correlationId);
   if (
     !row.signal_decided ||
     row.order_version < 1 ||
