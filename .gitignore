@@ -22,6 +22,10 @@ blob-report/
 # 承認依頼メールの送信BOX（ローカルの .eml）
 .mail/
 
+# E2E の認証状態（リポジトリ外に置く。誤って置いた場合の保険）
+e2e-auth/
+*.state.json
+
 # logs / OS
 *.log
 .DS_Store
