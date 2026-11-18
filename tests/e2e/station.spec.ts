@@ -34,12 +34,19 @@ async function gotoTab(page: Page, view: string): Promise<void> {
  * 7 ステップの画面操作で依頼を登録し、サーバに現れるまで待って ID を返す。
  * 手順は画面のステップ（種類 → 使う人 → 内容 → 作るもの → 合格条件 → 何をするか → 承認者）。
  */
-async function createRequest(page: Page, title: string): Promise<string> {
+async function createRequest(page: Page, title: string, options: { users?: string[]; places?: string[] } = {}): Promise<string> {
   await page.click('#nav a[data-v="new"]');
   await page.waitForSelector('#stepBody');
   const next = () => page.click('#pane [data-a="next"]');
   await next();
-  await page.click('#stepBody [data-a="chip"][data-f="users"]');
+  if (options.users?.length) {
+    for (const v of options.users) await page.click(`#stepBody [data-a="chip"][data-f="users"][data-v="${v}"]`);
+  } else {
+    await page.click('#stepBody [data-a="chip"][data-f="users"]');
+  }
+  if (options.places?.length) {
+    for (const v of options.places) await page.click(`#stepBody [data-a="chip"][data-f="places"][data-v="${v}"]`);
+  }
   await next();
   await page.fill('#stepBody [data-bind="title"]', title);
   await page.fill('#stepBody [data-bind="problem"]', '画面から依頼を登録できるかを確かめたい');
@@ -376,6 +383,23 @@ test.describe('ステーション画面', () => {
     await page.waitForSelector('#nav');
     expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe('dark');
     await page.click('#themebtn');
+  });
+
+  test('新しい依頼で、支店・作業船・海の上を選んでも登録できる（enum の同期）', async ({ page }) => {
+    await setRole(page, 'desk');
+    const title = `E2E enum 同期 ${Date.now()}`;
+    const id = await createRequest(page, title, {
+      users: ['支店・営業所の担当者', '作業船の船長・船員'],
+      places: ['海の上（作業船・台船）'],
+    });
+    expect(await serverStatus(page, id)).toBe('received');
+    const detail = await page.evaluate(async (rid) => {
+      const res = await fetch('/api/requests/' + encodeURIComponent(rid));
+      const json = await res.json();
+      return { users: json.request?.users ?? null, places: json.request?.places ?? null };
+    }, id);
+    expect(detail.users).toEqual(expect.arrayContaining(['支店・営業所の担当者', '作業船の船長・船員']));
+    expect(detail.places).toContain('海の上（作業船・台船）');
   });
 
   test('狭い画面でも主要な操作が見える', async ({ page }) => {
