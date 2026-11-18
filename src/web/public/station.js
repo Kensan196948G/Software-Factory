@@ -549,13 +549,23 @@ function seed(){
 /* ===================== 状態 ===================== */
 const loaded=load();
 const S={data:loaded.data,persistent:loaded.persistent,role:(window.__MSF__&&window.__MSF__.initialRole?window.__MSF__.initialRole():'requester'),view:'dash',sel:{},step:0,draft:null,editId:null,dpTab:'card',fq:'',fd:'',fs:'',fc:'',open:null,dtab:'sum',pickDept:'',fresh:null,cat:'koji',catTool:'',catq:'',logq:'',devTab:'line',secTab:'vuln',setTab:'personal',logk:'',cfg:null};
+/* 画面の「操作する人」に出す、ログイン中の利用者が持つ役割（サーバの user_role）。
+   サーバに繋がっていない見本（__MSF__ なし）は null を返し、従来どおり 3 役割を出す。 */
+const heldRoles=()=>{
+ const u=window.__MSF__&&window.__MSF__.user;
+ if(!u||!Array.isArray(u.roles))return null;
+ return ROLES.map(r=>r.k).filter(k=>u.roles.indexOf(k)>=0);
+};
+/* 表示名はログイン中の利用者の app_user.display_name を正とする。
+   名簿（__SF_ACTORS__）は起票者・部署の選択などの既存用途だけに使い、表示名には使わない。
+   見本（サーバ非接続）のときだけ、従来どおり見本名を使う。 */
 const me=()=>{
  const ro=roleOf(S.role);
+ const u=window.__MSF__&&window.__MSF__.user;
+ if(u)return Object.assign({},ro,{name:String(u.displayName||ro.name),dept:String(u.deptCode||ro.dept)});
  const a=window.__SF_ACTORS__&&window.__SF_ACTORS__[S.role];
  if(a)return Object.assign({},ro,{name:String(a.name||ro.name),dept:String(a.divisionCode||ro.dept),divisionName:String(a.divisionName||''),section:String(a.section||'')});
- const u=window.__MSF__&&window.__MSF__.user;
- if(!u)return ro;
- return Object.assign({},ro,{name:String(u.displayName||ro.name),dept:String(u.deptCode||ro.dept)});
+ return ro;
 };
 const find=id=>S.data.items.find(x=>x.id===id);
 /* ---------- 社員名簿（Mirai-Info） ---------- */
@@ -2219,8 +2229,12 @@ function tickClock(){const el=$('#clock');if(!el)return;const d=new Date();el.in
 /* ===================== 起動 ===================== */
 try{const th=localStorage.getItem(KEY+'-theme');if(th)document.documentElement.dataset.theme=th}catch(e){}
 $$('[data-ic]').forEach(el=>el.insertAdjacentHTML('afterbegin',I(el.dataset.ic)));
-const ROLE_OPTS=(()=>{const A=window.__SF_ACTORS__,u=window.__MSF__&&window.__MSF__.user;return ROLES.map(r=>{const a=A&&A[r.k];const label=a&&a.name?`${a.name}（${a.divisionName||r.l}）`:`${u?u.displayName:r.name}（${r.l}）`;return `<option value="${r.k}">${E(label)}</option>`}).join('')})();
+/* 「操作する人」の選択肢。ログイン中は、その利用者が持つ役割だけを出し、ラベルは「表示名（役割名）」にする。
+   名簿の代表者名は使わない（見本＝サーバ非接続のときだけ従来の見本名）。 */
+const ROLE_OPTS=(()=>{const A=window.__SF_ACTORS__,u=window.__MSF__&&window.__MSF__.user,held=heldRoles();return (held?ROLES.filter(r=>held.indexOf(r.k)>=0):ROLES).map(r=>{const a=A&&A[r.k];const label=u?`${u.displayName}（${r.l}）`:a&&a.name?`${a.name}（${a.divisionName||r.l}）`:`${r.name}（${r.l}）`;return `<option value="${r.k}">${E(label)}</option>`}).join('')})();
 $('#role').innerHTML=ROLE_OPTS;
+/* 保持していない役割が初期値のままにならないように、いまの役割を候補の中へ寄せる（役割切替の初期値を壊さない）。 */
+{const opts=Array.from($('#role').options).map(o=>o.value);if(opts.length&&opts.indexOf(S.role)<0)S.role=opts[0]}
 updTheme();tickClock();setInterval(tickClock,1000);
 S.cfg=loadCfg();
 if(window.__MSF__&&Array.isArray(window.__MSF__.approvers)&&window.__MSF__.approvers.length){
