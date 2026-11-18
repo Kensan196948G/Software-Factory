@@ -661,6 +661,53 @@ function contentHTML(r){
  <div class="blk" style="margin-top:7px"><h5>${I('check','sm')}合格の条件（${crit.length}件）</h5>${capList(crit,4,true,true)}</div>
  <div class="metas">${mp('起票',r.applicant||'－')}${mp('部署',dep?dep.short:'－',dep?dep.name:'')}${mp('区分',r.kind||'－')}${mp('カタログ',tl?tl.name:'カタログ外')}${mp('使う人',users||'－')}${mp('場所',(r.places||[]).join('・')||'－')}${mp('扱う情報',dataL.length?dataL.join('・'):'特になし')}${mp('相手',r.parties||'社内のみ')}${mp('守ること',cons.length+'件',cons.join(' ／ ')||'なし')}${mp('人に聞く',(r.approvals||[]).length+'件',(r.approvals||[]).join(' ／ ')||'なし')}${mp('承認者',apvShow(r)||'－')}${mp('希望',r.wish||'－')}${(r.attachments||[]).length?mp('添付',r.attachments.length+'件',r.attachments.map(a=>a.name).join(' ／ ')):''}</div>`;
 }
+/* ---------- 注文書（サーバ接続時は API の確定版。サーバ非接続の見本は toYAML） ---------- */
+const ORD={};
+/** サーバの確定版を取りに行く。何度呼ばれても 1 回にまとめる。返り値は状態（yaml か error）。 */
+function ensureOrder(id,force){
+ if(!window.__MSF__||!id||!find(id))return Promise.resolve(null);
+ const cur=ORD[id];
+ if(cur&&cur.loading)return cur.promise;
+ // force は「成功していないときの取り直し」。成功済みの版は、状態が変わったときに delete ORD[id] で捨てる。
+ if(!force&&cur&&cur.tried)return Promise.resolve(cur);
+ const st={loading:true,tried:true};
+ st.promise=window.__MSF__.api('GET','/api/requests/'+encodeURIComponent(id)+'/order').then(res=>{
+  if(res&&typeof res.yaml==='string'){const done={yaml:res.yaml,version:Number(res.version)||0,loading:false,tried:true};if(ORD[id]===st)ORD[id]=done;return done}
+  st.loading=false;st.error='注文書を取得できませんでした';return st;
+ },err=>{
+  st.loading=false;st.error=(err&&err.message)||'注文書を取得できませんでした';st.code=(err&&err.code)||null;return st;
+ }).then(st2=>{
+  // 注文書タブを開いているときだけ描き直す（ほかの画面の再描画を増やさない）
+  try{if(S.dtab==='yaml'&&(S.open===id||S.sel[S.view]===id))refreshDetail()}catch(_){/* 描き直しの失敗で取得結果を変えない */}
+  return st2;
+ });
+ ORD[id]=st;
+ return st.promise;
+}
+/** 画面に出す・コピーする・ダウンロードする注文書の文面。 */
+async function orderFor(r){
+ if(!window.__MSF__)return {yaml:toYAML(r),preview:true,version:0};
+ const st=await ensureOrder(r.id);
+ if(st&&st.yaml)return {yaml:st.yaml,preview:false,version:st.version};
+ // 承認前（ERR-205）はサーバに確定版がまだ無い。従来どおり、入力内容から作った見本を使う。
+ if(st&&st.code==='ERR-205')return {yaml:toYAML(r),preview:true,version:0};
+ return {yaml:null,preview:false,version:0,error:(st&&st.error)||'注文書を取得できませんでした'};
+}
+function orderPanel(r){
+ const id=E(r.id);
+ let head='',yaml=toYAML(r),retry='';
+ if(window.__MSF__){
+  const st=ORD[r.id];
+  if(st&&st.yaml){yaml=st.yaml;head=`<div class="btns xs" style="margin-bottom:6px"><span class="badge b-ok">${I('doc','sm')}サーバの確定版</span><span class="mono hint">order_version: ${E(String(st.version))}</span></div>`}
+  else if(st&&st.loading)head=`<div class="hint" style="margin-bottom:6px">${I('clock','sm')}確定版を読み込んでいます…（下は入力内容からの見本）</div>`;
+  else if(st&&st.code==='ERR-205')head=`<div class="hint" style="margin-bottom:6px">${I('info','sm')}承認前のため確定版はまだありません（下は入力内容からの見本）</div>`;
+  else if(st&&st.error)head=`<div class="hint" style="margin-bottom:6px">${I('alert','sm')}${E(st.error)}（下は入力内容からの見本）</div>`;
+  else head=`<div class="hint" style="margin-bottom:6px">${I('clock','sm')}確定版を読み込んでいます…（下は入力内容からの見本）</div>`;
+  if(st&&!st.yaml&&!st.loading)retry=`<button class="btn ghost sm" data-a="orderRetry" data-id="${id}" type="button">${I('reset')}読み込み直す</button>`;
+  ensureOrder(r.id);
+ }
+ return `${head}<pre class="yaml two">${yamlHl(String(yaml).trim())}</pre><div class="btns" style="margin-top:8px"><button class="btn ghost sm" data-a="ycopy" data-id="${id}" type="button">${I('copy')}コピー</button><button class="btn ghost sm" data-a="ydl" data-id="${id}" type="button">${I('download')}ダウンロード</button>${retry}<span class="hint">${I('user','sm')} AIへ渡す前に、人がレビューします</span></div>`;
+}
 /* 依頼の詳細パネル（右端固定・ドロワー共通）。全文は「注文書」タブにあります */
 function paneDetail(r,overlay){
  const nx=NEXT[r.status],can=k=>canMove(S.role,r.status,k),id=E(r.id);
@@ -668,7 +715,7 @@ function paneDetail(r,overlay){
  const gate=nx&&!can(nx)?ROLES.filter(x=>canMove(x.k,r.status,nx)):[];
  const cm=r.comments||[],hs=(r.history||[]).slice().reverse(),lastC=cm[cm.length-1];
  let body;
- if(S.dtab==='yaml')body=`<pre class="yaml two">${yamlHl(toYAML(r).trim())}</pre><div class="btns" style="margin-top:8px"><button class="btn ghost sm" data-a="ycopy" data-id="${id}" type="button">${I('copy')}コピー</button><button class="btn ghost sm" data-a="ydl" data-id="${id}" type="button">${I('download')}ダウンロード</button><span class="hint">${I('user','sm')} AIへ渡す前に、人がレビューします</span></div>`;
+ if(S.dtab==='yaml')body=orderPanel(r);
  else if(S.dtab==='log')body=`<div class="blk"><h5>${I('msg','sm')}コメント（${cm.length}件）</h5>${cm.length?cm.slice(-2).reverse().map(c=>`<div class="cmt">${av(c.by)}<div style="min-width:0;flex:1"><small>${fmtS(c.at)}　${E(c.by)}</small><span class="cl2" title="${E(c.text)}">${E(c.text)}</span></div></div>`).join(''):'<div class="hint">まだありません</div>'}${cm.length>2?`<div class="more">ほか ${cm.length-2}件（古いコメント）</div>`:''}
   <div class="inrow"><input id="ctx" data-id="${id}" placeholder="コメントを入力（Enterで送信）"><button class="btn sm" data-a="comment" data-id="${id}" type="button">${I('send')}送信</button></div></div>
   <div class="blk" style="margin-top:8px"><h5>${I('clock','sm')}変更履歴（${hs.length}件・新しい順）</h5><ul class="tl c">${hs.slice(0,6).map((h,i)=>`<li class="${/差戻し/.test(h.action)?'bad':/承認済み|完了/.test(h.action)?'ok':/実装中|検証中/.test(h.action)?'ai':''}" style="--i:${i}"><b>${E(h.action)}</b><small>${fmtS(h.at)}　${E(h.by)}（${E(h.role)}）</small>${h.note?`<div class="cl1 hint" title="${E(h.note)}">${E(h.note)}</div>`:''}</li>`).join('')}</ul>${hs.length>6?`<button class="btn ghost sm" data-a="logOf" data-id="${id}" type="button">${I('audit')}ほか ${hs.length-6}件を監査ログで見る</button>`:''}</div>`;
@@ -951,6 +998,7 @@ async function submit(){
    if(!window.__MSF__)toast((res&&res.error)||'保存できませんでした','bad');
    return;
   }
+  delete ORD[item.id]; // 内容を直すと承認前へ戻り、注文書の版も変わる（取り直す）
   const id=item.id;S.draft=null;S.editId=null;S.fresh=id;go('board',id);toast(id+' を更新しました','ok');return;
  }
  // 応答が失われても二重に作らないよう、最初の試行で決めた冪等キーと送信本文を控える（再試行は同じキーで照合する）。
@@ -1865,7 +1913,8 @@ function openStatus(r,preset){
 }
 /* 理由（メモ）が必須の状態変更。サーバの isReasonRequired（src/shared/domain.ts）が必須とする組をすべて含む（差戻し・見送りは従来どおり常に必須） */
 function needReason(from,to){return ['back','hold','cancel'].includes(to)||(to==='dev'&&['field','release_wait'].includes(from))}
-function applyStatus(id){
+async function applyStatus(id){
+ if(S.statusSending)return;
  const r=find(id);if(!r)return;
  const v=($('#modal input[name=ns]:checked')||{}).value,note=$('#nnote').value.trim();
  if(!v){toast('変更先を選んでください','bad');return}
@@ -1876,11 +1925,32 @@ function applyStatus(id){
    // 候補よりゆるい色は、利用者のメモが無ければ送らない（サーバの規則と同じ。自動の履歴文を理由にしない）。
    const cand=(typeof r.suggested==='string'&&RANK[r.suggested]!==undefined)?r.suggested:judge(r).c;
    if(RANK[fc]<RANK[cand]&&!note){toast('候補よりゆるい色にする理由をメモに書いてください','bad');return}
-   r.signalFinal=fc;extra='信号の色を「'+COLORS[fc].l+'」に決定'}
+   extra='信号の色を「'+COLORS[fc].l+'」に決定'}
+ // 送る前の写し。サーバが拒否したら、状態・履歴・コメント・信号をこの写しへ戻す（楽観更新の巻き戻し）。
+ const prev=JSON.parse(JSON.stringify(r));
+ // 画面のデータ（履歴・コメント・信号・状態）は、サーバへ送るために先に進める。
  // 履歴の表示用の文（extra）と、サーバへ送る理由（利用者のメモ）を分ける。理由は画面の履歴文から作らない。
- const now=nowISO();r.history=r.history||[];r.history.push({at:now,by:me().name,role:me().l,action:'状態を「'+statusOf(v).l+'」に変更',note:[extra,note].filter(Boolean).join('／'),reason:note});
+ const now=nowISO();
+ if(fc)r.signalFinal=fc;
+ r.history=r.history||[];r.history.push({at:now,by:me().name,role:me().l,action:'状態を「'+statusOf(v).l+'」に変更',note:[extra,note].filter(Boolean).join('／'),reason:note});
  if(note){r.comments=r.comments||[];r.comments.push({at:now,by:me().name,text:note,__reason:true})}
- r.status=v;r.updatedAt=now;persist();S.fresh=r.id;
+ r.status=v;r.updatedAt=now;
+ // 送った内容（失敗時に巻き戻してよいかの判定に使う。競合で画面が取り直したときは取り直しを正とする）
+ const sent=JSON.stringify(r);
+ S.statusSending=true;
+ let res;
+ try{res=await persist()}finally{S.statusSending=false}
+ if(!res||res.ok!==true){
+  // 保存できていないので成功の演出は出さない。送った内容のままなら、状態・履歴・コメントを元に戻す
+  // （競合（409）で画面が取り直したときは、取り直した最新を正とする。登録・編集の失敗と同じ扱い）。
+  const k=S.data.items.findIndex(x=>x.id===id);
+  if(k>=0&&S.data.items[k]&&JSON.stringify(S.data.items[k])===sent)S.data.items[k]=prev;
+  save(S.data);render();if(S.open)renderDrawer();
+  if(!window.__MSF__)toast((res&&res.error)||'保存できませんでした','bad');
+  return;
+ }
+ delete ORD[id]; // 注文書は状態で変わる（承認後は確定版を取り直す）
+ S.fresh=r.id;
  closeModal();render();if(S.open)renderDrawer();
  if(v==='approved')lineModal(r,fc);
  else{toast(r.id+' を「'+statusOf(v).l+'」にしました',v==='back'?'':'ok',statusOf(v).ic);if(v==='done')confetti(110)}
@@ -2087,10 +2157,15 @@ const ACT={
  login(){doLogin()},
  edit(el){startEdit(el.dataset.id)},
  del(el){const r=find(el.dataset.id);if(!r)return;confirmBox('削除',r.id+'「'+r.title+'」を削除します。元に戻せません。','削除する',()=>{S.data.items=S.data.items.filter(x=>x.id!==r.id);addAudit('req','依頼を削除',r.title,r.id);persist();closeDrawer();toast(r.id+' を削除しました','','trash');render()},true)},
- dtab(el){S.dtab=el.dataset.v;refreshDetail()},
+ dtab(el){S.dtab=el.dataset.v;const oid=S.open||S.sel[S.view],oc=oid?ORD[oid]:null;if(S.dtab==='yaml'&&oid&&(!oc||!oc.yaml))ensureOrder(oid,true);refreshDetail()},
  comment(el){const r=find(el.dataset.id),t=$('#ctx').value.trim();if(!r)return;if(!t){toast('コメントを入力してください','bad');return}const now=nowISO();r.comments=r.comments||[];r.comments.push({at:now,by:me().name,text:t});r.updatedAt=now;persist();toast('コメントしました','ok','msg');refreshDetail()},
- ycopy(el){const r=find(el.dataset.id);if(r)copyText(toYAML(r),()=>toast('注文書をコピーしました','ok','copy'))},
- ydl(el){const r=find(el.dataset.id);if(r)download(r.id+'_注文書.yaml',toYAML(r),'text/yaml')?toast('ダウンロードしました','ok','download'):toast('ダウンロードできませんでした','bad')},
+ ycopy(el){const r=find(el.dataset.id);if(!r)return;void orderFor(r).then(o=>{
+  if(!o.yaml){toast(o.error||'注文書を取得できませんでした','bad');return}
+  copyText(o.yaml,()=>toast(o.preview?'注文書（承認前の見本）をコピーしました':'注文書をコピーしました','ok','copy'))})},
+ ydl(el){const r=find(el.dataset.id);if(!r)return;void orderFor(r).then(o=>{
+  if(!o.yaml){toast(o.error||'注文書を取得できませんでした','bad');return}
+  download(r.id+'_注文書.yaml',o.yaml,'text/yaml')?toast('ダウンロードしました','ok','download'):toast('ダウンロードできませんでした','bad')})},
+ orderRetry(el){const id=el.dataset.id;delete ORD[id];ensureOrder(id,true);refreshDetail()},
  lineYaml(el){const id=el.dataset.id;closeModal();S.dtab='yaml';go('board',id)},
  lineBoard(){closeModal();go('board')}
 };
