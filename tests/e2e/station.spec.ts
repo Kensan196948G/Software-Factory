@@ -93,6 +93,15 @@ async function roster(page: Page): Promise<{ name: string; divisionCode: string;
   });
 }
 
+/** ログイン中の利用者（サーバの正本）。表示名は app_user.display_name。 */
+async function currentUser(page: Page): Promise<{ displayName: string; roles: string[]; actingRole: string }> {
+  return page.evaluate(async () => {
+    const res = await fetch('/api/auth/me');
+    const json = await res.json();
+    return json.user;
+  });
+}
+
 async function departmentNames(page: Page): Promise<{ code: string; name: string; shortName: string }[]> {
   return page.evaluate(async () => {
     const res = await fetch('/api/catalog/departments');
@@ -201,15 +210,21 @@ test.describe('ステーション画面', () => {
     await expect(page.locator('#catleft')).toContainText('検索結果');
   });
 
-  test('ログイン表示に Mirai-Info の社員名と部署が出る', async ({ page }) => {
+  // 表示名は DB の app_user.display_name を正とする（2026-11-18 の修正）。名簿（Mirai-Info）の
+  // 代表者名は表示名に使わない。ここでは管理者（3 役割を持つ）で、表示名と選択肢の形を見る。
+  test('ログイン表示は利用者の表示名（DB の display_name）になり、名簿の代表者名は出ない', async ({ page }) => {
     const people = await roster(page);
     expect(people.length).toBeGreaterThan(0);
+    const user = await currentUser(page);
+    expect(user.displayName).toBeTruthy();
     const options = await page.locator('#role option').allInnerTexts();
     expect(options).toHaveLength(3);
     for (const option of options) expect(option).toMatch(/（.+）$/);
+    // ラベルは「表示名（役割名）」
+    for (const option of options) expect(option.startsWith(`${user.displayName}（`)).toBe(true);
     const avatarName = await page.locator('#actorav .av').getAttribute('title');
-    expect(avatarName).toBeTruthy();
-    expect(people.some((p) => p.name === avatarName)).toBe(true);
+    expect(avatarName).toBe(user.displayName);
+    expect(people.some((p) => p.name === avatarName)).toBe(false);
   });
 
   test('新しい依頼の部署と起票者が Mirai-Info に合う', async ({ page }) => {
@@ -253,18 +268,21 @@ test.describe('ステーション画面', () => {
     expect(expected.some((n) => n === value || n.startsWith(`${value}（`))).toBe(true);
   });
 
-  test('役割を変えると表示の社員名と部署が変わる', async ({ page }) => {
+  // 役割を変えても表示名は変わらない（表示名は利用者の属性。変わるのは「操作する人」の役割名）。
+  test('役割を変えると「操作する人」の役割名が変わり、表示名は利用者のまま', async ({ page }) => {
     const people = await roster(page);
+    const user = await currentUser(page);
     const options = await page.locator('#role option').allInnerTexts();
     expect(options).toHaveLength(3);
     await page.selectOption('#role', 'approver');
     await page.waitForTimeout(400);
     const avatarName = await page.locator('#actorav .av').getAttribute('title');
-    expect(people.some((p) => p.name === avatarName)).toBe(true);
+    expect(avatarName).toBe(user.displayName);
+    expect(people.some((p) => p.name === avatarName)).toBe(false);
     const selected = await page.locator('#role').inputValue();
     expect(selected).toBe('approver');
     const label = await page.locator('#role option:checked').innerText();
-    expect(label).toMatch(/（.+）$/);
+    expect(label).toBe(`${user.displayName}（承認者（業務責任者））`);
     await page.selectOption('#role', 'requester');
   });
 
