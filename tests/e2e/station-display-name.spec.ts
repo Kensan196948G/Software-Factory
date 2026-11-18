@@ -135,6 +135,41 @@ async function rosterNames(page: Page): Promise<string[]> {
   });
 }
 
+/** 名簿から、部署を持つ社員を 1 人選ぶ（起票者の名前と部署は名簿のまま使う）。 */
+async function rosterPerson(page: Page): Promise<{ name: string; divisionCode: string }> {
+  return page.evaluate(async () => {
+    const response = await fetch('/api/mirai/employees');
+    const json = (await response.json()) as { items?: { name: string; divisionCode: string }[] };
+    const person = (json.items || []).find((p) => p && p.name && p.divisionCode);
+    if (!person) throw new Error('見本名簿に部署つきの社員がいません');
+    return person;
+  });
+}
+
+const CRITERION = '送信ボタンを押すと、入力した内容が消えずに残る';
+
+/** 準備用: その画面の利用者として依頼を 1 件登録する（起票者は名簿の社員名にする）。 */
+async function createRequestAs(page: Page, title: string, approver: Account): Promise<string> {
+  const person = await rosterPerson(page);
+  const res = await call<{ request: { id: string } }>(page, 'POST', '/api/requests', {
+    title,
+    kind: 'new_tool',
+    deptCode: person.divisionCode,
+    applicant: person.name,
+    problem: 'E2E のための架空の困りごとです',
+    purpose: '自分の依頼が「あなたの依頼」に表示されることを確かめる',
+    users: ['現場の担当者'],
+    scope: ['依頼の表示'],
+    outOfScope: ['写真の加工'],
+    criteria: [CRITERION],
+    decides: 'g',
+    approver: approver.displayName,
+    approverUserId: approver.id,
+  });
+  expect(res.status, JSON.stringify(res.body)).toBe(201);
+  return res.body.request.id;
+}
+
 const roleOptions = (page: Page): Promise<string[]> => page.locator('#role option').allInnerTexts();
 const actorName = (page: Page): Promise<string | null> => page.locator('#actorav .av').getAttribute('title');
 const greeting = (page: Page): Promise<string> => page.locator('#main .hero h2').innerText();
@@ -208,6 +243,35 @@ test.describe('表示名と「操作する人」（app_user.display_name と use
       expect(selectLabel).not.toContain('承認者');
 
       await expectNoRosterNames(p, options.join('\n'));
+
+      // 「あなたの依頼」は、表示名と名簿名が違っても自分の依頼を出す（applicant_user_id で判定）
+      const approver = await createUser(page, '承認 担当', ['approver']);
+      try {
+        const title = `自分の依頼 ${stamp()}`;
+        const id = await createRequestAs(p, title, approver);
+        await p.reload();
+        await p.waitForSelector('#nav');
+        const mine = p.locator('.card', { hasText: 'あなたの依頼' });
+        await expect(mine).toContainText(title);
+        await expect(mine).toContainText(id);
+
+        // 詳細を開くと、持っていない受付担当・承認者への切替ボタンは出ない（F-2）
+        await mine.getByText(title).click();
+        await p.waitForSelector('#drawer.open');
+        await expect(p.locator('#drawer')).toContainText(title);
+        await expect(p.locator('#drawer [data-a="role"]')).toHaveCount(0);
+
+        // サーバ接続時は、設定「起動したとき、ログイン画面から始める」でも見本のログインを出さない
+        // （見本のログインは全 3 役割を出し、サーバのセッションを無視して画面の役割を変えてしまう: F-2 の別経路）
+        await p.evaluate(() => localStorage.setItem('sf-station-v1-settings', JSON.stringify({ startLogin: true })));
+        await p.reload();
+        await p.waitForSelector('#nav');
+        await expect(p.locator('#auth')).not.toHaveClass(/open/);
+        expect(await roleOptions(p)).toEqual(['一般利用者（依頼者）']);
+        expect((await sessionUser(p)).actingRole).toBe('requester');
+      } finally {
+        await deactivate(page, approver.id);
+      }
     } finally {
       if (other) await other.context.close();
       await deactivate(page, account.id);

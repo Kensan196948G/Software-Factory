@@ -24,6 +24,9 @@
     }
   }
   if (!boot || !Array.isArray(boot.items)) {
+    // 起動マーカー（window.__MSF_BOOT__ / #msf-boot）があるのに読めないときは、見本モードへ落とさず
+    // 「接続できない」状態にする（全役割が見えてしまう fail-open を避ける）。
+    if (boot || document.getElementById('msf-boot')) window.__MSF_BOOT_FAILED__ = true;
     window.__MSF__ = null;
     return;
   }
@@ -83,6 +86,7 @@
       ? boot.user
       : null;
   if (!user) {
+    window.__MSF_BOOT_FAILED__ = true;
     window.__MSF__ = null;
     return; // The boot marker keeps the console fail-closed, not in standalone sample mode.
   }
@@ -976,14 +980,17 @@
     return ROLE_CODE[boot.role] ? boot.role : 'requester';
   }
 
-  let roleSwitch = Promise.resolve();
+  let roleSwitch = Promise.resolve(true);
+  /** 役割を切り替える。サーバが受け付けたら true、拒否・失敗なら false（呼び出し側は画面を変えない）。 */
   function switchRole(role) {
     const mapped = ROLE_CODE[role];
-    if (!mapped) return Promise.resolve();
+    if (!mapped) return Promise.resolve(false);
     roleSwitch = roleSwitch
       .then(() => api('POST', '/api/auth/role', { role: mapped }))
+      .then(() => true)
       .catch((err) => {
         if (window.__MSF_UI__ && window.__MSF_UI__.toast) window.__MSF_UI__.toast(err.message, true);
+        return false;
       });
     return roleSwitch;
   }

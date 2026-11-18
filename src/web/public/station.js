@@ -549,13 +549,23 @@ function seed(){
 /* ===================== 状態 ===================== */
 const loaded=load();
 const S={data:loaded.data,persistent:loaded.persistent,role:(window.__MSF__&&window.__MSF__.initialRole?window.__MSF__.initialRole():'requester'),view:'dash',sel:{},step:0,draft:null,editId:null,dpTab:'card',fq:'',fd:'',fs:'',fc:'',open:null,dtab:'sum',pickDept:'',fresh:null,cat:'koji',catTool:'',catq:'',logq:'',devTab:'line',secTab:'vuln',setTab:'personal',logk:'',cfg:null};
+/* サーバ接続を期待すべきなのに接続できていないか（読み込み時に 1 回だけ判定する）。
+   bridge が「起動マーカーはあるが読めない」と判断したとき（__MSF_BOOT_FAILED__）に加え、
+   bridge 自体が読めなかった（503 等）ときも #msf-boot の有無で見分ける。
+   どちらの場合もオフライン見本として扱わない（全役割が見えてしまう fail-open を避ける）。 */
+const BOOT_FAILED=Boolean(window.__MSF_BOOT_FAILED__||(!window.__MSF__&&document.getElementById('msf-boot')));
 /* 画面の「操作する人」に出す、ログイン中の利用者が持つ役割（サーバの user_role）。
-   サーバに繋がっていない見本（__MSF__ なし）は null を返し、従来どおり 3 役割を出す。 */
+   サーバに繋がっていない見本（__MSF__ なし）は null を返し、従来どおり 3 役割を出す。
+   利用者が居るのに roles が読めないとき、および起動マーカーがあるのに接続できなかったときは
+   空（出さない）。権限を推測で広げない（F-2 の再発防止）。 */
 const heldRoles=()=>{
  const u=window.__MSF__&&window.__MSF__.user;
- if(!u||!Array.isArray(u.roles))return null;
+ if(!u)return BOOT_FAILED?[]:null;
+ if(!Array.isArray(u.roles))return [];
  return ROLES.map(r=>r.k).filter(k=>u.roles.indexOf(k)>=0);
 };
+/* その役割を持っているか。見本（サーバ非接続）は従来どおり全て可。 */
+const holdsRole=k=>{const held=heldRoles();return held===null||held.indexOf(k)>=0};
 /* 表示名はログイン中の利用者の app_user.display_name を正とする。
    名簿（__SF_ACTORS__）は起票者・部署の選択などの既存用途だけに使い、表示名には使わない。
    見本（サーバ非接続）のときだけ、従来どおり見本名を使う。 */
@@ -722,7 +732,8 @@ function orderPanel(r){
 function paneDetail(r,overlay){
  const nx=NEXT[r.status],can=k=>canMove(S.role,r.status,k),id=E(r.id);
  const nxL=!nx?'':r.status==='back'?'再提出する':nx==='approved'?'承認する（色を決める）':'「'+statusOf(nx).l+'」へ進める';
- const gate=nx&&!can(nx)?ROLES.filter(x=>canMove(x.k,r.status,nx)):[];
+ // 進められないときは、切り替え先も「その人が持っている役割」だけを出す（持っていない役割を選ばせない。F-2）
+ const gate=nx&&!can(nx)?ROLES.filter(x=>canMove(x.k,r.status,nx)&&holdsRole(x.k)):[];
  const cm=r.comments||[],hs=(r.history||[]).slice().reverse(),lastC=cm[cm.length-1];
  let body;
  if(S.dtab==='yaml')body=orderPanel(r);
@@ -733,7 +744,7 @@ function paneDetail(r,overlay){
  return `<div class="dp-h">${cico(r.dept,'lg')}<div class="dp-t"><div class="hint"><span class="mono">${id}</span>　更新 ${fmtS(r.updatedAt)}</div><h2 class="cl2" title="${E(r.title)}">${E(r.title)}</h2><div class="btns xs" style="margin-top:3px">${sb(r.status)}${sig(colorOf(r))}${r.signalFinal?'':'<span class="hint">候補</span>'}${avn(r.applicant)}${S.data.devsec&&S.data.devsec.lines[r.id]?`<button class="badge b-ai lk2" data-a="go" data-v="devops" data-id="${id}" type="button" title="DevOps で開発ラインを見る">${I('code')}DevOps</button>`:''}</div></div>${overlay?`<button class="btn ghost sm icon" data-a="closeDrawer" type="button" title="閉じる">${I('x')}</button>`:''}</div>
  ${miniSteps(r)}
  <div class="dp-acts">${nx?`<button class="btn sm ${nx==='approved'?'ok':''}${can(nx)?' ready':''}" data-a="status" data-id="${id}" data-v="${nx}" type="button"${can(nx)?'':' disabled'}>${I(statusOf(nx).ic)}${nxL}</button>`:''}${r.status!=='back'&&r.status!=='hold'?`<button class="btn sm bad" data-a="status" data-id="${id}" data-v="back" type="button"${can('back')?'':' disabled'}>${I('undo')}差戻し</button>`:''}${r.status!=='hold'?`<button class="btn sm ghost" data-a="status" data-id="${id}" data-v="hold" type="button"${can('hold')?'':' disabled'}>${I('pause')}見送り</button>`:''}<span style="flex:1"></span><button class="btn sm ghost icon" data-a="status" data-id="${id}" type="button" title="状態を変更">${I('flag')}</button><button class="btn sm ghost icon" data-a="edit" data-id="${id}" type="button" title="${canEdit(S.role,r)?'編集':'いまの役割・状態では編集できません'}"${canEdit(S.role,r)?'':' disabled'}>${I('edit')}</button><button class="btn sm ghost icon dng" data-a="del" data-id="${id}" type="button" title="${S.role==='requester'?'依頼者は削除できません':'削除'}"${S.role==='requester'?' disabled':''}>${I('trash')}</button></div>
- ${gate.length?`<div class="gatel">${I('lock','sm')}<span>いまの役割（${E(me().l.replace(/（.*）/,''))}）では進められません</span>${gate.map(x=>`<button class="btn sm ghost" data-a="role" data-v="${x.k}" type="button">${I('user')}${E(x.name)}に切り替える</button>`).join('')}</div>`:''}
+ ${gate.length?`<div class="gatel">${I('lock','sm')}<span>いまの役割（${E(me().l.replace(/（.*）/,''))}）では進められません</span>${gate.map(x=>`<button class="btn sm ghost" data-a="role" data-v="${x.k}" type="button">${I('user')}${E(x.l.replace(/（.*）/,''))}に切り替える</button>`).join('')}</div>`:''}
  <div class="ptabs">${[['sum','概要','inbox'],['yaml','注文書','doc'],['log','コメント・履歴（'+cm.length+'）','clock']].map(t=>`<button type="button" data-a="dtab" data-v="${t[0]}" class="${S.dtab===t[0]?'on':''}">${I(t[2],'sm')}${t[1]}</button>`).join('')}</div>
  <div>${body}</div>`;
 }
@@ -821,7 +832,10 @@ V.dash=function(){
  let cAll=0,cOk=0;it.forEach(r=>(r.criteria||[]).filter(Boolean).forEach(c=>{cAll++;if(lint(c).ok)cOk++}));
  const critRate=cAll?cOk/cAll:0;
  const wait=cnt('wait'),off=cnt('back')+cnt('hold');
- const mine=S.role==='requester'?it.filter(r=>r.applicant===me().name):S.role==='approver'?it.filter(r=>r.status==='wait'):it.filter(r=>['received','review'].includes(r.status));
+ const myId=window.__MSF__&&window.__MSF__.user?window.__MSF__.user.id:null;
+ // 「あなたの依頼」は、名前の一致ではなく applicant_user_id で判定する（表示名と名簿名は一致しない）。
+ // 名簿名で作られた既存の依頼も自分の依頼として出る。applicantUserId が無い（見本・旧データ）ときだけ名前で見る。
+ const mine=S.role==='requester'?it.filter(r=>myId&&r.applicantUserId?r.applicantUserId===myId:r.applicant===me().name):S.role==='approver'?it.filter(r=>r.status==='wait'):it.filter(r=>['received','review'].includes(r.status));
  const mineT=S.role==='requester'?'あなたの依頼':S.role==='approver'?'あなたの承認を待っている依頼':'確認を待っている依頼';
  const ev=[];it.forEach(r=>(r.history||[]).forEach(x=>ev.push({r,x})));ev.sort((a,b)=>a.x.at<b.x.at?1:-1);
  const byDept=CATALOG.map(c=>({c,n:it.filter(r=>r.dept===c.id).length})).filter(x=>x.n).sort((a,b)=>b.n-a.n).slice(0,8);
@@ -1386,8 +1400,8 @@ function abtn(key,act,label,ic,o){
 }
 function gateFor(keys){
  const ks=keys.filter(k=>!may(k));if(!ks.length)return '';
- const rs=[...new Set(ks.flatMap(k=>CAN[k]))].filter(k=>k!==S.role).map(roleOf);
- return `<div class="gatel">${I('lock','sm')}<span>この操作ができるのは ${rs.map(x=>E(x.l.replace(/（.*）/,''))).join('・')} です</span>${rs.map(x=>`<button class="btn ghost sm" data-a="role" data-v="${x.k}" type="button">${av(x.name)}${E(x.name)}に切り替え</button>`).join('')}</div>`;
+ const rs=[...new Set(ks.flatMap(k=>CAN[k]))].filter(k=>k!==S.role&&holdsRole(k)).map(roleOf);
+ return `<div class="gatel">${I('lock','sm')}<span>この操作ができるのは ${rs.map(x=>E(x.l.replace(/（.*）/,''))).join('・')} です</span>${rs.map(x=>`<button class="btn ghost sm" data-a="role" data-v="${x.k}" type="button">${E(x.l.replace(/（.*）/,''))}に切り替え</button>`).join('')}</div>`;
 }
 function kstrip(arr){return `<div class="kstrip">${arr.map((k,i)=>`<div class="ks rise" style="--i:${i+1}"${k.go?` data-a="${k.go[0]}" data-v="${k.go[1]}" title="${E(k.go[2]||'')}"`:''}><div class="kt"><span class="ki${k.alarm?' alarm':''}" style="--kc:${k.c}">${I(k.ic)}</span><div class="v"><span data-count="${k.v}">${k.v}</span>${k.suf?`<small>${k.suf}</small>`:''}</div></div><div class="l">${E(k.l)}</div></div>`).join('')}</div>`}
 function segTabs(act,cur,tabs){return `<div class="seg tabs" role="tablist">${tabs.map(t=>`<button class="${cur===t[0]?'on':''}" data-a="${act}" data-v="${t[0]}" type="button" role="tab" aria-selected="${cur===t[0]}">${I(t[2])}${E(t[1])}${t[3]!=null?`<span class="sn${t[4]?' hot':''}">${t[3]}</span>`:''}</button>`).join('')}</div>`}
@@ -1846,7 +1860,18 @@ function confetti(n){
  for(let i=0;i<n;i++){const s=document.createElement('i');s.style.left=(Math.random()*100)+'%';s.style.background=cols[i%cols.length];s.style.animationDuration=(1.8+Math.random()*1.6)+'s';s.style.animationDelay=(Math.random()*.35)+'s';s.style.setProperty('--r',(Math.random()*900-450)+'deg');s.style.setProperty('--x',(Math.random()*200-100)+'px');if(i%3===0)s.style.borderRadius='50%';box.appendChild(s)}
  document.body.appendChild(box);setTimeout(()=>box.remove(),4000);
 }
-function setRole(k){S.role=k;if(window.__MSF__)window.__MSF__.switchRole(k);toast(me().name+'／'+me().l.replace(/（.*）/,'')+' として操作します','','user');render();if(S.open)renderDrawer()}
+/* 役割の切り替え。サーバが受け付けた後にだけ画面を変える（拒否された役割として描画しない。F-3）。
+   持っていない役割は、押されても切り替えない（F-2）。 */
+async function setRole(k){
+ const sel=$('#role');
+ if(!holdsRole(k)){if(sel)sel.value=S.role;toast('この操作をする権限がありません','bad');return}
+ if(window.__MSF__&&window.__MSF__.switchRole){
+  const ok=await window.__MSF__.switchRole(k);
+  // サーバが拒否したら、選択欄も元の役割へ戻す（画面と select を食い違わせない）
+  if(!ok){if(sel)sel.value=S.role;return}
+ }
+ S.role=k;toast(me().name+'／'+me().l.replace(/（.*）/,'')+' として操作します','','user');render();if(S.open)renderDrawer();
+}
 
 /* ---------- ログアウト／ログイン（サンプル：操作する人を選ぶだけ。本人確認はしない） ---------- */
 const SKEY=KEY+'-session';
@@ -1887,6 +1912,8 @@ function doLogout(){
 }
 function doLogin(){
  if(!authOpen())return;
+ // サーバ接続時・起動マーカー不正時は、見本のログインで役割を切り替えない（サーバのセッションを無視しない）
+ if(window.__MSF__||BOOT_FAILED){toast('サーバに接続しているため、見本のログインは使えません','bad');return}
  const v=($('#auth input[name=authrole]:checked')||{}).value||authSel;
  sessSet(null);S.role=ROLES.some(r=>r.k===v)?v:'requester';addAudit('auth','ログイン','','');persist();
  $('#auth').classList.remove('open');$('#auth').innerHTML='';setLock(false);
@@ -2243,9 +2270,11 @@ if(window.__MSF__&&Array.isArray(window.__MSF__.approvers)&&window.__MSF__.appro
 CFGX=S.cfg;normData(S.data);applyMotion();applyOrg();
 render();save(S.data);
 if(window.__MSF__){setTimeout(serverAudit,600);loadEmployees();}
-{const s0=sessGet();if(s0&&s0.out){authSel=ROLES.some(r=>r.k===s0.role)?s0.role:'requester';S.role=authSel;showAuth(s0.at)}}
-if(S.cfg.startLogin&&!authOpen())showAuth('');
-window.addEventListener('storage',e=>{if(e.key!==SKEY)return;const s1=sessGet();if(s1&&s1.out&&!authOpen())endSession(s1.at)});
+{const s0=sessGet();if(s0&&s0.out&&!window.__MSF__&&!BOOT_FAILED){authSel=ROLES.some(r=>r.k===s0.role)?s0.role:'requester';S.role=authSel;showAuth(s0.at)}}
+/* 見本のログイン画面（操作する人を選ぶだけ）は、サーバ非接続の見本モードだけ。
+   サーバ接続時・起動マーカーが不正なときは出さない（保持しない役割を選ばせない）。 */
+if(S.cfg.startLogin&&!authOpen()&&!window.__MSF__&&!BOOT_FAILED)showAuth('');
+window.addEventListener('storage',e=>{if(e.key!==SKEY)return;const s1=sessGet();if(s1&&s1.out&&!authOpen()&&!window.__MSF__&&!BOOT_FAILED)endSession(s1.at)});
 let fitT=null;window.addEventListener('resize',()=>{clearTimeout(fitT);fitT=setTimeout(()=>{fitPane($('#rin'));fitPane($('#din'))},120)});
 window.__SF={S,ACT,go,find,render,fitPane,logout:doLogout,login:doLogin,lineOf,gates,logRows,devKpi,secKpi};
 window.__MSF_UI__={
