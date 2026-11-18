@@ -307,6 +307,21 @@
   }
 
   let csrf = boot.csrf || '';
+
+  /**
+   * Cookie から値を読む。CSRF の Cookie（`msf_csrf`、src/api/auth.ts の CSRF_COOKIE）は
+   * httpOnly ではないので画面から読める。セッションが切り替わると Cookie だけが新しい値になる。
+   */
+  function cookieValue(name) {
+    const prefix = `${name}=`;
+    const parts = String(document.cookie || '').split(';');
+    for (let i = 0; i < parts.length; i += 1) {
+      const item = parts[i].trim();
+      if (item.indexOf(prefix) === 0) return decodeURIComponent(item.slice(prefix.length));
+    }
+    return '';
+  }
+
   const base = new Map(boot.items.map((r) => [r.id, r]));
   // 画面から外したあと、取消の対象にならなかった依頼（完了・見送り）。後の同期の失敗で画面へ戻さない
   const retired = new Set();
@@ -324,12 +339,12 @@
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (res.status === 403 && !path.startsWith('/api/auth/login')) {
-      // セッションのCSRFが変わった可能性があるため1回だけ取り直す
-      const c = await fetch('/api/auth/csrf', { credentials: 'same-origin' })
-        .then((r) => r.json())
-        .catch(() => null);
-      if (c && c.csrf) {
-        csrf = c.csrf;
+      // CSRF が切り替わったときだけ 1 回だけ取り直す。権限拒否（ERR-101・ERR-105 など）は
+      // 同じ要求を送り直しても結果は変わらず、監査と通信が二重になるだけ（F-3）。
+      // 目印は Cookie の値（画面が送った値と違えば、別のセッションに切り替わっている）。
+      const fresh = cookieValue('msf_csrf');
+      if (fresh && fresh !== csrf) {
+        csrf = fresh;
         const retryHeaders = { ...headers, 'x-csrf-token': csrf };
         const retry = await fetch(path, {
           method,

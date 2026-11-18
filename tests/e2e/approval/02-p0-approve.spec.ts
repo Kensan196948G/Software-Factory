@@ -404,7 +404,7 @@ test(
 test(
   'A7 管理者が自分の依頼を自分で承認しようとすると拒否され、状態と版が変わらない',
   { tag: ['@iso', '@otp'] },
-  async ({ admin, evidence }) => {
+  async ({ admin, evidence, recorder }) => {
     const me = await currentUser(admin.api);
     const title = uniqueTitle('A7 自己承認');
     let id = '';
@@ -424,12 +424,20 @@ test(
 
       const denied = await attemptApproval(admin.page, admin.api, id, { signal: 'g' });
       const { items } = await auditLogs(admin.api);
-      const selfDenied = items.find((entry) => entry.action === 'approval.self_denied' && entry.targetId === id);
+      const selfDeniedAll = items.filter((entry) => entry.action === 'approval.self_denied' && entry.targetId === id);
+      const selfDenied = selfDeniedAll[0];
+      // F-3: 403 の取り直しは CSRF が切り替わったときだけ。権限拒否で送り直すと、
+      // 拒否要求と監査が 1 操作で二重になる（画面の 403 を数えて固定する）。
+      const transitionDenials = recorder.http.filter(
+        (entry) => entry.status === 403 && entry.method === 'POST' && new URL(entry.url).pathname.endsWith('/transitions'),
+      );
       evidence.note('A7', {
         requestId: id,
         selfApprovalAttempt: denied,
         beforeApprove: { status: before.status, version: before.version },
+        transitionDenials,
         audit: selfDenied ? { action: selfDenied.action, result: selfDenied.result, targetId: selfDenied.targetId } : null,
+        selfDeniedCount: selfDeniedAll.length,
       });
       expect(denied.done, '自己承認が通ってしまった（成功演出が出た）').toBe(false);
       expect(denied.modalOpen, '自己承認の拒否でダイアログが閉じた').toBe(true);
@@ -439,6 +447,8 @@ test(
       expect(denied.signalDecided, '自己承認の拒否で色が決まった').toBeNull();
       expect(selfDenied, '自己承認の拒否が監査（approval.self_denied）に残っていない').toBeTruthy();
       expect(selfDenied?.result, '自己承認の拒否の監査結果が denied ではない').toBe('denied');
+      expect(transitionDenials, '403 の再送で拒否要求が二重になっている（F-3）').toHaveLength(1);
+      expect(selfDeniedAll, '自己承認の拒否の監査が二重に残っている（F-3）').toHaveLength(1);
     } finally {
       if (!IS_ISO && id) {
         await cancelRequest(admin.api, id, '検証（A7）で作った作り物の依頼のため、確認後に取消').catch(() => undefined);

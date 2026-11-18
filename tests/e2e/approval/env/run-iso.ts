@@ -11,7 +11,7 @@
  * 実データ・本番 DB・実 GitHub へは触らない。パスワードは環境変数だけに置き、出力しない。
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { homedir } from 'node:os';
@@ -131,14 +131,24 @@ function mtime(path: string): number {
   }
 }
 
-/** dist/web が src/web より新しければビルドしない。同時ビルドはロックで直列化する。 */
+/**
+ * dist/web が src/web より新しければビルドしない。同時ビルドはロックで直列化する。
+ * 画面の静的ファイル（public/ 配下）はすべて比較する。station.js だけを見ていると、
+ * station-bridge.js のような他のファイルの変更を取りこぼし、古い配布物で試験してしまう。
+ */
 async function ensureWebBuilt(env: NodeJS.ProcessEnv): Promise<boolean> {
-  const distJs = join(root, 'dist', 'web', 'station.js');
-  const srcJs = join(root, 'src', 'web', 'public', 'station.js');
-  const distIndex = join(root, 'dist', 'web', 'index.html');
-  const srcIndex = join(root, 'src', 'web', 'public', 'index.html');
-  const fresh = (): boolean =>
-    existsSync(distJs) && existsSync(distIndex) && mtime(distJs) >= mtime(srcJs) && mtime(distIndex) >= mtime(srcIndex);
+  const distDir = join(root, 'dist', 'web');
+  const publicDir = join(root, 'src', 'web', 'public');
+  const distIndex = join(distDir, 'index.html');
+  const srcIndex = join(root, 'src', 'web', 'index.html');
+  const fresh = (): boolean => {
+    if (!existsSync(distIndex) || mtime(distIndex) < mtime(srcIndex)) return false;
+    for (const name of readdirSync(publicDir)) {
+      const dist = join(distDir, name);
+      if (!existsSync(dist) || mtime(dist) < mtime(join(publicDir, name))) return false;
+    }
+    return true;
+  };
   if (fresh()) return false;
   const lock = join(root, 'test-results', '.e2e-build-web.lock');
   mkdirSync(join(root, 'test-results'), { recursive: true });
