@@ -763,6 +763,36 @@ export async function performTransition(
     const reason = (input.reason ?? '').trim();
     if (isReasonRequired(row.status, input.to) && reason === '') throw Errors.reasonRequired();
 
+    // 公開承認（release_wait → done）は、配備済みで健康・スモーク確認済みの成果物との紐付けを必須にする。
+    // 受付の状態だけを進めて「完了」にすると、何を公開したのか追えない（C2）。
+    if (input.to === 'done') {
+      const linked = await client.query(
+        `select 1
+           from job j
+           join release r on r.job_id = j.id
+          where j.request_id = $1
+            and r.merge_state = 'merged'
+            and r.deployed_at is not null
+            and r.health is true
+            and r.smoke is true
+            and r.rolled_back_at is null
+          limit 1`,
+        [id],
+      );
+      if (linked.rows.length === 0) {
+        await appendAuditInTx(client, actor, {
+          action: 'request.transition_denied',
+          targetType: 'request',
+          targetId: id,
+          result: 'denied',
+          correlationId,
+          diff: { reason: 'artifact_unlinked', from: row.status, to: input.to },
+        });
+        denial.error = Errors.approvalRequired('公開承認には、配備済みで健康・スモーク確認済みの成果物との紐付けが必要です');
+        return;
+      }
+    }
+
     const nextStatus: Status = input.to;
     let noteParts: string[] = [];
     let decided: Signal | null = row.signal_decided;

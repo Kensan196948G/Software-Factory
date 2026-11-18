@@ -494,7 +494,7 @@ Staging の画面から作り物を登録した。承認、merge、配備、戻�
 | 1 | この head の検証が `passed` で、受入条件が全件確認済み | `verification` の最新の run（`evaluateVerification`）。PR 本文・AI の申告は使わない |
 | 2 | 許可台帳と `DEVLINE_TARGET_REPOS` の積集合にあり、private 前提である | `DEVLINE_REPO_LEDGER` と設定。repoId の一致も見る（`docs/devline/repo-onboarding.md`） |
 | 3 | 差分検査（禁止パス・秘密・バイナリ）を通った証跡がある | `work_state.diffPolicy`（検査した policy の版）と `work_state.changedPaths`。版が今の policy と違う・path が policy に反する・記録が無いときは通さない（`checkAutoMergeDiffEvidence`） |
-| 4 | 注文書が最新版で、新しい版に置きかえられていない | `isOrderCurrent` と `superseded_at`。赤信号は不可 |
+| 4 | 注文書が最新版で、新しい版に置きかえられていない。**信号は青だけ** | `isOrderCurrent` と `superseded_at`、版固定した `envelope.approval.decided_signal`。黄は人が承認し、赤は不可（拒否理由 `order_signal_not_blue`） |
 | 5 | PR の head が job の `head_sha` と一致する | GitHub の PR を読み直す。merge の直前に再確認する |
 | 6 | 実 PR の記録があり、人の merge が進行中・結果不明・却下でない | `work_state.pr` と `release.merge_state`。`sending` / `unknown` / `rejected` / `merged` は触らない |
 

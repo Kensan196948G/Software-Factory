@@ -6,20 +6,16 @@ import { recordRequest } from './fixtures/run-state';
 import { errorCode } from './fixtures/devline';
 
 /**
- * 既知の穴（望ましい契約と実装が違う点）を `test.fail()` で残す。層①（使い捨て DB）だけ。
+ * C1/C2 の回帰（修正済み）。層①（使い捨て DB）だけ。
  *
- * `test.fail()` は「この期待は現状の実装では満たされない」という記録であり、期待を緩めるものではない。
- * 実装が直れば「Expected to fail, but passed」でこのテストは失敗する（穴が塞がれたことが分かる）。
- *
- * C1: `decideAutoMerge` は注文書の信号の色を見ていない。黄（signal='y'）でも他の条件が揃えば ok:true になる。
- * C2: `roleCanTransition` は release_wait → done で「指名された承認者か」を見ない。成果物の紐付けも見ない。
+ * C1: 自動マージは青の注文書だけを対象にし、黄は人が承認する（`order_signal_not_blue`）。
+ * C2: 公開承認（release_wait → done）は、指名された承認者だけができ、配備済みで健康・スモーク確認済みの
+ *     成果物との紐付けを必須にする。
  */
 
 /* ───────────────────────────── C1: 自動マージが信号の色を見ていない ───────────────────────────── */
 
-test('C1 黄の注文書（signal=y）は自動マージの対象外であるべき（既知の穴）', { tag: ['@iso'] }, async ({ evidence }) => {
-  test.fail();
-
+test('C1 黄の注文書（signal=y）は自動マージの対象外', { tag: ['@iso'] }, async ({ evidence }) => {
   // 黄だけが理由になるように、自動マージの他の条件はすべて満たす（許可台帳の private repo・合格・AC 全件・PR あり）。
   const base: AutoMergeFacts = {
     enabled: true,
@@ -27,6 +23,7 @@ test('C1 黄の注文書（signal=y）は自動マージの対象外であるべ
     jobHeadSha: 'a'.repeat(40),
     superseded: false,
     orderCurrent: true,
+    orderSignal: 'g',
     verdict: 'passed',
     acAllConfirmed: true,
     diff: { ok: true, policyVersion: 'devline-diff/v1', changedPaths: ['src/index.ts'] },
@@ -34,35 +31,28 @@ test('C1 黄の注文書（signal=y）は自動マージの対象外であるべ
     hasPr: true,
     mergeState: 'none',
   };
-  // 注文書の信号は AutoMergeFacts に無い。望ましい契約では黄（y）を対象外にするため、signal を渡す。
-  const facts = { ...base, orderSignal: 'y' } as AutoMergeFacts & { orderSignal: string };
 
-  const neutral = decideAutoMerge(base);
-  const decision = decideAutoMerge(facts);
+  const blue = decideAutoMerge(base);
+  const yellow = decideAutoMerge({ ...base, orderSignal: 'y' });
+  const red = decideAutoMerge({ ...base, orderSignal: 'r' });
 
-  evidence.note('C1-auto-merge-yellow', {
-    // 条件が揃った注文書（信号は渡していない）は現状 ok:true。ここは契約として変わらない。
-    withoutSignal: neutral,
-    // 黄の注文書でも、signal を見ていないので現状 ok:true になる（穴）。
-    withYellowSignal: decision,
-    orderSignal: facts.orderSignal,
+  evidence.note('C1-auto-merge-signal', {
+    blue,
+    yellow,
+    red,
+    orderSignal: base.orderSignal,
   });
 
-  // 前提: 他の条件が揃っていれば、信号を渡さない場合は通る（差は黄の信号だけ）。
-  expect(neutral.ok, '自動マージの前提条件が揃っていない（この試験の前提が崩れている）').toBe(true);
-
-  // 望ましい契約: 黄の注文書は「人が承認する」対象で、自動マージの対象外。
-  // 現状は signal を見ていないため ok:true のまま（decideAutoMerge の引数に signal が無い）。
-  expect(decision.ok, '黄の注文書（signal=y）が自動マージの対象になっている（decideAutoMerge が信号の色を見ていない）').toBe(
-    false,
-  );
+  // 青だけが自動マージの対象。
+  expect(blue.ok, '青の注文書が自動マージの対象になっていない').toBe(true);
+  expect(yellow.ok, '黄の注文書が自動マージの対象になっている').toBe(false);
+  if (!yellow.ok) expect(yellow.reasons, '黄の拒否理由が残っていない').toContain('order_signal_not_blue');
+  expect(red.ok, '赤の注文書が自動マージの対象になっている').toBe(false);
 });
 
 /* ───────────────────────────── C2-1: release_wait → done の指名 ───────────────────────────── */
 
-test('C2-1 release_wait→done は指名された承認者だけができるべき（既知の穴）', { tag: ['@iso'] }, async ({ evidence }) => {
-  test.fail();
-
+test('C2-1 release_wait→done は指名された承認者だけができる', { tag: ['@iso'] }, async ({ evidence }) => {
   const approverA = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
   const approverB = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
   const request = {
@@ -97,18 +87,16 @@ test('C2-1 release_wait→done は指名された承認者だけができるべ�
   // 指名された承認者（A）は done にできる（現状も、望ましい契約でも true）。
   expect(byA.allowed, '指名された承認者が release_wait→done に進めない').toBe(true);
 
-  // 望ましい契約: wait → approved と同じく、指名された承認者だけが公開承認（done）にできる。
-  // 現状は wait のときだけ approverUserId を見ており、release_wait では誰でも通る（穴）。
+  // wait → approved と同じく、指名された承認者だけが公開承認（done）にできる。
   expect(byB.allowed, '指名されていない承認者（B）が release_wait→done に進めている').toBe(false);
 });
 
 /* ───────────────────────────── C2-2: 成果物の紐付け無しで done ───────────────────────────── */
 
 test(
-  'C2-2 release_wait の依頼は成果物の紐付け無しに done にできないべき（既知の穴）',
+  'C2-2 release_wait の依頼は成果物の紐付け無しに done にできない',
   { tag: ['@iso'] },
   async ({ user, admin, db, evidence }) => {
-    test.fail();
     expect(db, '層①では DB へ接続できる必要があります').not.toBeNull();
     const requester = await currentUser(user.api);
     const approver = await currentUser(admin.api);
@@ -164,12 +152,17 @@ test(
       linkedReleases: linkedReleases[0]?.n ?? null,
     });
 
-    // 望ましい契約: 公開の承認（done）は、配備済みの成果物（release / release_attempt）と紐付いていなければ通さない。
-    // 現状は成果物を見ずに 200 で done にできる（穴）。
-    expect(
-      res.status,
-      `成果物の紐付けが無いのに release_wait→done が通った（実測 ${res.status} ${errorCode(res.body)}）`,
-    ).not.toBe(200);
+    // 公開の承認（done）は、配備済みで健康・スモーク確認済みの成果物と紐付いていなければ通さない。
+    expect(res.status, `成果物の紐付けが無いのに release_wait→done が通った（実測 ${res.status}）`).toBe(409);
+    expect(errorCode(res.body), `拒否コードが ERR-202 ではない（実測 ${errorCode(res.body)}）`).toBe('ERR-202');
     expect(String(after.status), '成果物の紐付けが無いのに依頼が done になった').toBe('release_wait');
+    const audits = await db!.query(
+      `select action, result, diff from audit_log where target_id = $1 and action = 'request.transition_denied' order by id`,
+      [request.id],
+    );
+    expect(
+      audits.some((a: { diff?: { reason?: string } }) => a.diff?.reason === 'artifact_unlinked'),
+      '成果物の紐付け拒否が監査に残っていない',
+    ).toBe(true);
   },
 );

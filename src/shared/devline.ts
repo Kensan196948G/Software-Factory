@@ -987,6 +987,7 @@ export type AutoMergeRefusal =
   | 'head_missing'
   | 'superseded'
   | 'order_not_current'
+  | 'order_signal_not_blue'
   | 'verification'
   | 'ac_unconfirmed'
   | 'diff_policy_missing'
@@ -1031,6 +1032,8 @@ export interface AutoMergeFacts {
   jobHeadSha: string | null;
   superseded: boolean;
   orderCurrent: boolean;
+  /** 版固定した注文書の決定色。青だけが自動マージの対象（黄は人が承認、赤は不可）。 */
+  orderSignal: Signal | null;
   verdict: VerificationVerdict['verdict'];
   acAllConfirmed: boolean;
   diff: AutoMergeDiffEvidence;
@@ -1048,7 +1051,7 @@ export type AutoMergeDecision = { ok: true; alreadyMerged: boolean } | { ok: fal
  * 1. この head の検証が合格し、受入条件が全件確認済み
  * 2. 対象 repo が許可台帳と DEVLINE_TARGET_REPOS の積集合にあり、private 前提である
  * 3. PR の差分検査の証跡（policy の版と変更 path）が今の policy に合う
- * 4. 注文書が最新版で、新しい版に置きかえられていない
+ * 4. 注文書が最新版で、新しい版に置きかえられていない。**信号は青だけ**（黄は人が承認、赤は不可）
  * 5. PR の記録があり、人の merge が進行中・結果不明・却下でない
  * 6. job が pr_ready で、head がある
  *
@@ -1062,6 +1065,7 @@ export function decideAutoMerge(f: AutoMergeFacts): AutoMergeDecision {
   if (!f.jobHeadSha) reasons.push('head_missing');
   if (f.superseded) reasons.push('superseded');
   if (!f.orderCurrent) reasons.push('order_not_current');
+  if (f.orderSignal !== 'g') reasons.push('order_signal_not_blue');
   if (f.verdict !== 'passed') reasons.push('verification');
   if (!f.acAllConfirmed) reasons.push('ac_unconfirmed');
   if (!f.diff.ok) reasons.push(f.diff.problem);
