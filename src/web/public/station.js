@@ -265,8 +265,8 @@ const ROLES=[
 ];
 const APPROVERS=['鈴木 一郎','田中 誠司','松本 綾'];
 const KINDS=['新しい道具がほしい','いまある道具を良くしたい','不具合の報告','相談・アイデア'];
-const USERS=['現場の担当者','現場所長','現場事務','本社・支店の担当者','協力会社','発注者','経営層'];
-const PLACES=['事務所','現場（屋外）','電波の弱い現場','移動中・車内'];
+const USERS=['現場の担当者','現場所長','現場事務','作業船の船長・船員','潜水士','本社の本部の担当者','支店・営業所の担当者','協力会社','発注者（国・港湾管理者など）','民間のお客様','経営層'];
+const PLACES=['事務所','陸の現場（屋外）','海の上（作業船・台船）','電波の弱い現場','移動中・車内'];
 const DATA=[
  {k:'personal',l:'個人情報（名簿・資格・健康など）'},
  {k:'client',l:'発注者から預かった図面・データ'},
@@ -487,38 +487,38 @@ function blank(role){
 const SEEDS=[
  {title:'工事写真の圏外保存',dept:'koji',toolRef:'koji|0',kind:'いまある道具を良くしたい',applicant:'山田 太郎',decides:'g',data:['photo'],status:'field',signalFinal:'y',
   problem:'山の中の現場では写真が送れず、事務所に戻ってから整理し直している',purpose:'電波の弱い現場でも写真が消えずに残り、事務所での整理の手間をなくす',
-  users:['現場の担当者','現場事務','現場所長'],people:40,places:['現場（屋外）','電波の弱い現場'],scope:'圏外での一時保存\n電波が戻った時の自動送信\n送信済み・未送信の表示',outScope:'発注者システムへの直接提出\n写真の加工・編集',
+  users:['現場の担当者','現場事務','現場所長'],people:40,places:['陸の現場（屋外）','電波の弱い現場'],scope:'圏外での一時保存\n電波が戻った時の自動送信\n送信済み・未送信の表示',outScope:'発注者システムへの直接提出\n写真の加工・編集',
   criteria:['圏外で撮った写真がアプリを閉じても消えない','電波が戻ると自動で送られ、二重に登録されない','撮影日時・撮影場所の記録をあとから書きかえられない','ほかの現場の写真は見えない'],
   constraints:['写真・記録の原本は加工しない','本物のデータを練習用の場所に持ち込まない','電波がなくても入力が消えないようにする'],approvals:['提出様式の変更'],freq:'d',minutes:15,dataReady:5,spread:5,d0:0},
  {title:'重機・機材の空き状況を見たい',dept:'kizai',toolRef:'kizai|0',kind:'新しい道具がほしい',applicant:'高橋 健',decides:'g',status:'dev',signalFinal:'g',
   problem:'どの重機が空いているか電話で確認しており、現場間で取り合いになる',purpose:'重機・機材の空き状況を、だれでもすぐに見られるようにする',
-  users:['現場所長','現場の担当者','本社・支店の担当者'],people:60,places:['事務所','現場（屋外）'],scope:'機械ごとの予約カレンダー\n予約の登録・取り消し\n点検期限切れの機械は予約できない',outScope:'回送トラックの手配\n料金の計算',
+  users:['現場所長','現場の担当者','本社の本部の担当者'],people:60,places:['事務所','陸の現場（屋外）'],scope:'機械ごとの予約カレンダー\n予約の登録・取り消し\n点検期限切れの機械は予約できない',outScope:'回送トラックの手配\n料金の計算',
   criteria:['同じ機械を同じ時間に二重予約できない','点検期限切れの機械は予約画面に「予約不可」と表示される','予約の変更履歴（だれが・いつ）が残る'],constraints:['いまのログイン方法は変えない'],freq:'d',minutes:10,dataReady:3,spread:5,d0:2},
  {title:'KY記録の書きもれ確認',dept:'anzen',toolRef:'anzen|2',kind:'新しい道具がほしい',applicant:'伊藤 誠',decides:'y',data:['personal'],parties:'協力会社も使う',status:'wait',
   problem:'KY活動記録の空欄や記入もれが、パトロールのときに見つかる',purpose:'提出前に書きもれに気づけるようにする（危険の見積もりは人が行う）',
-  users:['現場の担当者','協力会社','現場所長'],people:120,places:['現場（屋外）'],scope:'必須欄の空欄チェック\n作業内容と危険のポイントの未記入の知らせ',outScope:'危険度の自動判定\n作業可否の判断',
+  users:['現場の担当者','協力会社','現場所長'],people:120,places:['陸の現場（屋外）'],scope:'必須欄の空欄チェック\n作業内容と危険のポイントの未記入の知らせ',outScope:'危険度の自動判定\n作業可否の判断',
   criteria:['必須欄が空のまま提出すると、空欄の項目名が表示される','記入内容の良し悪しは判定しない（空欄のみを知らせる）','協力会社は自社の記録だけが見られる'],
   constraints:['個人情報は必要な人だけが見られるようにする'],approvals:['安全・品質の判定にかかわる変更','協力会社・発注者に見せる範囲の変更'],freq:'d',minutes:5,dataReady:3,spread:5,d0:4},
  {title:'請求書の仕訳候補',dept:'keiri',toolRef:'keiri|2',kind:'新しい道具がほしい',applicant:'渡辺 美咲',decides:'y',data:['money'],status:'review',
   problem:'協力会社からの請求書を手で入力しており、月末に作業が集中する',purpose:'請求書の読み取りと仕訳の候補づくりで入力時間を減らす（確定は経理担当）',
-  users:['本社・支店の担当者'],people:8,places:['事務所'],scope:'請求書PDFの読み取り\n工事番号・勘定科目の候補表示',outScope:'支払いの承認\n会計システムへの自動登録',
+  users:['本社の本部の担当者'],people:8,places:['事務所'],scope:'請求書PDFの読み取り\n工事番号・勘定科目の候補表示',outScope:'支払いの承認\n会計システムへの自動登録',
   criteria:['読み取った金額と請求書の金額が一致しない場合は警告を出す','候補は経理担当が「確定」を押すまで登録されない'],constraints:['本物のデータを練習用の場所に持ち込まない'],approvals:['新しい外部サービスとの接続'],freq:'m',minutes:600,dataReady:3,spread:3,d0:6},
  {title:'残業上限の早めのお知らせ',dept:'jinji',toolRef:'jinji|0',kind:'新しい道具がほしい',applicant:'中村 由紀',decides:'g',data:['personal'],status:'done',signalFinal:'y',
   problem:'時間外労働の上限に近づいていることに、月末まで気づけない',purpose:'本人と上司が早めに気づき、働き方を調整できるようにする',
-  users:['現場所長','本社・支店の担当者'],people:300,places:['事務所','現場（屋外）'],scope:'月の途中での残業時間の見える化\n上限の8割を超えたら本人と上司へ知らせる',outScope:'評価や処分への利用',
+  users:['現場所長','本社の本部の担当者'],people:300,places:['事務所','陸の現場（屋外）'],scope:'月の途中での残業時間の見える化\n上限の8割を超えたら本人と上司へ知らせる',outScope:'評価や処分への利用',
   criteria:['上限の8割を超えた日の翌朝までに本人と上司へ通知される','本人と上司以外は個人の残業時間を見られない','通知の記録が残る'],constraints:['個人情報は必要な人だけが見られるようにする'],approvals:['ログインや権限の変更'],freq:'w',minutes:10,dataReady:5,spread:5,d0:-10},
  {title:'入札・発注情報のお知らせ',dept:'eigyo',toolRef:'eigyo|0',kind:'新しい道具がほしい',applicant:'小林 大輔',decides:'g',status:'received',
   problem:'発注機関のサイトを毎日見て回っている',purpose:'自社に合いそうな案件だけを毎朝まとめて知らせる',
-  users:['本社・支店の担当者'],people:15,places:['事務所'],scope:'公告情報の収集\n工種・地域での絞り込み\n毎朝のお知らせ',outScope:'入札に参加するかの判断',
+  users:['本社の本部の担当者'],people:15,places:['事務所'],scope:'公告情報の収集\n工種・地域での絞り込み\n毎朝のお知らせ',outScope:'入札に参加するかの判断',
   criteria:['登録した工種・地域に合う公告が、翌営業日の朝9時までに一覧で届く','元の公告ページへのリンクが付いている'],constraints:['いまのログイン方法は変えない'],approvals:['新しい外部サービスとの接続'],freq:'d',minutes:30,dataReady:5,spread:3,d0:12},
  {title:'見積金額を自動で決めたい',dept:'sekisan',toolRef:'sekisan|5',kind:'相談・アイデア',applicant:'加藤 修',decides:'r',data:['money'],status:'back',
   problem:'見積の作成に時間がかかる',purpose:'見積金額をAIで自動的に決めたい',
-  users:['本社・支店の担当者'],people:10,places:['事務所'],scope:'見積金額の自動決定',outScope:'',
+  users:['本社の本部の担当者'],people:10,places:['事務所'],scope:'見積金額の自動決定',outScope:'',
   criteria:['いい感じの金額が出る'],constraints:[],approvals:[],freq:'w',minutes:240,dataReady:3,spread:1,d0:8,
   backNote:'金額の決定は赤信号（AIに決めさせない）です。「過去工事との見積比べ（黄）」に範囲を変え、合格の条件を数字で書き直して再提出してください。'},
  {title:'協力会社書類の回収状況',dept:'kobai',toolRef:'kobai|1',kind:'新しい道具がほしい',applicant:'吉田 恵',decides:'g',parties:'協力会社も使う',data:['personal'],status:'verify',signalFinal:'y',
   problem:'安全書類が出たかどうかを、電話とメールで確認している',purpose:'書類の提出状況を一覧で見られるようにする',
-  users:['現場事務','協力会社','現場所長'],people:80,places:['事務所','現場（屋外）'],scope:'書類ごとの提出状況の一覧\n未提出の協力会社への連絡文の下書き',outScope:'書類内容の審査',
+  users:['現場事務','協力会社','現場所長'],people:80,places:['事務所','陸の現場（屋外）'],scope:'書類ごとの提出状況の一覧\n未提出の協力会社への連絡文の下書き',outScope:'書類内容の審査',
   criteria:['協力会社は自社の書類と提出状況だけが見られる','未提出の書類が現場ごとに件数で表示される','提出日時が自動で記録される'],constraints:['個人情報は必要な人だけが見られるようにする'],approvals:['協力会社・発注者に見せる範囲の変更'],freq:'w',minutes:60,dataReady:3,spread:5,d0:3}
 ];
 const SAMPLES=[{label:'青：重機の空き状況',ic:'truck',i:1},{label:'黄：KY記録の書きもれ確認',ic:'shieldok',i:2},{label:'赤：見積金額の自動決定',ic:'yen',i:6}];
@@ -907,7 +907,7 @@ function stepHTML(i){
  if(i===0){
   const kic=['sparkles','wrench','bug','msg'],kdesc=['まだない道具を作ってほしい','いま使っている道具を直したい・足したい','動かない・まちがっている','まだ形になっていない思いつき'];
   const dep=S.pickDept||(d.toolRef?d.toolRef.split('|')[0]:'');
-  return `${S.editId?'':`<div class="lbl">${I('sparkles','sm')}サンプル入力（デモ用）</div><div class="btns" style="margin-bottom:14px">${SAMPLES.map((s,j)=>`<button type="button" class="btn ghost sm" data-a="sample" data-v="${j}">${I(s.ic)}${E(s.label)}</button>`).join('')}</div>`}
+  return `${S.editId||window.__MSF__?'':`<div class="lbl">${I('sparkles','sm')}サンプル入力（デモ用）</div><div class="btns" style="margin-bottom:14px">${SAMPLES.map((s,j)=>`<button type="button" class="btn ghost sm" data-a="sample" data-v="${j}">${I(s.ic)}${E(s.label)}</button>`).join('')}</div>`}
   <div class="lbl">${I('tag','sm')}依頼の種類<span class="req">必須</span></div>
   <div class="choices">${KINDS.map((k,j)=>`<button type="button" class="choice${d.kind===k?' on':''}" data-a="one" data-f="kind" data-v="${E(k)}"><span class="ib">${I(kic[j])}</span><span><b>${E(k)}</b><small>${E(kdesc[j])}</small></span></button>`).join('')}</div>
   <div class="lbl" style="margin-top:14px">${I('grid','sm')}部署別 道具カタログから選ぶ（任意）</div>
