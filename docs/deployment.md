@@ -371,7 +371,7 @@ journalctl --user -u mirai-sf-backup -u mirai-sf-restore-drill -u mirai-sf-remin
 
 画面の投入から実 job を動かす worker。詳細は `docs/devline/real-runner.md` 13 章。
 
-**前提の未解決**: `preview.conf` は `NODE_ENV=production` で、この値では docker-claude の投入（ERR-405）も worker も拒否される。Staging で動かすには、この拒否をどう扱うかを先に決める。
+**解決（2026-11-18）**: `preview.conf` は `NODE_ENV=production` のため、従来は docker-claude の投入（ERR-405）も worker も拒否される。Staging は `APP_ENV=staging`（`setup-preview` が設定）で許可される。`APP_ENV` が staging でない環境で実 runner を許す場合だけ、`DEVLINE_ALLOW_PRODUCTION=1` を明示する（既定は拒否。`docs/devline/production-automation.md`）。
 
 ```bash
 # 1. イメージ（版は docs/devline/real-runner.md 7 章と同じ）
@@ -386,6 +386,9 @@ install -m 600 /dev/null ~/.config/mirai-sf/devline-secrets.env
 #    DEVLINE_RUNNER_KIND=docker-claude
 #    DEVLINE_TARGET_REPOS=Kensan196948G/Software-Factory-Sandbox:1440860477
 #    DEVLINE_SECRETS_FILE=<資格情報の絶対 path>
+#    # NODE_ENV=production で APP_ENV が staging でない環境でも実 runner を許す場合だけ（既定は拒否）
+#    # 行内コメントは EnvironmentFile で値の一部になるため、コメントは前行に置く
+#    DEVLINE_ALLOW_PRODUCTION=1
 
 # 4. ユニット（current のリリースを参照する）
 cp deploy/systemd/mirai-sf-worker.service ~/.config/systemd/user/
