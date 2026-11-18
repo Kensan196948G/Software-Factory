@@ -702,7 +702,9 @@ describe('承認後の編集（承認取消→承認待ち）', () => {
       payload: { to: 'approved', version: waitVersion, signal: 'y', checklistAcknowledged: true },
     });
     expect(approved.statusCode).toBe(200);
-    const approvedVersion = (approved.json() as { detail: { version: number } }).detail.version;
+    const approvedDetail = (approved.json() as { detail: { version: number; orderVersion: number } }).detail;
+    const approvedVersion = approvedDetail.version;
+    expect(approvedDetail.orderVersion, '承認 1 回目の注文書の版は 1').toBe(1);
 
     // 承認後に受付担当が内容を変える → 承認取消して承認待ちへ戻る（到達可能になった分岐）
     const patched = await app.inject({
@@ -712,9 +714,25 @@ describe('承認後の編集（承認取消→承認待ち）', () => {
       payload: { ...sampleRequest({ title: '承認後に直した依頼' }), version: approvedVersion },
     });
     expect(patched.statusCode).toBe(200);
-    const body = patched.json() as { detail: { status: string }; warnings: { code: string }[] };
+    const body = patched.json() as {
+      detail: { status: string; version: number; orderVersion: number; signalDecided: string | null };
+      warnings: { code: string }[];
+    };
     expect(body.detail.status).toBe('wait');
     expect(body.warnings.map((w) => w.code)).toContain('ERR-202');
+    // F-1: 編集では注文書の版を動かさない（承認のたびに +1 だけ進める）。
+    expect(body.detail.orderVersion, '承認後の編集で order_version が動いている').toBe(1);
+    expect(body.detail.signalDecided, '編集後も決定色が残っている').toBeNull();
+
+    // 再承認で注文書の版が 2 になる（編集 +1 と承認 +1 の二重加算をしない）。
+    const reapproved = await app.inject({
+      method: 'POST',
+      url: `/api/requests/${id}/transitions`,
+      headers: authHeaders(approver),
+      payload: { to: 'approved', version: body.detail.version, signal: 'y', checklistAcknowledged: true },
+    });
+    expect(reapproved.statusCode, reapproved.body).toBe(200);
+    expect((reapproved.json() as { detail: { orderVersion: number } }).detail.orderVersion).toBe(2);
 
     const mails = await query<{ n: number }>('select count(*)::int as n from mail_outbox where request_id = $1', [id]);
     expect(mails.rows[0]!.n).toBe(2);

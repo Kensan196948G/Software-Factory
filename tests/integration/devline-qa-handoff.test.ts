@@ -1033,3 +1033,40 @@ describe('別のリポジトリの結果不明', () => {
     expect(trace).toHaveProperty('currentTargetRepo');
   });
 });
+
+describe('F-2: 赤信号の注文書は開発ラインへ投入しない', () => {
+  it('新ルート・旧ルートのどちらも 409 ERR-205 で拒否し、Issue・job・intent を作らない', async () => {
+    const id = await h.createRequest({ decides: 'r' });
+    await h.toWait(id);
+    await h.setRole('approver');
+    await h.transition(id, {
+      to: 'approved',
+      signal: 'r',
+      checklistAcknowledged: true,
+      redAcknowledged: true,
+      reason: '赤のまま承認する作り物の理由',
+    });
+    await h.setRole('desk');
+
+    const version = await h.orderVersion(id);
+    const viaOrders = await h.api('POST', `/api/orders/${id}/handoff`, { orderVersion: version });
+    expect(viaOrders.statusCode, viaOrders.body).toBe(409);
+    expect(viaOrders.json().error.code).toBe('ERR-205');
+    expect(viaOrders.json().error.message).toContain('赤信号');
+
+    const viaLegacy = await h.api('POST', `/api/requests/${id}/handoff`);
+    expect(viaLegacy.statusCode, viaLegacy.body).toBe(409);
+    expect(viaLegacy.json().error.code).toBe('ERR-205');
+
+    expect(h.github.issues).toHaveLength(0);
+    expect(await h.count('from job where request_id=$1', [id])).toBe(0);
+    expect(await h.intents(id)).toHaveLength(0);
+    const audits = (
+      await query<{ action: string; result: string; diff: { why?: string } }>(
+        `select action, result, diff from audit_log where target_id=$1 and action='handoff.intent' order by id`,
+        [id],
+      )
+    ).rows;
+    expect(audits.filter((a) => a.result === 'denied' && a.diff?.why === 'red_signal').length).toBeGreaterThanOrEqual(2);
+  });
+});
