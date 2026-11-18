@@ -1,6 +1,6 @@
 # 開発ライン 実 AI ランナーと実 PR（docker-claude）
 
-状態: 実装済み。**Staging の画面起点で、作り物 2 件を配備と戻しまで実走済み**（2026-11-01〜02、16 章）。最初のスクリプト起点の記録は 11 章。本番と実データには使っていない。
+状態: 実装済み。**Staging の画面起点で、作り物 2 件を配備と戻しまで実走済み**（2026-11-01〜02、16 章）。最初のスクリプト起点の記録は 11 章。本番と実データにはまだ使っていない（2026-11-18 から、所有者が `DEVLINE_ALLOW_PRODUCTION=1` を明示した場合だけ本番でも起動できる。§6・§17）。
 既定は fake のまま。`DEVLINE_RUNNER_KIND=docker-claude` のときだけ動く。画面の投入も同じ設定で実 job を作る（13 章、実走の記録は 16 章）。
 
 ## 1. 所有者の決定
@@ -140,7 +140,8 @@ DEVLINE_GITHUB_TOKEN=
 | `DEVLINE_CI_POLL_MS`     | なし（15〜30秒）                | 1件実走の入口の CI の問い合わせ間隔                                                       |
 | `DEVLINE_DEPLOY_ENABLED` | なし                            | `1` で worker が成果物の作成と検証環境への配備を行う                                      |
 | `DEVLINE_ARTIFACT_DIR`   | OS の一時領域                   | CI の成果物を展開する場所。tmpfs でない、空きのあるところ（最大で zip 1 GiB + tar 3 GiB） |
-| `DEVLINE_AUTO_MERGE`     | `0`（無効）                     | `1` で、条件をすべて満たすときにサーバが squash merge する（17 章）。本番と検証環境以外では起動を拒否 |
+| `DEVLINE_AUTO_MERGE`     | `0`（無効）                     | `1` で、条件をすべて満たすときにサーバが squash merge する（17 章）。本番は `DEVLINE_ALLOW_PRODUCTION=1` の明示が無い限り起動を拒否 |
+| `DEVLINE_ALLOW_PRODUCTION` | なし（拒否）                  | `1` で、本番でも実 runner と自動マージを許可する（既定は拒否。空は未設定、`0` / `1` 以外は起動エラー）。**所有者の明示指示があるときだけ**設定する（`docs/devline/production-automation.md`） |
 
 ## 7. 1件実走の手順（CTO）
 
@@ -351,7 +352,7 @@ runner の種別・対象・トークンはサーバの設定だけで決まる�
 | `DEVLINE_RUNNER_KIND=docker-claude` | `DEVLINE_TARGET_REPOS` と許可台帳の積集合の**先頭**へ `DEVLINE_GITHUB_TOKEN` で Issue を作り、job は `docker-claude`。`GITHUB_TOKEN` と `GITHUB_REPO` は見ない。複数あってよい（job は target_repo_id を持ち、その repo だけを触る） |
 | それ以外の値                        | ERR-405。fake として動かさない                                                                                                          |
 
-実 job の投入を ERR-405 で拒否する場合（fake へ落とさない）: 資格情報のファイルが無い・0600 以外・symlink・他人のもの・`DEVLINE_GITHUB_TOKEN` が無い、`DEVLINE_TARGET_REPOS` が空・許可台帳（`DEVLINE_REPO_LEDGER`）に無い・repo ID が違う・差分 policy が無い、公開リポジトリ、`NODE_ENV=production`。複数のリポジトリは拒否しない（`docs/devline/repo-onboarding.md`）。
+実 job の投入を ERR-405 で拒否する場合（fake へ落とさない）: 資格情報のファイルが無い・0600 以外・symlink・他人のもの・`DEVLINE_GITHUB_TOKEN` が無い、`DEVLINE_TARGET_REPOS` が空・許可台帳（`DEVLINE_REPO_LEDGER`）に無い・repo ID が違う・差分 policy が無い、公開リポジトリ、`NODE_ENV=production`（`DEVLINE_ALLOW_PRODUCTION=1` の明示があるときを除く）。複数のリポジトリは拒否しない（`docs/devline/repo-onboarding.md`）。
 
 API のプロセスは `DEVLINE_GITHUB_TOKEN` だけを読む。`ANTHROPIC_API_KEY` は worker だけが読む。fake の worker は実 job を取らず、実の worker は fake の job を取らない。worker を動かさなければ job は `queued` のまま。
 
@@ -483,7 +484,7 @@ Staging の画面から作り物を登録した。承認、merge、配備、戻�
 ### 17-1. 原則
 
 - **AI は自分の成果物を承認しない。** 自動マージは人の承認の代替ではなく、所有者が明示設定したポリシー（環境変数 `DEVLINE_AUTO_MERGE=1`）によるサーバの機械判定である。判定根拠と設定値を監査に残す。AI の申告・PR 本文・runner の結果は根拠にしない。
-- 既定は 0（無効）。未設定・`0`・読めない値は無効または起動拒否で、**fail-closed**。本番（`NODE_ENV=production` かつ `APP_ENV!=staging`）では既定 0 のままで、明示的に 1 にしても起動を拒否する（実 runner と同じ境界）。
+- 既定は 0（無効）。未設定・`0`・読めない値は無効または起動拒否で、**fail-closed**。本番（`NODE_ENV=production` かつ `APP_ENV!=staging`）では既定 0 のままで、明示的に 1 にしても起動を拒否する。所有者が `DEVLINE_ALLOW_PRODUCTION=1` を明示したときだけ、この境界を越えて有効にできる（実 runner と同じ境界。戻すときは値を消す。`docs/devline/production-automation.md`）。
 - 有効でも、条件をすべて満たさないときは merge を送らない。無効のときは従来どおり、人の承認（`POST /api/jobs/:id/approve-merge`、15 章）だけが merge する。
 
 ### 17-2. 判定条件（すべて満たすときだけ squash merge）

@@ -39,6 +39,12 @@ export interface AppConfig {
   selfApprovalForcedInProduction: boolean;
   /** JSON 取込（全件置換）を許可するか。 */
   allowImport: boolean;
+  /**
+   * 本番（APP_ENV=production）でも開発ラインの実 runner と自動マージを許可するか。
+   * 既定は false（従来どおり本番では拒否）。DEVLINE_ALLOW_PRODUCTION=1 の明示だけで true。
+   * 0 / 1 以外は起動エラー（fail-closed）。2026-11-18 の所有者指示で追加した。
+   */
+  devlineAllowProduction: boolean;
   /** password: アプリのログイン画面 / access: Cloudflare Access の JWT を検証（ヘッダ信頼は明示 opt-in のみ） */
   authMode: 'password' | 'access';
   accessAllowedEmails: string[];
@@ -341,6 +347,14 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
   );
   const accessAutoProvision = accessAutoProvisionOf(pick(file, 'ACCESS_AUTO_PROVISION'), appEnv, isProduction);
 
+  // 本番の開発ライン自動化（実 runner・自動マージ）の明示許可。既定は拒否。
+  // 未設定と空は「無効」、0 / 1 以外の値は起動エラー（fail-closed）。判定は devline-real-config.ts と同じ。
+  const rawDevlineAllowProduction = (pick(file, 'DEVLINE_ALLOW_PRODUCTION') ?? '').trim();
+  if (rawDevlineAllowProduction !== '' && rawDevlineAllowProduction !== '0' && rawDevlineAllowProduction !== '1') {
+    throw new Error('DEVLINE_ALLOW_PRODUCTION が不正です（0 / 1 のいずれか）');
+  }
+  const devlineAllowProduction = rawDevlineAllowProduction === '1';
+
   // 自己承認の既定は環境で決める。本番だけ既定で禁止し、明示の 1 は警告つきで許可する。
   const rawSelfApproval = pick(file, 'ALLOW_SELF_APPROVAL')?.trim();
   const explicitSelfApproval = rawSelfApproval === undefined || rawSelfApproval === '' ? undefined : rawSelfApproval;
@@ -371,6 +385,7 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
     allowSelfApproval,
     selfApprovalForcedInProduction,
     allowImport: (pick(file, 'ALLOW_IMPORT') ?? '1') === '1',
+    devlineAllowProduction,
     authMode,
     ...accessJwtSettingsOf(authMode, pick(file, 'ACCESS_TEAM_DOMAIN'), pick(file, 'ACCESS_AUD')),
     accessTrustEmailHeader,
