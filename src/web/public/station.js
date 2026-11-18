@@ -272,7 +272,9 @@ const DATA=[
  {k:'client',l:'発注者から預かった図面・データ'},
  {k:'location',l:'現場の位置情報'},
  {k:'photo',l:'工事写真・検査記録の原本'},
- {k:'money',l:'お金の情報（金額・原価・支払い）'}
+ {k:'money',l:'お金の情報（金額・原価・支払い）'},
+ {k:'vessel',l:'作業船の運航・位置・点検の記録'},
+ {k:'env',l:'海の濁りなど環境の測定値'}
 ];
 const PARTIES=['社内のみ','協力会社も使う','発注者も見る'];
 const DECIDES=[
@@ -280,8 +282,8 @@ const DECIDES=[
  {k:'y',l:'たたき台づくり・比べっこ・見落としチェック',d:'結果は必ず担当者や技術者が見てから使う'},
  {k:'r',l:'合否・金額・契約・人の処遇・安全などを決める',d:'AIに決めさせない。道具は「材料集め・表示」までにする'}
 ];
-const CONSTRAINTS=['いまのログイン方法は変えない','本物のデータを練習用の場所に持ち込まない','写真・記録の原本は加工しない','個人情報は必要な人だけが見られるようにする','電波がなくても入力が消えないようにする'];
-const APPROVALS=['データを消す・作り直す変更','ログインや権限の変更','新しい外部サービスとの接続','協力会社・発注者に見せる範囲の変更','提出様式の変更','安全・品質の判定にかかわる変更'];
+const CONSTRAINTS=['いまのログイン方法は変えない','本物のデータを練習用の場所に持ち込まない','写真・記録の原本は加工しない','個人情報は必要な人だけが見られるようにする','電波がなくても入力が消えないようにする','天気・波の予報は「目安」として見せ、作業するかどうかは表示しない'];
+const APPROVALS=['データを消す・作り直す変更','ログインや権限の変更','新しい外部サービスとの接続','協力会社・発注者に見せる範囲の変更','提出様式の変更','安全・品質の判定にかかわる変更','作業船の運航・海の上の作業にかかわる変更'];
 const FREQ=[{k:'d',l:'毎日',m:20},{k:'w',l:'毎週',m:4},{k:'m',l:'毎月',m:1},{k:'o',l:'ときどき',m:0.3}];
 const READY=[{k:5,l:'電子データでそろっている'},{k:3,l:'一部は紙・Excel'},{k:1,l:'紙や人の頭の中'}];
 const SPREAD=[{k:5,l:'全社で使えそう'},{k:3,l:'いくつかの部署・現場で使えそう'},{k:1,l:'自分の部署だけ'}];
@@ -317,6 +319,7 @@ function judge(r){
  (r.data||[]).forEach(k=>{const d=DATA.find(x=>x.k===k);if(d)up('y',d.l+'を扱います')});
  if(r.parties&&r.parties!=='社内のみ')up('y','社外の人（'+r.parties.replace('も使う','').replace('も見る','')+'）が関わります');
  if((r.approvals||[]).includes('安全・品質の判定にかかわる変更'))up('y','安全・品質の判定にかかわります');
+ if((r.approvals||[]).includes('作業船の運航・海の上の作業にかかわる変更'))up('y','作業船の運航・海の上の作業にかかわります');
  if(!reasons.length)reasons.push({c:'g',t:'まだ判定材料がありません（「この道具は何をしますか」を選んでください）'});
  return {c,reasons};
 }
@@ -907,7 +910,7 @@ function stepHTML(i){
  if(i===0){
   const kic=['sparkles','wrench','bug','msg'],kdesc=['まだない道具を作ってほしい','いま使っている道具を直したい・足したい','動かない・まちがっている','まだ形になっていない思いつき'];
   const dep=S.pickDept||(d.toolRef?d.toolRef.split('|')[0]:'');
-  return `${S.editId||window.__MSF__?'':`<div class="lbl">${I('sparkles','sm')}サンプル入力（デモ用）</div><div class="btns" style="margin-bottom:14px">${SAMPLES.map((s,j)=>`<button type="button" class="btn ghost sm" data-a="sample" data-v="${j}">${I(s.ic)}${E(s.label)}</button>`).join('')}</div>`}
+  return `${S.editId||window.__MSF__||BOOT_FAILED?'':`<div class="lbl">${I('sparkles','sm')}サンプル入力（デモ用）</div><div class="btns" style="margin-bottom:14px">${SAMPLES.map((s,j)=>`<button type="button" class="btn ghost sm" data-a="sample" data-v="${j}">${I(s.ic)}${E(s.label)}</button>`).join('')}</div>`}
   <div class="lbl">${I('tag','sm')}依頼の種類<span class="req">必須</span></div>
   <div class="choices">${KINDS.map((k,j)=>`<button type="button" class="choice${d.kind===k?' on':''}" data-a="one" data-f="kind" data-v="${E(k)}"><span class="ib">${I(kic[j])}</span><span><b>${E(k)}</b><small>${E(kdesc[j])}</small></span></button>`).join('')}</div>
   <div class="lbl" style="margin-top:14px">${I('grid','sm')}部署別 道具カタログから選ぶ（任意）</div>
@@ -1206,7 +1209,7 @@ const CAN={ai:['desk'],check:['desk'],review:['approver'],merge:['desk'],stg:['d
 const may=k=>(CAN[k]||[]).includes(S.role);
 const rl=k=>roleOf(k).l.replace(/（.*）/,'');
 const whoCanT=k=>(CAN[k]||[]).map(rl).join('・');
-const fieldUse=r=>(r.places||[]).some(p=>/現場（屋外）|電波の弱い現場/.test(p));
+const fieldUse=r=>(r.places||[]).some(p=>/現場（屋外）|電波の弱い現場|海の上/.test(p));
 const isReq=k=>CHK_LOCK.includes(k)||!!S.cfg.req[k];
 
 /* ---------- 設定（このブラウザに保存。依頼のデータとは別） ---------- */
@@ -1382,7 +1385,7 @@ function gates(){
   {id:'G4',t:'赤信号の仕事はAIに決めさせない',d:'赤の依頼は、承認者の確認がないと承認できません。',s:'ok',why:'守られています'},
   {id:'G5',t:'シークレットを含むコミットを止める',d:'シークレットの検査は、いつも必須です（外せません）。',s:'ok',why:'守られています'},
   {id:'G6',t:'期限切れの脆弱性が0件',d:'修正期限はシステム設定で決めます。',s:od?'bad':'ok',why:od?'期限切れが '+od+' 件あります':'期限切れはありません',tab:'vuln',set:'secops'},
-  {id:'G7',t:'現場向けの道具は圏外テストが必須',d:'使う場所に現場（屋外）・電波の弱い現場がある道具です。',s:S.cfg.req.offline?'ok':'warn',why:S.cfg.req.offline?'必須になっています':'圏外テストが必須から外れています',set:'devops'}
+  {id:'G7',t:'現場向けの道具は圏外テストが必須',d:'使う場所に現場（屋外）・海の上・電波の弱い現場がある道具です。',s:S.cfg.req.offline?'ok':'warn',why:S.cfg.req.offline?'必須になっています':'圏外テストが必須から外れています',set:'devops'}
  ];
 }
 function secKpi(){
