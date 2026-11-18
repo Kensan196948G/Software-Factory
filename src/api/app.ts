@@ -75,6 +75,7 @@ import {
   cancelJob,
   getJob,
   handoffOrder,
+  refuseRedHandoff,
   listDevlineTrace,
   listJobsForRequest,
   resumeJob,
@@ -466,6 +467,7 @@ export async function buildApp(
     const ctx = mutate(req);
     const { id } = req.params as { id: string };
     const body = orderHandoffSchema.parse(req.body);
+    await refuseRedHandoff(id, actorOf(ctx.user), correlationId(req));
     return handoffOrder(
       {
         requestId: id,
