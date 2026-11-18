@@ -67,6 +67,6 @@ E2E_BASE_URL=https://sf.mirai-dx-platform.com E2E_LAYER=otp \
 | `03-p0-exceptions.spec.ts` | A2（飛ばし遷移）/ A6（利用者は承認不可）/ A8（編集→再承認）/ A9（差戻し・再提出）/ A10（見送り・取消） |
 | `04-p1-station.spec.ts`    | B1（同時承認）/ B2（監査 403・役割切替）/ B3（無効化でセッション失効）                                 |
 | `05-devline.spec.ts`       | B4（Issue 投入）/ B5（merge 承認・SHA）/ B6（配備 digest・戻し）                                       |
-| `06-known-holes.spec.ts`   | C1/C2（既知の穴。`test.fail()`）                                                                       |
+| `06-known-holes.spec.ts`   | C1/C2 の回帰（自動マージは青のみ・公開承認の指名/成果物紐付け）                                        |
 | `09-p0-audit.spec.ts`      | A12（監査とハッシュ連鎖。層①は `db:verify` も実行）                                                    |
 | `10-p0-logout.spec.ts`     | A11（ログアウト後の再アクセス。`@logout-last`）                                                        |

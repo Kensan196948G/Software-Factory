@@ -570,8 +570,8 @@ export function roleCanTransition(
         who: 'approver',
       };
     }
-    // 承認待ち → 承認済み は、承認者本人（または承認者が空）の依頼だけ。
-    if (from === 'wait' && request.approverUserId && request.approverUserId !== actor.userId) {
+    // 承認待ち → 承認済み と 公開承認待ち → 完了 は、承認者本人（または承認者が空）の依頼だけ。
+    if ((from === 'wait' || from === 'release_wait') && request.approverUserId && request.approverUserId !== actor.userId) {
       return { allowed: false, reason: 'この依頼の承認者ではありません', who: 'approver' };
     }
     return { allowed: true };
