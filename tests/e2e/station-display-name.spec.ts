@@ -260,6 +260,15 @@ test.describe('表示名と「操作する人」（app_user.display_name と use
         await p.waitForSelector('#drawer.open');
         await expect(p.locator('#drawer')).toContainText(title);
         await expect(p.locator('#drawer [data-a="role"]')).toHaveCount(0);
+
+        // サーバ接続時は、設定「起動したとき、ログイン画面から始める」でも見本のログインを出さない
+        // （見本のログインは全 3 役割を出し、サーバのセッションを無視して画面の役割を変えてしまう: F-2 の別経路）
+        await p.evaluate(() => localStorage.setItem('sf-station-v1-settings', JSON.stringify({ startLogin: true })));
+        await p.reload();
+        await p.waitForSelector('#nav');
+        await expect(p.locator('#auth')).not.toHaveClass(/open/);
+        expect(await roleOptions(p)).toEqual(['一般利用者（依頼者）']);
+        expect((await sessionUser(p)).actingRole).toBe('requester');
       } finally {
         await deactivate(page, approver.id);
       }

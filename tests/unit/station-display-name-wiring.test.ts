@@ -197,6 +197,7 @@ it('役割の切替は、持っていない役割では画面を変えず、サ�
     return switchResult;
   };
   const win = { __MSF__: { switchRole, user: null } };
+  const select = { value: 'approver' };
   const setRole = new Function(
     'holdsRole',
     'window',
@@ -205,6 +206,7 @@ it('役割の切替は、持っていない役割では画面を変えず、サ�
     'S',
     'render',
     'renderDrawer',
+    '$',
     `${fnDefOf('setRole')}\nreturn setRole;`,
   )(
     holdsRole,
@@ -214,26 +216,60 @@ it('役割の切替は、持っていない役割では画面を変えず、サ�
     state,
     () => calls.push('render'),
     () => calls.push('renderDrawer'),
+    () => select,
   ) as (k: string) => Promise<void>;
 
-  // 持っていない役割: サーバへも送らず、画面も変えず、エラーだけ出す
+  // 持っていない役割: サーバへも送らず、画面も変えず、エラーだけ出す。選択欄も元へ戻す
+  select.value = 'requester';
   await setRole('requester');
   expect(state.role).toBe('approver');
   expect(calls).not.toContain('switch:requester');
+  expect(select.value).toBe('approver');
   expect(toasts.at(-1)).toMatchObject({ kind: 'bad' });
   expect(toasts.at(-1)?.msg).toContain('権限がありません');
 
-  // サーバが拒否した: 画面を変えない（拒否された役割として描画しない）
+  // サーバが拒否した: 画面を変えず、選択欄も元へ戻す（拒否された役割として描画しない）
   switchResult = false;
+  select.value = 'approver';
   await setRole('approver');
   expect(state.role).toBe('approver');
   expect(calls).not.toContain('render');
+  expect(select.value).toBe('approver');
 
   // サーバが受け付けた: その後に画面を変える
   switchResult = true;
   await setRole('approver');
   expect(calls).toContain('render');
   expect(toasts.at(-1)?.msg).toContain('として操作します');
+});
+
+it('gateFor（DevOps / SecOps の操作ガード）も、保持する役割だけを切替候補にする', () => {
+  const roleOf = (k: string) => ROLES.find((r) => r.k === k);
+  const make = (heldRolesForUser: string[]): ((keys: string[]) => string) => {
+    const S = { role: 'requester' };
+    const holdsRole = (k: string) => heldRolesForUser.indexOf(k) >= 0;
+    return new Function('may', 'CAN', 'roleOf', 'S', 'holdsRole', 'E', 'I', `${fnDefOf('gateFor')}\nreturn gateFor;`)(
+      () => false,
+      { transition: ['desk', 'approver'] },
+      roleOf,
+      S,
+      holdsRole,
+      (v: unknown) => String(v),
+      () => '',
+    ) as (keys: string[]) => string;
+  };
+  const none = make([])(['transition']);
+  expect(none).not.toContain('に切り替え');
+  const withDesk = make(['desk'])(['transition']);
+  expect(withDesk).toContain('受付担当');
+  expect(withDesk).not.toContain('承認者');
+});
+
+it('起動マーカーがあるのに接続できないときは、役割を出さない（fail-open にしない）', () => {
+  const win = { __MSF__: null, __MSF_BOOT_FAILED__: true } as unknown as FakeWindow;
+  const scope: Scope = { window: win, ROLES, roleOf, E, S: { role: 'requester' } };
+  const held = evaluate<() => Role[] | null>('heldRoles', scope, ['window', 'ROLES']);
+  expect(held()).toEqual([]);
 });
 
 it('「あなたの依頼」は名前ではなく applicantUserId で判定する（表示名と名簿名の不一致で消えない）', () => {

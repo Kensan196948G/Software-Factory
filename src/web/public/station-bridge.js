@@ -24,6 +24,9 @@
     }
   }
   if (!boot || !Array.isArray(boot.items)) {
+    // 起動マーカー（window.__MSF_BOOT__ / #msf-boot）があるのに読めないときは、見本モードへ落とさず
+    // 「接続できない」状態にする（全役割が見えてしまう fail-open を避ける）。
+    if (boot || document.getElementById('msf-boot')) window.__MSF_BOOT_FAILED__ = true;
     window.__MSF__ = null;
     return;
   }
@@ -83,6 +86,7 @@
       ? boot.user
       : null;
   if (!user) {
+    window.__MSF_BOOT_FAILED__ = true;
     window.__MSF__ = null;
     return; // The boot marker keeps the console fail-closed, not in standalone sample mode.
   }
