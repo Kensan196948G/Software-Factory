@@ -82,6 +82,7 @@ type Scope = {
   E: typeof E;
   S: { role: Role };
   heldRoles?: unknown;
+  BOOT_FAILED?: unknown;
 };
 
 const ACTORS: Record<Role, RosterActor> = {
@@ -99,11 +100,11 @@ function evaluate<T>(name: string, scope: Scope, deps: string[] = ['window', 'RO
 /** ログイン中の利用者（サーバ）と名簿の両方がある状態の画面を作る。 */
 function screenWith(user: NonNullable<FakeWindow['__MSF__']>['user'], role: Role = 'requester') {
   const win: FakeWindow = { __MSF__: { user }, __SF_ACTORS__: ACTORS };
-  const scope: Scope = { window: win, ROLES, roleOf, E, S: { role } };
-  scope.heldRoles = evaluate('heldRoles', scope, ['window', 'ROLES']);
+  const scope: Scope = { window: win, ROLES, roleOf, E, S: { role }, BOOT_FAILED: false };
+  scope.heldRoles = evaluate('heldRoles', scope, ['window', 'ROLES', 'BOOT_FAILED']);
   const me = evaluate<(r: Role) => { name: string; dept: string }>('me', scope);
   const roleOpts = evaluate<string>('ROLE_OPTS', scope, ['window', 'ROLES', 'E', 'heldRoles']);
-  const held = evaluate<() => Role[] | null>('heldRoles', scope, ['window', 'ROLES']);
+  const held = evaluate<() => Role[] | null>('heldRoles', scope, ['window', 'ROLES', 'BOOT_FAILED']);
   return {
     name: (r: Role) => me(r).name,
     dept: (r: Role) => me(r).dept,
@@ -130,8 +131,8 @@ it('me() はログイン中の利用者の表示名（__MSF__.user.displayName�
 
 it('サーバ非接続（見本）のときだけ、従来どおり名簿の見本名を使う', () => {
   const win: FakeWindow = { __SF_ACTORS__: ACTORS };
-  const scope: Scope = { window: win, ROLES, roleOf, E, S: { role: 'approver' } };
-  scope.heldRoles = evaluate('heldRoles', scope, ['window', 'ROLES']);
+  const scope: Scope = { window: win, ROLES, roleOf, E, S: { role: 'approver' }, BOOT_FAILED: false };
+  scope.heldRoles = evaluate('heldRoles', scope, ['window', 'ROLES', 'BOOT_FAILED']);
   const me = evaluate<(r: Role) => { name: string }>('me', scope);
   expect(me('approver').name).toBe('鈴木 一郎');
   expect((scope.heldRoles as () => unknown)()).toBeNull();
@@ -168,8 +169,8 @@ it('名簿（__SF_ACTORS__）は起票者・部署の選択では従来どおり
 
 it('利用者が居るのに roles が読めないときは役割を出さない（fail-open にしない）', () => {
   const win = { __MSF__: { user: { displayName: '壊れた起動', deptCode: 'dx' } } } as unknown as FakeWindow;
-  const scope: Scope = { window: win, ROLES, roleOf, E, S: { role: 'requester' } };
-  const held = evaluate<() => Role[] | null>('heldRoles', scope, ['window', 'ROLES']);
+  const scope: Scope = { window: win, ROLES, roleOf, E, S: { role: 'requester' }, BOOT_FAILED: false };
+  const held = evaluate<() => Role[] | null>('heldRoles', scope, ['window', 'ROLES', 'BOOT_FAILED']);
   expect(held()).toEqual([]);
   const scope2: Scope = { ...scope, heldRoles: held };
   const holds = evaluate<(k: Role) => boolean>('holdsRole', scope2, ['heldRoles']);
@@ -178,8 +179,8 @@ it('利用者が居るのに roles が読めないときは役割を出さない
 
   // 見本（サーバ非接続）は従来どおり全て可
   const sampleWin: FakeWindow = { __SF_ACTORS__: ACTORS };
-  const sampleScope: Scope = { window: sampleWin, ROLES, roleOf, E, S: { role: 'requester' } };
-  const sampleHeld = evaluate<() => Role[] | null>('heldRoles', sampleScope, ['window', 'ROLES']);
+  const sampleScope: Scope = { window: sampleWin, ROLES, roleOf, E, S: { role: 'requester' }, BOOT_FAILED: false };
+  const sampleHeld = evaluate<() => Role[] | null>('heldRoles', sampleScope, ['window', 'ROLES', 'BOOT_FAILED']);
   const sampleScope2: Scope = { ...sampleScope, heldRoles: sampleHeld };
   const sampleHolds = evaluate<(k: Role) => boolean>('holdsRole', sampleScope2, ['heldRoles']);
   expect(sampleHolds('approver')).toBe(true);
@@ -229,8 +230,9 @@ it('役割の切替は、持っていない役割では画面を変えず、サ�
   expect(toasts.at(-1)?.msg).toContain('権限がありません');
 
   // サーバが拒否した: 画面を変えず、選択欄も元へ戻す（拒否された役割として描画しない）
+  // 選択欄は「押された別の値」にしてから拒否させる（S.role と同じ値だと復元処理が無くても通ってしまう）
   switchResult = false;
-  select.value = 'approver';
+  select.value = 'desk';
   await setRole('approver');
   expect(state.role).toBe('approver');
   expect(calls).not.toContain('render');
@@ -266,9 +268,16 @@ it('gateFor（DevOps / SecOps の操作ガード）も、保持する役割だ�
 });
 
 it('起動マーカーがあるのに接続できないときは、役割を出さない（fail-open にしない）', () => {
-  const win = { __MSF__: null, __MSF_BOOT_FAILED__: true } as unknown as FakeWindow;
-  const scope: Scope = { window: win, ROLES, roleOf, E, S: { role: 'requester' } };
-  const held = evaluate<() => Role[] | null>('heldRoles', scope, ['window', 'ROLES']);
+  // bridge がマーカー不正と判断した場合と、bridge 自体が読めなかった場合のどちらも BOOT_FAILED=true になる
+  const scope: Scope = {
+    window: { __MSF__: null } as unknown as FakeWindow,
+    ROLES,
+    roleOf,
+    E,
+    S: { role: 'requester' },
+    BOOT_FAILED: true,
+  };
+  const held = evaluate<() => Role[] | null>('heldRoles', scope, ['window', 'ROLES', 'BOOT_FAILED']);
   expect(held()).toEqual([]);
 });
 

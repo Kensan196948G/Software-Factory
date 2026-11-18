@@ -549,13 +549,18 @@ function seed(){
 /* ===================== 状態 ===================== */
 const loaded=load();
 const S={data:loaded.data,persistent:loaded.persistent,role:(window.__MSF__&&window.__MSF__.initialRole?window.__MSF__.initialRole():'requester'),view:'dash',sel:{},step:0,draft:null,editId:null,dpTab:'card',fq:'',fd:'',fs:'',fc:'',open:null,dtab:'sum',pickDept:'',fresh:null,cat:'koji',catTool:'',catq:'',logq:'',devTab:'line',secTab:'vuln',setTab:'personal',logk:'',cfg:null};
+/* サーバ接続を期待すべきなのに接続できていないか（読み込み時に 1 回だけ判定する）。
+   bridge が「起動マーカーはあるが読めない」と判断したとき（__MSF_BOOT_FAILED__）に加え、
+   bridge 自体が読めなかった（503 等）ときも #msf-boot の有無で見分ける。
+   どちらの場合もオフライン見本として扱わない（全役割が見えてしまう fail-open を避ける）。 */
+const BOOT_FAILED=Boolean(window.__MSF_BOOT_FAILED__||(!window.__MSF__&&document.getElementById('msf-boot')));
 /* 画面の「操作する人」に出す、ログイン中の利用者が持つ役割（サーバの user_role）。
    サーバに繋がっていない見本（__MSF__ なし）は null を返し、従来どおり 3 役割を出す。
    利用者が居るのに roles が読めないとき、および起動マーカーがあるのに接続できなかったときは
    空（出さない）。権限を推測で広げない（F-2 の再発防止）。 */
 const heldRoles=()=>{
  const u=window.__MSF__&&window.__MSF__.user;
- if(!u)return window.__MSF_BOOT_FAILED__?[]:null;
+ if(!u)return BOOT_FAILED?[]:null;
  if(!Array.isArray(u.roles))return [];
  return ROLES.map(r=>r.k).filter(k=>u.roles.indexOf(k)>=0);
 };
@@ -1908,7 +1913,7 @@ function doLogout(){
 function doLogin(){
  if(!authOpen())return;
  // サーバ接続時・起動マーカー不正時は、見本のログインで役割を切り替えない（サーバのセッションを無視しない）
- if(window.__MSF__||window.__MSF_BOOT_FAILED__){toast('サーバに接続しているため、見本のログインは使えません','bad');return}
+ if(window.__MSF__||BOOT_FAILED){toast('サーバに接続しているため、見本のログインは使えません','bad');return}
  const v=($('#auth input[name=authrole]:checked')||{}).value||authSel;
  sessSet(null);S.role=ROLES.some(r=>r.k===v)?v:'requester';addAudit('auth','ログイン','','');persist();
  $('#auth').classList.remove('open');$('#auth').innerHTML='';setLock(false);
@@ -2265,11 +2270,11 @@ if(window.__MSF__&&Array.isArray(window.__MSF__.approvers)&&window.__MSF__.appro
 CFGX=S.cfg;normData(S.data);applyMotion();applyOrg();
 render();save(S.data);
 if(window.__MSF__){setTimeout(serverAudit,600);loadEmployees();}
-{const s0=sessGet();if(s0&&s0.out&&!window.__MSF__&&!window.__MSF_BOOT_FAILED__){authSel=ROLES.some(r=>r.k===s0.role)?s0.role:'requester';S.role=authSel;showAuth(s0.at)}}
+{const s0=sessGet();if(s0&&s0.out&&!window.__MSF__&&!BOOT_FAILED){authSel=ROLES.some(r=>r.k===s0.role)?s0.role:'requester';S.role=authSel;showAuth(s0.at)}}
 /* 見本のログイン画面（操作する人を選ぶだけ）は、サーバ非接続の見本モードだけ。
    サーバ接続時・起動マーカーが不正なときは出さない（保持しない役割を選ばせない）。 */
-if(S.cfg.startLogin&&!authOpen()&&!window.__MSF__&&!window.__MSF_BOOT_FAILED__)showAuth('');
-window.addEventListener('storage',e=>{if(e.key!==SKEY)return;const s1=sessGet();if(s1&&s1.out&&!authOpen())endSession(s1.at)});
+if(S.cfg.startLogin&&!authOpen()&&!window.__MSF__&&!BOOT_FAILED)showAuth('');
+window.addEventListener('storage',e=>{if(e.key!==SKEY)return;const s1=sessGet();if(s1&&s1.out&&!authOpen()&&!window.__MSF__&&!BOOT_FAILED)endSession(s1.at)});
 let fitT=null;window.addEventListener('resize',()=>{clearTimeout(fitT);fitT=setTimeout(()=>{fitPane($('#rin'));fitPane($('#din'))},120)});
 window.__SF={S,ACT,go,find,render,fitPane,logout:doLogout,login:doLogin,lineOf,gates,logRows,devKpi,secKpi};
 window.__MSF_UI__={
