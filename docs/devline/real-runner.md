@@ -352,7 +352,7 @@ runner の種別・対象・トークンはサーバの設定だけで決まる�
 | `DEVLINE_RUNNER_KIND=docker-claude` | `DEVLINE_TARGET_REPOS` と許可台帳の積集合の**先頭**へ `DEVLINE_GITHUB_TOKEN` で Issue を作り、job は `docker-claude`。`GITHUB_TOKEN` と `GITHUB_REPO` は見ない。複数あってよい（job は target_repo_id を持ち、その repo だけを触る） |
 | それ以外の値                        | ERR-405。fake として動かさない                                                                                                          |
 
-実 job の投入を ERR-405 で拒否する場合（fake へ落とさない）: 資格情報のファイルが無い・0600 以外・symlink・他人のもの・`DEVLINE_GITHUB_TOKEN` が無い、`DEVLINE_TARGET_REPOS` が空・許可台帳（`DEVLINE_REPO_LEDGER`）に無い・repo ID が違う・差分 policy が無い、公開リポジトリ、`NODE_ENV=production`（`DEVLINE_ALLOW_PRODUCTION=1` の明示があるときを除く）。複数のリポジトリは拒否しない（`docs/devline/repo-onboarding.md`）。
+実 job の投入を ERR-405 で拒否する場合（fake へ落とさない）: 資格情報のファイルが無い・0600 以外・symlink・他人のもの・`DEVLINE_GITHUB_TOKEN` が無い、`DEVLINE_TARGET_REPOS` が空・許可台帳（`DEVLINE_REPO_LEDGER`）に無い・repo ID が違う・差分 policy が無い、公開リポジトリ、`NODE_ENV=production`（`APP_ENV=staging` か `DEVLINE_ALLOW_PRODUCTION=1` の明示があるときを除く。`docs/devline/production-automation.md`）。複数のリポジトリは拒否しない（`docs/devline/repo-onboarding.md`）。
 
 API のプロセスは `DEVLINE_GITHUB_TOKEN` だけを読む。`ANTHROPIC_API_KEY` は worker だけが読む。fake の worker は実 job を取らず、実の worker は fake の job を取らない。worker を動かさなければ job は `queued` のまま。
 
