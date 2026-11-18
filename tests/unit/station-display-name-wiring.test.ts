@@ -37,6 +37,24 @@ function defOf(name: string): string {
   throw new Error(`const ${name} の定義が終わりません`);
 }
 
+/** station.js の `function NAME(` / `async function NAME(` の定義を 1 文ぶん取り出す。 */
+function fnDefOf(name: string): string {
+  for (const head of [`async function ${name}(`, `function ${name}(`]) {
+    const start = js.indexOf(head);
+    if (start < 0) continue;
+    const open = js.indexOf('{', start);
+    let depth = 0;
+    for (let i = open; i < js.length; i += 1) {
+      if (js[i] === '{') depth += 1;
+      else if (js[i] === '}') {
+        depth -= 1;
+        if (depth === 0) return js.slice(start, i + 1);
+      }
+    }
+  }
+  throw new Error(`station.js に function ${name} の定義がありません`);
+}
+
 /** station.js と同じ並び・名前の役割（画面の ROLES と一致することは既存の E2E が見ている）。 */
 const ROLES = [
   { k: 'requester', l: '依頼者', name: '山田 太郎', dept: 'koji' },
@@ -146,4 +164,78 @@ it('名簿（__SF_ACTORS__）は起票者・部署の選択では従来どおり
   // 起票者の選択肢は、その部署の名簿から作る（applicantField）
   const applicantField = js.slice(js.indexOf('function applicantField('));
   expect(applicantField.slice(0, applicantField.indexOf('\n}\n'))).toContain('empOf(');
+});
+
+it('利用者が居るのに roles が読めないときは役割を出さない（fail-open にしない）', () => {
+  const win = { __MSF__: { user: { displayName: '壊れた起動', deptCode: 'dx' } } } as unknown as FakeWindow;
+  const scope: Scope = { window: win, ROLES, roleOf, E, S: { role: 'requester' } };
+  const held = evaluate<() => Role[] | null>('heldRoles', scope, ['window', 'ROLES']);
+  expect(held()).toEqual([]);
+  const scope2: Scope = { ...scope, heldRoles: held };
+  const holds = evaluate<(k: Role) => boolean>('holdsRole', scope2, ['heldRoles']);
+  expect(holds('approver')).toBe(false);
+  expect(holds('requester')).toBe(false);
+
+  // 見本（サーバ非接続）は従来どおり全て可
+  const sampleWin: FakeWindow = { __SF_ACTORS__: ACTORS };
+  const sampleScope: Scope = { window: sampleWin, ROLES, roleOf, E, S: { role: 'requester' } };
+  const sampleHeld = evaluate<() => Role[] | null>('heldRoles', sampleScope, ['window', 'ROLES']);
+  const sampleScope2: Scope = { ...sampleScope, heldRoles: sampleHeld };
+  const sampleHolds = evaluate<(k: Role) => boolean>('holdsRole', sampleScope2, ['heldRoles']);
+  expect(sampleHolds('approver')).toBe(true);
+});
+
+it('役割の切替は、持っていない役割では画面を変えず、サーバの応答後にだけ変える（F-2 / F-3）', async () => {
+  const calls: string[] = [];
+  const toasts: { msg: string; kind?: string }[] = [];
+  const state = { role: 'approver', open: null as string | null };
+  const held = ['approver'];
+  const holdsRole = (k: string): boolean => held.indexOf(k) >= 0;
+  let switchResult = true;
+  const switchRole = async (k: string): Promise<boolean> => {
+    calls.push(`switch:${k}`);
+    return switchResult;
+  };
+  const win = { __MSF__: { switchRole, user: null } };
+  const setRole = new Function(
+    'holdsRole',
+    'window',
+    'toast',
+    'me',
+    'S',
+    'render',
+    'renderDrawer',
+    `${fnDefOf('setRole')}\nreturn setRole;`,
+  )(
+    holdsRole,
+    win,
+    (msg: string, kind?: string) => toasts.push({ msg, kind }),
+    () => ({ name: '管理者', l: '承認者（業務責任者）' }),
+    state,
+    () => calls.push('render'),
+    () => calls.push('renderDrawer'),
+  ) as (k: string) => Promise<void>;
+
+  // 持っていない役割: サーバへも送らず、画面も変えず、エラーだけ出す
+  await setRole('requester');
+  expect(state.role).toBe('approver');
+  expect(calls).not.toContain('switch:requester');
+  expect(toasts.at(-1)).toMatchObject({ kind: 'bad' });
+  expect(toasts.at(-1)?.msg).toContain('権限がありません');
+
+  // サーバが拒否した: 画面を変えない（拒否された役割として描画しない）
+  switchResult = false;
+  await setRole('approver');
+  expect(state.role).toBe('approver');
+  expect(calls).not.toContain('render');
+
+  // サーバが受け付けた: その後に画面を変える
+  switchResult = true;
+  await setRole('approver');
+  expect(calls).toContain('render');
+  expect(toasts.at(-1)?.msg).toContain('として操作します');
+});
+
+it('「あなたの依頼」は名前ではなく applicantUserId で判定する（表示名と名簿名の不一致で消えない）', () => {
+  expect(js).toContain('r.applicantUserId===myId');
 });

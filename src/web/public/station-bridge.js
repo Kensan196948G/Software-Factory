@@ -976,14 +976,17 @@
     return ROLE_CODE[boot.role] ? boot.role : 'requester';
   }
 
-  let roleSwitch = Promise.resolve();
+  let roleSwitch = Promise.resolve(true);
+  /** 役割を切り替える。サーバが受け付けたら true、拒否・失敗なら false（呼び出し側は画面を変えない）。 */
   function switchRole(role) {
     const mapped = ROLE_CODE[role];
-    if (!mapped) return Promise.resolve();
+    if (!mapped) return Promise.resolve(false);
     roleSwitch = roleSwitch
       .then(() => api('POST', '/api/auth/role', { role: mapped }))
+      .then(() => true)
       .catch((err) => {
         if (window.__MSF_UI__ && window.__MSF_UI__.toast) window.__MSF_UI__.toast(err.message, true);
+        return false;
       });
     return roleSwitch;
   }
