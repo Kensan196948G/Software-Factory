@@ -160,4 +160,14 @@ describe('DEVLINE_ALLOW_PRODUCTION（本番の開発ライン自動化の明示�
       expect(() => loadConfig()).toThrow(/DEVLINE_ALLOW_PRODUCTION/);
     }
   });
+
+  it('前後の空白は無視する（EnvironmentFile の `DEVLINE_ALLOW_PRODUCTION= 1 `）', () => {
+    stub({ NODE_ENV: 'production', APP_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: ' 1 ' });
+    expect(loadConfig().devlineAllowProduction).toBe(true);
+  });
+
+  it('設定ファイル・overrides では有効にならない（systemd の EnvironmentFile だけ）', () => {
+    stub({ NODE_ENV: 'production', APP_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: undefined });
+    expect(loadConfig({ DEVLINE_ALLOW_PRODUCTION: '1' }).devlineAllowProduction).toBe(false);
+  });
 });

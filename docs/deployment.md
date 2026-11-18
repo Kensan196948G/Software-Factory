@@ -371,7 +371,7 @@ journalctl --user -u mirai-sf-backup -u mirai-sf-restore-drill -u mirai-sf-remin
 
 画面の投入から実 job を動かす worker。詳細は `docs/devline/real-runner.md` 13 章。
 
-**前提の未解決**: `preview.conf` は `NODE_ENV=production` で、この値では docker-claude の投入（ERR-405）も worker も拒否される。Staging で動かすには、この拒否をどう扱うかを先に決める。
+**解決（2026-11-18）**: `preview.conf` は `NODE_ENV=production` のため、従来は docker-claude の投入（ERR-405）も worker も拒否される。Staging では `DEVLINE_ALLOW_PRODUCTION=1` を明示して許可する（既定は拒否。`docs/devline/production-automation.md`）。
 
 ```bash
 # 1. イメージ（版は docs/devline/real-runner.md 7 章と同じ）

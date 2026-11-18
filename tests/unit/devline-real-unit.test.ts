@@ -273,6 +273,16 @@ describe('起動の判定', () => {
     expect(() =>
       checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: 'yes' }, sandboxAllowed),
     ).toThrow(/DEVLINE_ALLOW_PRODUCTION/);
+    // staging は明示許可が無くても従来どおり次の検査へ進む（挙動を変えない）
+    expect(checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: 'staging' }, sandboxAllowed)).toBeNull();
+    // 不正値は staging でも拒否する（config.ts と同じ fail-closed。見逃して有効化しない）
+    expect(() =>
+      checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: 'staging', DEVLINE_ALLOW_PRODUCTION: 'yes' }, sandboxAllowed),
+    ).toThrow(/DEVLINE_ALLOW_PRODUCTION/);
+    // 前後の空白は無視する
+    expect(
+      checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: ' 1 ' }, sandboxAllowed),
+    ).toBeNull();
   });
   it('自動マージは本番でも明示許可のときだけ有効にできる', () => {
     expect(parseAutoMergePolicy({}).enabled).toBe(false);
@@ -285,6 +295,33 @@ describe('起動の判定', () => {
     expect(() =>
       parseAutoMergePolicy({ DEVLINE_AUTO_MERGE: '1', NODE_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: 'x' }),
     ).toThrow(/DEVLINE_ALLOW_PRODUCTION/);
+    // staging は従来どおり。不正値は staging でも拒否する（自動マージが無効のときも含む）
+    expect(parseAutoMergePolicy({ DEVLINE_AUTO_MERGE: '1', NODE_ENV: 'production', APP_ENV: 'staging' }).enabled).toBe(true);
+    expect(() =>
+      parseAutoMergePolicy({
+        DEVLINE_AUTO_MERGE: '1',
+        NODE_ENV: 'production',
+        APP_ENV: 'staging',
+        DEVLINE_ALLOW_PRODUCTION: 'x',
+      }),
+    ).toThrow(/DEVLINE_ALLOW_PRODUCTION/);
+    expect(() => parseAutoMergePolicy({ DEVLINE_AUTO_MERGE: '0', DEVLINE_ALLOW_PRODUCTION: 'x' })).toThrow(
+      /DEVLINE_ALLOW_PRODUCTION/,
+    );
+  });
+  it('staging の docker-claude は明示許可が無くても動かせる（従来挙動）', () => {
+    const saved = {
+      isProduction: config.isProduction,
+      appEnv: config.appEnv,
+      devlineAllowProduction: config.devlineAllowProduction,
+    };
+    const adapter = { capability: { kind: 'docker-claude' } } as unknown as RunnerAdapter;
+    try {
+      Object.assign(config, { isProduction: true, appEnv: 'staging', devlineAllowProduction: false });
+      expect(() => assertRunnerAllowed(adapter)).not.toThrow();
+    } finally {
+      Object.assign(config, saved);
+    }
   });
   it('本番の runner は明示許可のときだけ docker-claude を許す（fake は不可）', () => {
     const saved = {

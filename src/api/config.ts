@@ -348,8 +348,10 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
   const accessAutoProvision = accessAutoProvisionOf(pick(file, 'ACCESS_AUTO_PROVISION'), appEnv, isProduction);
 
   // 本番の開発ライン自動化（実 runner・自動マージ）の明示許可。既定は拒否。
-  // 未設定と空は「無効」、0 / 1 以外の値は起動エラー（fail-closed）。判定は devline-real-config.ts と同じ。
-  const rawDevlineAllowProduction = (pick(file, 'DEVLINE_ALLOW_PRODUCTION') ?? '').trim();
+  // この安全スイッチはプロセス環境（systemd の EnvironmentFile）だけを見る。JSON 設定ファイルや overrides では
+  // 有効にならない（設定ファイルの置き忘れで本番が有効にならないように）。未設定と空は無効、0 / 1 以外は起動エラー。
+  // 判定は devline-real-config.ts の productionRealLineAllowed と同じ規則。
+  const rawDevlineAllowProduction = (process.env.DEVLINE_ALLOW_PRODUCTION ?? '').trim();
   if (rawDevlineAllowProduction !== '' && rawDevlineAllowProduction !== '0' && rawDevlineAllowProduction !== '1') {
     throw new Error('DEVLINE_ALLOW_PRODUCTION が不正です（0 / 1 のいずれか）');
   }

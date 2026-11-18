@@ -11,15 +11,15 @@
 
 ## 2. 変更した判定
 
-| 判定 | 場所 | 変更前 | 変更後 |
-| ---- | ---- | ------ | ------ |
-| 実 runner の起動（worker） | `src/worker/loop.ts` `assertRunnerAllowed` | 本番では `docker-claude` を拒否 | `DEVLINE_ALLOW_PRODUCTION=1` のときだけ許可 |
-| 実 runner の起動判定（設定だけ） | `src/worker/real-line.ts` `checkRealLineEnv` | 本番は常に拒否 | 明示許可のときだけ次の検査（台帳・repo・差分 policy）へ進む |
-| 自動マージの設定 | `src/api/devline-real-config.ts` `parseAutoMergePolicy` | 本番では `DEVLINE_AUTO_MERGE=1` でも起動拒否 | 明示許可のときだけ有効にできる |
-| 起動設定の解釈 | `src/api/config.ts` `devlineAllowProduction` | （なし） | 未設定・空・`0` は無効、`1` は有効、それ以外は起動エラー |
+| 判定                             | 場所                                                    | 変更前                                       | 変更後                                                      |
+| -------------------------------- | ------------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------- |
+| 実 runner の起動（worker）       | `src/worker/loop.ts` `assertRunnerAllowed`              | 本番では `docker-claude` を拒否              | `DEVLINE_ALLOW_PRODUCTION=1` のときだけ許可                 |
+| 実 runner の起動判定（設定だけ） | `src/worker/real-line.ts` `checkRealLineEnv`            | 本番は常に拒否                               | 明示許可のときだけ次の検査（台帳・repo・差分 policy）へ進む |
+| 自動マージの設定                 | `src/api/devline-real-config.ts` `parseAutoMergePolicy` | 本番では `DEVLINE_AUTO_MERGE=1` でも起動拒否 | 明示許可のときだけ有効にできる                              |
+| 起動設定の解釈                   | `src/api/config.ts` `devlineAllowProduction`            | （なし）                                     | 未設定・空・`0` は無効、`1` は有効、それ以外は起動エラー    |
 
-- 2 つの読み口（`AppConfig.devlineAllowProduction` と、環境変数を直接読む純関数）は**同じ規則**にしてある。片方だけ許可・拒否という状態を作らない。
-- 設定の置き場は API と worker が読む `preview.conf`（systemd の `EnvironmentFile`）。**API と worker の両方**に同じ値を渡す。
+- 読み口は 2 つあるが、どちらも**同じプロセス環境**の `DEVLINE_ALLOW_PRODUCTION` だけを見る（`AppConfig.devlineAllowProduction` と、環境変数を直接読む純関数）。JSON 設定ファイル・overrides は見ないので、片方だけ許可・拒否という状態にならない。
+- 設定の置き場は systemd の `EnvironmentFile`（Staging は `preview.conf`、本番は `prod.conf`）。**API と worker の両方**に同じ値を渡す。フラグの値は環境に関係なく起動時に検証し、`0` / `1` 以外は起動エラーにする。
 
 ## 3. 明示許可でも変わらないこと
 
@@ -31,7 +31,9 @@
 
 ## 4. 有効化と戻し
 
-有効化（所有者の承認後に人間が行う）:
+**このフラグはプロセス環境（systemd の `EnvironmentFile`）だけを見る。** `local.json` などの JSON 設定ファイルや overrides では有効にならない（設定ファイルの置き忘れで本番が有効にならないように）。API と worker の両方へ同じ値を渡す。
+
+### 4-1. Staging で試す（`preview.conf`）
 
 ```ini
 # ~/.config/mirai-sf/preview.conf（API と worker の両方が読む）
@@ -40,7 +42,8 @@ DEVLINE_RUNNER_KIND=docker-claude
 DEVLINE_TARGET_REPOS=<owner/repo:repoId>
 DEVLINE_SECRETS_FILE=<資格情報の絶対 path>
 DEVLINE_ALLOW_PRODUCTION=1
-DEVLINE_AUTO_MERGE=1        # 自動マージまで行う場合だけ
+# 自動マージまで行う場合だけ。行内コメントは書かない（systemd の EnvironmentFile では値の一部になる）
+DEVLINE_AUTO_MERGE=1
 ```
 
 ```bash
@@ -49,7 +52,19 @@ systemctl --user restart mirai-sf-api.service mirai-sf-worker.service
 journalctl --user -u mirai-sf-worker.service -n 30   # 起動の拒否理由が出ていないこと
 ```
 
-戻す: `DEVLINE_ALLOW_PRODUCTION` の行を消す（または `0`）→ 再起動。以後の起動判定は拒否に戻る。すでに merge 済みのものは戻らない（merge の取消はしない）。
+### 4-2. 本番で有効化する（未整備・別作業）
+
+本番は `prod.conf`（`mirai-sf-prod-api.service`）で動く。**本番用の worker の unit はリポジトリにも現行の systemd にも無い**ため、`DEVLINE_ALLOW_PRODUCTION=1` を置くだけでは本番の全自動化は動かない。必要な作業:
+
+1. 本番用 worker の unit（例: `mirai-sf-prod-worker.service`）を `deploy/systemd/` に追加し、実機へ導入する。`deploy/**` の変更は人間の承認が要る（`R4`）。
+2. `~/.config/mirai-sf/prod.conf` に、上の `preview.conf` と同じ変数を置く（`DATABASE_URL` は本番用のまま。資格情報の path も本番用）。
+3. API と本番 worker を再起動し、`journalctl` で拒否理由が出ていないことを確認する。
+
+この unit 追加は本 PR の範囲外である（本 PR は判定の切りかえだけ）。
+
+### 4-3. 戻す
+
+`DEVLINE_ALLOW_PRODUCTION` の行を消す（または `0`）→ 再起動。以後の起動判定は拒否に戻る。すでに merge 済みのものは戻らない（merge の取消はしない）。
 
 ## 5. 監査・記録
 

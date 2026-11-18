@@ -442,7 +442,7 @@ Browser
 - トークンは**用途別・リポジトリ別・最小権限**にする。広い個人トークンを本番の API/worker に渡さない（M-6 の残存リスク）。
 - トークンを argv・環境変数の一覧・ログ・PR・Issue・画面に出さない。`docker` の argv にも載せない（`--env` で引き継ぐ実装）。
 - 漏えい時は即時失効し、`docs/limitations.md` / 監査に記録する。定期的な棚卸し（誰がどのトークンを持つか）を行う。
-- 本番で devline worker を動かさない場合、`DEVLINE_WORKER_ENABLED` を 0 にし、`DEVLINE_RUNNER_KIND` を `fake` 以外にしない。`NODE_ENV=production` では `APP_ENV=staging` の明示がない限り実 runner は拒否される（実装）。
+- 本番で devline worker を動かさない場合、`DEVLINE_WORKER_ENABLED` を 0 にし、`DEVLINE_RUNNER_KIND` を `fake` 以外にしない。`NODE_ENV=production` では `APP_ENV=staging` の明示か `DEVLINE_ALLOW_PRODUCTION=1`（2026-11-18 の所有者決定。`docs/devline/production-automation.md`）がない限り実 runner は拒否される（実装）。
 
 ### 4.4 API キー・その他
 
