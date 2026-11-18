@@ -20,6 +20,7 @@
 
 - 読み口は 2 つあるが、どちらも**同じプロセス環境**の `DEVLINE_ALLOW_PRODUCTION` だけを見る（`AppConfig.devlineAllowProduction` と、環境変数を直接読む純関数）。JSON 設定ファイル・overrides は見ないので、片方だけ許可・拒否という状態にならない。
 - 設定の置き場は systemd の `EnvironmentFile`（Staging は `preview.conf`、本番は `prod.conf`）。**API と worker の両方**に同じ値を渡す。フラグの値は環境に関係なく起動時に検証し、`0` / `1` 以外は起動エラーにする。
+- ローカル用の `scripts/local-run.mjs` は `~/.config/mirai-sf/local.json` を環境へ重ねるが、**この値だけは local.json から除外**し、呼び出し元の環境変数だけを通す（`scripts/local-run-env.mjs`。試験あり）。
 
 ## 3. 明示許可でも変わらないこと
 

@@ -695,7 +695,7 @@ Browser
 | 7   | **1**: オフサイトは Cloudflare R2（非公開バケット）                           | 決定                                     |
 | 8   | 1（Cloudflare Access のワンタイムパスワード）                                 | 推奨案（公開前に再確認）                 |
 | 9   | 1（複数ユーザー・自己承認禁止。実装は #66。管理者の自動付与は本番で行わない） | 推奨案（公開前に再確認）                 |
-| 10  | N（本番では devline worker を動かさない。`prod-release` は worker=none）      | 推奨案（公開前に再確認）                 |
+| 10  | N（本番では devline worker を動かさない。`prod-release` は worker=none。2026-11-18 の決定で `DEVLINE_ALLOW_PRODUCTION=1` があれば許可できるが、本番 worker unit は未整備。`docs/devline/production-automation.md`） | 推奨案（公開前に再確認）                 |
 | 11  | N（`MAIL_MODE=off`）                                                          | 推奨案（公開前に再確認）                 |
 | 12  | 要件化しない（案Aの best-effort。逸脱は記録）                                 | 推奨案（公開前に再確認）                 |
 | 13  | 4（未定。当面は削除しない）                                                   | 推奨案（公開前に再確認）                 |

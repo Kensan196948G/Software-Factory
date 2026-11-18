@@ -386,6 +386,7 @@ install -m 600 /dev/null ~/.config/mirai-sf/devline-secrets.env
 #    DEVLINE_RUNNER_KIND=docker-claude
 #    DEVLINE_TARGET_REPOS=Kensan196948G/Software-Factory-Sandbox:1440860477
 #    DEVLINE_SECRETS_FILE=<資格情報の絶対 path>
+#    DEVLINE_ALLOW_PRODUCTION=1   # NODE_ENV=production で APP_ENV が staging でない環境でも実 runner を許す場合だけ（既定は拒否）
 
 # 4. ユニット（current のリリースを参照する）
 cp deploy/systemd/mirai-sf-worker.service ~/.config/systemd/user/

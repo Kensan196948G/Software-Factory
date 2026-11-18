@@ -33,7 +33,7 @@ handoff（Issue）→ queued → planning（AI・読むだけ）→ implementing
 | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
 | 資格情報なし・0600 以外・symlink・他人のファイル                                     | 起動を拒否（fake へ落とさない）                                                                                     |
 | 許可リスト外・定数の repo 以外・repo ID 不一致・public                               | 起動を拒否。動作中なら `policy_violation`                                                                           |
-| `NODE_ENV=production`                                                                | `APP_ENV=staging` を明示したときだけ起動する（Staging はこの設定）。それ以外は起動を拒否し、投入も ERR-405（13 章） |
+| `NODE_ENV=production`                                                                | `APP_ENV=staging` を明示したとき、または `DEVLINE_ALLOW_PRODUCTION=1` の明示許可があるときだけ起動する（Staging は前者）。それ以外は起動を拒否し、投入も ERR-405（13 章）。`docs/devline/production-automation.md` |
 | artifact は読めて AC の試験が足りない（未確認、`not_run`、未知の ID、重複、欠落）    | `revising`（どの AC かを AI へ渡す。同因 2 回・合計 5 回の上限の中で。AI の費用がかかる）                           |
 | `ac-results` が読めない、取得元が合わない、再開で同じ run を読み直した               | `ci_incomplete`。理由に「AC 未確認」を出す                                                                          |
 | 別の worker が動いている（advisory lock を取れない）                                 | 起動を拒否。コンテナの片付けもしない                                                                                |
@@ -358,7 +358,7 @@ API のプロセスは `DEVLINE_GITHUB_TOKEN` だけを読む。`ANTHROPIC_API_K
 
 画面の表示は `job.runnerKind` と証跡で決まる。実 job の「ジョブ」「計画・実装」「自動検査」は、完了していない段階で「実行中」、停止系で「停止」と出し、「実行確認済み」にしない。fake GitHub の結果は `fake` と出す。
 
-**Staging**: `scripts/setup-preview.mjs` は Staging を `NODE_ENV=production`（`APP_ENV=staging`）にする。実 runner は `APP_ENV=staging` を明示したときだけ許し（所有者の決定、Approval PR）、それ以外の production は拒否する。fake は Staging でも動かさない。
+**Staging**: `scripts/setup-preview.mjs` は Staging を `NODE_ENV=production`（`APP_ENV=staging`）にする。実 runner は `APP_ENV=staging` を明示したとき、または `DEVLINE_ALLOW_PRODUCTION=1` を明示したときだけ許し（後者は 2026-11-18 の所有者決定。`docs/devline/production-automation.md`）、それ以外の production は拒否する。fake は Staging でも動かさない。
 
 ## 14. 受入条件の証跡（`ac-results`）
 
