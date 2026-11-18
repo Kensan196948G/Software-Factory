@@ -42,6 +42,10 @@ function mask(email: string): string {
   return `${(local ?? '').slice(0, 3)}***@${domain ?? ''}`;
 }
 
+const roleFilter = (process.env.E2E_LOGIN_ROLES ?? '')
+  .split(',')
+  .map((r) => r.trim())
+  .filter(Boolean);
 const roles = [
   {
     who: '管理者（承認者）',
@@ -56,6 +60,7 @@ const roles = [
     path: process.env.E2E_USER_STATE ?? join(authDir, 'user.json'),
   },
 ] as const;
+const selected = roleFilter.length === 0 ? roles : roles.filter((r) => roleFilter.includes(r === roles[0] ? 'admin' : 'user'));
 
 async function waitForApp(page: Page): Promise<boolean> {
   const started = Date.now();
@@ -72,7 +77,7 @@ async function waitForApp(page: Page): Promise<boolean> {
 
 const browser = await chromium.launch({ headless: false });
 try {
-  for (const target of roles) {
+  for (const target of selected) {
     console.log(`\n${target.who} のログインを行います。`);
     if (target.email) console.log(`対象アカウント（マスク）: ${mask(target.email)}`);
     console.log('開いたブラウザで Cloudflare Access の OTP を入力し、アプリの画面が出るまで待ってください。');

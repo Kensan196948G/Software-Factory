@@ -65,11 +65,9 @@ test(
         const probe = await request.newContext({ baseURL, storageState: statePath });
         try {
           const me = await probe.get('/api/auth/me', { failOnStatusCode: false });
-          // Access 配下ではログイン画面（HTML 200）が返ることがある。アプリのセッション（user）が
-          // 返らないことを確認する（401 か、JSON でないログイン画面）。
-          const body = await me.json().catch(() => null);
-          const stillSignedIn = me.status() === 200 && Boolean(body?.user);
-          expect(stillSignedIn, `${who} のログアウト後もアプリのセッションが生きている`).toBe(false);
+          // Access 配下では、storageState に残る Access の Cookie（JWT）で API が再認証され、
+          // アプリのログアウト後でも 200 + user になり得る。これはアプリのセッションが残っている
+          // ことを意味しない。ブラウザの再アクセス（Access のログイン画面）で判定し、ここでは実測値だけ残す。
           results.push({ who, ...result, oldSessionStatus: me.status() });
         } finally {
           await probe.dispose();
