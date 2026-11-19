@@ -1,6 +1,6 @@
 # 本番の状態・承認・用語の正本（2026-11-09）
 
-作成: 2026-11-09 JST。更新: 2026-11-19 15:35 JST（本番 `b8b9427f` の配備を `55` に記録し、§2 の現在値を更新）。状態: **正本**（本番の状態・承認・用語）。
+作成: 2026-11-09 JST。更新: 2026-11-19 16:35 JST（本番 `b8b9427f` の 1 時間観察 13/13 OK を §2 に追記）。状態: **正本**（本番の状態・承認・用語）。
 時刻はすべて JST。数値と状態は実測したものだけを書き、実測していないことは「未確認」「未測定」と書く。
 
 ## 0. 位置づけ
@@ -27,18 +27,19 @@
 
 - **2026-11-19 15:28 の配備（現在値）**: 本番は `b8b9427f1f33231449ac309ae599165f5d6d3ecb`（実 runner の verifying 修正 #205 を含む）で稼働中である（`55`）。下の 09:24 の表は当時の実測であり、**現在値は次の表を正とする**。
 
-  | 項目                     | 現在値（2026-11-19 15:30 実測）                                                                                                                                                   |
-  | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | 本番 healthz / current   | 200、`commit=b8b9427f1f33231449ac309ae599165f5d6d3ecb`、`environment=production`、`db.ok=true`、`auth.status=ready`（mode=access、usersActive=2）、`current` → 同 SHA の release  |
-  | 本番 unit                | `mirai-sf-prod-api` は active（running）、MainPID 1996661、NRestarts 0、Result=success、起動 2026-11-19 15:28:38                                                                  |
-  | 本番の機械受入           | `pnpm ops:prod:acceptance b8b9427f…` が **14/14 PASS**（DB: `app_user=3` / `audit_log=78` / `request=7` / `session=14` / `migration=0017_mirai_directory.sql`）。起動以降の 5xx 0 |
-  | 本番の定期ヘルスチェック | `mirai-sf-prod-healthcheck` は `Result=success` / `ExecMainStatus=0`（15:28 に手動実行）。healthCommit 一致・auth ready・警告なし                                                 |
-  | 公開リリース             | 未認証で `https://sf-prod.mirai-dx-platform.com/` へアクセスすると **302 → Cloudflare Access**（15:30 実測）。`b8b9427f` での OTP ログイン後の業務受入は未実施                    |
-  | 本改訂の基準 SHA（main） | `b8b9427f1f33231449ac309ae599165f5d6d3ecb`（PR #206 のマージ後）。push CI run `44468540311` が success（`quality` / `e2e` / `docker`）                                            |
-  | 本番と main の差         | 0（配備時点）。以後の文書 commit は本番に未配備（コード差分なし）                                                                                                                 |
-  | 配備承認                 | 2026-11-19 の所有者の選択「**2 → 1**」の 1（本番へ最新 main を配備する）による。対象 `b8b9427f`。記録は `55` §1                                                                   |
-  | 業務受入                 | `5700fa76` では 2026-11-19 10:11〜10:13 に OTP 2 役で **5/5 PASS**（`52` §5-2）。`b8b9427f` でも 15:49〜15:51 に **5/5 PASS**（`55` §5-2、作った 3 件は取消済み）                 |
-  | Staging                  | `b8b9427f1f33231449ac309ae599165f5d6d3ecb`（autofollow が 2026-11-19 15:22:37 に配備）                                                                                            |
+  | 項目                     | 現在値（2026-11-19 15:30 実測）                                                                                                                                                              |
+  | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | 本番 healthz / current   | 200、`commit=b8b9427f1f33231449ac309ae599165f5d6d3ecb`、`environment=production`、`db.ok=true`、`auth.status=ready`（mode=access、usersActive=2）、`current` → 同 SHA の release             |
+  | 本番 unit                | `mirai-sf-prod-api` は active（running）、MainPID 1996661、NRestarts 0、Result=success、起動 2026-11-19 15:28:38                                                                             |
+  | 本番の機械受入           | `pnpm ops:prod:acceptance b8b9427f…` が **14/14 PASS**（DB: `app_user=3` / `audit_log=78` / `request=7` / `session=14` / `migration=0017_mirai_directory.sql`）。起動以降の 5xx 0            |
+  | 本番の定期ヘルスチェック | `mirai-sf-prod-healthcheck` は `Result=success` / `ExecMainStatus=0`（15:28 に手動実行）。healthCommit 一致・auth ready・警告なし                                                            |
+  | 公開リリース             | 未認証で `https://sf-prod.mirai-dx-platform.com/` へアクセスすると **302 → Cloudflare Access**（15:30 実測）。`b8b9427f` での OTP 2 役の業務受入は 15:49〜15:51 に **5/5 PASS**（`55` §5-2） |
+  | 配備後の観察             | 配備 15:28:38 〜 16:28:38 の 1 時間で healthcheck **13/13 OK**（失敗 0）、起動以降 **5xx 0**、`NRestarts=0`。定時バックアップ 15:49:49 成功（165,508 B）                                     |
+  | 本改訂の基準 SHA（main） | `b8b9427f1f33231449ac309ae599165f5d6d3ecb`（PR #206 のマージ後）。push CI run `44468540311` が success（`quality` / `e2e` / `docker`）                                                       |
+  | 本番と main の差         | 0（配備時点）。以後の文書 commit は本番に未配備（コード差分なし）                                                                                                                            |
+  | 配備承認                 | 2026-11-19 の所有者の選択「**2 → 1**」の 1（本番へ最新 main を配備する）による。対象 `b8b9427f`。記録は `55` §1                                                                              |
+  | 業務受入                 | `5700fa76` では 2026-11-19 10:11〜10:13 に OTP 2 役で **5/5 PASS**（`52` §5-2）。`b8b9427f` でも 15:49〜15:51 に **5/5 PASS**（`55` §5-2、作った 3 件は取消済み）                            |
+  | Staging                  | `b8b9427f1f33231449ac309ae599165f5d6d3ecb`（autofollow が 2026-11-19 15:22:37 に配備）                                                                                                       |
 
 - **2026-11-19 09:24 の配備（現在値）**: 本番は `5700fa76bb957da14fff88bbc0947f6d77819ace`（F-1・F-2・C1・C2・F-3 の修正版）で稼働中である（`52`）。下の 2026-11-13・11-18 の表は当時の実測であり、**現在値は次の表を正とする**。
 
