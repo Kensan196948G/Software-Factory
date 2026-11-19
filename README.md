@@ -63,7 +63,7 @@
 > このコンソールは、**現場・支店・本部・DX推進部・承認者**まで、みらい建設工業の全社員が使います。
 > むずかしい言葉は使わず、**アイコンと色と動き**で「いま何をする番か」が分かるようにしています。
 
-**🔗 本番リリース URL: <https://sf-prod.mirai-dx-platform.com/>**（Cloudflare Access・ワンタイムパスワードでログイン／`80db562a` で稼働中）
+**🔗 本番リリース URL: <https://sf-prod.mirai-dx-platform.com/>**（Cloudflare Access・ワンタイムパスワードでログイン／`18d6dd99` で稼働中）
 **🧪 動作確認用（Staging）: <https://sf.mirai-dx-platform.com/>**（同じく Access 配下・本番とは別のDB）
 
 ![依頼ができるまで（約3分）](docs/assets/ui-flow.svg)
