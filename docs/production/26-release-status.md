@@ -27,17 +27,18 @@
 
 - **2026-11-19 09:24 の配備（現在値）**: 本番は `5700fa76bb957da14fff88bbc0947f6d77819ace`（F-1・F-2・C1・C2・F-3 の修正版）で稼働中である（`52`）。下の 2026-11-13・11-18 の表は当時の実測であり、**現在値は次の表を正とする**。
 
-  | 項目                     | 現在値（2026-11-19 09:26 実測）                                                                                                                                                   |
-  | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | 本番 healthz / current   | 200、`commit=5700fa76bb957da14fff88bbc0947f6d77819ace`、`environment=production`、`db.ok=true`、`auth.status=ready`（mode=access、usersActive=2）、`current` → 同 SHA の release  |
-  | 本番 unit                | `mirai-sf-prod-api` は active（running）、MainPID 2939578、NRestarts 0、Result=success、起動 2026-11-19 09:24:17。`mirai-sf-prod-tunnel` も active                                |
-  | 本番の機械受入           | `pnpm ops:prod:acceptance 5700fa76…` が **14/14 PASS**（DB: `app_user=3` / `audit_log=62` / `request=4` / `session=12` / `migration=0017_mirai_directory.sql`）。起動以降の 5xx 0 |
-  | 本番の定期ヘルスチェック | `mirai-sf-prod-healthcheck` は `Result=success` / `ExecMainStatus=0`（09:24 に手動実行）。healthCommit 一致・auth ready・警告なし                                                 |
-  | 公開リリース             | 未認証で `https://sf-prod.mirai-dx-platform.com/` へアクセスすると **302 → Cloudflare Access**（09:26 実測）。`5700fa76` での OTP ログイン後の業務受入は未実施                    |
-  | 本改訂の基準 SHA（main） | `5700fa76bb957da14fff88bbc0947f6d77819ace`（PR #197 のマージ後）。push CI run `44422424052` が success（`quality` / `e2e` / `docker`）                                            |
-  | 本番と main の差         | 0（配備時点）。以後の文書 commit は本番に未配備（コード差分なし）                                                                                                                 |
-  | 配備承認                 | 2026-11-19 09:23 の所有者の指示「続けて対応してください」を受けて `5700fa76` を配備（`52` §1）。**番号選択ではない形式のため、承認の根拠と対象 SHA を `52` §1 に明記している**    |
-  | Staging                  | `5700fa76bb957da14fff88bbc0947f6d77819ace`。`/healthz` 200・`db.ok=true`・`environment=staging`・auth ready・usersActive=2（autofollow が 2026-11-19 00:00:51Z に配備）           |
+  | 項目                     | 現在値（2026-11-19 09:26 実測）                                                                                                                                                                                        |
+  | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | 本番 healthz / current   | 200、`commit=5700fa76bb957da14fff88bbc0947f6d77819ace`、`environment=production`、`db.ok=true`、`auth.status=ready`（mode=access、usersActive=2）、`current` → 同 SHA の release                                       |
+  | 本番 unit                | `mirai-sf-prod-api` は active（running）、MainPID 2939578、NRestarts 0、Result=success、起動 2026-11-19 09:24:17。`mirai-sf-prod-tunnel` も active                                                                     |
+  | 本番の機械受入           | `pnpm ops:prod:acceptance 5700fa76…` が **14/14 PASS**（DB: `app_user=3` / `audit_log=62` / `request=4` / `session=12` / `migration=0017_mirai_directory.sql`）。起動以降の 5xx 0                                      |
+  | 本番の定期ヘルスチェック | `mirai-sf-prod-healthcheck` は `Result=success` / `ExecMainStatus=0`（09:24 に手動実行）。healthCommit 一致・auth ready・警告なし                                                                                      |
+  | 業務受入                 | 2026-11-19 10:11〜10:13 に OTP 2 役（承認者・利用者）で本番スモーク **5/5 PASS**（受付・承認・注文書 `order_version=1`・利用者の承認拒否 409・監査連鎖・ログアウト）。作った依頼 3 件は理由付きで取消済み（`52` §5-2） |
+  | 公開リリース             | 未認証で `https://sf-prod.mirai-dx-platform.com/` へアクセスすると **302 → Cloudflare Access**（09:26 実測）。`5700fa76` での OTP ログイン後の業務受入は未実施                                                         |
+  | 本改訂の基準 SHA（main） | `5700fa76bb957da14fff88bbc0947f6d77819ace`（PR #197 のマージ後）。push CI run `44422424052` が success（`quality` / `e2e` / `docker`）                                                                                 |
+  | 本番と main の差         | 0（配備時点）。以後の文書 commit は本番に未配備（コード差分なし）                                                                                                                                                      |
+  | 配備承認                 | 2026-11-19 09:23 の所有者の指示「続けて対応してください」を受けて `5700fa76` を配備（`52` §1）。**番号選択ではない形式のため、承認の根拠と対象 SHA を `52` §1 に明記している**                                         |
+  | Staging                  | `5700fa76bb957da14fff88bbc0947f6d77819ace`。`/healthz` 200・`db.ok=true`・`environment=staging`・auth ready・usersActive=2（autofollow が 2026-11-19 00:00:51Z に配備）                                                |
 
 - **2026-11-13 21:39 の配備（現在値）**: 本番は `17c91f4311bba16a7225db8719935790bb1e81ba`（P0・P1 修正版）で稼働中である（`40`）。下の 19:22 の表は当時の実測であり、**現在値は次の表を正とする**。
 
