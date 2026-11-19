@@ -1,6 +1,6 @@
 # 実 runner / 実 Docker 配備 / 実 AI の検証計画（2026-11-19）
 
-作成: 2026-11-19 12:20 JST。対象: `5700fa76`（Staging `fd0bc8fe` は docs のみ差）。状態: **計画**（実施の可否・範囲は所有者の判断）。時刻はすべて JST。
+作成: 2026-11-19 12:20 JST。対象: `5700fa76`（Staging `fd0bc8fe` は docs のみ差）。状態: **計画**（実施の可否・範囲は所有者の判断）。時刻はすべて JST。**追記（2026-11-19 16:35）**: A・B・C は `real-runner.md` §18 で、D のうち予算到達の停止・禁止差分・prompt injection は同 §18-5 で実走した。**実 AI の修正やり直しだけは未実走**（層①の T-63 で機構のみ確認）。
 
 ## 1. なぜ今か
 
@@ -8,16 +8,16 @@
 
 ## 2. 前提（既存の実装・実測）
 
-| 項目           | 値                                                                                                              |
-| -------------- | --------------------------------------------------------------------------------------------------------------- |
-| runner         | `DEVLINE_RUNNER_KIND=docker-claude`。既定は fake。Staging は `APP_ENV=staging` で起動可                          |
-| 接続先         | private repo `Kensan196948G/Software-Factory-Sandbox`（許可台帳と `DEVLINE_TARGET_REPOS` の積集合）              |
-| 資格情報       | `~/.config/mirai-sf/devline-secrets.env`（0600）: 専用 `DEVLINE_GITHUB_TOKEN` と `ANTHROPIC_API_KEY`            |
-| 費用           | 1 タスク 1,000 円（`DEVLINE_BUDGET_JPY` ≤ 1000）。超えたら停止                                                  |
-| 隔離           | 専用ネットワーク（外へ出られない実測あり）、作業ツリーのみ bind mount、gitdir は外、advisory lock で 1 台      |
-| 自動マージ     | `DEVLINE_AUTO_MERGE=1` で有効。既定 0。C1 修正で**青の注文書だけ**が対象（黄は `order_signal_not_blue`、赤は不可） |
-| 本番           | `DEVLINE_ALLOW_PRODUCTION=1` を所有者が明示したときだけ本番でも起動可（既定は拒否）                              |
-| 画像           | `msf-devline-runner:2.1.316` / `msf-devline-egress-proxy:v1`（`deploy/devline/`）                                |
+| 項目       | 値                                                                                                                 |
+| ---------- | ------------------------------------------------------------------------------------------------------------------ |
+| runner     | `DEVLINE_RUNNER_KIND=docker-claude`。既定は fake。Staging は `APP_ENV=staging` で起動可                            |
+| 接続先     | private repo `Kensan196948G/Software-Factory-Sandbox`（許可台帳と `DEVLINE_TARGET_REPOS` の積集合）                |
+| 資格情報   | `~/.config/mirai-sf/devline-secrets.env`（0600）: 専用 `DEVLINE_GITHUB_TOKEN` と `ANTHROPIC_API_KEY`               |
+| 費用       | 1 タスク 1,000 円（`DEVLINE_BUDGET_JPY` ≤ 1000）。超えたら停止                                                     |
+| 隔離       | 専用ネットワーク（外へ出られない実測あり）、作業ツリーのみ bind mount、gitdir は外、advisory lock で 1 台          |
+| 自動マージ | `DEVLINE_AUTO_MERGE=1` で有効。既定 0。C1 修正で**青の注文書だけ**が対象（黄は `order_signal_not_blue`、赤は不可） |
+| 本番       | `DEVLINE_ALLOW_PRODUCTION=1` を所有者が明示したときだけ本番でも起動可（既定は拒否）                                |
+| 画像       | `msf-devline-runner:2.1.316` / `msf-devline-egress-proxy:v1`（`deploy/devline/`）                                  |
 
 ## 3. 検証項目
 
@@ -58,13 +58,13 @@
 
 ## 5. リスクと戻し
 
-| リスク                                 | 対策                                                                                   |
-| -------------------------------------- | -------------------------------------------------------------------------------------- |
-| Docker のアドレスプール枯渇（未確定）  | 既存の他プロジェクトのネットワークを増やさない。失敗時は段階・stderr・ブリッジ数を記録 |
-| AI の誤実装が Sandbox に入る           | 専用リポジトリ・作り物のみ。PR は人が merge するまで取り込まない                       |
-| 費用が上限に達する                     | `DEVLINE_BUDGET_JPY=1000`。到達で停止し再開不可（記録は残す）                          |
-| 資格情報の露出                         | `devline-secrets.env` は 0600・リポジトリ外。終了後にキーとトークンを失効              |
-| 失敗時に環境が残る                     | ラベル `msf.devline=1` のコンテナを kill、advisory lock の解放を確認                    |
+| リスク                                | 対策                                                                                   |
+| ------------------------------------- | -------------------------------------------------------------------------------------- |
+| Docker のアドレスプール枯渇（未確定） | 既存の他プロジェクトのネットワークを増やさない。失敗時は段階・stderr・ブリッジ数を記録 |
+| AI の誤実装が Sandbox に入る          | 専用リポジトリ・作り物のみ。PR は人が merge するまで取り込まない                       |
+| 費用が上限に達する                    | `DEVLINE_BUDGET_JPY=1000`。到達で停止し再開不可（記録は残す）                          |
+| 資格情報の露出                        | `devline-secrets.env` は 0600・リポジトリ外。終了後にキーとトークンを失効              |
+| 失敗時に環境が残る                    | ラベル `msf.devline=1` のコンテナを kill、advisory lock の解放を確認                   |
 
 ## 6. 決定事項（所有者）
 
