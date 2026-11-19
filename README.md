@@ -8,6 +8,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](docs/database.md)
 [![Cloudflare](https://img.shields.io/badge/Cloudflare-Tunnel%2BAccess-F38020?style=for-the-badge&logo=cloudflare&logoColor=white)](docs/deployment.md)
 [![Access](https://img.shields.io/badge/Login-ワンタイムパスワード-0f766e?style=for-the-badge&logo=cloudflare&logoColor=white)](https://sf.mirai-dx-platform.com)
+[![本番](https://img.shields.io/badge/本番-sf--prod.mirai--dx--platform.com-0ea5e9?style=for-the-badge&logo=cloudflare&logoColor=white)](https://sf-prod.mirai-dx-platform.com/)
 
 ![コンソールの動き](docs/assets/demo.gif)
 
@@ -57,23 +58,45 @@
 
 ---
 
-## 🖥️ 画面（8ビュー）
+## 🖥️ 画面（UI）— 全社員のための「困った」の窓口
 
-| アイコン | 画面       | できること                                      |
-| -------- | ---------- | ----------------------------------------------- |
-| 🏠       | ホーム     | 「あなたの番」・件数・最近の動き                |
-| ➕       | 新しい依頼 | 7ステップ入力・下書き・あいまい語の書き換え候補 |
-| 📋       | ボード     | 状態ごとの列。カードから次へ                    |
-| ☰       | 一覧       | 検索・絞り込み・CSV/JSON                        |
-| ⚡       | 運用       | リリース後の道具・障害・バックアップ（見本）    |
-| 🔀       | DevOps     | 開発ラインのIssue/PR/CI（見本）                 |
-| 🔒       | SecOps     | 脆弱性・インシデント・監査（見本）              |
-| 🗄️       | データ     | 保存先・書き出し・取り込み                      |
+> このコンソールは、**現場・支店・本部・DX推進部・承認者**まで、みらい建設工業の全社員が使います。
+> むずかしい言葉は使わず、**アイコンと色と動き**で「いま何をする番か」が分かるようにしています。
 
+**🔗 本番リリース URL: <https://sf-prod.mirai-dx-platform.com/>**（Cloudflare Access・ワンタイムパスワードでログイン／`80db562a` で稼働中）
+**🧪 動作確認用（Staging）: <https://sf.mirai-dx-platform.com/>**（同じく Access 配下・本番とは別のDB）
+
+![依頼ができるまで（約3分）](docs/assets/ui-flow.svg)
+
+### 🙋 あなたの役割から見た画面
+
+| あなたは             | アイコン | 最初に開く          | そこでできること                                   |
+| -------------------- | -------- | ------------------- | -------------------------------------------------- |
+| 現場監督・作業所     | 🦺       | ➕ 新しい依頼       | 困りごとを7ステップで登録。下書きは自動保存        |
+| 支店・本部の担当     | 🏢       | 📋 ボード           | 自分の部署の依頼がどこまで進んだかを一目で         |
+| 受付担当（DX推進部） | 🧭       | ☰ 一覧             | 内容を整える・差戻し・承認待ちへ進める             |
+| 承認者（業務責任者） | ✅       | 🏠 ホーム           | 「あなたの番」。信号の色を決める                   |
+| 経営・管理職         | 📊       | 🏠 ホーム           | 件数・滞留・最近の動きをダッシュボードで           |
+| 運用・保守           | 🛠️       | ⚡ 運用 / 🔀 DevOps | リリース・障害・バックアップ・開発ラインの進み具合 |
+
+![画面ツアー](docs/assets/ui-tour.svg)
+
+### 🖥️ 8つの画面（アイコンでひと目）
+
+| アイコン | 画面       | ひとことで                                      | 主に使う人             |
+| -------- | ---------- | ----------------------------------------------- | ---------------------- |
+| 🏠       | ホーム     | 「あなたの番」・件数・最近の動き                | 全員（承認者・管理職） |
+| ➕       | 新しい依頼 | 7ステップ入力・下書き・あいまい語の書き換え候補 | 現場・支店・本部       |
+| 📋       | ボード     | 状態ごとの列。カードから次へ                    | 受付担当・承認者       |
+| ☰       | 一覧       | 検索・絞り込み・CSV/JSON                        | 受付担当・管理職       |
+| ⚡       | 運用       | リリース後の道具・障害・バックアップ（見本）    | 運用・保守             |
+| 🔀       | DevOps     | 開発ラインのIssue/PR/CI（見本）                 | 運用・DX               |
+| 🔒       | SecOps     | 脆弱性・インシデント・監査（見本）              | セキュリティ担当       |
+| 🗄️       | データ     | 保存先・書き出し・取り込み                      | 運用・管理職           |
+
+> 💡 **使い方の合言葉**: 迷ったら「あなたの番」を見る → 色（🔵🟡🔴）を確認する → 受付番号で追いかける。この3つだけで、全社員が同じ流れに乗れます。
 > 📐 「8ビュー」はコンソールの**トップレベル 8 画面**を指す。仕様書の SCR 番号は複数の表があり 1:1 に対応しないため、画面対応の正本は `docs/design/msf-intake-design.html` とする（推測の対応表は作らない）。
 > 🎨 画面は `offline-Application/mirai-construction-sf-console.html` を**そのまま採用**しています（デザイン・文言・操作を統一）。
-
----
 
 ## 🔁 データの流れ
 
@@ -236,7 +259,7 @@ A. 2回目は作りません（`issue_no` で冪等）。既存の番号を返�
 A. 入りません。MVPは**作り物のデータだけ**です。
 
 **Q. どこで動いている？**
-A. `https://sf.mirai-dx-platform.com`（Cloudflare Access保護）。ローカルDBは非公開です。
+A. 本番は `https://sf-prod.mirai-dx-platform.com/`、動作確認用は `https://sf.mirai-dx-platform.com/`（どちらも Cloudflare Access保護・ワンタイムパスワード）。ローカルDBは非公開です。
 </details>
 
 ---
