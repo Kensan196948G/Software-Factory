@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-label="依頼ができるまでの流れ（登録 → 色を決める → 注文書 → Issue）">
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#0ea5e9" />
+      <stop offset="100%" stop-color="#22c55e" />
+    </linearGradient>
+  </defs>
+  <style>
+    .jp { font-family: 'Noto Sans JP', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', sans-serif; }
+    .frame { fill: #ffffff; stroke: #e2e8f0; stroke-width: 2; }
+    .t { font-size: 24px; font-weight: 700; fill: #0f172a; }
+    .s { font-size: 14px; fill: #64748b; }
+    .card { fill: #f8fafc; stroke: #e2e8f0; stroke-width: 2; }
+    .ico { font-size: 36px; }
+    .step { font-size: 18px; font-weight: 700; fill: #0f172a; }
+    .d { font-size: 13px; fill: #64748b; }
+    .num { font-size: 13px; font-weight: 700; fill: #ffffff; }
+    .nb { fill: #0ea5e9; }
+    .line { stroke: #e2e8f0; stroke-width: 6; stroke-linecap: round; }
+    .arrow { fill: #cbd5e1; }
+    .ring { fill: none; stroke: #0ea5e9; stroke-width: 3; transform-box: fill-box; transform-origin: center; opacity: 0; }
+    .pkt { fill: url(#g1); }
+    @keyframes slide {
+      0% { transform: translateX(0); opacity: 0; }
+      6% { opacity: 1; }
+      94% { opacity: 1; }
+      100% { transform: translateX(840px); opacity: 0; }
+    }
+    @keyframes ring {
+      0% { transform: scale(0.5); opacity: 0.85; }
+      60% { transform: scale(2.1); opacity: 0; }
+      100% { transform: scale(2.1); opacity: 0; }
+    }
+    .pkt { animation: slide 6s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+    .r1 { animation: ring 6s infinite; animation-delay: 0s; }
+    .r2 { animation: ring 6s infinite; animation-delay: 1.5s; }
+    .r3 { animation: ring 6s infinite; animation-delay: 3s; }
+    .r4 { animation: ring 6s infinite; animation-delay: 4.5s; }
+    @media (prefers-reduced-motion: reduce) {
+      .pkt, .r1, .r2, .r3, .r4 { animation: none; }
+    }
+  </style>
+
+  <rect class="frame jp" x="1" y="1" width="1198" height="298" rx="22" />
+  <text class="jp t" x="40" y="48">依頼ができるまで（約 3 分）</text>
+  <text class="jp s" x="40" y="76">現場の「困った」が、そのまま開発の注文書になります。全社員が同じ窓口を使います。</text>
+
+  <!-- 進行ライン -->
+  <line class="line" x1="155" y1="190" x2="1045" y2="190" />
+
+  <!-- 移動する光（仮想の依頼） -->
+  <g class="pkt">
+    <circle cx="155" cy="190" r="10" />
+    <circle cx="155" cy="190" r="18" fill="#0ea5e9" opacity="0.18" />
+  </g>
+
+  <!-- 1 登録 -->
+  <rect class="card" x="40" y="100" width="230" height="120" rx="16" />
+  <circle class="nb" cx="62" cy="122" r="11" />
+  <text class="jp num" x="62" y="127" text-anchor="middle">1</text>
+  <text class="jp ico" x="56" y="172">📝</text>
+  <text class="jp step" x="104" y="140">登録する</text>
+  <text class="jp d" x="104" y="164">7ステップで入力</text>
+  <text class="jp d" x="104" y="184">下書きは自動保存</text>
+  <circle class="ring r1" cx="155" cy="190" r="14" />
+
+  <!-- 2 色 -->
+  <rect class="card" x="320" y="100" width="230" height="120" rx="16" />
+  <circle class="nb" cx="342" cy="122" r="11" />
+  <text class="jp num" x="342" y="127" text-anchor="middle">2</text>
+  <text class="jp ico" x="336" y="172">🚦</text>
+  <text class="jp step" x="384" y="140">色を決める</text>
+  <text class="jp d" x="384" y="164">候補を自動でつける</text>
+  <text class="jp d" x="384" y="184">決めるのは承認者だけ</text>
+  <circle class="ring r2" cx="435" cy="190" r="14" />
+
+  <!-- 3 注文書 -->
+  <rect class="card" x="600" y="100" width="230" height="120" rx="16" />
+  <circle class="nb" cx="622" cy="122" r="11" />
+  <text class="jp num" x="622" y="127" text-anchor="middle">3</text>
+  <text class="jp ico" x="616" y="172">📄</text>
+  <text class="jp step" x="664" y="140">注文書にする</text>
+  <text class="jp d" x="664" y="164">合格の条件を機械可読に</text>
+  <text class="jp d" x="664" y="184">承認の記録も一緒に残す</text>
+  <circle class="ring r3" cx="715" cy="190" r="14" />
+
+  <!-- 4 Issue -->
+  <rect class="card" x="880" y="100" width="230" height="120" rx="16" />
+  <circle class="nb" cx="902" cy="122" r="11" />
+  <text class="jp num" x="902" y="127" text-anchor="middle">4</text>
+  <text class="jp ico" x="896" y="172">🐙</text>
+  <text class="jp step" x="944" y="140">開発へ渡す</text>
+  <text class="jp d" x="944" y="164">GitHub Issue を自動作成</text>
+  <text class="jp d" x="944" y="184">番号は二重にならない</text>
+  <circle class="ring r4" cx="995" cy="190" r="14" />
+
+  <!-- 矢印 -->
+  <path class="arrow" d="M282 185 l16 8 -16 8z" />
+  <path class="arrow" d="M562 185 l16 8 -16 8z" />
+  <path class="arrow" d="M842 185 l16 8 -16 8z" />
+
+  <text class="jp s" x="40" y="250">🔵 青 = そのまま任せてOK　🟡 黄 = 人が確認　🔴 赤 = 人は決めない（AIも決めない）</text>
+  <text class="jp s" x="40" y="274">🔐 入口は Cloudflare Access（ワンタイムパスワード）。受付番号は REQ-YYYY-NNNN の形で残ります。</text>
+</svg>

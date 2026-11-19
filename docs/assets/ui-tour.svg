@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="430" viewBox="0 0 1200 430" role="img" aria-label="画面ツアー（新しい依頼 → ホーム → ボード）">
+  <style>
+    .jp { font-family: 'Noto Sans JP', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', sans-serif; }
+    .frame { fill: #ffffff; stroke: #e2e8f0; stroke-width: 2; }
+    .t { font-size: 24px; font-weight: 700; fill: #0f172a; }
+    .s { font-size: 14px; fill: #64748b; }
+    .bar { fill: #0f172a; }
+    .dot { fill: #e2e8f0; }
+    .win { fill: #f8fafc; stroke: #e2e8f0; stroke-width: 2; }
+    .card { fill: #ffffff; stroke: #e2e8f0; stroke-width: 1.5; }
+    .line { fill: #e2e8f0; }
+    .accent { fill: #0ea5e9; }
+    .ok { fill: #22c55e; }
+    .warn { fill: #f59e0b; }
+    .bad { fill: #ef4444; }
+    .lbl { font-size: 15px; font-weight: 700; fill: #0f172a; }
+    .mini { font-size: 11px; fill: #64748b; }
+    .big { font-size: 26px; font-weight: 700; fill: #0f172a; }
+    .cap { font-size: 16px; font-weight: 700; fill: #0f172a; }
+    .caps { font-size: 14px; fill: #64748b; }
+    .screen { opacity: 0; }
+    .c1, .c2, .c3 { opacity: 0; }
+    @keyframes show3 {
+      0%, 28% { opacity: 1; transform: translateY(0); }
+      33%, 95% { opacity: 0; transform: translateY(10px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes show3c {
+      0%, 28% { opacity: 1; }
+      33%, 95% { opacity: 0; }
+      100% { opacity: 1; }
+    }
+    .s1 { animation: show3 9s ease-in-out infinite; animation-delay: 0s; }
+    .s2 { animation: show3 9s ease-in-out infinite; animation-delay: 3s; }
+    .s3 { animation: show3 9s ease-in-out infinite; animation-delay: 6s; }
+    .c1 { animation: show3c 9s ease-in-out infinite; animation-delay: 0s; }
+    .c2 { animation: show3c 9s ease-in-out infinite; animation-delay: 3s; }
+    .c3 { animation: show3c 9s ease-in-out infinite; animation-delay: 6s; }
+    .screen, .c1, .c2, .c3 { transform-box: fill-box; }
+    @keyframes pulse2 {
+      0%, 100% { opacity: 0.25; }
+      50% { opacity: 0.9; }
+    }
+    .live { animation: pulse2 2s ease-in-out infinite; }
+    @media (prefers-reduced-motion: reduce) {
+      .s1, .s2, .s3, .c1, .c2, .c3, .live { animation: none; }
+      .s1 { opacity: 1; }
+      .c1 { opacity: 1; }
+    }
+  </style>
+
+  <rect class="frame" x="1" y="1" width="1198" height="428" rx="22" />
+  <text class="jp t" x="40" y="48">画面ツアー（3 秒ごとに切り替わります）</text>
+  <text class="jp s" x="40" y="76">むずかしい言葉はありません。アイコンと色で、いま何をする番なのかが分かります。</text>
+
+  <!-- ウィンドウ枠 -->
+  <rect class="win" x="60" y="96" width="1080" height="250" rx="14" />
+  <rect class="bar" x="60" y="96" width="1080" height="34" rx="14" />
+  <rect class="bar" x="60" y="116" width="1080" height="14" />
+  <circle class="dot" cx="84" cy="113" r="6" />
+  <circle class="dot" cx="106" cy="113" r="6" />
+  <circle class="dot" cx="128" cy="113" r="6" />
+  <text class="jp mini" x="150" y="118" fill="#94a3b8">みらい建設工業 ソフトウェアファクトリー</text>
+
+  <!-- 画面1: 新しい依頼 -->
+  <g class="screen s1">
+    <text class="jp" x="90" y="170" font-size="30">📝</text>
+    <text class="jp lbl" x="140" y="168">新しい依頼（7ステップ）</text>
+    <text class="jp mini" x="140" y="188">困りごとを書く → 使う人 → 作るもの → 合格の条件</text>
+    <rect class="card" x="90" y="204" width="300" height="26" rx="6" />
+    <rect class="line" x="102" y="212" width="160" height="10" rx="5" />
+    <rect class="accent" x="90" y="240" width="128" height="32" rx="8" />
+    <text class="jp mini" x="106" y="261" fill="#ffffff">次へ（3/7）</text>
+    <rect class="card" x="90" y="290" width="640" height="38" rx="8" />
+    <rect class="line" x="104" y="304" width="420" height="10" rx="5" />
+    <circle class="ok live" cx="706" cy="309" r="7" />
+    <text class="jp mini" x="90" y="288" fill="#64748b">💾 下書きは自動保存</text>
+  </g>
+
+  <!-- 画面2: ホーム -->
+  <g class="screen s2">
+    <text class="jp" x="90" y="170" font-size="30">🏠</text>
+    <text class="jp lbl" x="140" y="168">ホーム（あなたの番）</text>
+    <text class="jp mini" x="140" y="188">承認待ち・差戻し・最近の動きが、ひと目で分かります</text>
+    <rect class="card" x="150" y="206" width="150" height="90" rx="10" />
+    <text class="jp big" x="166" y="242">3</text>
+    <text class="jp mini" x="166" y="264">承認待ち</text>
+    <rect class="card" x="320" y="206" width="150" height="90" rx="10" />
+    <text class="jp big" x="336" y="242">1</text>
+    <text class="jp mini" x="336" y="264">差戻し</text>
+    <rect class="card" x="490" y="206" width="150" height="90" rx="10" />
+    <text class="jp big" x="506" y="242">12</text>
+    <text class="jp mini" x="506" y="264">進行中</text>
+    <circle class="ok live" cx="600" cy="220" r="7" />
+    <rect class="card" x="660" y="206" width="150" height="90" rx="10" />
+    <text class="jp mini" x="676" y="232">最近の動き</text>
+    <rect class="line" x="676" y="246" width="110" height="8" rx="4" />
+    <rect class="line" x="676" y="262" width="90" height="8" rx="4" />
+  </g>
+
+  <!-- 画面3: ボード -->
+  <g class="screen s3">
+    <text class="jp" x="90" y="170" font-size="30">📋</text>
+    <text class="jp lbl" x="140" y="168">ボード（進み具合）</text>
+    <text class="jp mini" x="140" y="188">受付 → 承認待ち → 承認済み → 実装中 … カードを押すと次へ</text>
+    <rect class="card" x="90" y="204" width="150" height="120" rx="10" />
+    <rect class="accent" x="90" y="204" width="150" height="8" rx="4" />
+    <text class="jp mini" x="104" y="232">受付 2</text>
+    <rect class="line" x="104" y="244" width="112" height="10" rx="5" />
+    <rect class="line" x="104" y="262" width="86" height="10" rx="5" />
+    <rect class="card" x="258" y="204" width="150" height="120" rx="10" />
+    <rect class="warn" x="258" y="204" width="150" height="8" rx="4" />
+    <text class="jp mini" x="272" y="232">承認待ち 3</text>
+    <rect class="line" x="272" y="244" width="112" height="10" rx="5" />
+    <rect class="line" x="272" y="262" width="70" height="10" rx="5" />
+    <rect class="card" x="426" y="204" width="150" height="120" rx="10" />
+    <rect class="ok" x="426" y="204" width="150" height="8" rx="4" />
+    <text class="jp mini" x="440" y="232">承認済み 9</text>
+    <rect class="line" x="440" y="244" width="112" height="10" rx="5" />
+    <rect class="line" x="440" y="262" width="96" height="10" rx="5" />
+    <rect class="card" x="594" y="204" width="150" height="120" rx="10" />
+    <rect class="accent" x="594" y="204" width="150" height="8" rx="4" />
+    <text class="jp mini" x="608" y="232">実装中 1</text>
+    <rect class="line" x="608" y="244" width="112" height="10" rx="5" />
+    <rect class="line" x="608" y="262" width="80" height="10" rx="5" />
+  </g>
+
+  <!-- キャプション（画面と同期） -->
+  <g class="c1">
+    <text class="jp cap" x="60" y="386">① 新しい依頼</text>
+    <text class="jp caps" x="196" y="386">現場の困りごとを 7 ステップで。下書きは自動保存。</text>
+  </g>
+  <g class="c2">
+    <text class="jp cap" x="60" y="386">② ホーム</text>
+    <text class="jp caps" x="152" y="386">「あなたの番」と件数。承認待ち・差戻しがすぐ分かる。</text>
+  </g>
+  <g class="c3">
+    <text class="jp cap" x="60" y="386">③ ボード</text>
+    <text class="jp caps" x="152" y="386">状態ごとの列。カードから次の状態へ進める。</text>
+  </g>
+  <text class="jp s" x="60" y="412">※ 実際の画面は本番 URL（Cloudflare Access）またはローカル起動で確認できます。</text>
+</svg>
