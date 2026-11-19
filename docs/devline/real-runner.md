@@ -589,8 +589,22 @@ Staging の画面から作り物を登録した。承認、merge、配備、戻�
 
 ### 18-3. 未確認（今回の範囲外）
 
-- 自動マージ（`DEVLINE_AUTO_MERGE=1`）の実走（C1）。
+- （自動マージ C1 は 18-4 で実走した）
 - 実 AI の修正やり直し（CI 失敗 → revising）、予算到達の停止、禁止差分・prompt injection への動作。
 - 費用と Anthropic Console の請求の照合。
 - 本番での実 runner（`DEVLINE_ALLOW_PRODUCTION=1`）。
 - 依頼で作った機能（`countChars`）の配備後の動作確認（smoke は health/smoke の範囲）。
+
+### 18-4. 自動マージ（C1）の実走（2026-11-19）
+
+Staging で `DEVLINE_AUTO_MERGE=1` を一時設定（worker 再起動）し、青と黄の作り物で自動マージの可否を実測した。終了後に `DEVLINE_AUTO_MERGE=0` へ戻して worker を再起動（`preview.conf` のバックアップ `preview.conf.bak-automerge-20261119`）。
+
+| ケース              | 依頼            | job                                    | 結果                                                                                                                                                                                                                          |
+| ------------------- | --------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 青（`countVowels`） | `REQ-2026-0042` | `cfec1d42-e8be-4dc1-963e-986309cf30fe` | 15:03:39 に `pr_ready` → **自動マージ**。`release.auto_merge=t`・`auto_merge_verdict=passed`・`merge_sha=b5217899…`、`release_approval`（merge）は 0 件。監査 `job.auto_merge`（success）と `job.merged`（system:auto-merge） |
+| 黄（`countDigits`） | `REQ-2026-0043` | `32450650-9912-488e-b4a1-95091df38db2` | `pr_ready` のまま**拒否**。監査 `job.auto_merge`（denied、`mode=refused`、`reasons=["order_signal_not_blue"]`、`orderSignal="y"`、`policyValue=1`、`verdict=passed`、PR 17）。依頼は理由付きで取消                            |
+
+- 費用: 青 14 円・黄 16 円（各 2 試行、上限 1,000 円/タスク）。
+- 赤は層①の `isRedOrder` と C1 のテストで対象外（実走はしていない）。
+
+**観測した不具合（未解決・記録）**: 青の自動マージ完了（15:03:39）後、worker が次の queued job（黄）を拾わない状態が約 7 分続き、再起動で再開した。その後の停止（15:20:35）は autofollow の `b8b9427f` 配備に伴う release.sh の worker 再起動で、正常。自動マージの契機（`options.autoMerge`）が戻らない可能性があり、原因は未特定。追跡は Issue #208。
