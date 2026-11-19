@@ -27,9 +27,12 @@
     "tests",
     "scripts/devline-real-run.ts",
     "deploy/devline/egress-proxy.d.mts",
+    "scripts/local-run-env.d.mts",
     "vite.config.ts",
     "vitest.config.ts",
     "playwright.config.ts",
-    "playwright.approver.config.ts"
-  ]
+    "playwright.approver.config.ts",
+    "playwright.approval.config.ts"
+  ],
+  "exclude": ["tests/e2e-legacy", "tests/browser-legacy"]
 }

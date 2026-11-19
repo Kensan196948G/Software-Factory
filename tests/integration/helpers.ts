@@ -2,7 +2,7 @@ import { expect } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../../src/api/app.js';
 import { pool, query } from '../../src/api/db.js';
-import { seedMaster } from '../../src/api/seed.js';
+import { seedMaster, seedMiraiDirectory } from '../../src/api/seed.js';
 import { hashPassword } from '../../src/api/password.js';
 
 export const TEST_USER = {
@@ -44,6 +44,7 @@ export async function prepareTestDb(): Promise<void> {
   const client = await pool.connect();
   try {
     await seedMaster(client);
+    await seedMiraiDirectory(client);
     await ensureUser(client, TEST_USER, ['requester', 'desk', 'approver'], true);
     await ensureUser(client, TEST_MEMBER, ['requester', 'approver'], false);
   } finally {

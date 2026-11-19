@@ -305,6 +305,33 @@ async function denyHandoff(requestId: string, actor: Actor, correlationId: strin
   throw Errors.noPermission();
 }
 
+/**
+ * 赤信号の注文書は外部（GitHub Issue）へ渡さない（F-2）。
+ *
+ * 赤は「合否・金額・契約・人の処遇・安全」を AI に決めさせない仕事であり、開発ラインの入口に
+ * 載せない。投入の可否は API の境界（旧ルート・新ルート）で判定し、監査に拒否を残す。
+ * worker 側の `red_signal_human_required` は、修正前に投入済みの job に対する多層防御として残す。
+ */
+export async function refuseRedHandoff(requestId: string, actor: Actor, correlationId: string): Promise<void> {
+  const { rows } = await query<{ decided_signal: string | null }>(
+    `select decided_signal from approval
+      where request_id=$1 and decision='approved'
+      order by at desc, id desc limit 1`,
+    [requestId],
+  );
+  if (rows[0]?.decided_signal !== 'r') return;
+  await appendAudit({
+    action: 'handoff.intent',
+    targetType: 'request',
+    targetId: requestId,
+    result: 'denied',
+    ...auditFields(actor),
+    correlationId,
+    diff: { why: 'red_signal', signal: 'r' },
+  });
+  throw new ApiError('ERR-205', '赤信号の注文書は開発ラインへ投入できません（範囲を変えて承認し直してください）', 409);
+}
+
 async function findIntent(requestId: string, version: number, repo: string): Promise<IntentRow | null> {
   const { rows } = await query<IntentRow>(
     `select * from handoff_intent where request_id=$1 and order_version=$2 and target_repo_id=$3

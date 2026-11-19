@@ -98,6 +98,19 @@ export function isRealRunnerTarget(
   return Boolean(entry && entry.private && policyOf(repo));
 }
 
+/**
+ * 本番で開発ラインの実 runner・自動マージを明示許可しているか（DEVLINE_ALLOW_PRODUCTION）。
+ * 既定は拒否。0 / 1 以外は拒否する（fail-closed）。
+ * 2026-11-18 の所有者指示（全段階の自動移動と commit〜merge の全自動）で追加した。
+ * 許可しても、対象 repo の保護（必須チェック）と台帳・差分 policy は従来どおり必要。
+ */
+export function productionRealLineAllowed(env: Record<string, string | undefined>): boolean {
+  const raw = (env.DEVLINE_ALLOW_PRODUCTION ?? '').trim();
+  if (raw === '' || raw === '0') return false;
+  if (raw !== '1') throw new RealLineRefused('DEVLINE_ALLOW_PRODUCTION は 0 か 1 で指定してください');
+  return true;
+}
+
 /** 設定だけで決まる起動の拒否（純関数）。接続はしない。 */
 export function checkRealLineEnv(
   env: Record<string, string | undefined>,
@@ -105,8 +118,12 @@ export function checkRealLineEnv(
   ledger: readonly RepoAllowEntry[] = DEVLINE_REPO_LEDGER,
   policyOf: (repo: string) => RepoDiffPolicy | null = diffPolicyForRepo,
 ): string | null {
-  // Staging は NODE_ENV=production で動く。APP_ENV=staging を明示したときだけ許す。本番は常に拒否（所有者の決定、2026-11-01）
-  if (env.NODE_ENV === 'production' && env.APP_ENV !== 'staging') return 'production では docker-claude を起動しません';
+  // Staging は NODE_ENV=production で動く。APP_ENV=staging を明示したときだけ許す。本番は明示許可があるときだけ。
+  // フラグの値は環境に関係なく先に検証する（0 / 1 以外を staging で見逃さない）。
+  const allowProduction = productionRealLineAllowed(env);
+  if (env.NODE_ENV === 'production' && env.APP_ENV !== 'staging' && !allowProduction) {
+    return 'production では docker-claude を起動しません（DEVLINE_ALLOW_PRODUCTION=1 で明示許可できます）';
+  }
   if (!allowed.some((r) => isRealRunnerTarget(r.name, allowed, ledger, policyOf))) {
     return 'DEVLINE_TARGET_REPOS に実 runner の許可先がありません';
   }
@@ -131,16 +148,20 @@ export interface AutoMergePolicy {
 
 /**
  * DEVLINE_AUTO_MERGE の解釈（純関数）。既定は 0（無効）。'0' / '1' 以外は拒否する。
- * production では既定 0 のままとし、明示的に 1 にしても APP_ENV=staging（検証環境）でなければ拒否する。
- * 実 runner 本体（docker-claude）と同じ境界で、本番の自動 merge は作らない。
+ * production では既定 0 のままとし、明示的に 1 にしても APP_ENV=staging（検証環境）か
+ * DEVLINE_ALLOW_PRODUCTION=1 の明示許可が無ければ拒否する。実 runner 本体（docker-claude）と同じ境界。
  */
 export function parseAutoMergePolicy(env: Record<string, string | undefined>): AutoMergePolicy {
   const raw = (env.DEVLINE_AUTO_MERGE ?? '').trim();
   const disabled: AutoMergePolicy = { enabled: false, configuredValue: raw, policyVersion: AUTO_MERGE_POLICY_VERSION };
+  // フラグの値は、自動マージが無効のときも含めて先に検証する（config.ts と同じ fail-closed）。
+  const allowProduction = productionRealLineAllowed(env);
   if (raw === '' || raw === '0') return disabled;
   if (raw !== '1') throw new RealLineRefused('DEVLINE_AUTO_MERGE は 0 か 1 で指定してください');
-  if (env.NODE_ENV === 'production' && env.APP_ENV !== 'staging') {
-    throw new RealLineRefused('本番（APP_ENV=production）では自動マージを有効にできません（APP_ENV=staging の検証環境だけ）');
+  if (env.NODE_ENV === 'production' && env.APP_ENV !== 'staging' && !allowProduction) {
+    throw new RealLineRefused(
+      '本番（APP_ENV=production）では自動マージを有効にできません（DEVLINE_ALLOW_PRODUCTION=1 で明示許可できます）',
+    );
   }
   return { enabled: true, configuredValue: '1', policyVersion: AUTO_MERGE_POLICY_VERSION };
 }

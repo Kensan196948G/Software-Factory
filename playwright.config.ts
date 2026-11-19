@@ -5,6 +5,9 @@ const BASE_URL = process.env.E2E_BASE_URL ?? `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({
   testDir: 'tests/e2e',
+  // 承認プロセスの E2E（tests/e2e/approval/）は専用の隔離環境・2 アカウントが前提のため、
+  // 既存の E2E（1 アカウントのローカル環境）では実行しない。専用設定は playwright.approval.config.ts。
+  testIgnore: ['approval/**'],
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
@@ -27,7 +30,14 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'setup', testMatch: /auth\.setup\.ts/ },
+    {
+      name: 'chromium',
+      dependencies: ['setup'],
+      use: { ...devices['Desktop Chrome'], storageState: 'test-results/.auth/station.json' },
+    },
+  ],
   webServer: process.env.E2E_NO_SERVER
     ? undefined
     : {

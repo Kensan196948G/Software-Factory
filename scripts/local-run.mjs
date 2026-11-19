@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
+import { childEnv } from './local-run-env.mjs';
 
 const configPath = process.env.MIRAI_SF_CONFIG_FILE ?? resolve(homedir(), '.config/mirai-sf/local.json');
 if (!existsSync(configPath)) {
@@ -29,7 +30,7 @@ if (!rawCommand) {
 const localBin = resolve(import.meta.dirname, '..', 'node_modules', '.bin', rawCommand);
 const command = rawCommand.includes('/') || !existsSync(localBin) ? rawCommand : localBin;
 
-const env = { ...process.env, ...config, MIRAI_SF_CONFIG_FILE: configPath };
+const env = childEnv({ processEnv: process.env, fileConfig: config, configPath });
 const child = spawn(command, args, { stdio: 'inherit', env, shell: process.platform === 'win32' });
 child.on('exit', (code, signal) => {
   if (signal) process.kill(process.pid, signal);

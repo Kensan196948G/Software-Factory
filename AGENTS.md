@@ -35,6 +35,8 @@
 4. DBを変えたら migration を追加（additive）し、`db:verify` と空DBからの再構築を確認する。
 5. UIを変えたら設計成果物（`docs/design/msf-intake-design.html`）との差異を確認し、差異を記録する。
 
+AI チームの運用詳細（ロール・状態機械・品質ゲート・マージ手順）は `docs/agent-team/00-operations.md` を参照する。矛盾時は本ファイル（`AGENTS.md`）を優先する。
+
 ## 5. 検証コマンド
 
 ```bash
@@ -68,4 +70,4 @@ pnpm db:verify
 
 - 複数ユーザー（パスワード認証）と3役の切替。自己承認は本番（`APP_ENV=production`）の既定で拒否、開発・テスト・staging の既定は許可（L-01/L-02）。
 - 添付はメタ情報のみ。通知は承認依頼メールと滞留通知まで（L-04）。Entra ID SSO は未実装。開発ラインの到達点は `docs/limitations.md` を参照。
-- 数値目標は 2026-11-04 に実測済み（`docs/production/07-slo-and-measurement.md`）。目標値の最終確定は所有者確認待ち。
+- 数値目標は 2026-11-09 に決定済み（`docs/production/07-slo-and-measurement.md` §4 を参照。実測は同書 §3）。

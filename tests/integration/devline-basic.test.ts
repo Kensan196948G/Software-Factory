@@ -321,11 +321,18 @@ describe('fake 縦断', () => {
     expect((await getJobView(jobId))?.continuousSeconds).toBe(600);
   });
 
-  it('赤信号は計画の前に止まる（T-70）', async () => {
+  it('赤信号は API から投入できず、修正前に投入済みの job は計画の前に止まる（T-70）', async () => {
     const id = await approvedRequest();
     await query(`update approval set decided_signal='r' where request_id=$1`, [id]);
     await query(`update request set signal_decided='r' where id=$1`, [id]);
-    const { jobId } = (await handoff(id)).json();
+    // 通常の API は赤を拒否する（F-2）。
+    const refused = await handoff(id);
+    expect(refused.statusCode, refused.body).toBe(409);
+    expect(refused.json().error.code).toBe('ERR-205');
+    expect(github.issues).toHaveLength(0);
+    // 修正前に投入済みだった job の多層防御は、サービス層を直接呼んで再現する。
+    const legacy = await handoffOrder({ requestId: id, orderVersion: null }, actorFrom('desk'), 'red-legacy', deps());
+    const jobId = legacy.jobId;
     await runUntilIdle(worker('success'));
     expect(await getJobView(jobId)).toMatchObject({ state: 'stopped', stopReason: 'red_signal_human_required' });
   });
@@ -1131,7 +1138,9 @@ describe('修復ループ1回目の指摘', () => {
     const id = await approvedRequest();
     await query(`update approval set decided_signal='r' where request_id=$1`, [id]);
     await query(`update request set signal_decided='r' where id=$1`, [id]);
-    const { jobId } = (await handoff(id)).json();
+    // 修正前に投入済みの job を再現する（通常の API は赤を拒否する）。
+    const legacy = await handoffOrder({ requestId: id, orderVersion: null }, actorFrom('desk'), 'red-legacy', deps());
+    const jobId = legacy.jobId;
     await query(`update job set state='planning' where id=$1`, [jobId]);
     const runner = createFakeRunner('success');
     // 依頼の色が編集で消えても、版固定の色で止まる
