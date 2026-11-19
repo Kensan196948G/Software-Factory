@@ -40,7 +40,7 @@ import {
   type VerificationVerdict,
 } from '../shared/devline.js';
 import { DEPLOY_ENVIRONMENT } from '../shared/devline-release.js';
-import type { Status } from '../shared/domain.js';
+import type { Signal, Status } from '../shared/domain.js';
 
 /** 監査と job_event に残す主体。人の承認の行（release_approval）は作らない。 */
 const SYSTEM_ACTOR = { actorUserId: null, actorName: 'system:auto-merge', role: 'system' } as const;
@@ -153,6 +153,12 @@ async function jobFactsOf(
   );
   const request = req.rows[0];
   const red = await isRedOrder(client, job.snapshot_id);
+  // 版固定した注文書の決定色。赤は orderCurrent=false、黄は自動マージの対象外（青だけ）。
+  const sig = await client.query<{ decided_signal: string | null }>(
+    `select envelope->'approval'->>'decided_signal' as decided_signal from order_snapshot where id = $1`,
+    [job.snapshot_id],
+  );
+  const orderSignal = (sig.rows[0]?.decided_signal ?? null) as Signal | null;
   const orderCurrent =
     !red &&
     request !== undefined &&
@@ -179,6 +185,7 @@ async function jobFactsOf(
       jobHeadSha: job.head_sha,
       superseded: job.superseded_at !== null,
       orderCurrent,
+      orderSignal,
       verdict: verdict.verdict,
       acAllConfirmed,
       diff,
@@ -206,6 +213,7 @@ function evidenceOf(job: JobRow, facts: JobFacts, deps: AutoMergeDeps): Record<s
     verdict: facts.verdict.verdict,
     acIds: facts.acIds,
     headSha: job.head_sha,
+    orderSignal: facts.facts.orderSignal,
     runId: facts.run?.id ?? null,
     runAttempt: facts.run?.attempt ?? null,
     prNumber: facts.pr?.number ?? null,

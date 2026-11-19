@@ -25,7 +25,6 @@
     "test:ops": "bash scripts/ops/tests/staging-autofollow.test.sh && bash scripts/ops/tests/prod-release-ci-gate.test.sh && bash scripts/ops/tests/onfailure-notify.test.sh && bash scripts/ops/tests/rto-drill.test.sh && bash scripts/ops/tests/pr-ready.test.sh",
     "test:integration": "node scripts/local-run.mjs vitest run --config vitest.integration.config.ts",
     "test:e2e": "node scripts/local-run.mjs playwright test",
-    "test:browser:approver": "playwright test --config playwright.approver.config.ts",
     "test:docker": "vitest run --config vitest.docker.config.ts",
     "db:migrate": "node scripts/local-run.mjs tsx scripts/db.ts migrate",
     "db:rollback": "node scripts/local-run.mjs tsx scripts/db.ts rollback",

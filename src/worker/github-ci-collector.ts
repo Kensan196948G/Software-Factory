@@ -119,6 +119,33 @@ export function selectAcArtifact(
   return { ok: true, artifact };
 }
 
+/**
+ * PR の変更ファイル一覧の応答を読む（純関数）。
+ * GitHub の REST `GET /repos/{repo}/pulls/{n}/files` は**配列**を返す。以前の実装は
+ * `{ files: [...] }` を期待していたため、実環境では常に retry になり verifying が進まなかった
+ * （2026-11-19 に実測。テストの偽サーバは object を返していた）。
+ * 配列・object の両方を受け、形が合わないときだけ理由を返す。
+ */
+export type PullFilesParse = { ok: true; changedFiles: Set<string>; count: number } | { ok: false; reason: 'retry' | 'invalid' };
+
+export function parsePullFiles(raw: unknown): PullFilesParse {
+  const list = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === 'object' && Array.isArray((raw as { files?: unknown }).files)
+      ? (raw as { files: unknown[] }).files
+      : null;
+  if (list === null) return { ok: false, reason: 'retry' };
+  const changed = new Set<string>();
+  for (const item of list) {
+    if (typeof item !== 'object' || item === null) return { ok: false, reason: 'invalid' };
+    const file = item as { filename?: unknown; status?: unknown };
+    if (typeof file.filename !== 'string' || file.filename === '') return { ok: false, reason: 'invalid' };
+    if (file.status === 'removed') continue;
+    changed.add(file.filename);
+  }
+  return { ok: true, changedFiles: changed, count: list.length };
+}
+
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 /** run の条件（純関数）。合わない run は証拠にしない。 */
@@ -326,24 +353,18 @@ export function createGithubCiCollector(options: GithubCiCollectorOptions): Gith
         }
         return 'retry';
       }
-      let list: { files?: unknown[] };
+      let raw: unknown;
       try {
-        list = (await res.json()) as { files?: unknown[] };
+        raw = await res.json();
       } catch {
         return 'retry';
       }
-      if (!Array.isArray(list.files)) return 'retry';
-      for (const raw of list.files) {
-        if (typeof raw !== 'object' || raw === null) return { ok: false, problem: 'file_scope_unavailable' };
-        const file = raw as { filename?: unknown; status?: unknown };
-        if (typeof file.filename !== 'string' || file.filename === '') {
-          return { ok: false, problem: 'file_scope_unavailable' };
-        }
-        // 削除されたファイルは head に無いので「追加または変更されたファイル」に含めない
-        if (file.status === 'removed') continue;
-        changed.add(file.filename);
+      const parsed = parsePullFiles(raw);
+      if (!parsed.ok) {
+        return parsed.reason === 'retry' ? 'retry' : { ok: false, problem: 'file_scope_unavailable' };
       }
-      if (list.files.length < 100) return { ok: true, changedFiles: changed };
+      for (const filename of parsed.changedFiles) changed.add(filename);
+      if (parsed.count < 100) return { ok: true, changedFiles: changed };
     }
     // 500 件を超える PR は一覧を取り切れない。範囲を確かめられないものとして扱う
     return { ok: false, problem: 'file_scope_unavailable' };

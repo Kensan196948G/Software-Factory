@@ -125,7 +125,7 @@ async function seedRequests(client: pg.Client, count: number): Promise<void> {
        data_ready, spread, approver, status, signal_decided, order_version, version, deleted
      )
      select
-       'SYN-' || lpad(i::text, 5, '0'),
+       'SYN-' || lpad(i::text, greatest(5, length($1::text)), '0'),
        i,
        2026,
        timestamptz '2026-10-01 09:00:00+09' - (i * interval '1 minute'),

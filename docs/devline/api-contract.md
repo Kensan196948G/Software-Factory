@@ -68,6 +68,9 @@ buildPrCandidate(client: PoolClient, jobId: string, verdict: VerificationVerdict
 ### handoffOrder の手順
 
 1. 権限（`canHandoff`）。外れたら ERR-101 と監査（`result='denied'`）。`isRepoAllowed` に外れたら ERR-405。
+   - **赤信号の注文書**（最新の承認が `decided_signal='r'`）は、API の境界（旧ルート・新ルートの両方）で
+     ERR-205 と監査（`handoff.intent` / `result='denied'` / `diff.why='red_signal'`）で拒否する。
+     Issue も job も作らない。修正前に投入済みの赤 job に対する worker の `red_signal_human_required` は多層防御として残す。
 2. 依頼を読む（無ければ ERR-104）。本文の `orderVersion` が `request.order_version` と違えば、intent の有無にかかわらず ERR-202。その版の intent があれば 6 へ。`sendAllowed` = 版が最新 かつ `isOrderCurrent`。
 3. `checkOrderForHandoff`（最新の approval は `order by at desc, id desc limit 1`）。失敗はその code。
 4. 前の版の intent を確かめる。create が `sent` / `unknown` なら先に照合。`intent` のままなら `failed` へ。
@@ -371,7 +374,7 @@ merge の口（`createGithubPrMergeAdapter`）を作るのは `devline-release.t
 | T-67 | `injection`: 本文の命令で policy・シナリオ・snapshot が変わらない                                                                                              |
 | T-68 | 費用が0円で計上され、`usage` の形が残る。fake の子プロセスや任意 shell を起動しない                                                                            |
 | T-69 | `NODE_ENV=production` で fake を起動しない。`DEVLINE_WORKER_ENABLED` 未設定で worker が動かない。HTTP 要求の中で実行しない                                     |
-| T-70 | 赤信号の依頼が計画の前に `stopped(red_signal_human_required)`                                                                                                  |
+| T-70 | 赤信号の依頼は API から投入できず ERR-205。修正前に投入済みの赤 job は計画の前に `stopped(red_signal_human_required)`（多層防御）                              |
 
 ### 検証証跡
 

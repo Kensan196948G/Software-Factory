@@ -50,7 +50,7 @@
    - PR の repo が対象 repo である（別の repo の PR が開かれていない）
    - `ac-results` v2 の AC が全件 ○ で、`pr_ready` の根拠になっている
    - job の `targetRepo` が対象 repo である
-8. **自動マージを使う場合**（任意）。`docs/devline/real-runner.md` 17章の条件を満たすことを確認してから `DEVLINE_AUTO_MERGE=1` にする。既定は 0（無効）。本番（`APP_ENV=production`）では有効にできない。
+8. **自動マージを使う場合**（任意）。`docs/devline/real-runner.md` 17章の条件を満たすことを確認してから `DEVLINE_AUTO_MERGE=1` にする。既定は 0（無効）。本番（`APP_ENV=production`）では `DEVLINE_ALLOW_PRODUCTION=1` の明示許可があるときだけ有効にできる（既定は不可。`docs/devline/production-automation.md`）。
 
 ## 4. 確認（壊していないこと）
 

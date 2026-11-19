@@ -115,12 +115,14 @@ export function assertRunnerAllowed(runner: RunnerAdapter): void {
     throw new Error(`runner ${runner.capability.kind} は未実装です`);
   }
   const realOnStaging = runner.capability.kind === 'docker-claude' && config.appEnv === 'staging';
-  if (
-    config.isProduction &&
-    (runner.capability.kind === 'fake' || runner.capability.kind === 'docker-claude') &&
-    !realOnStaging
-  ) {
-    throw new Error(`production では ${runner.capability.kind} runner を動かしません`);
+  // 本番の実 runner は、所有者が DEVLINE_ALLOW_PRODUCTION=1 で明示許可したときだけ動かす（既定は拒否）。
+  // fake は許可しない（本番で作り物の CI を通さない）。
+  const realAllowedInProduction = config.devlineAllowProduction;
+  if (config.isProduction && runner.capability.kind === 'fake') {
+    throw new Error('production では fake runner を動かしません');
+  }
+  if (config.isProduction && runner.capability.kind === 'docker-claude' && !realOnStaging && !realAllowedInProduction) {
+    throw new Error('production では docker-claude runner を動かしません（DEVLINE_ALLOW_PRODUCTION=1 で明示許可できます）');
   }
 }
 

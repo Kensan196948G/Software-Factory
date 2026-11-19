@@ -1,6 +1,6 @@
 # 本番配備当日の手順（承認後）
 
-作成: 2026-11-06 JST。状態: **手順書**（本番は未配備・所有者の承認待ち）。
+作成: 2026-11-06 JST。状態: **手順書**（本番は `2d0766b0` で稼働中。**最新 main の配備**は所有者承認待ち。現在状態は `26-release-status.md` を参照）。
 対象: 本番（`sf-prod.mirai-dx-platform.com`、API `127.0.0.1:8783`、DB `mirai_sf_prod`）。
 
 - 本書は 2026-11-06 までに実証した結果だけを手順化した。実測の出典は `docs/production/20`〜`23` を参照する。
@@ -9,14 +9,14 @@
 
 ## 0. 前提条件（すべて満たすこと）
 
-| # | 条件 | 確認方法 | 2026-11-06 時点 |
-| - | ---- | -------- | --------------- |
-| 1 | 所有者の配備承認（数字選択または Y/N） | 会話・記録 | **未取得** |
-| 2 | main が緑（必須 CI 3/3） | `gh run list --branch main --limit 1`。**実際の判定は §1 の dry-run の CI ゲートで行う** | success（run 42215329492、quality / e2e / docker 3/3） |
-| 3 | 未適用の migration がない | `ops:prod:release --dry-run <SHA>` | 0 件 |
-| 4 | 最新バックアップと R2 記録が新しい | `pnpm ops:prod:offsite-status --count 2` | OK |
-| 5 | ロールバック手順が使える | `pnpm ops:prod:rollback --dry-run <前SHA>` | exit 0 |
-| 6 | 監視が動いている | `systemctl --user show mirai-sf-prod-healthcheck.service -p Result` | success |
+| #   | 条件                               | 確認方法                                                                                 | 2026-11-06 時点                                        |
+| --- | ---------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| 1   | 所有者の配備承認（数字選択）       | 会話・記録                                                                               | **未取得**                                             |
+| 2   | main が緑（必須 CI 3/3）           | `gh run list --branch main --limit 1`。**実際の判定は §1 の dry-run の CI ゲートで行う** | success（run 42215329492、quality / e2e / docker 3/3） |
+| 3   | 未適用の migration がない          | `ops:prod:release --dry-run <SHA>`                                                       | 0 件                                                   |
+| 4   | 最新バックアップと R2 記録が新しい | `pnpm ops:prod:offsite-status --count 2`                                                 | OK                                                     |
+| 5   | ロールバック手順が使える           | `pnpm ops:prod:rollback --dry-run <前SHA>`                                               | exit 0                                                 |
+| 6   | 監視が動いている                   | `systemctl --user show mirai-sf-prod-healthcheck.service -p Result`                      | success                                                |
 
 補足: 前提 2 の判定は必ず §1 の dry-run（exact-main CI ゲート）で行う。コミット本文の skip 指示子等で
 main の push CI が生成されないことがあるため、`gh run list` の表示だけで「緑」とみなさない（詳細は
@@ -78,14 +78,14 @@ pnpm ops:prod:acceptance "$SHA"
 
 ## 5. 人の操作による受入（§4 の残り）
 
-| # | 確認 | 期待 |
-| - | ---- | ---- |
-| 1 | 公開 URL へ未認証でアクセス | Access のログインへ 302 |
-| 2 | `Cf-Access-Authenticated-User-Email` を付けて `/api/auth/me` | 401（JWT 検証が有効なため） |
-| 3 | 正規の OTP ログイン（ブラウザ） | 画面が表示され、管理画面に入れる |
-| 4 | 受付 1 件の登録 → 承認 → 注文書 YAML | 画面で完了し、監査に残る |
-| 5 | 自己承認（同一ユーザー） | ERR-105 で拒否 |
-| 6 | `journalctl --user -u mirai-sf-prod-api --since …` | 5xx / ERROR が出ていない |
+| #   | 確認                                                         | 期待                             |
+| --- | ------------------------------------------------------------ | -------------------------------- |
+| 1   | 公開 URL へ未認証でアクセス                                  | Access のログインへ 302          |
+| 2   | `Cf-Access-Authenticated-User-Email` を付けて `/api/auth/me` | 401（JWT 検証が有効なため）      |
+| 3   | 正規の OTP ログイン（ブラウザ）                              | 画面が表示され、管理画面に入れる |
+| 4   | 受付 1 件の登録 → 承認 → 注文書 YAML                         | 画面で完了し、監査に残る         |
+| 5   | 自己承認（同一ユーザー）                                     | ERR-105 で拒否                   |
+| 6   | `journalctl --user -u mirai-sf-prod-api --since …`           | 5xx / ERROR が出ていない         |
 
 - **中止**: 1〜5 のいずれかが期待と異なる → 原因を切り分け、設定起因なら設定を戻し、コード起因なら §7 のロールバック。
 
@@ -134,12 +134,12 @@ pnpm ops:prod:acceptance <前のSHA>           # 戻した先の受入
 
 本手順のうち **§4（healthcheck を 1 回実行 → 機械的受入）** を Staging でそのまま実行し、手順どおりに通ることを確認した。
 
-| 手順 | 実行 | 結果 |
-| ---- | ---- | ---- |
-| healthcheck を 1 回実行 | `systemctl --user start mirai-sf-healthcheck.service` | `Result=success` / `ExecMainStatus=0`（20:33:51） |
-| 機械的受入 | `ops:prod:acceptance <SHA> --base-url http://127.0.0.1:8782 --db mirai_sf --unit mirai-sf-api.service --state-dir ~/.local/state/mirai-sf --expect-environment staging --skip-offsite` | **14 項目 PASS / exit 0**（FAIL 0） |
-| 対象 | Staging `39103cd`（`auth.status=ready` を含む） | — |
+| 手順                    | 実行                                                                                                                                                                                   | 結果                                              |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| healthcheck を 1 回実行 | `systemctl --user start mirai-sf-healthcheck.service`                                                                                                                                  | `Result=success` / `ExecMainStatus=0`（20:33:51） |
+| 機械的受入              | `ops:prod:acceptance <SHA> --base-url http://127.0.0.1:8782 --db mirai_sf --unit mirai-sf-api.service --state-dir ~/.local/state/mirai-sf --expect-environment staging --skip-offsite` | **14 項目 PASS / exit 0**（FAIL 0）               |
+| 対象                    | Staging `39103cd`（`auth.status=ready` を含む）                                                                                                                                        | —                                                 |
 
 - **確認できたこと**: 「配備直後は healthcheck の状態が古い」という §4 の注意は正しく、**先に healthcheck を 1 回実行すれば受入が通る**。
 - 本番では `--expect-environment production`（既定）と `--skip-offsite` なしで同じ順序で実行する。`--skip-offsite` は本番では exit 2 で拒否される（実装済み）。
-- 未確認: 本番環境での §4 の実行（未配備のため）。
+- 未確認: 本番環境での §4 の実行（最新 main が未配備のため）。

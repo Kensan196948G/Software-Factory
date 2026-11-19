@@ -190,7 +190,7 @@ describe('T-15: 投入を拒否する（未承認 / 差戻し / 見送り / 取�
     expect(h.github.access).toHaveLength(0);
   });
 
-  it('承認の取消（承認後の編集）は版が上がるので、もとの版は ERR-202、今の版も未承認で ERR-205', async () => {
+  it('承認の取消（承認後の編集）は状態が承認待ちに戻るので、投入は ERR-205（版は編集では動かさない）', async () => {
     const id = await h.approvedRequest();
     const v1 = await h.orderVersion(id);
     const current = await h.detail(id);
@@ -199,9 +199,11 @@ describe('T-15: 投入を拒否する（未承認 / 差戻し / 見送り / 取�
       version: current.version,
     });
     expect(edit.statusCode, edit.body).toBe(200);
+    // F-1: 編集では order_version を動かさない（承認のたびに +1 だけ進める）。
+    expect(await h.orderVersion(id)).toBe(v1);
     const stale = await h.api('POST', `/api/orders/${id}/handoff`, { orderVersion: v1 });
     expect(stale.statusCode).toBe(409);
-    expect(codeOf(stale)).toBe('ERR-202');
+    expect(codeOf(stale)).toBe('ERR-205');
     const now = await h.handoff(id);
     expect(now.statusCode).toBe(409);
     expect(codeOf(now)).toBe('ERR-205');
@@ -261,12 +263,12 @@ describe('T-15: 投入を拒否する（未承認 / 差戻し / 見送り / 取�
 });
 
 describe('T-16: 再承認と旧版', () => {
-  it('承認 → 編集 → 再承認で版が2上がり、古い版は ERR-202。新しい版は再投入できる', async () => {
+  it('承認 → 編集 → 再承認で版が1上がり、古い版は ERR-202。新しい版は再投入できる', async () => {
     const id = await h.approvedRequest();
     const v1 = await h.orderVersion(id);
     const first = (await h.handoff(id)).json();
     const v2 = await h.reapprove(id, '再承認の目的');
-    expect(v2).toBe(v1 + 2);
+    expect(v2).toBe(v1 + 1);
 
     const stale = await h.api('POST', `/api/orders/${id}/handoff`, { orderVersion: v1 });
     expect(stale.statusCode).toBe(409);

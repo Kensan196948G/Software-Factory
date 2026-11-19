@@ -6,9 +6,11 @@ import { appendAudit } from './audit.js';
 import {
   getCatalogSignals,
   getDepartmentName,
+  getMiraiActors,
   getRecentHistory,
   getRequestRow,
   getRequestRowForUpdate,
+  listBootCatalog,
   listComments,
   listHistory,
   listRequests,
@@ -41,7 +43,7 @@ import type { Role, Signal, Status } from '../shared/domain.js';
 import type { RequestDetail, RequestRecord, SessionUser } from '../shared/types.js';
 import type { RequestInput, TransitionInput } from './schemas.js';
 import { buildOrderYaml } from '../shared/order.js';
-import { defaultDevlineDeps, handoffOrder, type DevlineDeps } from './devline-handoff.js';
+import { defaultDevlineDeps, handoffOrder, refuseRedHandoff, type DevlineDeps } from './devline-handoff.js';
 import { canHandoff } from '../shared/devline.js';
 import { buildCsv, buildExportJson, measureOf } from '../shared/export.js';
 import { deliverOutboxMail, enqueueApprovalMailInTx, latestMailForRequest } from './mail-outbox.js';
@@ -396,6 +398,8 @@ export async function createRequest(
 
     // マスタの検証は照合の後。作成の後にマスタが変わっても、同じキーの再送は作成済みの依頼を返す
     // トランザクションの接続で読む（別の接続を待つと、同時の作成で接続プールが詰まる）
+    // 画面は Mirai-Info の部署（selectable）だけを出す。API は旧クライアント・取り込みの互換のため
+    // 旧・機能別の部署コードも受け付ける（同期スクリプトが次の実行で新しい部署へ移す）。
     const dept = await client.query('select 1 from department where code = $1', [input.deptCode]);
     if (!dept.rows[0]) throw Errors.notAllowedValue('deptCode');
     if (input.toolId) {
@@ -573,6 +577,9 @@ export async function updateRequest(
     const nextStatus = afterApproval ? 'wait' : row.status;
     const signal = afterApproval ? null : row.signal_decided;
     if (afterApproval) warnings.push({ code: 'ERR-202', message: '承認後に内容を変えたため、承認をやり直す必要があります' });
+    // 注文書の版（order_version）は「承認のたびに +1」だけ進める（docs/development-line-handoff.md）。
+    // 承認後の編集では版を動かさず、status=wait と signal_decided=null で古い注文書を無効にする。
+    // ここでも +1 すると、編集で 1→2、再承認で 2→3 となり、承認 2 回で版が 2 つ飛ぶ（E2E A8 の F-1）。
     // 投入先（L-12）は内容の更新では変えない（専用の口に一本化する）。
     // ここで変えると、投入済み・結果未確定の依頼で `request.target_repo_id` だけが動き、
     // job と Issue の repo と食い違う状態（次の投入が ERR-405）を作れてしまう。
@@ -592,8 +599,8 @@ export async function updateRequest(
         problem=$8, purpose=$9, users=$10, people=$11, places=$12, scope=$13, out_of_scope=$14,
         criteria=$15, decides=$16, data_handling=$17, parties=$18, constraints=$19, constraints_other=$20,
         requires_human_approval=$21, frequency=$22, minutes_per_time=$23, data_ready=$24, spread=$25,
-        wish_date=$26, approver=$27, approver_user_id=$32, status=$28, signal_decided=$29, order_version=order_version + $30,
-        version=version+1, updated_at=now(), updated_by=$31
+        wish_date=$26, approver=$27, approver_user_id=$31, status=$28, signal_decided=$29, order_version=order_version,
+        version=version+1, updated_at=now(), updated_by=$30
       where id=$1`,
       [
         id,
@@ -625,7 +632,6 @@ export async function updateRequest(
         input.approver,
         nextStatus,
         signal,
-        afterApproval ? 1 : 0,
         actor.userId,
         resolvedApproverUserId,
       ],
@@ -756,6 +762,36 @@ export async function performTransition(
 
     const reason = (input.reason ?? '').trim();
     if (isReasonRequired(row.status, input.to) && reason === '') throw Errors.reasonRequired();
+
+    // 公開承認（release_wait → done）は、配備済みで健康・スモーク確認済みの成果物との紐付けを必須にする。
+    // 受付の状態だけを進めて「完了」にすると、何を公開したのか追えない（C2）。
+    if (input.to === 'done') {
+      const linked = await client.query(
+        `select 1
+           from job j
+           join release r on r.job_id = j.id
+          where j.request_id = $1
+            and r.merge_state = 'merged'
+            and r.deployed_at is not null
+            and r.health is true
+            and r.smoke is true
+            and r.rolled_back_at is null
+          limit 1`,
+        [id],
+      );
+      if (linked.rows.length === 0) {
+        await appendAuditInTx(client, actor, {
+          action: 'request.transition_denied',
+          targetType: 'request',
+          targetId: id,
+          result: 'denied',
+          correlationId,
+          diff: { reason: 'artifact_unlinked', from: row.status, to: input.to },
+        });
+        denial.error = Errors.approvalRequired('公開承認には、配備済みで健康・スモーク確認済みの成果物との紐付けが必要です');
+        return;
+      }
+    }
 
     const nextStatus: Status = input.to;
     let noteParts: string[] = [];
@@ -1092,7 +1128,14 @@ export async function saveOpsState(
 }
 
 /** 画面起動用のデータ（履歴・コメントを含む）。監査ログには記録しない。 */
-export async function getBootData(userId: string): Promise<{ seq: number; items: unknown[]; drafts: DraftView[]; ops: unknown }> {
+export async function getBootData(userId: string): Promise<{
+  seq: number;
+  items: unknown[];
+  drafts: DraftView[];
+  ops: unknown;
+  catalog: { departments: unknown[]; tools: unknown[] };
+  actors: unknown;
+}> {
   const { rows } = await listRequests({ limit: 5000 });
   const items = [];
   for (const row of rows) {
@@ -1106,11 +1149,16 @@ export async function getBootData(userId: string): Promise<{ seq: number; items:
   const seq = rows.reduce((max, r) => Math.max(max, r.seq), 0);
   const drafts = await listDrafts(userId);
   const ops = await getOpsState();
+  // 画面のカタログ（部署・道具）はサーバの正本を起動データに含める。
+  // 部署は Mirai-Info の division に合わせた selectable の 16 部署。
+  const [catalog, actors] = await Promise.all([listBootCatalog(), getMiraiActors()]);
   return {
     seq,
     items,
     drafts: drafts.items,
     ops: ops ? { data: ops.data, version: ops.version } : null,
+    catalog: { departments: catalog.departments, tools: catalog.tools },
+    actors,
   };
 }
 
@@ -1266,6 +1314,8 @@ export async function handoffToGithub(
 
   const row = await getRequestRow(id);
   if (!row) throw Errors.notFound('依頼');
+  // 赤信号の注文書は投入しない（F-2）。issue_no が既にある旧データでも、新たな投入としては扱わない。
+  await refuseRedHandoff(id, actor, correlationId);
   if (
     !row.signal_decided ||
     row.order_version < 1 ||

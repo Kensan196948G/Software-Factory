@@ -442,7 +442,7 @@ Browser
 - トークンは**用途別・リポジトリ別・最小権限**にする。広い個人トークンを本番の API/worker に渡さない（M-6 の残存リスク）。
 - トークンを argv・環境変数の一覧・ログ・PR・Issue・画面に出さない。`docker` の argv にも載せない（`--env` で引き継ぐ実装）。
 - 漏えい時は即時失効し、`docs/limitations.md` / 監査に記録する。定期的な棚卸し（誰がどのトークンを持つか）を行う。
-- 本番で devline worker を動かさない場合、`DEVLINE_WORKER_ENABLED` を 0 にし、`DEVLINE_RUNNER_KIND` を `fake` 以外にしない。`NODE_ENV=production` では `APP_ENV=staging` の明示がない限り実 runner は拒否される（実装）。
+- 本番で devline worker を動かさない場合、`DEVLINE_WORKER_ENABLED` を 0 にし、`DEVLINE_RUNNER_KIND` を `fake` 以外にしない。`NODE_ENV=production` では `APP_ENV=staging` の明示か `DEVLINE_ALLOW_PRODUCTION=1`（2026-11-18 の所有者決定。`docs/devline/production-automation.md`）がない限り実 runner は拒否される（実装）。
 
 ### 4.4 API キー・その他
 
@@ -695,7 +695,7 @@ Browser
 | 7   | **1**: オフサイトは Cloudflare R2（非公開バケット）                           | 決定                                     |
 | 8   | 1（Cloudflare Access のワンタイムパスワード）                                 | 推奨案（公開前に再確認）                 |
 | 9   | 1（複数ユーザー・自己承認禁止。実装は #66。管理者の自動付与は本番で行わない） | 推奨案（公開前に再確認）                 |
-| 10  | N（本番では devline worker を動かさない。`prod-release` は worker=none）      | 推奨案（公開前に再確認）                 |
+| 10  | N（本番では devline worker を動かさない。`prod-release` は worker=none。2026-11-18 の決定で `DEVLINE_ALLOW_PRODUCTION=1` があれば許可できるが、本番 worker unit は未整備。`docs/devline/production-automation.md`） | 推奨案（公開前に再確認）                 |
 | 11  | N（`MAIL_MODE=off`）                                                          | 推奨案（公開前に再確認）                 |
 | 12  | 要件化しない（案Aの best-effort。逸脱は記録）                                 | 推奨案（公開前に再確認）                 |
 | 13  | 4（未定。当面は削除しない）                                                   | 推奨案（公開前に再確認）                 |

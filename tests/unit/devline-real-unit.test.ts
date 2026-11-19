@@ -27,7 +27,9 @@ import {
   parsePrMarker,
   usdToJpyCeil,
 } from '../../src/shared/devline.js';
-import type { RunnerInput } from '../../src/shared/devline.js';
+import type { RunnerAdapter, RunnerInput } from '../../src/shared/devline.js';
+import { config } from '../../src/api/config.js';
+import { assertRunnerAllowed } from '../../src/worker/loop.js';
 import { evaluateDiff, parseRawDiff, type RawDiffEntry } from '../../src/worker/diff-policy.js';
 import { detectSecret, isBinaryContent, knownSecretForms, scanAddedText } from '../../src/worker/secret-scan.js';
 import { unmatchedJobNames } from '../../src/worker/github-ci-collector.js';
@@ -56,6 +58,7 @@ import {
 } from '../../src/worker/real-line.js';
 import { parseRunnerResult } from '../../src/worker/runner-result.js';
 import { dryRunReport } from '../../scripts/devline-real-run.js';
+import { parseAutoMergePolicy } from '../../src/api/devline-real-config.js';
 
 const entry = (status: string, path: string, over: Partial<RawDiffEntry> = {}): RawDiffEntry => ({
   srcMode: '100644',
@@ -210,6 +213,30 @@ describe('起動の判定', () => {
       runnerKind: 'docker-claude',
     });
     expect(decideWorkerStart({ ...base, DEVLINE_TARGET_REPOS: TARGET, NODE_ENV: 'production' })).toMatchObject({ start: false });
+    // 所有者の明示許可（DEVLINE_ALLOW_PRODUCTION=1）のときだけ、本番でも docker-claude を起動する
+    expect(
+      decideWorkerStart({
+        ...base,
+        DEVLINE_TARGET_REPOS: TARGET,
+        NODE_ENV: 'production',
+        DEVLINE_ALLOW_PRODUCTION: '1',
+      }),
+    ).toMatchObject({ start: true, runnerKind: 'docker-claude' });
+    expect(
+      decideWorkerStart({
+        ...base,
+        DEVLINE_TARGET_REPOS: TARGET,
+        NODE_ENV: 'production',
+        DEVLINE_ALLOW_PRODUCTION: '0',
+      }),
+    ).toMatchObject({ start: false });
+    // 明示許可があっても fake は本番で起動しない
+    expect(
+      decideWorkerStart({ DEVLINE_WORKER_ENABLED: '1', NODE_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: '1' }),
+    ).toMatchObject({ start: false });
+    expect(
+      decideWorkerStart({ ...base, DEVLINE_TARGET_REPOS: TARGET, NODE_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: 'yes' }),
+    ).toMatchObject({ start: false });
     expect(decideWorkerStart(base)).toMatchObject({ start: false });
     expect(decideWorkerStart({ ...base, DEVLINE_TARGET_REPOS: 'someone/other:1' })).toMatchObject({ start: false });
     expect(decideWorkerStart({ ...base, DEVLINE_TARGET_REPOS: `${SANDBOX_REPO.name}:999` })).toMatchObject({ start: false });
@@ -235,6 +262,86 @@ describe('起動の判定', () => {
     expect(checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: 'production' }, [])).toContain('production');
     expect(checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: '' }, [])).toContain('production');
     expect(checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: 'staging' }, [])).toContain('許可先');
+    // 所有者の明示許可（DEVLINE_ALLOW_PRODUCTION=1）のときだけ、本番でも production 拒否を越えて次の検査へ進む
+    const sandboxAllowed = [{ name: SANDBOX_REPO.name, repoId: SANDBOX_REPO.repoId }];
+    expect(
+      checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: '1' }, sandboxAllowed),
+    ).toBeNull();
+    expect(
+      checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: '0' }, sandboxAllowed),
+    ).toContain('production');
+    expect(() =>
+      checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: 'yes' }, sandboxAllowed),
+    ).toThrow(/DEVLINE_ALLOW_PRODUCTION/);
+    // staging は明示許可が無くても従来どおり次の検査へ進む（挙動を変えない）
+    expect(checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: 'staging' }, sandboxAllowed)).toBeNull();
+    // 不正値は staging でも拒否する（config.ts と同じ fail-closed。見逃して有効化しない）
+    expect(() =>
+      checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: 'staging', DEVLINE_ALLOW_PRODUCTION: 'yes' }, sandboxAllowed),
+    ).toThrow(/DEVLINE_ALLOW_PRODUCTION/);
+    // 前後の空白は無視する
+    expect(
+      checkRealLineEnv({ NODE_ENV: 'production', APP_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: ' 1 ' }, sandboxAllowed),
+    ).toBeNull();
+  });
+  it('自動マージは本番でも明示許可のときだけ有効にできる', () => {
+    expect(parseAutoMergePolicy({}).enabled).toBe(false);
+    expect(parseAutoMergePolicy({ DEVLINE_AUTO_MERGE: '0' }).enabled).toBe(false);
+    expect(parseAutoMergePolicy({ DEVLINE_AUTO_MERGE: '1' }).enabled).toBe(true);
+    expect(() => parseAutoMergePolicy({ DEVLINE_AUTO_MERGE: '1', NODE_ENV: 'production' })).toThrow(/本番/);
+    expect(parseAutoMergePolicy({ DEVLINE_AUTO_MERGE: '1', NODE_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: '1' }).enabled).toBe(
+      true,
+    );
+    expect(() =>
+      parseAutoMergePolicy({ DEVLINE_AUTO_MERGE: '1', NODE_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: 'x' }),
+    ).toThrow(/DEVLINE_ALLOW_PRODUCTION/);
+    // staging は従来どおり。不正値は staging でも拒否する（自動マージが無効のときも含む）
+    expect(parseAutoMergePolicy({ DEVLINE_AUTO_MERGE: '1', NODE_ENV: 'production', APP_ENV: 'staging' }).enabled).toBe(true);
+    expect(() =>
+      parseAutoMergePolicy({
+        DEVLINE_AUTO_MERGE: '1',
+        NODE_ENV: 'production',
+        APP_ENV: 'staging',
+        DEVLINE_ALLOW_PRODUCTION: 'x',
+      }),
+    ).toThrow(/DEVLINE_ALLOW_PRODUCTION/);
+    expect(() => parseAutoMergePolicy({ DEVLINE_AUTO_MERGE: '0', DEVLINE_ALLOW_PRODUCTION: 'x' })).toThrow(
+      /DEVLINE_ALLOW_PRODUCTION/,
+    );
+  });
+  it('staging の docker-claude は明示許可が無くても動かせる（従来挙動）', () => {
+    const saved = {
+      isProduction: config.isProduction,
+      appEnv: config.appEnv,
+      devlineAllowProduction: config.devlineAllowProduction,
+    };
+    const adapter = { capability: { kind: 'docker-claude' } } as unknown as RunnerAdapter;
+    try {
+      Object.assign(config, { isProduction: true, appEnv: 'staging', devlineAllowProduction: false });
+      expect(() => assertRunnerAllowed(adapter)).not.toThrow();
+    } finally {
+      Object.assign(config, saved);
+    }
+  });
+  it('本番の runner は明示許可のときだけ docker-claude を許す（fake は不可）', () => {
+    const saved = {
+      isProduction: config.isProduction,
+      appEnv: config.appEnv,
+      devlineAllowProduction: config.devlineAllowProduction,
+    };
+    const adapter = (kind: 'fake' | 'docker-claude'): RunnerAdapter => ({ capability: { kind } }) as unknown as RunnerAdapter;
+    try {
+      Object.assign(config, { isProduction: true, appEnv: 'production', devlineAllowProduction: false });
+      expect(() => assertRunnerAllowed(adapter('docker-claude'))).toThrow(/DEVLINE_ALLOW_PRODUCTION/);
+      expect(() => assertRunnerAllowed(adapter('fake'))).toThrow(/fake/);
+
+      config.devlineAllowProduction = true;
+      expect(() => assertRunnerAllowed(adapter('docker-claude'))).not.toThrow();
+      // 明示許可があっても、本番で作り物の CI を通す fake は動かさない
+      expect(() => assertRunnerAllowed(adapter('fake'))).toThrow(/fake/);
+    } finally {
+      Object.assign(config, saved);
+    }
   });
   it('git の接続先は https とループバックだけ。試験はループバックだけ', () => {
     expect(() => assertGitBaseUrlAllowed('https://github.com', 'test')).toThrow();

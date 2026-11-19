@@ -2409,6 +2409,7 @@ const SF = (function () {
     fc: '',
     open: null,
     dtab: 'sum',
+    reviewSel: null,
     pickDept: '',
     fresh: null,
     critUndo: {},
@@ -3224,6 +3225,28 @@ const SF = (function () {
     if (S.open) renderDrawer();
     render();
   });
+  // ログアウト: アプリのセッションを破棄し、Cloudflare Access のセッションも終える。
+  // Access の Cookie が残ると、次に開いたときに同じ利用者として自動ログインしてしまう。
+  const logoutBtn = $('#logout');
+  if (logoutBtn) {
+    if (!MSF_CONNECTED || !window.__MSF__) {
+      logoutBtn.hidden = true;
+    } else {
+      logoutBtn.hidden = false;
+      logoutBtn.addEventListener('click', async () => {
+        logoutBtn.disabled = true;
+        logoutBtn.textContent = 'ログアウト中…';
+        try {
+          // 空でも JSON 本文を送る。本文なしの POST は Fastify が Content-Type を解釈できず 415 になる
+          await window.__MSF__.api('POST', '/api/auth/logout', {});
+        } catch (e) {
+          /* アプリ側の失効に失敗しても Access 側は終える（残ったセッションは期限で切れる） */
+        }
+        const url = window.__MSF__.logoutUrl;
+        location.replace(url || '/login');
+      });
+    }
+  }
   $('#rail').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-v]');
     if (!b) return;
@@ -3239,6 +3262,226 @@ const SF = (function () {
     render();
     window.scrollTo({ top: 0 });
   }
+  /* ---- review（確認・承認）: 左の一覧と右端パネルを同時に見る（D-01/D-21） ---- */
+  /** 判断を待つ依頼。承認待ち → 内容確認中 → 受付 → 差戻し の順。 */
+  const REVIEW_ORDER = ['wait', 'review', 'received', 'back'];
+  function reviewPending() {
+    return S.data.items
+      .filter((r) => REVIEW_ORDER.includes(r.status))
+      .slice()
+      .sort(
+        (a, b) =>
+          REVIEW_ORDER.indexOf(a.status) - REVIEW_ORDER.indexOf(b.status) || SF.stayDays(b) - SF.stayDays(a),
+      );
+  }
+  function reviewLines(text, n) {
+    const a = String(text || '')
+      .split(/\r?\n/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+    return { shown: a.slice(0, n), more: Math.max(0, a.length - n) };
+  }
+  function reviewUL(text, n) {
+    const { shown, more } = reviewLines(text, n);
+    if (!shown.length) return '<span class="muted">－</span>';
+    return (
+      '<ul>' +
+      shown.map((x) => '<li>' + E(x) + '</li>').join('') +
+      '</ul>' +
+      (more ? '<div class="rp-more">ほか ' + more + ' 件</div>' : '')
+    );
+  }
+  function reviewRows(list) {
+    return list
+      .map((r) => {
+        const c = colorOf(r),
+          d = SF.deptOf(r.dept),
+          nx = SF.nextOf(r);
+        const on = r.id === S.reviewSel;
+        return (
+          '<button type="button" class="rrow' +
+          (on ? ' on' : '') +
+          '" data-id="' +
+          E(r.id) +
+          '" data-status="' +
+          E(r.status) +
+          '" aria-pressed="' +
+          (on ? 'true' : 'false') +
+          '">' +
+          '<span class="rt"><span class="no">' +
+          E(r.id) +
+          '</span><span>' +
+          E(SF.statusOf(r.status).l) +
+          '</span>' +
+          stay(r) +
+          '</span>' +
+          '<b>' +
+          E(r.title) +
+          '</b>' +
+          '<span class="rm">' +
+          sig(c) +
+          '<span>・' +
+          E(d ? d.short : '') +
+          '</span>' +
+          (nx ? '<span>・次は' + E(nextWho(r)) + '</span>' : '') +
+          '</span></button>'
+        );
+      })
+      .join('');
+  }
+  /** 受付チェックの札。長い説明は title に置き、パネルは高さを食わない。 */
+  const REVIEW_CHK = {
+    crit: '合格の条件',
+    out: '作らない',
+    data: '扱う情報',
+    party: '社外の範囲',
+    safety: '安全・品質',
+    red: '赤信号',
+  };
+  function reviewChecks(r) {
+    const pc = SF.precheck(r);
+    if (!pc.length) return '<span class="muted">－</span>';
+    return (
+      '<div class="rp-chk">' +
+      pc
+        .map((x) => {
+          const lab = REVIEW_CHK[x.k] || x.k;
+          return (
+            '<span class="' +
+            (x.lv === 'w' ? 'w' : 'ok') +
+            '" title="' +
+            E(x.t) +
+            '">' +
+            (x.lv === 'w' ? '△' : '✓') +
+            ' ' +
+            E(lab) +
+            '</span>'
+          );
+        })
+        .join('') +
+      '</div>'
+    );
+  }
+  function reviewPanel(r) {
+    if (!r) return '<div class="rp-empty">左の一覧から依頼を選んでください。</div>';
+    const c = colorOf(r),
+      d = SF.deptOf(r.dept),
+      nx = SF.nextOf(r),
+      turn = SF.turnOf(S.role, r, me().name);
+    const canApprove = r.status === 'wait' && SF.canMoveR(S.role, r, 'approved', me().name);
+    const canNx = Boolean(nx && SF.canMoveR(S.role, r, nx, me().name));
+    const canBack = r.status !== 'back' && SF.canMoveR(S.role, r, 'back', me().name);
+    const others = SF.STATUSES.filter((s) => s.k !== r.status && SF.canMoveR(S.role, r, s.k, me().name));
+    const canStatus = others.length > 0;
+    // 押せる操作があるか。承認者は「自分の番」でなくても状態を動かせるため、
+    // 「進められません」と書いてボタンを並べる、という食い違いを避ける。
+    const actable = canApprove || canNx || canBack || canStatus;
+    const act = [];
+    if (canApprove)
+      act.push(
+        '<button class="btn go" id="rvApprove" type="button">' + ico('i-check') + '承認する</button>',
+      );
+    else if (canNx)
+      act.push(
+        '<button class="btn go" id="rvNext" type="button">' +
+          ico('i-arrow') +
+          E(SF.statusOf(nx).l) +
+          'へ進める</button>',
+      );
+    if (canBack) act.push('<button class="btn" id="rvBack" type="button">' + ico('i-undo') + '差し戻す</button>');
+    if (canStatus) act.push('<button class="btn sm" id="rvStatus" type="button">状態を変更</button>');
+    act.push('<button class="btn sm" id="rvOpen" type="button">全文を開く</button>');
+    return (
+      '<div class="rp-head">' +
+      '<div class="rp-top">' +
+      st(r.status) +
+      sig(c) +
+      (r.signalFinal ? '' : '<span>候補</span>') +
+      stay(r) +
+      '<span class="no">' +
+      E(r.id) +
+      '</span></div>' +
+      '<h3>' +
+      E(r.title) +
+      '</h3>' +
+      '<div class="rp-meta"><span>' +
+      E(d ? d.name : '') +
+      '</span><span>・起票者 ' +
+      E(r.applicant || '－') +
+      '</span><span>・更新 ' +
+      E(SF.fmt(r.updatedAt)) +
+      '</span><span>・' +
+      SF.measure(r).hours +
+      'h/月</span></div>' +
+      '</div>' +
+      '<div class="rp-body">' +
+      '<div class="rp-sec"><h4>困りごと</h4><p class="rp-clamp">' +
+      E(String(r.problem || '－')) +
+      '</p></div>' +
+      '<div class="rp-sec"><h4>目的</h4><p class="rp-clamp">' +
+      E(String(r.purpose || '－')) +
+      '</p></div>' +
+      '<div class="rp-sec rp-two opt"><div><h4>作るもの</h4>' +
+      reviewUL(r.scope, 3) +
+      '</div><div><h4>作らない</h4>' +
+      reviewUL(r.outScope, 3) +
+      '</div></div>' +
+      '<div class="rp-sec"><h4>合格の条件</h4>' +
+      reviewUL((r.criteria || []).filter(Boolean).join('\n'), 4) +
+      '</div>' +
+      '<div class="rp-sec"><h4>受付チェック（自動）</h4>' +
+      reviewChecks(r) +
+      '</div>' +
+      (turn
+        ? '<p class="rp-who">あなたの番です: ' + E(turn) + '（いまの状態になってから ' + SF.stayDays(r) + ' 日）</p>'
+        : actable
+          ? '<p class="rp-who">次に動かすのは ' + E(nextWho(r) || '－') + ' です。</p>'
+          : '<p class="rp-who">いまの役割（' + E(SF.roleShort(S.role)) + '）では進められません。次に動かすのは ' + E(nextWho(r) || '－') + ' です。</p>') +
+      '</div>' +
+      '<div class="rp-act">' +
+      act.join('') +
+      '</div>'
+    );
+  }
+  function renderReview() {
+    const list = reviewPending();
+    if (S.reviewSel && !list.some((r) => r.id === S.reviewSel)) S.reviewSel = null;
+    if (!S.reviewSel && list.length) S.reviewSel = list[0].id;
+    const r = list.find((x) => x.id === S.reviewSel) || null;
+    const loading = loadingNoData(list.length);
+    $('#view').innerHTML =
+      '<div class="btool"><h2 class="h2" style="margin:0">' +
+      ico('i-check') +
+      '確認・承認</h2><span class="muted" style="font-size:12.5px">判断を待つ依頼を左に並べ、右のパネルで確かめて、そのまま進める・承認する・差し戻す。押せるボタンは役割で変わります。</span></div>' +
+      '<div class="review">' +
+      '<div class="rlist" id="rlist" tabindex="0" aria-label="判断を待つ依頼の一覧">' +
+      '<div class="rhead"><b>判断を待つ依頼</b><em>' +
+      list.length +
+      ' 件</em></div>' +
+      (loading
+        ? '<div style="padding:20px">' + loadingNote('依頼を読み込んでいます') + '</div>'
+        : list.length
+          ? reviewRows(list)
+          : '<div style="padding:24px" class="muted">判断を待つ依頼はありません。</div>') +
+      '</div>' +
+      '<aside class="rpanel" id="rpanel" aria-label="依頼の要点と操作">' +
+      (loading ? '<div class="rp-empty">' + loadingNote('依頼を読み込んでいます') + '</div>' : reviewPanel(r)) +
+      '</aside>' +
+      '</div>';
+    $$('.rrow').forEach((b) =>
+      b.addEventListener('click', () => {
+        S.reviewSel = b.dataset.id;
+        renderReview();
+      }),
+    );
+    if (!r) return;
+    if ($('#rvApprove')) $('#rvApprove').addEventListener('click', () => openStatus(r, 'approved'));
+    if ($('#rvNext')) $('#rvNext').addEventListener('click', () => advance(r));
+    if ($('#rvBack')) $('#rvBack').addEventListener('click', () => openStatus(r, 'back'));
+    if ($('#rvStatus')) $('#rvStatus').addEventListener('click', () => openStatus(r));
+    if ($('#rvOpen')) $('#rvOpen').addEventListener('click', () => openDrawer(r.id));
+  }
+
   function render() {
     // 管理者でなくなった（別の端末で変更された等）ときは管理画面を残さない
     if (S.view === 'adminUsers' && !adminMenuAllowed()) S.view = 'home';
@@ -3264,11 +3507,19 @@ const SF = (function () {
     bs.textContent = nSec;
     bs.style.display = nSec ? 'grid' : 'none';
     bs.title = '期限切れの脆弱性と未確認の通知 ' + nSec + ' 件';
+    const br = $('#bdgReview');
+    if (br) {
+      const nRv = reviewPending().length;
+      br.textContent = nRv;
+      br.style.display = nRv ? 'grid' : 'none';
+      br.title = '判断を待つ依頼 ' + nRv + ' 件';
+    }
     ({
       home: renderHome,
       new: renderWizard,
       board: renderBoard,
       list: renderList,
+      review: renderReview,
       data: renderData,
       ops: renderOps,
       devops: renderDevops,
@@ -4907,12 +5158,35 @@ const SF = (function () {
     }
   }
 
+  /* ---- 読込中の明示表示（不具合 bug_mw97gmv4） ---- */
+  // サーバ接続時、まだ表示できるデータが無く、取得中である状態。
+  // 「0 件」と「読込中」を混同させないため、件数表示と空表示を分ける。
+  function loadingNoData(count) {
+    return Boolean(MSF_CONNECTED && !count && listServer.loading);
+  }
+  /** 読込中の明示表示。reduce 指定時は回転を止める。 */
+  function loadingNote(detail) {
+    const reduce =
+      typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const spin = reduce
+      ? ''
+      : '<span aria-hidden="true" style="width:12px;height:12px;border:2px solid var(--line,#d7dce3);border-top-color:var(--ci,#2563eb);border-radius:50%;display:inline-block;animation:spin 1s linear infinite"></span>';
+    return (
+      '<span role="status" aria-busy="true" style="display:inline-flex;align-items:center;gap:8px;justify-content:center">' +
+      '<b>読み込み中です…</b>' +
+      spin +
+      (detail ? '<span class="muted" style="font-size:12.5px">' + E(detail) + '</span>' : '') +
+      '</span>'
+    );
+  }
+
   /* ---- board ---- */
   function renderBoard() {
     const flow = SF.STATUSES.filter((s) => s.flow),
       side = SF.STATUSES.filter((s) => !s.flow);
     const isMine = (r) => !!SF.turnOf(S.role, r, me().name);
     const items = S.data.items.filter((r) => (!S.fd || r.dept === S.fd) && (!S.bmine || isMine(r)));
+    const loading = loadingNoData(items.length);
     const card = (r) => {
       const c = colorOf(r),
         d = SF.deptOf(r.dept),
@@ -4987,11 +5261,19 @@ const SF = (function () {
       ico('i-plus') +
       '新しい依頼</button></div>' +
       '<div class="board" id="board">' +
-      flow.map((s) => col(s)).join('') +
-      side.map((s) => col(s, 'side')).join('') +
+      (loading
+        ? '<div class="card pad" style="grid-column:1/-1">' + loadingNote('依頼を読み込んでいます') + '</div>'
+        : flow.map((s) => col(s)).join('') + side.map((s) => col(s, 'side')).join('')) +
       '</div>';
     S.fresh = null;
-    $('#bnew').addEventListener('click', startNew);
+    const newBtn = $('#bnew');
+    if (newBtn) {
+      newBtn.disabled = loading;
+      newBtn.addEventListener('click', () => {
+        if (loading) return;
+        startNew();
+      });
+    }
     $('#bfd').addEventListener('change', (e) => {
       S.fd = e.target.value;
       renderBoard();
@@ -5093,6 +5375,7 @@ const SF = (function () {
       listServerVersions = new Map((state.items || []).map((x) => [x.id, Number(x.version) || 0]));
       listServerUpdatedAt = new Map((state.items || []).map((x) => [x.id, String(x.updatedAt || '')]));
       if (S.view === 'list') renderList();
+      else if (S.view === 'board') renderBoard();
     };
     const load = (page, acc, total, restarted) =>
       window.__MSF__
@@ -5183,12 +5466,8 @@ const SF = (function () {
     const totalLabel = useServer ? listServer.total : S.data.items.length;
     const loadedLabel = useServer && listServer.items ? listServer.items.length : 0;
     const capped = useServer && listServer.total > loadedLabel; // 表示の上限までしか出していない
-    const emptyMsg =
-      useServer && listServer.loading
-        ? '絞り込みの結果を読み込んでいます…'
-        : useServer && listServer.error
-          ? listServer.error
-          : '条件に合う依頼がありません';
+    const loading = useServer && Boolean(listServer.loading) && a.length === 0;
+    const emptyMsg = useServer && listServer.error ? listServer.error : '条件に合う依頼がありません';
     $('#view').innerHTML =
       '<div class="btool"><h2 class="h2" style="margin:0">' +
       ico('i-list') +
@@ -5256,12 +5535,14 @@ const SF = (function () {
               );
             })
             .join('')
-        : '<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">' + E(emptyMsg) + '</td></tr>') +
+        : loading
+          ? '<tr><td colspan="10" style="text-align:center;padding:30px">' +
+            loadingNote('絞り込みの結果を読み込んでいます') +
+            '</td></tr>'
+          : '<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">' + E(emptyMsg) + '</td></tr>') +
       '</tbody></table></div><p class="hint">' +
-      a.length +
-      ' 件 ／ 全 ' +
-      totalLabel +
-      ' 件</p>' +
+      (loading ? '件数を数えています…' : a.length + ' 件 ／ 全 ' + totalLabel + ' 件') +
+      '</p>' +
       (capped
         ? '<p class="hint">全 ' +
           listServer.total +
@@ -5299,12 +5580,23 @@ const SF = (function () {
       renderList();
     });
     $$('#ltb tr[data-id]').forEach((tr) => tr.addEventListener('click', () => openDrawer(tr.dataset.id)));
-    $('#lcsv').addEventListener('click', () =>
-      SF.download('受付一覧_' + ymd() + '.csv', SF.toCSV(a), 'text/csv')
-        ? toast('CSVを書き出しました')
-        : toast('書き出せませんでした', true),
-    );
-    $('#ljson').addEventListener('click', exportJSON);
+    const csvBtn = $('#lcsv');
+    if (csvBtn) {
+      csvBtn.disabled = loading;
+      csvBtn.addEventListener('click', () => {
+        if (loading) return;
+        if (SF.download('受付一覧_' + ymd() + '.csv', SF.toCSV(a), 'text/csv')) toast('CSVを書き出しました');
+        else toast('書き出せませんでした', true);
+      });
+    }
+    const jsonBtn = $('#ljson');
+    if (jsonBtn) {
+      jsonBtn.disabled = loading;
+      jsonBtn.addEventListener('click', () => {
+        if (loading) return;
+        exportJSON();
+      });
+    }
   }
   const ymd = () => {
     const d = new Date();

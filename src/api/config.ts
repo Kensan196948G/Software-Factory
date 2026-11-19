@@ -39,6 +39,12 @@ export interface AppConfig {
   selfApprovalForcedInProduction: boolean;
   /** JSON 取込（全件置換）を許可するか。 */
   allowImport: boolean;
+  /**
+   * 本番（APP_ENV=production）でも開発ラインの実 runner と自動マージを許可するか。
+   * 既定は false（従来どおり本番では拒否）。DEVLINE_ALLOW_PRODUCTION=1 の明示だけで true。
+   * 0 / 1 以外は起動エラー（fail-closed）。2026-11-18 の所有者指示で追加した。
+   */
+  devlineAllowProduction: boolean;
   /** password: アプリのログイン画面 / access: Cloudflare Access の JWT を検証（ヘッダ信頼は明示 opt-in のみ） */
   authMode: 'password' | 'access';
   accessAllowedEmails: string[];
@@ -143,6 +149,29 @@ function accessJwtSettingsOf(
 /** Access の JWT 検証が有効か（AUTH_MODE=access かつ両方設定済み）。 */
 export function isAccessJwtEnabled(cfg: Pick<AppConfig, 'authMode' | 'accessTeamDomain' | 'accessAud'>): boolean {
   return cfg.authMode === 'access' && Boolean(cfg.accessTeamDomain && cfg.accessAud);
+}
+
+/**
+ * Cloudflare Access のログアウト URL。アプリのセッションだけ消しても Access の Cookie が残ると
+ * 次のリクエストで同じ利用者として自動ログインしてしまうため、画面のログアウトは両方を終える。
+ *
+ * ログアウトは **アプリのドメイン**（`<app>/cdn-cgi/access/logout`）で行う。チームドメインの
+ * `/cdn-cgi/access/logout` は、そのドメインの Cookie を持たないブラウザでは
+ * 「No Access cookie found. Please login first.」のエラー面になり、アプリ側の Cookie も残る
+ * （2026-11-11 に staging で実測）。`returnTo` でアプリのルートへ戻し、次のログイン（OTP）へ繋ぐ。
+ *
+ * AUTH_MODE=password では null（アプリのログイン画面へ戻す）。
+ */
+export function accessLogoutUrl(cfg: Pick<AppConfig, 'authMode' | 'appBaseUrl'>): string | null {
+  if (cfg.authMode !== 'access') return null;
+  try {
+    const base = new URL(cfg.appBaseUrl);
+    if (base.protocol !== 'https:') return null;
+    const returnTo = encodeURIComponent(base.origin + '/');
+    return `${base.origin}/cdn-cgi/access/logout?returnTo=${returnTo}`;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -318,6 +347,16 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
   );
   const accessAutoProvision = accessAutoProvisionOf(pick(file, 'ACCESS_AUTO_PROVISION'), appEnv, isProduction);
 
+  // 本番の開発ライン自動化（実 runner・自動マージ）の明示許可。既定は拒否。
+  // この安全スイッチはプロセス環境（systemd の EnvironmentFile）だけを見る。JSON 設定ファイルや overrides では
+  // 有効にならない（設定ファイルの置き忘れで本番が有効にならないように）。未設定と空は無効、0 / 1 以外は起動エラー。
+  // 判定は devline-real-config.ts の productionRealLineAllowed と同じ規則。
+  const rawDevlineAllowProduction = (process.env.DEVLINE_ALLOW_PRODUCTION ?? '').trim();
+  if (rawDevlineAllowProduction !== '' && rawDevlineAllowProduction !== '0' && rawDevlineAllowProduction !== '1') {
+    throw new Error('DEVLINE_ALLOW_PRODUCTION が不正です（0 / 1 のいずれか）');
+  }
+  const devlineAllowProduction = rawDevlineAllowProduction === '1';
+
   // 自己承認の既定は環境で決める。本番だけ既定で禁止し、明示の 1 は警告つきで許可する。
   const rawSelfApproval = pick(file, 'ALLOW_SELF_APPROVAL')?.trim();
   const explicitSelfApproval = rawSelfApproval === undefined || rawSelfApproval === '' ? undefined : rawSelfApproval;
@@ -348,6 +387,7 @@ export function loadConfig(overrides: RawConfig = {}): AppConfig {
     allowSelfApproval,
     selfApprovalForcedInProduction,
     allowImport: (pick(file, 'ALLOW_IMPORT') ?? '1') === '1',
+    devlineAllowProduction,
     authMode,
     ...accessJwtSettingsOf(authMode, pick(file, 'ACCESS_TEAM_DOMAIN'), pick(file, 'ACCESS_AUD')),
     accessTrustEmailHeader,
