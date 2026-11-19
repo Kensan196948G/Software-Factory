@@ -20,6 +20,33 @@ import { runDeployOnce, type DeployOutcome, type DeployWorkerOptions } from './d
 
 const POLL_MS = 5_000;
 
+/**
+ * 配備の工程だけを回すループ。job の工程（runOnce）と同じループで待たない。
+ * 成果物の取得は数十 MB で数分かかることがあり、待つ間 queued の job を拾えない（Issue #208）。
+ * 試行は release_attempt の lease で守られるので、job の工程と並べて動かしてよい。
+ */
+export async function runDeployLoop(options: {
+  deploy: () => Promise<DeployOutcome>;
+  shutdown: AbortSignal;
+  intervalMs?: number;
+  log?: (line: string) => void;
+  logError?: (line: string) => void;
+}): Promise<void> {
+  const log = options.log ?? ((line: string) => console.log(line));
+  const logError = options.logError ?? ((line: string) => console.error(line));
+  const intervalMs = options.intervalMs ?? POLL_MS;
+  while (!options.shutdown.aborted) {
+    try {
+      const outcome = await options.deploy();
+      if (outcome.kind !== 'idle') log(`[worker] ${JSON.stringify(outcome)}`);
+    } catch (err) {
+      logError(`[worker] deploy step failed: ${(err as Error).name}`);
+    }
+    if (options.shutdown.aborted) break;
+    await delay(intervalMs, undefined, { signal: options.shutdown }).catch(() => undefined);
+  }
+}
+
 export interface WorkerEnvDecision {
   start: boolean;
   /** 起動しない理由。start が true なら null。 */
@@ -50,12 +77,11 @@ export function decideWorkerStart(env: Record<string, string | undefined>): Work
 }
 
 /**
- * 1 回分の工程。runOnce の例外で配備を飢えさせない（別々に受ける）。進まなかったら true を返す（呼び出し側が待つ）。
- * lease は期限で切れるので、次の取得で取り直される。
+ * job の工程を 1 回分だけ進める。進まなかったら true を返す（呼び出し側が待つ）。
+ * 配備は runDeployLoop が別に回す（成果物の取得で job を止めない。Issue #208）。
  */
 export async function workerTick(steps: {
   runOnce: () => Promise<Awaited<ReturnType<typeof runOnce>>>;
-  deploy?: () => Promise<DeployOutcome>;
   shutdown?: AbortSignal;
   log?: (line: string) => void;
   logError?: (line: string) => void;
@@ -70,17 +96,6 @@ export async function workerTick(steps: {
     if (outcome.kind !== 'idle') log(`[worker] ${JSON.stringify(outcome)}`);
   } catch (err) {
     logError(`[worker] step failed: ${(err as Error).name}`);
-  }
-  if (steps.deploy && !steps.shutdown?.aborted) {
-    try {
-      const deployed = await steps.deploy();
-      if (deployed.kind !== 'idle') {
-        idle = false;
-        log(`[worker] ${JSON.stringify(deployed)}`);
-      }
-    } catch (err) {
-      logError(`[worker] deploy step failed: ${(err as Error).name}`);
-    }
   }
   return idle;
 }
@@ -158,6 +173,14 @@ async function main(): Promise<void> {
   process.once('SIGTERM', () => stop.abort());
   console.log(`[worker] started runner=${decision.runnerKind} isolation=${runner.capability.isolation}`);
 
+  // 配備は job のループと並べて回す。成果物の取得（数分）で queued の job を止めない（Issue #208）
+  const deployLoop = deploy
+    ? runDeployLoop({
+        deploy: () => runDeployOnce({ ...(deploy as DeployWorkerOptions), shutdown: stop.signal }),
+        shutdown: stop.signal,
+      })
+    : null;
+
   while (!stop.signal.aborted) {
     if (line?.isLockHeld?.() === false) {
       // 別の worker が動き出せる状態。新しい AI を動かさず、終わる（監視の側で起動し直す）
@@ -176,11 +199,12 @@ async function main(): Promise<void> {
           ...(line ? { line } : {}),
           ...(autoMerge ? { autoMerge } : {}),
         }),
-      ...(deploy ? { deploy: () => runDeployOnce({ ...(deploy as DeployWorkerOptions), shutdown: stop.signal }) } : {}),
       shutdown: stop.signal,
     });
     if (idle) await delay(POLL_MS, undefined, { signal: stop.signal }).catch(() => undefined);
   }
+  // 途中の配備を切らない（成果物の取得は続く。止める合図は runDeployOnce が工程の区切りで見る）
+  await deployLoop;
   await line?.close();
   await closePool();
   console.log('[worker] stopped');

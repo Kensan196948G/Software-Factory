@@ -607,4 +607,8 @@ Staging で `DEVLINE_AUTO_MERGE=1` を一時設定（worker 再起動）し、�
 - 費用: 青 14 円・黄 16 円（各 2 試行、上限 1,000 円/タスク）。
 - 赤は層①の `isRedOrder` と C1 のテストで対象外（実走はしていない）。
 
-**観測した不具合（未解決・記録）**: 青の自動マージ完了（15:03:39）後、worker が次の queued job（黄）を拾わない状態が約 7 分続き、再起動で再開した。その後の停止（15:20:35）は autofollow の `b8b9427f` 配備に伴う release.sh の worker 再起動で、正常。自動マージの契機（`options.autoMerge`）が戻らない可能性があり、原因は未特定。追跡は Issue #208。
+**観測した不具合（原因を特定・修正。Issue #208）**: 青の自動マージ完了（15:03:39）後、worker が次の queued job（黄）を拾わない状態が約 8 分続いた。その後の停止（15:20:35）は autofollow の `b8b9427f` 配備に伴う release.sh の worker 再起動で、正常。
+
+- **原因**: 自動マージの契機（`options.autoMerge`）ではなく、自動マージが作った `release_attempt`（build）の成果物取得。`image` artifact は 79,454,135 B で、取得に約 8〜9 分かかる（同日 14:21:15→14:29:55 の build は attempts 1・**517 秒**で成功）。worker は job の工程と配備の工程を**同じループで順に待って**いたため、取得中は queued の job を拾えなかった。
+- **経過の実測**: 自動マージ後の build は 15:03:39 に開始。運用者が停止・再起動したため lease（120 秒）切れで取り直され、各回が取得をやり直した。4 回目で `too_many_attempts` になり 15:28:46 に failed（1507 秒）。残った部分ファイルは `msf-image-*` に 60 MB / 69 MB / 25 MB。
+- **修正**: 配備の工程を `runDeployLoop` に分け、job の工程（`workerTick`）と並べて回す。`release_attempt` は lease で守られるため、取得中も job を拾える。単体試験は `tests/unit/devline-release.test.ts`（取得が終わらない間も `workerTick` が戻る／配備の例外でループが止まらない／止める合図の後は呼ばない）。Staging への配備後に実走で再確認する（本項は未実施）。
