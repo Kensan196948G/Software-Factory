@@ -15,7 +15,7 @@ import {
   type MergeFacts,
   type RollbackFacts,
 } from '../../src/shared/devline-release.js';
-import { workerTick } from '../../src/worker/main.js';
+import { runDeployLoop, workerTick } from '../../src/worker/main.js';
 
 const HEAD = 'a'.repeat(40);
 const OTHER = 'b'.repeat(40);
@@ -145,29 +145,50 @@ function walk(dir: string): string[] {
 describe('worker の1回分（配備を飢えさせない）', () => {
   const quiet = { log: (): void => undefined, logError: (): void => undefined };
 
-  it('runOnce が例外でも配備は動く', async () => {
-    const deploy = vi.fn(async () => ({ kind: 'done', attemptKind: 'deploy', state: 'succeeded', errorCode: null }) as const);
+  it('job の工程が例外でも待つ側へ倒す', async () => {
     const idle = await workerTick({
       runOnce: async () => {
         throw new Error('db');
       },
-      deploy,
       ...quiet,
     });
-    expect(deploy).toHaveBeenCalledTimes(1);
-    expect(idle).toBe(false);
+    expect(idle).toBe(true);
   });
 
-  it('配備の例外は外へ出さず、両方が例外なら待つ側へ倒す。止める合図の後は配備を呼ばない', async () => {
-    const fail = async (): Promise<never> => {
-      throw new Error('x');
-    };
-    expect(await workerTick({ runOnce: fail, deploy: fail, ...quiet })).toBe(true);
+  it('配備は job の工程と同じループで待たない（成果物の取得中も job を拾える）', async () => {
+    // 配備が終わらない間も workerTick（job の工程）は戻る
+    let finishDeploy: (() => void) | null = null;
+    const deployStarted = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        finishDeploy = resolve;
+      });
+      return { kind: 'idle' } as const;
+    });
     const stop = new AbortController();
+    const loop = runDeployLoop({ deploy: deployStarted, shutdown: stop.signal, intervalMs: 1, ...quiet });
+    await vi.waitFor(() => expect(deployStarted).toHaveBeenCalledTimes(1));
+    const idle = await workerTick({ runOnce: async () => ({ kind: 'idle' }) as const, ...quiet });
+    expect(idle).toBe(true);
     stop.abort();
-    const deploy = vi.fn(async () => ({ kind: 'idle' }) as const);
-    await workerTick({ runOnce: fail, deploy, shutdown: stop.signal, ...quiet });
-    expect(deploy).not.toHaveBeenCalled();
+    finishDeploy!();
+    await loop;
+  });
+
+  it('配備の例外は外へ出さず、次の回に進む。止める合図の後は配備を呼ばない', async () => {
+    const stop = new AbortController();
+    let calls = 0;
+    const deploy = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('docker');
+      return { kind: 'idle' } as const;
+    });
+    const loop = runDeployLoop({ deploy, shutdown: stop.signal, intervalMs: 1, ...quiet });
+    await vi.waitFor(() => expect(deploy.mock.calls.length).toBeGreaterThanOrEqual(2));
+    stop.abort();
+    await loop;
+    const after = vi.fn(async () => ({ kind: 'idle' }) as const);
+    await runDeployLoop({ deploy: after, shutdown: stop.signal, intervalMs: 1, ...quiet });
+    expect(after).not.toHaveBeenCalled();
   });
 });
 

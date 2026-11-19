@@ -5,7 +5,11 @@
  */
 export function versionAssets(html: string, version: string): string {
   const v = encodeURIComponent(version);
-  return html.replace(/<script src="\/(bridge|console)\.js"><\/script>/g, (_, name: string) => {
-    return `<script src="/${name}.js?v=${v}"></script>`;
-  });
+  return html
+    .replace(/<script src="\/(bridge|console|station-bridge|station)\.js"><\/script>/g, (_, name: string) => {
+      return `<script src="/${name}.js?v=${v}"></script>`;
+    })
+    .replace(/<link rel="stylesheet" href="\/(station)\.css">/g, (_, name: string) => {
+      return `<link rel="stylesheet" href="/${name}.css?v=${v}">`;
+    });
 }

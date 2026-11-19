@@ -141,6 +141,10 @@ describe('状態遷移（本番の遷移表）', () => {
     expect(roleCanTransition('wait', 'approved', approver, request('u1', 'a1'), false).allowed).toBe(true);
     expect(roleCanTransition('wait', 'approved', approver, request('u1', 'a2'), false).allowed).toBe(false);
     expect(roleCanTransition('wait', 'approved', approver, request('u1', null), false).allowed).toBe(true);
+    // 公開承認（release_wait → done）も、指名された承認者だけ。
+    expect(roleCanTransition('release_wait', 'done', approver, request('u1', 'a1'), false).allowed).toBe(true);
+    expect(roleCanTransition('release_wait', 'done', approver, request('u1', 'a2'), false).allowed).toBe(false);
+    expect(roleCanTransition('release_wait', 'done', approver, request('u1', null), false).allowed).toBe(true);
   });
 
   it('差戻し・見送り・取消は理由必須', () => {

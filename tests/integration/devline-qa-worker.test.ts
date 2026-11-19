@@ -14,6 +14,7 @@ import {
   claimNextJob,
   finishAttempt,
   haltJob,
+  handoffOrder,
   heartbeat,
   recordVerification,
   releaseLease,
@@ -723,18 +724,27 @@ describe('T-61〜T-65, T-68〜T-70: Runner', () => {
     expect(isolated.code, isolated.out).toBe(1);
   }, 60000);
 
-  it('T-70: 赤信号の実承認は投入は通り、計画の前に stopped(red_signal_human_required)。runner を呼ばず再開もできない', async () => {
+  it('T-70: 赤信号の実承認は API から投入できず、修正前に投入済みの赤 job は worker が計画前に停止する', async () => {
     const id = await h.createRequest();
     await h.toWait(id);
     await h.setRole('approver');
     await h.transition(id, { ...APPROVE, signal: 'r', redAcknowledged: true, reason: '赤のまま承認する作り物の理由' });
     await h.setRole('desk');
-    const res = await h.handoff(id);
-    expect(res.statusCode, res.body).toBe(200);
+
+    // 1) API（新ルート）は赤を拒否し、Issue も job も作らない。
+    const refused = await h.handoff(id);
+    expect(refused.statusCode, refused.body).toBe(409);
+    expect(refused.json().error.code).toBe('ERR-205');
+    expect(h.github.issues).toHaveLength(0);
+    expect(await h.count('from job where request_id=$1', [id])).toBe(0);
+
+    // 2) 修正前に投入済みだった赤 job（多層防御）。サービス層を直接呼んで同じ状態を作る。
+    //    通常の API はここを通らない（赤は拒否される）ので、worker 側の停止を確かめるための再現。
+    const legacy = await handoffOrder({ requestId: id, orderVersion: null }, h.actor('desk'), 'legacy-red', h.deps());
+    const jobId = legacy.jobId;
     const runner = scriptedRunner(() => ({}));
     await runUntilIdle(h.worker('success', { runner }));
     expect(runner.runs).toHaveLength(0);
-    const jobId = res.json().jobId;
     expect(await h.view(jobId)).toMatchObject({ state: 'stopped', stopReason: 'red_signal_human_required' });
     await expect(resume(jobId)).rejects.toMatchObject({ code: 'ERR-201' });
   });

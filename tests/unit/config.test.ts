@@ -123,3 +123,51 @@ describe('ACCESS_TRUST_EMAIL_HEADER', () => {
     expect(() => loadConfig()).toThrow(/ACCESS_TRUST_EMAIL_HEADER が不正/);
   });
 });
+
+describe('DEVLINE_ALLOW_PRODUCTION（本番の開発ライン自動化の明示許可）', () => {
+  beforeEach(() => {
+    stub({
+      MIRAI_SF_CONFIG_FILE: undefined,
+      NODE_ENV: undefined,
+      APP_ENV: undefined,
+      DEVLINE_ALLOW_PRODUCTION: undefined,
+      DATABASE_URL: 'postgresql:///mirai_sf_test?host=/var/run/postgresql',
+    });
+  });
+
+  it('既定は無効（未設定・0）', () => {
+    stub({ NODE_ENV: 'development' });
+    expect(loadConfig().devlineAllowProduction).toBe(false);
+    stub({ NODE_ENV: 'development', DEVLINE_ALLOW_PRODUCTION: '0' });
+    expect(loadConfig().devlineAllowProduction).toBe(false);
+  });
+
+  it('1 のときだけ有効（本番でも）', () => {
+    stub({ NODE_ENV: 'production', APP_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: '1' });
+    expect(loadConfig().devlineAllowProduction).toBe(true);
+  });
+
+  it('未設定・空・0 は無効（空で起動を止めない）', () => {
+    for (const v of [undefined, '', ' ', '0']) {
+      stub({ NODE_ENV: 'production', APP_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: v });
+      expect(loadConfig().devlineAllowProduction).toBe(false);
+    }
+  });
+
+  it('0 と 1 以外は起動エラー（fail-closed）', () => {
+    for (const v of ['yes', 'true', '2', '10', '-1']) {
+      stub({ NODE_ENV: 'production', APP_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: v });
+      expect(() => loadConfig()).toThrow(/DEVLINE_ALLOW_PRODUCTION/);
+    }
+  });
+
+  it('前後の空白は無視する（EnvironmentFile の `DEVLINE_ALLOW_PRODUCTION= 1 `）', () => {
+    stub({ NODE_ENV: 'production', APP_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: ' 1 ' });
+    expect(loadConfig().devlineAllowProduction).toBe(true);
+  });
+
+  it('設定ファイル・overrides では有効にならない（systemd の EnvironmentFile だけ）', () => {
+    stub({ NODE_ENV: 'production', APP_ENV: 'production', DEVLINE_ALLOW_PRODUCTION: undefined });
+    expect(loadConfig({ DEVLINE_ALLOW_PRODUCTION: '1' }).devlineAllowProduction).toBe(false);
+  });
+});

@@ -135,8 +135,8 @@ async function verify(): Promise<void> {
     );
     add('テーブル数', (tables.rows[0]?.count ?? 0) >= 12, `${tables.rows[0]?.count} 件`);
 
-    const dept = await client.query<{ count: number }>('select count(*)::int as count from department');
-    add('部署 19', dept.rows[0]?.count === 19, `${dept.rows[0]?.count} 件`);
+    const dept = await client.query<{ count: number }>('select count(*)::int as count from department where selectable');
+    add('部署 16（Mirai-Info）', dept.rows[0]?.count === 16, `${dept.rows[0]?.count} 件`);
 
     const tools = await client.query<{ signal: string; count: number }>(
       'select signal, count(*)::int as count from catalog_tool group by signal',
